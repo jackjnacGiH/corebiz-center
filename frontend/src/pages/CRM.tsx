@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, Mail, Phone, Tag } from 'lucide-react';
+import { Users, Mail, Phone } from 'lucide-react';
 
 const CRM: React.FC = () => {
     const customers = [

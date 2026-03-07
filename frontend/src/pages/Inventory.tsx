@@ -1,5 +1,5 @@
 import React from 'react';
-import { Package, Plus, Filter, MoreVertical } from 'lucide-react';
+import { Plus, Filter, MoreVertical } from 'lucide-react';
 
 const Inventory: React.FC = () => {
     const products = [

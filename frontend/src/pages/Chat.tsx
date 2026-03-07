@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MessageCircle, Send, Plus, PhoneCall, Video } from 'lucide-react';
+import { Send, Plus, PhoneCall, Video } from 'lucide-react';
 
 const Chat: React.FC = () => {
     const [msg, setMsg] = useState('');
