@@ -142,12 +142,100 @@ app.post('/api/links', async (req, res) => {
 
         // ทำการ Process Link ที่ส่งมาเพื่อทำ Data Embedding เบื้องต้น (ตัวอย่างใช้ URL แทน Content ก่อน)
         for (const linkObj of links) {
-            const embedding = await generateEmbedding(`Website/Video URL: ${linkObj.url}`);
-            await insertIntoSupabase(linkObj.url, { source: linkObj.url, type: linkObj.type }, embedding);
+            let contentText = `Website/Video URL: ${linkObj.url}`;
+            let chunks = [contentText];
+
+            try {
+                // ตรวจสอบว่าเป็น Google Sheets หรือไม่
+                if (linkObj.url.includes('docs.google.com/spreadsheets')) {
+                    const matchId = linkObj.url.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+                    if (matchId && matchId[1]) {
+                        const sheetId = matchId[1];
+                        const gidMatch = linkObj.url.match(/[?&]gid=([0-9]+)/);
+                        const gidParam = (gidMatch && gidMatch[1]) ? `&gid=${gidMatch[1]}` : '';
+
+                        // ปรับ Link เพื่อดาวน์โหลดเป็น CSV
+                        const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv${gidParam}`;
+                        console.log(`📥 Downloading Google Sheet: ${exportUrl}`);
+
+                        const csvRes = await fetch(exportUrl);
+                        if (csvRes.ok) {
+                            const csvText = await csvRes.text();
+
+                            // ตัดแบ่งข้อมูลจาก CSV
+                            chunks = [];
+                            const lines = csvText.split('\n');
+                            let currentChunk = '';
+                            for (let i = 0; i < lines.length; i++) {
+                                currentChunk += lines[i] + '\n';
+                                if (i > 0 && i % 20 === 0) { // ทุกๆ 20 บรรทัด
+                                    chunks.push(currentChunk.trim());
+                                    currentChunk = '';
+                                }
+                            }
+                            if (currentChunk.trim() !== '') chunks.push(currentChunk.trim());
+                        } else {
+                            console.warn("⚠️ Google Sheet Export Failed (ต้องตั้งค่าแชร์ลิงก์เป็น Public ก่อน)");
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("❌ Google Sheet Error:", err);
+            }
+
+            // รัน Embedding 
+            for (const chunk of chunks) {
+                if (!chunk) continue;
+                // ตัดไม่ให้เกินความยาวที่ Phaya รับได้
+                const textChunk = chunk.substring(0, 1500);
+                const embedding = await generateEmbedding(textChunk);
+                await insertIntoSupabase(textChunk, { source: linkObj.url, type: linkObj.type }, embedding);
+            }
         }
     } catch (error) {
         console.error('Links Error:', error);
         res.status(500).json({ error: 'เกิดข้อผิดพลาดในการบันทึกลิงก์' });
+    }
+});
+
+app.post('/api/search', async (req, res) => {
+    try {
+        const { query } = req.body;
+        if (!query) return res.status(400).json({ error: 'ไม่พบคำค้นหา' });
+
+        const queryEmbedding = await generateEmbedding(query);
+        if (!queryEmbedding) return res.status(500).json({ error: 'ไม่สามารถสร้าง Embedding สำหรับคำค้นหาได้' });
+
+        // ดึงข้อมูลทั้งหมด 500 รายการล่าสุด
+        const { data, error } = await supabase.from('page_sections').select('*').order('id', { ascending: false }).limit(500);
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+            return res.json({ context: '' });
+        }
+
+        const dotProduct = (a, b) => a.reduce((sum, val, i) => sum + val * b[i], 0);
+        const norm = (a) => Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+
+        const qNorm = norm(queryEmbedding);
+
+        const scoredDocs = data.map(doc => {
+            if (!doc.embedding) return { ...doc, score: 0 };
+            let emb = doc.embedding;
+            if (typeof emb === 'string') emb = JSON.parse(emb);
+            const score = dotProduct(emb, queryEmbedding) / (norm(emb) * qNorm);
+            return { ...doc, score };
+        });
+
+        scoredDocs.sort((a, b) => b.score - a.score);
+
+        // เลือก 3 ผลลัพธ์แรกที่คะแนนสูงสุดเป็นบริบท (Context)
+        const topDocs = scoredDocs.slice(0, 3).map(d => d.content).join('\n\n');
+
+        res.json({ context: topDocs });
+    } catch (error) {
+        console.error('Search error:', error);
+        res.status(500).json({ error: 'ค้นหาผิดพลาด' });
     }
 });
 

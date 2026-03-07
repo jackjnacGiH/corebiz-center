@@ -7,10 +7,9 @@ const N8nAssistant: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // *Note*: The provided URL was a Workflow Editor URL. 
-    // n8n Webhook URLs normally look like: ".../webhook/your-path-name" or ".../webhook-test/your-path-name".
-    // Please update this URL to exactly what the n8n Webhook Node shows inside the workflow.
-    const WEBHOOK_URL = 'https://n8n.srv1315112.hstgr.cloud/webhook/LZ9tnL6dCkYuIPn6';
+    // URL สำหรับรับข้อมูล Webhook Production
+    // อัปเดต Path ให้ตรงกับ Webhook จริงใน n8n
+    const WEBHOOK_URL = 'https://n8n.srv1315112.hstgr.cloud/webhook/f450c3d8-3d4c-4a74-bfa3-8ebb093bc72c';
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -21,12 +20,37 @@ const N8nAssistant: React.FC = () => {
         setResponse(null);
 
         try {
+            // 1. ค้นหาข้อมูล Context จาก Openclaw RAG (Local Server)
+            let ragContext = '';
+            try {
+                const searchRes = await fetch('http://localhost:3001/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: input })
+                });
+                if (searchRes.ok) {
+                    const searchData = await searchRes.json();
+                    if (searchData.context && searchData.context.trim() !== '') {
+                        ragContext = searchData.context;
+                    }
+                }
+            } catch (searchErr) {
+                console.warn("⚠️ ไม่สามารถดึงข้อมูลจาก Openclaw RAG Data Center ได้:", searchErr);
+            }
+
+            // 2. เตรียมข้อความ + ข้อมูล RAG ส่งให้ n8n AI Agent ชุดเดียว
+            let finalMessage = input;
+            if (ragContext) {
+                finalMessage = `(โปรดตอบคำถามโดยอิงจาก "ข้อมูลอ้างอิง" ต่อไปนี้เป็นหลัก)\n\nข้อมูลอ้างอิงจาก Openclaw RAG:\n${ragContext}\n\nคำถามจากผู้ใช้:\n${input}`;
+            }
+
+            // 3. ยิงข้อมูลหา n8n Webhook
             const res = await fetch(WEBHOOK_URL, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message: input })
+                body: JSON.stringify({ message: finalMessage })
             });
 
             if (!res.ok) {
@@ -36,9 +60,12 @@ const N8nAssistant: React.FC = () => {
             // Waiting for reply from n8n webhook
             const data = await res.json();
 
-            // Assume the reply has a "reply" field or format it from raw data
+            // Assume the reply has a "reply" or "output" field or format it from raw data
             if (data && data.reply) {
                 setResponse(data.reply);
+            } else if (data && data.output) {
+                // AI Agent usually returns "output" instead of "reply"
+                setResponse(data.output);
             } else if (typeof data === 'string') {
                 setResponse(data);
             } else {

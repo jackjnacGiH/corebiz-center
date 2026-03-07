@@ -45,7 +45,7 @@ const OpenclawRAG: React.FC = () => {
                     throw new Error('กรุณาเลือกไฟล์ที่ต้องการอัปโหลด');
                 }
                 const formData = new FormData();
-                selectedFiles.forEach(file => {
+                selectedFiles.forEach((file) => {
                     formData.append('documents', file);
                 });
 
@@ -54,29 +54,30 @@ const OpenclawRAG: React.FC = () => {
                     body: formData,
                 });
 
-                if (!response.ok) throw new Error('เกิดข้อผิดพลาดในการอัปโหลดไฟล์');
+                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
             } else {
                 const validLinks = links.filter(link => link.url.trim() !== '');
                 if (validLinks.length === 0) {
                     throw new Error('กรุณากรอกลิงก์ที่ต้องการเพิ่ม');
                 }
+
                 const response = await fetch('http://localhost:3001/api/links', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ links: validLinks }),
                 });
 
-                if (!response.ok) throw new Error('เกิดข้อผิดพลาดในการบันทึกลิงก์');
+                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
             }
 
-            setStatusText('✅ นำเข้าข้อมูลสู่ระบบ Openclaw RAG เรียบร้อยแล้ว');
+            setStatusText('✅ นำเข้าข้อมูลสู่ระบบ AI เรียบร้อยแล้ว!');
             setTimeout(() => {
                 setStatusText('');
                 setSelectedFiles([]);
                 setLinks([{ type: 'website', url: '' }]);
-            }, 3000);
+            }, 5000);
         } catch (error: any) {
-            setStatusText(`❌ ข้อผิดพลาด: ${error.message}`);
+            setStatusText(`❌ ข้อผิดพลาด: ไม่สามารถเชื่อมต่อ n8n Webhook ได้ (${error.message})`);
         } finally {
             setIsUploading(false);
         }
