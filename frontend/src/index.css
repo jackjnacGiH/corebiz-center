@@ -1,24 +1,27 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
+/* CSS Variables and Typography */
 :root {
   --bg-color: #0f111a;
   --panel-bg: rgba(25, 28, 41, 0.7);
   --panel-border: rgba(255, 255, 255, 0.05);
   
-  --primary: #6366f1;
-  --primary-hover: #4f46e5;
+  --primary: #6366f1; /* Indigo-500 */
+  --primary-hover: #4f46e5; /* Indigo-600 */
   --primary-glow: rgba(99, 102, 241, 0.5);
-  --secondary: #ec4899;
-  --accent: #14b8a6;
+  --secondary: #ec4899; /* Pink-500 */
+  --accent: #14b8a6; /* Teal-500 */
   
-  --text-main: #f8fafc;
-  --text-muted: #94a3b8;
+  --text-main: #f8fafc; /* Slate-50 */
+  --text-muted: #94a3b8; /* Slate-500 */
   
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --success: #10b981; /* Emerald-500 */
+  --warning: #f59e0b; /* Amber-500 */
+  --danger: #ef4444; /* Red-500 */
 
-  --sidebar-width: 260px;
+  --sidebar-width: 290px; /* Adjusted for better spacing with icons */
   --header-height: 70px;
   
   --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -35,12 +38,13 @@
 body {
   font-family: 'Outfit', sans-serif;
   background-color: var(--bg-color);
+  /* Subtle gradient background */
   background-image: 
     radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.08), transparent 25%),
     radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.08), transparent 25%);
   color: var(--text-main);
   min-height: 100vh;
-  overflow-x: hidden;
+  overflow-x: hidden; /* Prevent horizontal scroll */
 }
 
 /* Scrollbar styling */
@@ -52,7 +56,7 @@ body {
   background: var(--bg-color);
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #334155; /* Slate-700 */
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -81,7 +85,7 @@ a {
 }
 
 .glass-card {
-  background: rgba(30, 33, 48, 0.6);
+  background: rgba(30, 33, 48, 0.6); /* Slightly lighter panel background */
   backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.03);
   border-radius: 12px;
@@ -99,26 +103,26 @@ a {
 .app-layout {
   display: flex;
   height: 100vh;
-  overflow: hidden;
+  overflow: hidden; /* Prevent layout overflow */
 }
 
 .sidebar {
   width: var(--sidebar-width);
   height: 100vh;
-  background: rgba(15, 17, 26, 0.95);
+  background: rgba(15, 17, 26, 0.95); /* Slightly darker, more opaque sidebar */
   border-right: 1px solid var(--panel-border);
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(10px);
-  z-index: 100;
+  z-index: 100; /* Ensure sidebar is above main content */
 }
 
 .main-content {
-  flex: 1;
+  flex: 1; /* Takes remaining space */
   display: flex;
   flex-direction: column;
   height: 100vh;
-  overflow: hidden;
+  overflow: hidden; /* Prevent main content overflow */
 }
 
 .header {
@@ -127,15 +131,15 @@ a {
   align-items: center;
   justify-content: space-between;
   padding: 0 2rem;
-  background: rgba(15, 17, 26, 0.8);
+  background: rgba(15, 17, 26, 0.8); /* Header background with blur */
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--panel-border);
-  z-index: 50;
+  z-index: 50; /* Below sidebar */
 }
 
 .page-content {
-  flex: 1;
-  overflow-y: auto;
+  flex: 1; /* Takes remaining space */
+  overflow-y: auto; /* Enable vertical scrolling for content */
   padding: 2rem;
 }
 
@@ -148,7 +152,7 @@ a {
   padding: 0.75rem 1.5rem;
   border-radius: 8px;
   font-weight: 500;
-  font-family: inherit;
+  font-family: inherit; /* Use body font */
   cursor: pointer;
   transition: var(--transition);
   border: none;
@@ -158,12 +162,12 @@ a {
 .btn-primary {
   background: linear-gradient(135deg, var(--primary), var(--secondary));
   color: white;
-  box-shadow: 0 4px 15px var(--primary-glow);
+  box-shadow: 0 4px 15px var(--primary-glow); /* Glow effect */
 }
 
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(236, 72, 153, 0.4);
+  box-shadow: 0 6px 20px rgba(236, 72, 153, 0.4); /* Pink glow on hover */
 }
 
 .btn-secondary {
@@ -202,7 +206,7 @@ a {
 .justify-center { justify-content: center; }
 .gap-2 { gap: 0.5rem; }
 .flex-col { flex-direction: column; }
-.flex-1 { flex: 1 1 0%; }
+.flex-1 { flex: 1 1 0%; } /* Grow and shrink */
 
 /* Text Utilities */
 .text-2xl { font-size: 1.5rem; line-height: 2rem; }
@@ -220,7 +224,7 @@ a {
 /* Status Badges */
 .badge {
   padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
+  border-radius: 9999px; /* Pill shape */
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -230,3 +234,31 @@ a {
 .badge-warning { background: rgba(245, 158, 11, 0.1); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.2); }
 .badge-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.2); }
 .badge-primary { background: rgba(99, 102, 241, 0.1); color: var(--primary); border: 1px solid rgba(99, 102, 241, 0.2); }
+
+/* Add Tailwind directives to the top */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom base styles (optional) */
+@layer base {
+  body {
+    @apply bg-gray-900 text-slate-100; /* Example: Using Tailwind color names */
+  }
+}
+
+/* Custom component styles */
+@layer components {
+  /* Example custom button style */
+  .my-fancy-button {
+    @apply bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg;
+  }
+}
+
+/* Custom utility styles */
+@layer utilities {
+  /* Example custom utility */
+  .my-custom-border {
+    @apply border-2 border-pink-500;
+  }
+}
