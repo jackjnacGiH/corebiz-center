@@ -10,7 +10,9 @@ import {
     Settings,
     Bell,
     Search,
-    BrainCircuit
+    BrainCircuit,
+    Truck,
+    Handshake
 } from 'lucide-react';
 
 const Layout: React.FC = () => {
@@ -18,9 +20,11 @@ const Layout: React.FC = () => {
         { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={20} /> },
         { name: 'E-Commerce', path: '/ecommerce', icon: <ShoppingCart size={20} /> },
         { name: 'Inventory', path: '/inventory', icon: <Package size={20} /> },
+        { name: 'Orders', path: '/orders', icon: <Truck size={20} /> },
         { name: 'CRM & Customers', path: '/crm', icon: <Users size={20} /> },
         { name: 'Omni-Chat', path: '/chat', icon: <MessageSquare size={20} /> },
         { name: 'Marketing & Affiliates', path: '/marketing', icon: <TrendingUp size={20} /> },
+        { name: 'Affiliate', path: '/affiliate', icon: <Handshake size={20} /> },
         { name: 'Openclaw RAG', path: '/rag', icon: <BrainCircuit size={20} /> },
     ];
 
