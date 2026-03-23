@@ -28,7 +28,7 @@ const Ecommerce: React.FC = () => {
   return (
     <div className="animate-fade-in p-6">
       {/* Header Section */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }} className="flex-col md:flex-row gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
             <Store className="w-8 h-8 text-primary" />
@@ -37,7 +37,7 @@ const Ecommerce: React.FC = () => {
           <p className="text-muted mt-1">Manage your storefront and product listings for agents</p>
         </div>
         
-        <div className="flex items-center gap-3 bg-gray-800/50 p-1.5 rounded-lg border border-gray-700/50">
+        <div className="flex items-center gap-3 bg-gray-800/50 p-1.5 rounded-lg border border-gray-700/50 ml-auto">
           <button 
             onClick={() => setViewMode('grid')}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-primary text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
@@ -85,30 +85,22 @@ const Ecommerce: React.FC = () => {
       </div>
 
       {/* Product Display (Grid or List based on state) */}
-      <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" : "flex flex-col gap-4"}>
+      <div className={viewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6" : "flex flex-col gap-4"}>
         {products.map((product) => (
-          <div key={product.id} className={`glass-card group hover:border-primary transition-all duration-300 ${viewMode === 'list' ? 'flex flex-row items-center p-4' : 'flex flex-col p-0 overflow-hidden'}`}>
+          <div key={product.id} className={`glass-card group hover:border-primary transition-all duration-300 ${viewMode === 'list' ? 'flex flex-row items-center p-4' : 'flex flex-col p-0 overflow-hidden h-full'}`}>
             
             {/* Image */}
-            <div style={{ 
-              position: 'relative', 
-              backgroundColor: '#1e293b',
-              width: viewMode === 'list' ? '120px' : '100%',
-              height: viewMode === 'list' ? '120px' : '200px',
-              flexShrink: 0,
-              borderRadius: viewMode === 'list' ? '8px' : '0',
-              overflow: 'hidden'
-            }}>
-              <img src={product.img} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: '0.85' }} className="group-hover:opacity-100 transition-opacity" />
+            <div className={`relative bg-slate-800 flex-shrink-0 overflow-hidden ${viewMode === 'list' ? 'w-32 h-32 rounded-lg' : 'w-full aspect-square'}`}>
+              <img src={product.img} alt={product.name} className="w-full h-full object-cover opacity-85 group-hover:opacity-100 transition-opacity" />
               {viewMode === 'grid' && (
-                <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(15, 23, 42, 0.8)', backdropFilter: 'blur(4px)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'monospace', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <div className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur-sm px-2 py-1 rounded text-xs text-slate-300 border border-slate-700 font-mono">
                   {product.sku}
                 </div>
               )}
             </div>
 
             {/* Content Body */}
-            <div className={`flex-1 display-flex flex-col ${viewMode === 'list' ? 'pl-6 pr-4 py-2' : 'p-6 gap-3'}`}>
+            <div className={`flex-1 flex flex-col ${viewMode === 'list' ? 'pl-6 pr-4 py-2' : 'p-4 gap-2 flex-grow'}`}>
               
               <div className="flex justify-between items-start mb-1">
                 {viewMode === 'list' && <span className="text-xs text-gray-400 font-mono">SKU: {product.sku}</span>}
