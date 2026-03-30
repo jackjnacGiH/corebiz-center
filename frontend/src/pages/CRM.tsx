@@ -1,76 +1,138 @@
-import React from 'react';
-import { Users, Mail, Phone } from 'lucide-react';
+import React, { useState } from 'react';
+import { Users, Mail, Phone, Search, UserPlus, Eye, Briefcase, User } from 'lucide-react';
+
+const initialCustomers = [
+  { id: 'CUS-001', name: 'บจก. ก่อสร้างไทย', type: 'บริษัท', tier: 'VIP', totalSpent: 125000, email: 'contact@korsangthai.com', phone: '02-123-4567' },
+  { id: 'CUS-002', name: 'อู่ช่างแมว', type: 'บุคคล', tier: 'ทั่วไป', totalSpent: 15000, email: 'changmeow@gmail.com', phone: '081-987-6543' },
+  { id: 'CUS-003', name: 'ร้านสมชายวัสดุภัณฑ์', type: 'บริษัท', tier: 'Gold', totalSpent: 85000, email: 'somchai.wat@hotmail.com', phone: '089-111-2222' },
+  { id: 'CUS-004', name: 'นาย เจตน์ งานไม้', type: 'บุคคล', tier: 'ทั่วไป', totalSpent: 4500, email: 'jet.wood@gmail.com', phone: '085-555-4444' },
+];
 
 const CRM: React.FC = () => {
-    const customers = [
-        { name: 'Somchai Jaidee', email: 'somchai@email.com', phone: '081-123-4567', tier: 'VIP Gold', spent: '฿145,000' },
-        { name: 'Manee Rakdee', email: 'manee@email.com', phone: '089-987-6543', tier: 'Silver', spent: '฿25,400' },
-        { name: 'Piti Suksabai', email: 'piti@email.com', phone: '085-555-4444', tier: 'Bronze', spent: '฿5,200' },
-    ];
+  const [customers] = useState(initialCustomers);
 
-    return (
-        <div className="animate-fade-in">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-                <div>
-                    <h1 className="text-2xl font-bold">CRM & Customer Relations</h1>
-                    <p className="text-muted">Manage customer data, segmentation, and retention</p>
-                </div>
-                <button className="btn btn-primary"><Users size={18} /> Add Customer</button>
-            </div>
+  const getTierBadge = (tier: string) => {
+    switch(tier) {
+      case 'VIP':
+        return <span className="bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider">{tier}</span>;
+      case 'Gold':
+        return <span className="bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider">{tier}</span>;
+      case 'ทั่วไป':
+      default:
+        return <span className="bg-gray-500/20 text-gray-400 border border-gray-500/30 px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider">{tier}</span>;
+    }
+  };
 
-            <div className="grid grid-cols-3 gap-6 mb-6">
-                <div className="glass-card">
-                    <h3 className="text-muted text-sm mb-2">Total Customers</h3>
-                    <div className="text-2xl font-bold">14,284</div>
-                </div>
-                <div className="glass-card">
-                    <h3 className="text-muted text-sm mb-2">Customer Lifetime Value (Avg)</h3>
-                    <div className="text-2xl font-bold">฿12,450</div>
-                </div>
-                <div className="glass-card">
-                    <h3 className="text-muted text-sm mb-2">Retention Rate</h3>
-                    <div className="text-2xl font-bold text-success">68%</div>
-                </div>
-            </div>
-
-            <div className="glass-card">
-                <h2 className="text-xl font-bold mb-4">Customer Directory</h2>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                    <thead>
-                        <tr style={{ borderBottom: '1px solid var(--panel-border)', color: 'var(--text-muted)' }}>
-                            <th style={{ padding: '1rem' }}>Name</th>
-                            <th style={{ padding: '1rem' }}>Contact</th>
-                            <th style={{ padding: '1rem' }}>Tier</th>
-                            <th style={{ padding: '1rem' }}>Total Spent</th>
-                            <th style={{ padding: '1rem' }}>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {customers.map((c, i) => (
-                            <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                                <td style={{ padding: '1rem', fontWeight: 500 }}>{c.name}</td>
-                                <td style={{ padding: '1rem' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.9rem' }}>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Mail size={14} className="text-muted" /> {c.email}</span>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Phone size={14} className="text-muted" /> {c.phone}</span>
-                                    </div>
-                                </td>
-                                <td style={{ padding: '1rem' }}>
-                                    <span className={`badge ${c.tier.includes('VIP') ? 'badge-primary' : 'badge-secondary'}`}>
-                                        {c.tier}
-                                    </span>
-                                </td>
-                                <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--success)' }}>{c.spent}</td>
-                                <td style={{ padding: '1rem' }}>
-                                    <button className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>View Profile</button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+  return (
+    <div className="animate-fade-in p-6">
+      {/* Header Section */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-3 text-white">
+            <Users className="w-8 h-8 text-primary" />
+            จัดการลูกค้า (CRM)
+          </h1>
+          <p className="text-muted mt-1">ฐานข้อมูลลูกค้าและตัวแทนจำหน่ายทั้งหมดในระบบ</p>
         </div>
-    );
+        
+        <div className="flex gap-3">
+          <div className="relative">
+            <input 
+              type="text" 
+              placeholder="ค้นหาลูกค้า..." 
+              className="bg-gray-800/50 border border-gray-700/50 text-white text-sm rounded-lg focus:ring-primary focus:border-primary block w-full pl-10 p-2.5"
+            />
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+          </div>
+          <button className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white font-medium py-2 px-4 rounded-lg transition-colors shadow-lg shadow-primary/20">
+            <UserPlus size={18} /> <span className="hidden sm:inline">เพิ่มลูกค้า</span>
+          </button>
+        </div>
+      </div>
+
+      {/* CRM Summary Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="glass-card flex items-center gap-4 py-4 px-5">
+          <div className="bg-blue-500/20 p-3 rounded-xl border border-blue-500/30">
+            <Users className="w-6 h-6 text-blue-400" />
+          </div>
+          <div>
+            <p className="text-sm text-gray-400 mb-1">ลูกค้าทั้งหมด</p>
+            <h3 className="text-2xl font-bold text-white">4 <span className="text-sm font-normal text-gray-500">ราย</span></h3>
+          </div>
+        </div>
+        <div className="glass-card flex items-center gap-4 py-4 px-5">
+          <div className="bg-purple-500/20 p-3 rounded-xl border border-purple-500/30">
+            <Briefcase className="w-6 h-6 text-purple-400" />
+          </div>
+          <div>
+            <p className="text-sm text-gray-400 mb-1">ลูกค้านิติบุคคล (บริษัท)</p>
+            <h3 className="text-2xl font-bold text-white">2 <span className="text-sm font-normal text-gray-500">ราย</span></h3>
+          </div>
+        </div>
+        <div className="glass-card flex items-center gap-4 py-4 px-5">
+          <div className="bg-emerald-500/20 p-3 rounded-xl border border-emerald-500/30">
+            <User className="w-6 h-6 text-emerald-400" />
+          </div>
+          <div>
+            <p className="text-sm text-gray-400 mb-1">ลูกค้าบุคคลธรรมดา</p>
+            <h3 className="text-2xl font-bold text-white">2 <span className="text-sm font-normal text-gray-500">ราย</span></h3>
+          </div>
+        </div>
+      </div>
+
+      {/* CRM Table */}
+      <div className="glass-card overflow-hidden p-0 border border-gray-800">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left border-collapse">
+            <thead className="bg-gray-800/50 border-b border-gray-700/50">
+              <tr>
+                <th className="py-4 px-6 font-semibold text-gray-300">รหัสลูกค้า</th>
+                <th className="py-4 px-6 font-semibold text-gray-300">ชื่อลูกค้า / ข้อมูลติดต่อ</th>
+                <th className="py-4 px-6 font-semibold text-gray-300 text-center">ประเภท</th>
+                <th className="py-4 px-6 font-semibold text-gray-300 text-center">ระดับ (Tier)</th>
+                <th className="py-4 px-6 font-semibold text-gray-300 text-right">ยอดซื้อสะสม (฿)</th>
+                <th className="py-4 px-6 font-semibold text-gray-300 text-center">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/50">
+              {customers.map((cus) => (
+                <tr key={cus.id} className="hover:bg-gray-800/30 transition-colors">
+                  <td className="py-4 px-6 text-sm font-mono font-medium text-primary align-top pt-5">{cus.id}</td>
+                  <td className="py-4 px-6">
+                    <div className="font-bold text-gray-100 text-base mb-1">{cus.name}</div>
+                    <div className="flex flex-col gap-1 mt-1 text-xs text-gray-400">
+                      <span className="flex items-center gap-1.5"><Mail size={12} className="text-gray-500" /> {cus.email}</span>
+                      <span className="flex items-center gap-1.5"><Phone size={12} className="text-gray-500" /> {cus.phone}</span>
+                    </div>
+                  </td>
+                  <td className="py-4 px-6 text-center align-top pt-5">
+                    <span className="text-gray-300 font-medium text-sm bg-gray-800 px-2.5 py-1 rounded-md border border-gray-700">
+                      {cus.type === 'บริษัท' ? <Briefcase size={12} className="inline mr-1 text-blue-400" /> : <User size={12} className="inline mr-1 text-emerald-400" />}
+                      {cus.type}
+                    </span>
+                  </td>
+                  <td className="py-4 px-6 text-center align-top pt-5">
+                    {getTierBadge(cus.tier)}
+                  </td>
+                  <td className="py-4 px-6 text-right align-top pt-5">
+                    <span className="font-bold text-emerald-400 text-lg">
+                      {cus.totalSpent.toLocaleString()}
+                    </span>
+                  </td>
+                  <td className="py-4 px-6 text-center align-top pt-5">
+                    <button className="text-gray-300 hover:text-white text-sm font-medium px-3 py-1.5 rounded flex items-center gap-1 mx-auto bg-gray-700/50 border border-gray-600/50 hover:bg-primary/20 hover:border-primary/50 hover:text-primary transition-colors">
+                      <Eye size={14} /> Profile
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 export default CRM;
