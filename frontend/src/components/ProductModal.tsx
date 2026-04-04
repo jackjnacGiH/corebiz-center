@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { X, Package, Tag, DollarSign, Hash } from 'lucide-react';
 
 interface Product {
   id: string;
@@ -15,14 +16,16 @@ interface ProductModalProps {
   editingProduct?: Product | null;
 }
 
+const CATEGORIES = ['Abrasives', 'Power Tools', 'Hand Tools', 'Safety', 'Adhesives', 'Cutting', 'General'];
+
 export default function ProductModal({ isOpen, onClose, onSave, editingProduct }: ProductModalProps) {
-  const [formData, setFormData] = useState<Partial<Product>>({ name: '', price: 0, stock: 0, category: '' });
+  const [formData, setFormData] = useState<Partial<Product>>({ name: '', price: 0, stock: 0, category: 'General' });
 
   useEffect(() => {
     if (editingProduct) {
       setFormData(editingProduct);
     } else {
-      setFormData({ name: '', price: 0, stock: 0, category: '' });
+      setFormData({ name: '', price: 0, stock: 0, category: 'General' });
     }
   }, [editingProduct, isOpen]);
 
@@ -39,39 +42,176 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
     });
     onClose();
   };
-return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 transform transition-all">
-        <h2 className="text-2xl font-bold text-gray-800 mb-6">
-          {editingProduct ? 'แก้ไขข้อมูลสินค้า' : 'เพิ่มสินค้าใหม่'}
-        </h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="product-name" className="block text-sm font-medium text-gray-700 mb-1">ชื่อสินค้า</label>
-            <input id="product-name" type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="product-price" className="block text-sm font-medium text-gray-700 mb-1">ราคา (฿)</label>
-              <input id="product-price" type="number" required min="0" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.price ?? 0} onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })} />
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    background: 'rgba(15,17,26,0.8)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '10px',
+    padding: '0.75rem 1rem',
+    color: 'var(--text-main)',
+    fontSize: '0.95rem',
+    outline: 'none',
+    transition: 'var(--transition)',
+    fontFamily: 'inherit',
+  };
+
+  const labelStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.4rem',
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    marginBottom: '0.5rem',
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {/* Backdrop */}
+      <div
+        style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)' }}
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <div style={{
+        position: 'relative',
+        background: 'rgba(15,17,26,0.98)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '18px',
+        width: '100%',
+        maxWidth: 480,
+        boxShadow: '0 25px 60px rgba(0,0,0,0.6)',
+        overflow: 'hidden',
+      }}>
+        {/* Modal Header */}
+        <div style={{
+          padding: '1.5rem',
+          borderBottom: '1px solid rgba(255,255,255,0.07)',
+          background: 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(236,72,153,0.05))',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ width: 40, height: 40, borderRadius: '10px', background: 'linear-gradient(135deg, var(--primary), var(--secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Package size={20} color="#fff" />
             </div>
             <div>
-              <label htmlFor="product-stock" className="block text-sm font-medium text-gray-700 mb-1">จำนวนสต๊อก</label>
-              <input id="product-stock" type="number" required min="0" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.stock ?? 0} onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })} />
+              <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                {editingProduct ? 'แก้ไขข้อมูลสินค้า' : 'เพิ่มสินค้าใหม่'}
+              </h2>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                {editingProduct ? `กำลังแก้ไข #${editingProduct.id.padStart(4,'0')}` : 'กรอกข้อมูลสินค้าให้ครบถ้วน'}
+              </p>
             </div>
           </div>
-          <div>
-            <label htmlFor="product-category" className="block text-sm font-medium text-gray-700 mb-1">หมวดหมู่</label>
-            <select id="product-category" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.category || ''} onChange={(e) => setFormData({ ...formData, category: e.target.value })}>
-              <option value="">เลือกหมวดหมู่</option>
-              <option value="Electronics">Electronics</option>
-              <option value="Furniture">Furniture</option>
-              <option value="General">General</option>
-            </select>
+          <button
+            onClick={onClose}
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-muted)' }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <form onSubmit={handleSubmit}>
+          <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+            {/* Product Name */}
+            <div>
+              <label htmlFor="product-name" style={labelStyle}>
+                <Tag size={13} /> ชื่อสินค้า
+              </label>
+              <input
+                id="product-name"
+                type="text"
+                required
+                placeholder="เช่น ใบเจียรเหล็ก 4 นิ้ว"
+                style={inputStyle}
+                value={formData.name || ''}
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
+                onFocus={e => (e.target.style.borderColor = 'var(--primary)')}
+                onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
+              />
+            </div>
+
+            {/* Price & Stock */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <label htmlFor="product-price" style={labelStyle}>
+                  <DollarSign size={13} /> ราคา (฿)
+                </label>
+                <input
+                  id="product-price"
+                  type="number"
+                  required
+                  min="0"
+                  placeholder="0"
+                  style={inputStyle}
+                  value={formData.price ?? 0}
+                  onChange={e => setFormData({ ...formData, price: Number(e.target.value) })}
+                  onFocus={e => (e.target.style.borderColor = 'var(--primary)')}
+                  onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
+                />
+              </div>
+              <div>
+                <label htmlFor="product-stock" style={labelStyle}>
+                  <Hash size={13} /> จำนวนสต๊อก
+                </label>
+                <input
+                  id="product-stock"
+                  type="number"
+                  required
+                  min="0"
+                  placeholder="0"
+                  style={inputStyle}
+                  value={formData.stock ?? 0}
+                  onChange={e => setFormData({ ...formData, stock: Number(e.target.value) })}
+                  onFocus={e => (e.target.style.borderColor = 'var(--primary)')}
+                  onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
+                />
+              </div>
+            </div>
+
+            {/* Category */}
+            <div>
+              <label htmlFor="product-category" style={labelStyle}>
+                <Package size={13} /> หมวดหมู่
+              </label>
+              <select
+                id="product-category"
+                style={{ ...inputStyle, cursor: 'pointer' }}
+                value={formData.category || 'General'}
+                onChange={e => setFormData({ ...formData, category: e.target.value })}
+                onFocus={e => (e.target.style.borderColor = 'var(--primary)')}
+                onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
+              >
+                {CATEGORIES.map(cat => (
+                  <option key={cat} value={cat} style={{ background: '#0f111a' }}>{cat}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div className="flex justify-end space-x-3 mt-8">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium">ยกเลิก</button>
-            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">บันทึกข้อมูล</button>
+
+          {/* Modal Footer */}
+          <div style={{ padding: '1.25rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.07)', display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn btn-secondary"
+              style={{ padding: '0.65rem 1.25rem' }}
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              style={{ padding: '0.65rem 1.5rem' }}
+            >
+              {editingProduct ? 'บันทึกการแก้ไข' : 'เพิ่มสินค้า'}
+            </button>
           </div>
         </form>
       </div>
