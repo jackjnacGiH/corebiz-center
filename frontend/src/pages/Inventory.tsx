@@ -1,122 +1,91 @@
 import React, { useState } from 'react';
-import { Plus, Filter, Minus, Package, Box } from 'lucide-react';
+import ProductModal from '../components/ProductModal';
 
-const initialInventory = [
-  { id: 1, sku: 'SA-001', name: 'กระดาษทรายกลมสักหลาด 5"', desc: 'สีฟ้า PE Film, #400 DEERFOS', qty: 1500, minQty: 200, location: 'WH-Bangkok' },
-  { id: 2, sku: 'TW-002', name: 'ใบเจียรเหล็ก 4"', desc: 'หนา 6mm, TOA', qty: 850, minQty: 100, location: 'WH-Bangkok' },
-  { id: 3, sku: 'SA-003', name: 'กระดาษทรายกลมสักหลาด 5"', desc: 'สีม่วง Ceramic, #240 DEERFOS', qty: 320, minQty: 100, location: 'WH-Chiang Mai' },
-  { id: 4, sku: 'TW-004', name: 'ใบเจียรตัดสแตนเลส 4"', desc: 'หนา 1mm, INOX TOA', qty: 40, minQty: 100, location: 'WH-Bangkok' },
-  { id: 5, sku: 'SA-005', name: 'กระดาษทรายกลมสักหลาด 6"', desc: 'สีเขียว Zirconia, #80 MIRKA', qty: 0, minQty: 50, location: 'WH-Phuket' },
-  { id: 6, sku: 'JN-003', name: 'ล้อทรายมีแกน 6mm', desc: 'งานลบคม CNC', qty: 45, minQty: 50, location: 'WH-Bangkok' },
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  stock: number;
+  category: string;
+}
+
+const mockData: Product[] = [
+  { id: '1', name: 'กระดาษทรายกลมสักหลาด 5"', price: 15, stock: 1500, category: 'General' },
+  { id: '2', name: 'ใบเจียรเหล็ก 4"', price: 25, stock: 850, category: 'General' },
 ];
 
-const Inventory: React.FC = () => {
-  const [inventory] = useState(initialInventory);
+export default function Inventory() {
+  const [products, setProducts] = useState<Product[]>(mockData);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
-  const getStockStatus = (qty: number, minQty: number) => {
-    if (qty === 0) return <span className="badge badge-danger">หมดสต๊อก</span>;
-    if (qty <= minQty) return <span className="badge badge-warning">ใกล้หมด</span>;
-    return <span className="badge badge-success">ปกติ</span>;
+  const handleSave = (product: Product) => {
+    if (editingProduct) {
+      setProducts(products.map(p => p.id === product.id ? product : p));
+    } else {
+      setProducts([...products, product]);
+    }
+  };
+
+  const handleDelete = (id: string) => {
+    if(confirm('ยืนยันการลบสินค้านี้?')) {
+      setProducts(products.filter(p => p.id !== id));
+    }
+  };
+
+  const openEditModal = (product: Product) => {
+    setEditingProduct(product);
+    setIsModalOpen(true);
+  };
+
+  const openAddModal = () => {
+    setEditingProduct(null);
+setIsModalOpen(true);
   };
 
   return (
-    <div className="animate-fade-in p-6">
-      {/* Header Section */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+    <div className="p-8 max-w-7xl mx-auto min-h-screen bg-gray-50">
+      <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3">
-            <Package className="w-8 h-8 text-primary" />
-            จัดการคลังสินค้า (Inventory)
-          </h1>
-          <p className="text-muted mt-1">จัดการรับเข้า เบิกออก และตรวจสอบสถานะสินค้าคงคลัง</p>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Inventory Management</h1>
+          <p className="text-gray-500 mt-1">จัดการคลังสินค้าและสต๊อกแบบเรียลไทม์</p>
         </div>
-        
-        <div className="flex gap-3">
-          <button className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors shadow-lg shadow-emerald-500/20">
-            <Plus className="w-5 h-5" />
-            <span>รับเข้า (In)</span>
-          </button>
-          <button className="flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors shadow-lg shadow-amber-500/20">
-            <Minus className="w-5 h-5" />
-            <span>เบิกออก (Out)</span>
-          </button>
-          <button className="btn btn-secondary hidden sm:flex">
-            <Filter size={18} />
-          </button>
-        </div>
+        <button onClick={openAddModal} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-semibold shadow-sm transition-all flex items-center gap-2">
+          + เพิ่มสินค้าใหม่
+        </button>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="glass-card flex items-center gap-4 py-4">
-          <div className="bg-primary/20 p-3 rounded-xl border border-primary/30">
-            <Box className="w-6 h-6 text-primary" />
-          </div>
-          <div>
-            <p className="text-sm text-muted mb-1">สินค้าทั้งหมด</p>
-            <h3 className="text-2xl font-bold text-white">{inventory.length} <span className="text-sm font-normal text-muted">SKU</span></h3>
-          </div>
-        </div>
-        <div className="glass-card flex items-center gap-4 py-4">
-          <div className="bg-warning/20 p-3 rounded-xl border border-warning/30">
-            <Package className="w-6 h-6 text-warning" />
-          </div>
-          <div>
-            <p className="text-sm text-muted mb-1">สินค้าใกล้หมด</p>
-            <h3 className="text-2xl font-bold text-white">{inventory.filter(i => i.qty > 0 && i.qty <= i.minQty).length} <span className="text-sm font-normal text-muted">รายการ</span></h3>
-          </div>
-        </div>
-        <div className="glass-card flex items-center gap-4 py-4">
-          <div className="bg-danger/20 p-3 rounded-xl border border-danger/30">
-            <Package className="w-6 h-6 text-danger" />
-          </div>
-          <div>
-            <p className="text-sm text-muted mb-1">สินค้าหมดสต๊อก</p>
-            <h3 className="text-2xl font-bold text-white">{inventory.filter(i => i.qty === 0).length} <span className="text-sm font-normal text-muted">รายการ</span></h3>
-          </div>
-        </div>
-      </div>
-
-      {/* Inventory Table */}
-      <div className="glass-card overflow-hidden p-0 border border-gray-800">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left border-collapse">
-            <thead className="bg-gray-800/50 border-b border-gray-700/50">
-              <tr>
-                <th className="py-4 px-6 font-semibold text-gray-300 w-24">SKU</th>
-                <th className="py-4 px-6 font-semibold text-gray-300">ชื่อสินค้า</th>
-                <th className="py-4 px-6 font-semibold text-gray-300 text-right w-28">คงเหลือ</th>
-                <th className="py-4 px-6 font-semibold text-gray-300 text-center w-28">สถานะ</th>
-                <th className="py-4 px-6 font-semibold text-gray-300 text-center w-24">จัดการ</th>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-100 text-gray-600 text-sm uppercase tracking-wider">
+              <th className="p-4 font-semibold">รหัสสินค้า</th>
+              <th className="p-4 font-semibold">ชื่อสินค้า</th>
+              <th className="p-4 font-semibold">หมวดหมู่</th>
+              <th className="p-4 font-semibold text-right">ราคา (฿)</th>
+              <th className="p-4 font-semibold text-right">สต๊อก</th>
+              <th className="p-4 font-semibold text-center">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {products.map((product) => (
+              <tr key={product.id} className="hover:bg-gray-50 transition-colors">
+                <td className="p-4 text-gray-500 font-mono text-sm">#{product.id.padStart(4, '0')}</td>
+                <td className="p-4 font-medium text-gray-900">{product.name}</td>
+                <td className="p-4"><span className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-full">{product.category}</span></td>
+                <td className="p-4 text-right text-gray-700">{product.price.toLocaleString()}</td>
+                <td className="p-4 text-right"><span className={`font-semibold ${product.stock < 10 ? 'text-red-500' : 'text-green-600'}`}>{product.stock}</span></td>
+                <td className="p-4 flex justify-center gap-2">
+                  <button onClick={() => openEditModal(product)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg">Edit</button>
+                  <button onClick={() => handleDelete(product.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg">Delete</button>
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {inventory.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="py-4 px-6 text-sm font-mono text-primary">{item.sku}</td>
-                  <td className="py-4 px-6">
-                    <div className="font-bold text-gray-100">{item.name}</div>
-                    <div className="text-xs text-gray-400 mt-1">{item.desc} | <span className="text-gray-500">คลัง: {item.location}</span></div>
-                  </td>
-                  <td className={`py-4 px-6 text-right font-bold text-lg ${item.qty === 0 ? 'text-red-500' : item.qty <= item.minQty ? 'text-amber-500' : 'text-emerald-400'}`}>
-                    {item.qty.toLocaleString()}
-                  </td>
-                  <td className="py-4 px-6 text-center">
-                    {getStockStatus(item.qty, item.minQty)}
-                  </td>
-                  <td className="py-4 px-6 text-center">
-                    <button className="text-blue-400 hover:text-blue-300 text-sm font-medium px-3 py-1 rounded bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 transition-colors">
-                      แก้ไข
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
+
+      <ProductModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSave} editingProduct={editingProduct} />
     </div>
   );
-};
-
-export default Inventory;
+}
