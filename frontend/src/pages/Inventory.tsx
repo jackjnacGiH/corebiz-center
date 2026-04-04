@@ -28,7 +28,7 @@ export default function Inventory() {
   };
 
   const handleDelete = (id: string) => {
-    if(confirm('ยืนยันการลบสินค้านี้?')) {
+    if(window.confirm('ยืนยันการลบสินค้านี้?')) {
       setProducts(products.filter(p => p.id !== id));
     }
   };

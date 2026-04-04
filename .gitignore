@@ -10,3 +10,5 @@ yarn.lock
 Openclaw RAG/
 *.log
 .DS_Store
+.vercel
+.env*.local

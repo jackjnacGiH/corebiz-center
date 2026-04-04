@@ -47,22 +47,22 @@ return (
         </h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">ชื่อสินค้า</label>
-            <input type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+            <label htmlFor="product-name" className="block text-sm font-medium text-gray-700 mb-1">ชื่อสินค้า</label>
+            <input id="product-name" type="text" required className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">ราคา (฿)</label>
-              <input type="number" required min="0" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.price} onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })} />
+              <label htmlFor="product-price" className="block text-sm font-medium text-gray-700 mb-1">ราคา (฿)</label>
+              <input id="product-price" type="number" required min="0" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.price ?? 0} onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">จำนวนสต๊อก</label>
-              <input type="number" required min="0" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.stock} onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })} />
+              <label htmlFor="product-stock" className="block text-sm font-medium text-gray-700 mb-1">จำนวนสต๊อก</label>
+              <input id="product-stock" type="number" required min="0" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.stock ?? 0} onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })} />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">หมวดหมู่</label>
-            <select className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })}>
+            <label htmlFor="product-category" className="block text-sm font-medium text-gray-700 mb-1">หมวดหมู่</label>
+            <select id="product-category" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.category || ''} onChange={(e) => setFormData({ ...formData, category: e.target.value })}>
               <option value="">เลือกหมวดหมู่</option>
               <option value="Electronics">Electronics</option>
               <option value="Furniture">Furniture</option>
