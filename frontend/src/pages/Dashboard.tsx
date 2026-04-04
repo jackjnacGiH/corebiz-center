@@ -1,4 +1,3 @@
-import React from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, ShoppingCart, Package, Users } from 'lucide-react';
 import N8nAssistant from '../components/N8nAssistant';
@@ -13,7 +12,7 @@ const data = [
     { name: 'Jul', sales: 3490 },
 ];
 
-const Dashboard: React.FC = () => {
+const Dashboard = () => {
     return (
         <div className="animate-fade-in">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>

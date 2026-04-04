@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import { useState, type FormEvent, type ChangeEvent } from 'react';
 import { Upload, Link as LinkIcon, FileText, FileImage, Youtube, HardDriveUpload, CheckCircle, AlertCircle } from 'lucide-react';
 
-const OpenclawRAG: React.FC = () => {
+const OpenclawRAG = () => {
     const [uploadMode, setUploadMode] = useState<'files' | 'links'>('files');
     const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
     const [links, setLinks] = useState([{ type: 'website', url: '' }]);
     const [isUploading, setIsUploading] = useState(false);
     const [statusText, setStatusText] = useState('');
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
             setSelectedFiles(Array.from(e.target.files));
         }
@@ -34,7 +34,7 @@ const OpenclawRAG: React.FC = () => {
         setLinks(newLinks);
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setIsUploading(true);
         setStatusText('กำลังอัปโหลดข้อมูลไปยัง Openclaw RAG...');
@@ -76,8 +76,9 @@ const OpenclawRAG: React.FC = () => {
                 setSelectedFiles([]);
                 setLinks([{ type: 'website', url: '' }]);
             }, 5000);
-        } catch (error: any) {
-            setStatusText(`❌ ข้อผิดพลาด: ไม่สามารถเชื่อมต่อ n8n Webhook ได้ (${error.message})`);
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            setStatusText(`❌ ข้อผิดพลาด: ไม่สามารถเชื่อมต่อ n8n Webhook ได้ (${msg})`);
         } finally {
             setIsUploading(false);
         }

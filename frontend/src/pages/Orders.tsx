@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Search, Filter, Eye, ShoppingCart } from 'lucide-react';
 
 const initialOrders = [
@@ -8,7 +8,7 @@ const initialOrders = [
   { id: 'ORD-004', customer: 'บริษัท เจริญการช่าง จำกัด', total: 15200, status: 'Processing', date: '2026-03-26' },
 ];
 
-const Orders: React.FC = () => {
+const Orders = () => {
   const [orders] = useState(initialOrders);
 
   const getStatusBadge = (status: string) => {

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Send, Bot, Loader2 } from 'lucide-react';
 
-const N8nAssistant: React.FC = () => {
+const N8nAssistant = () => {
     const [input, setInput] = useState('');
     const [response, setResponse] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -11,7 +11,7 @@ const N8nAssistant: React.FC = () => {
     // อัปเดต Path ให้ตรงกับ Webhook จริงใน n8n
     const WEBHOOK_URL = 'https://n8n.srv1315112.hstgr.cloud/webhook/f450c3d8-3d4c-4a74-bfa3-8ebb093bc72c';
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
         if (!input.trim()) return;
 
@@ -71,8 +71,9 @@ const N8nAssistant: React.FC = () => {
             } else {
                 setResponse(JSON.stringify(data, null, 2));
             }
-        } catch (err: any) {
-            setError(err.message || 'Failed to connect to the webhook. Please make sure the n8n webhook is active and CORS is enabled.');
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Failed to connect to the webhook. Please make sure the n8n webhook is active and CORS is enabled.';
+            setError(msg);
         } finally {
             setIsLoading(false);
         }

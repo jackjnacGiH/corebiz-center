@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Send, Plus, PhoneCall, Video } from 'lucide-react';
 
-const Chat: React.FC = () => {
+const Chat = () => {
     const [msg, setMsg] = useState('');
     const [chatHistory, setChatHistory] = useState([
         { sender: 'System AI', text: 'Welcome to Omni-Channel Chat. Waiting for new messages...', time: '10:00 AM' },
         { sender: 'Somchai (LINE OA)', text: 'Is the ergonomic chair in stock?', time: '10:15 AM' }
     ]);
 
-    const handleSend = (e: React.FormEvent) => {
+    const handleSend = (e: FormEvent) => {
         e.preventDefault();
         if (!msg.trim()) return;
         setChatHistory([...chatHistory, { sender: 'You', text: msg, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Users, Mail, Phone, Search, UserPlus, Eye, Briefcase, User } from 'lucide-react';
 
 const initialCustomers = [
@@ -8,7 +8,7 @@ const initialCustomers = [
   { id: 'CUS-004', name: 'นาย เจตน์ งานไม้', type: 'บุคคล', tier: 'ทั่วไป', totalSpent: 4500, email: 'jet.wood@gmail.com', phone: '085-555-4444' },
 ];
 
-const CRM: React.FC = () => {
+const CRM = () => {
   const [customers] = useState(initialCustomers);
 
   const getTierBadge = (tier: string) => {
