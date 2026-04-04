@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 
 const catalogData = [
   { id: '1', name: 'กระดาษทรายกลมสักหลาด 5"', price: 15, image: '🔵', category: 'General' },
