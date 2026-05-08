@@ -6,14 +6,19 @@ const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
 
 // ตั้งค่าการเชื่อมต่อฐานข้อมูลเวกเตอร์ Supabase
-const supabaseUrl = 'https://owoedccmuqnzdtxvywgt.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93b2VkY2NtdXFuemR0eHZ5d2d0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzNTMyOTQsImV4cCI6MjA4NzkyOTI5NH0.OfOaHTsJx-M36N5G54PjC4n-8-qZVQNVUuLdb10RO4M';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseUrl = process.env.OPENCLAW_SUPABASE_URL;
+const supabaseKey = process.env.OPENCLAW_SUPABASE_ANON_KEY;
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 // ฟังก์ชันสำหรับแปลงข้อความให้กลายเป็นจำลอง Vector (Embedding)
-const PHAYA_API_KEY = 'pk_gd7O1pA7AzzOBoEwbDIGpIFoAo1zpLi5duzVFD0xnA198o8k';
+const PHAYA_API_KEY = process.env.PHAYA_API_KEY;
 
 async function generateEmbedding(text) {
+    if (!PHAYA_API_KEY) {
+        console.warn("PHAYA_API_KEY is not configured; skipping embedding generation.");
+        return null;
+    }
+
     try {
         const response = await fetch("https://api.phaya.io/api/v1/embedding/create", {
             method: "POST",
@@ -38,6 +43,10 @@ async function generateEmbedding(text) {
 
 async function insertIntoSupabase(content, metadata, embedding) {
     if (!embedding) return;
+    if (!supabase) {
+        console.warn("OPENCLAW_SUPABASE_URL/OPENCLAW_SUPABASE_ANON_KEY are not configured; skipping Supabase insert.");
+        return;
+    }
 
     const { error } = await supabase
         .from('page_sections')
@@ -205,6 +214,8 @@ app.post('/api/search', async (req, res) => {
 
         const queryEmbedding = await generateEmbedding(query);
         if (!queryEmbedding) return res.status(500).json({ error: 'ไม่สามารถสร้าง Embedding สำหรับคำค้นหาได้' });
+
+        if (!supabase) return res.status(500).json({ error: 'Openclaw Supabase config is missing' });
 
         // ดึงข้อมูลทั้งหมด 500 รายการล่าสุด
         const { data, error } = await supabase.from('page_sections').select('*').order('id', { ascending: false }).limit(500);

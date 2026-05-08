@@ -32,30 +32,19 @@ const Layout: React.FC = () => {
         <div className="app-layout">
             {/* Sidebar */}
             <aside className="sidebar">
-                <div style={{ padding: '2rem 1.5rem', borderBottom: '1px solid var(--panel-border)' }}>
-                    <h2 style={{ fontSize: '1.5rem', fontWeight: 700, background: 'linear-gradient(45deg, var(--primary), var(--secondary))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                <div className="sidebar-header">
+                    <h2 className="sidebar-logo">
                         CoreBiz Center
                     </h2>
-                    <p className="text-sm text-muted" style={{ marginTop: '0.25rem' }}>Unified Commerce Platform</p>
+                    <p className="text-sm text-muted mt-1">Unified Commerce Platform</p>
                 </div>
 
-                <nav style={{ flex: 1, padding: '1.5rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <nav className="sidebar-nav">
                     {menuItems.map((item) => (
                         <NavLink
                             key={item.path}
                             to={item.path}
-                            style={({ isActive }) => ({
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '1rem',
-                                padding: '0.75rem 1rem',
-                                borderRadius: '8px',
-                                color: isActive ? '#fff' : 'var(--text-muted)',
-                                background: isActive ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                borderLeft: isActive ? '3px solid var(--primary)' : '3px solid transparent',
-                                transition: 'var(--transition)',
-                                fontWeight: isActive ? 600 : 500
-                            })}
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                         >
                             {item.icon}
                             {item.name}
@@ -63,8 +52,8 @@ const Layout: React.FC = () => {
                     ))}
                 </nav>
 
-                <div style={{ padding: '1rem', borderTop: '1px solid var(--panel-border)' }}>
-                    <button className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start' }}>
+                <div className="sidebar-footer">
+                    <button className="btn btn-secondary w-full justify-start" title="System Settings">
                         <Settings size={20} /> Settings
                     </button>
                 </div>
@@ -74,27 +63,27 @@ const Layout: React.FC = () => {
             <main className="main-content">
                 {/* Header */}
                 <header className="header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', width: '300px' }} className="glass-card">
+                    <div className="header-search-container glass-card">
                         <Search size={18} className="text-muted" />
                         <input
                             type="text"
                             placeholder="Search anything..."
-                            style={{ background: 'transparent', border: 'none', color: '#fff', outline: 'none', width: '100%' }}
+                            className="header-search-input"
                         />
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-                        <button style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', position: 'relative' }}>
+                    <div className="header-actions">
+                        <button className="notification-btn" title="Notifications">
                             <Bell size={22} />
-                            <span style={{ position: 'absolute', top: -2, right: -2, width: 8, height: 8, background: 'var(--danger)', borderRadius: '50%' }}></span>
+                            <span className="notification-dot"></span>
                         </button>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}>
-                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg, var(--secondary), var(--primary))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                        <div className="user-profile-trigger">
+                            <div className="user-avatar">
                                 ADMIN
                             </div>
                             <div>
-                                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>System Admin</div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Super User</div>
+                                <div className="user-info-name">System Admin</div>
+                                <div className="user-info-role">Super User</div>
                             </div>
                         </div>
                     </div>
