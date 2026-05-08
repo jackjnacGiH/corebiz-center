@@ -1,0 +1,19 @@
+{
+  "extends": [
+    "development"
+  ],
+  "hints": {
+    "no-inline-styles": "off",
+    "axe/forms": "off",
+    "axe/keyboard": "off",
+    "axe/aria": "off",
+    "axe/color": "off",
+    "axe/structure": "off",
+    "axe/text-alternatives": "off",
+    "axe/time-and-media": "off",
+    "compat-api/css": "off",
+    "compat-api/html": "off",
+    "button-has-type": "off",
+    "dom-nodes-not-id": "off"
+  }
+}

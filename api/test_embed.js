@@ -1,8 +1,13 @@
 const testEmbedding = async () => {
+    const apiKey = process.env.PHAYA_API_KEY;
+    if (!apiKey) {
+        throw new Error("PHAYA_API_KEY is required");
+    }
+
     const response = await fetch("https://api.phaya.io/api/v1/embedding/create", {
         method: "POST",
         headers: {
-            "Authorization": "Bearer pk_gd7O1pA7AzzOBoEwbDIGpIFoAo1zpLi5duzVFD0xnA198o8k",
+            "Authorization": `Bearer ${apiKey}`,
             "Content-Type": "application/json"
         },
         body: JSON.stringify({ input: ["test string"] })

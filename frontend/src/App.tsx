@@ -8,17 +8,7 @@ import CRM from './pages/CRM';
 import Chat from './pages/Chat';
 import Marketing from './pages/Marketing';
 import OpenclawRAG from './pages/OpenclawRAG';
-
-// Placeholder components สำหรับหน้าที่ยังไม่เสร็จ
-const Affiliate = () => (
-  <div className="animate-fade-in">
-    <h1 className="text-2xl font-bold">ระบบ Affiliate</h1>
-    <p className="text-muted" style={{ marginTop: '0.5rem', marginBottom: '2rem' }}>กำลังพัฒนาระบบนี้...</p>
-    <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-      🚀 Coming Soon 🚧 ระบบ Affiliate & โปรแกรมตัวแทน
-    </div>
-  </div>
-);
+import Affiliate from './pages/Affiliate';
 
 function App() {
   return (

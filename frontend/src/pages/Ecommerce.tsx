@@ -59,16 +59,16 @@ export default function Ecommerce() {
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
 
   return (
-    <div className="animate-fade-in" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="animate-fade-in ecommerce-container">
 
       {/* Page Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <div className="ecommerce-header">
+        <div className="ecommerce-title-container">
+          <h1>
             <ShoppingCart size={28} color="var(--primary)" />
             E-Commerce Catalog
           </h1>
-          <p style={{ color: 'var(--text-muted)', marginTop: '0.25rem', fontSize: '0.9rem' }}>
+          <p className="ecommerce-subtitle">
             รายการสินค้าสำหรับองค์กร — {catalogData.length} รายการ
           </p>
         </div>
@@ -76,133 +76,106 @@ export default function Ecommerce() {
         {/* Cart Button */}
         <button
           onClick={() => setIsCartOpen(true)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '0.75rem',
-            background: 'linear-gradient(135deg, var(--primary), var(--secondary))',
-            color: '#fff', border: 'none', borderRadius: '10px',
-            padding: '0.75rem 1.25rem', cursor: 'pointer', fontWeight: 600,
-            fontSize: '0.95rem', transition: 'var(--transition)',
-            boxShadow: '0 4px 15px var(--primary-glow)'
-          }}
+          className="cart-button"
+          title="ดูตะกร้าสินค้า"
         >
           <ShoppingCart size={18} />
           ตะกร้าสินค้า
           {cartCount > 0 && (
-            <span style={{
-              background: 'rgba(255,255,255,0.2)', borderRadius: '20px',
-              padding: '0.1rem 0.6rem', fontSize: '0.8rem', fontWeight: 700
-            }}>{cartCount}</span>
+            <span className="cart-badge">{cartCount}</span>
           )}
         </button>
       </div>
 
       {/* Stats Bar */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+      <div className="stats-grid">
         {[
-          { icon: <Package size={18} />, label: 'สินค้าทั้งหมด', value: catalogData.length, color: 'var(--primary)' },
-          { icon: <Tag size={18} />, label: 'หมวดหมู่', value: categories.length - 1, color: 'var(--accent)' },
-          { icon: <TrendingUp size={18} />, label: 'สินค้าในตะกร้า', value: cartCount, color: 'var(--secondary)' },
-          { icon: <AlertCircle size={18} />, label: 'สต๊อกต่ำ', value: catalogData.filter(p => p.stock < 20).length, color: 'var(--warning)' },
+          { icon: <Package size={18} />, label: 'สินค้าทั้งหมด', value: catalogData.length, type: 'primary' },
+          { icon: <Tag size={18} />, label: 'หมวดหมู่', value: categories.length - 1, type: 'accent' },
+          { icon: <TrendingUp size={18} />, label: 'สินค้าในตะกร้า', value: cartCount, type: 'secondary' },
+          { icon: <AlertCircle size={18} />, label: 'สต๊อกต่ำ', value: catalogData.filter(p => p.stock < 20).length, type: 'warning' },
         ].map((stat, i) => (
-          <div key={i} className="glass-card" style={{ padding: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ width: 40, height: 40, borderRadius: '10px', background: `${stat.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: stat.color }}>
+          <div key={i} className="glass-card stat-card">
+            <div className={`stat-icon-wrapper stat-icon-${stat.type}`}>
               {stat.icon}
             </div>
             <div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-main)' }}>{stat.value}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stat.label}</div>
+              <div className="stat-value">{stat.value}</div>
+              <div className="stat-label">{stat.label}</div>
             </div>
           </div>
         ))}
       </div>
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="filter-bar">
         {/* Search */}
-        <div style={{ flex: 1, minWidth: 240, display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(30,33,48,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '0.65rem 1rem' }}>
+        <div className="search-input-wrapper">
           <Search size={16} color="var(--text-muted)" />
           <input
             type="text"
             placeholder="ค้นหาสินค้า หรือ รหัส SKU..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-main)', fontSize: '0.9rem', width: '100%' }}
+            className="search-input"
           />
         </div>
 
         {/* Category Filter */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div className="category-filters">
           <Filter size={15} color="var(--text-muted)" />
           {categories.map(cat => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
-              style={{
-                padding: '0.4rem 0.9rem', borderRadius: '20px', border: 'none', cursor: 'pointer',
-                fontSize: '0.8rem', fontWeight: 600, transition: 'var(--transition)',
-                background: selectedCategory === cat ? 'var(--primary)' : 'rgba(255,255,255,0.05)',
-                color: selectedCategory === cat ? '#fff' : 'var(--text-muted)',
-              }}
+              className={`category-btn ${selectedCategory === cat ? 'active' : ''}`}
             >{cat}</button>
           ))}
         </div>
       </div>
 
       {/* Product Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.25rem' }}>
+      <div className="product-grid">
         {filteredProducts.map(item => (
-          <div key={item.id} className="glass-card" style={{ padding: 0, overflow: 'hidden', cursor: 'default' }}>
+          <div key={item.id} className="glass-card product-card">
             {/* Product Image Area */}
-            <div style={{
-              height: 140, background: `linear-gradient(135deg, rgba(99,102,241,0.1), rgba(236,72,153,0.05))`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3.5rem',
-              borderBottom: '1px solid rgba(255,255,255,0.04)', position: 'relative'
-            }}>
+            <div className="product-image-area">
               {item.image}
               {item.stock < 20 && (
-                <span style={{
-                  position: 'absolute', top: 10, right: 10, background: 'var(--warning)',
-                  color: '#000', fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem',
-                  borderRadius: '20px'
-                }}>สต๊อกต่ำ</span>
+                <span className="stock-warning-badge">สต๊อกต่ำ</span>
               )}
             </div>
 
             {/* Product Info */}
-            <div style={{ padding: '1rem' }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>
+            <div className="product-info">
+              <div className="product-meta">
                 {item.category} · {item.sku}
               </div>
-              <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.5rem', lineHeight: 1.4 }}>
+              <h4 className="product-name">
                 {item.name}
               </h4>
 
               {/* Rating */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.75rem' }}>
+              <div className="rating-container">
                 {[...Array(5)].map((_, i) => (
                   <Star key={i} size={11} fill={i < Math.floor(item.rating) ? '#f59e0b' : 'none'} color={i < Math.floor(item.rating) ? '#f59e0b' : '#475569'} />
                 ))}
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.rating}</span>
+                <span className="rating-value">{item.rating}</span>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="product-footer">
                 <div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                  <div className="product-price">
                     ฿{item.price.toLocaleString()}
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: item.stock < 20 ? 'var(--warning)' : 'var(--success)' }}>
+                  <div className={`product-stock ${item.stock < 20 ? 'text-warning' : 'text-success'}`}>
                     คงเหลือ {item.stock.toLocaleString()} ชิ้น
                   </div>
                 </div>
                 <button
                   onClick={() => addToCart(item)}
-                  style={{
-                    width: 36, height: 36, borderRadius: '8px', border: 'none', cursor: 'pointer',
-                    background: 'var(--primary)', color: '#fff', display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', transition: 'var(--transition)',
-                  }}
-                  onMouseOver={e => (e.currentTarget.style.background = 'var(--secondary)')}
-                  onMouseOut={e => (e.currentTarget.style.background = 'var(--primary)')}
+                  className="add-to-cart-btn"
+                  title="ใส่ตะกร้า"
                 >
                   <Plus size={16} />
                 </button>
@@ -213,56 +186,81 @@ export default function Ecommerce() {
       </div>
 
       {filteredProducts.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-muted)' }}>
-          <Package size={48} style={{ margin: '0 auto 1rem', opacity: 0.3 }} />
+        <div className="empty-state">
+          <Package size={48} />
           <p>ไม่พบสินค้าที่ค้นหา</p>
         </div>
       )}
 
       {/* Cart Drawer */}
       {isCartOpen && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000 }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} onClick={() => setIsCartOpen(false)} />
-          <div style={{
-            position: 'absolute', right: 0, top: 0, bottom: 0, width: 420,
-            background: 'rgba(15,17,26,0.98)', borderLeft: '1px solid rgba(255,255,255,0.08)',
-            display: 'flex', flexDirection: 'column', boxShadow: '-20px 0 60px rgba(0,0,0,0.5)'
-          }}>
+        <div className="cart-overlay">
+          <div className="cart-backdrop" onClick={() => setIsCartOpen(false)} />
+          <div className="cart-content">
             {/* Cart Header */}
-            <div style={{ padding: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <ShoppingCart size={20} color="var(--primary)" />
-                <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>ตะกร้าสินค้า</span>
-                <span style={{ background: 'var(--primary)', color: '#fff', borderRadius: '20px', padding: '0.1rem 0.6rem', fontSize: '0.8rem', fontWeight: 700 }}>{cartCount}</span>
+            <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-br from-indigo-500/10 to-transparent">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                  <ShoppingCart size={20} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-extrabold text-white leading-tight">ตะกร้าสินค้า</h2>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black mt-0.5">Order Summary · {cartCount} รายการ</p>
+                </div>
               </div>
-              <button onClick={() => setIsCartOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.25rem' }}>
+              <button 
+                onClick={() => setIsCartOpen(false)} 
+                title="ปิดตะกร้าสินค้า"
+                className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-500 hover:text-white transition-all border border-white/5"
+              >
                 <X size={20} />
               </button>
             </div>
 
             {/* Cart Items */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 custom-scrollbar">
               {cart.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                  <ShoppingCart size={40} style={{ margin: '0 auto 1rem', opacity: 0.3 }} />
-                  <p>ตะกร้าว่างเปล่า</p>
+                <div className="h-full flex flex-col items-center justify-center opacity-30 py-20">
+                  <ShoppingCart size={64} className="mb-4" />
+                  <p className="text-lg font-bold">ตะกร้าว่างเปล่า</p>
+                  <p className="text-xs uppercase tracking-widest mt-1">ยังไม่มีรายการสินค้า</p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div className="space-y-3">
                   {cart.map(item => (
-                    <div key={item.id} style={{ background: 'rgba(30,33,48,0.8)', borderRadius: '10px', padding: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.875rem', border: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div style={{ fontSize: '1.8rem', flexShrink: 0 }}>{item.image}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.sku}</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--primary)', marginTop: '0.25rem' }}>฿{(item.price * item.qty).toLocaleString()}</div>
+                    <div key={item.id} className="glass-card hover:bg-white/[0.04] transition-colors p-3 border border-white/5 flex gap-4 group">
+                      <div className="w-16 h-16 rounded-xl bg-slate-950 flex items-center justify-center text-2xl shadow-inner flex-shrink-0 border border-white/5">
+                        {item.image}
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
-                        <button onClick={() => updateQty(item.id, item.qty - 1)} style={{ width: 26, height: 26, borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'var(--text-main)', cursor: 'pointer', fontWeight: 700 }}>-</button>
-                        <span style={{ width: 24, textAlign: 'center', fontSize: '0.9rem', fontWeight: 600 }}>{item.qty}</span>
-                        <button onClick={() => updateQty(item.id, item.qty + 1)} style={{ width: 26, height: 26, borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'var(--text-main)', cursor: 'pointer', fontWeight: 700 }}>+</button>
-                        <button onClick={() => removeFromCart(item.id)} style={{ marginLeft: '0.25rem', background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer' }}><X size={15} /></button>
+                      <div className="flex-1 min-w-0 flex flex-col justify-between">
+                        <div>
+                          <div className="text-sm font-bold text-white truncate">{item.name}</div>
+                          <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider">{item.sku}</div>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <div className="text-sm font-black text-indigo-400">฿{(item.price * item.qty).toLocaleString()}</div>
+                          <div className="flex items-center bg-slate-950 rounded-lg p-0.5 border border-white/5">
+                            <button 
+                              className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-md transition-all font-bold" 
+                              onClick={() => updateQty(item.id, item.qty - 1)} 
+                              title="ลดจำนวน"
+                            >-</button>
+                            <span className="min-w-[24px] text-center text-xs font-black text-white">{item.qty}</span>
+                            <button 
+                              className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-md transition-all font-bold" 
+                              onClick={() => updateQty(item.id, item.qty + 1)} 
+                              title="เพิ่มจำนวน"
+                            >+</button>
+                          </div>
+                        </div>
                       </div>
+                      <button 
+                        className="self-start p-1.5 text-slate-600 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all" 
+                        onClick={() => removeFromCart(item.id)} 
+                        title="ลบออกจากตะกร้า"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -271,21 +269,32 @@ export default function Ecommerce() {
 
             {/* Cart Footer */}
             {cart.length > 0 && (
-              <div style={{ padding: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  <span>รายการ ({cartCount} ชิ้น)</span>
-                  <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>฿{cartTotal.toLocaleString()}</span>
+              <div className="p-8 border-t border-white/5 bg-slate-900/80 backdrop-blur-xl">
+                <div className="space-y-3 mb-6">
+                  <div className="flex justify-between items-center text-sm font-bold">
+                    <span className="text-slate-400">รายการรวม ({cartCount})</span>
+                    <span className="text-white">฿{cartTotal.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm font-bold">
+                    <span className="text-slate-400">ภาษีมูลค่าเพิ่ม (7%)</span>
+                    <span className="text-white">฿{(cartTotal * 0.07).toLocaleString()}</span>
+                  </div>
+                  <div className="pt-3 border-t border-white/5 flex justify-between items-center">
+                    <span className="text-xs font-black text-slate-500 uppercase tracking-widest">ยอดชำระสุทธิ (Grand Total)</span>
+                    <span className="text-2xl font-black text-emerald-400 tracking-tighter">฿{(cartTotal * 1.07).toLocaleString()}</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.25rem', fontSize: '1.1rem', fontWeight: 700 }}>
-                  <span>ยอดรวมทั้งหมด</span>
-                  <span style={{ color: 'var(--primary)' }}>฿{cartTotal.toLocaleString()}</span>
+                <div className="grid grid-cols-1 gap-3">
+                  <button className="w-full py-4 rounded-xl bg-indigo-500 text-white font-black hover:bg-indigo-600 transition-all shadow-xl shadow-indigo-500/30 uppercase tracking-[0.2em] text-[10px]">
+                    ยืนยันการทำรายการ
+                  </button>
+                  <button 
+                    onClick={() => setIsCartOpen(false)} 
+                    className="w-full py-3 rounded-xl border border-white/5 bg-white/5 text-slate-400 font-bold hover:bg-white/10 hover:text-white transition-all uppercase tracking-widest text-[10px]"
+                  >
+                    เลือกซื้อสินค้าต่อ
+                  </button>
                 </div>
-                <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.9rem' }}>
-                  สั่งซื้อสินค้า
-                </button>
-                <button onClick={() => setIsCartOpen(false)} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}>
-                  เลือกสินค้าต่อ
-                </button>
               </div>
             )}
           </div>

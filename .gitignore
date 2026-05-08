@@ -1,5 +1,9 @@
 node_modules/
 dist/
+.next/
+.turbo/
+.cache/
+coverage/
 .env
 .idea/
 .vscode/
@@ -12,3 +16,13 @@ Openclaw RAG/
 .DS_Store
 .vercel
 .env*.local
+
+# JNAC imported data/export artifacts
+jnac info_Assist/*.csv
+jnac info_Assist/*.json
+jnac info_Assist/*.jsonl
+jnac info_Assist/*.doc
+jnac info_Assist/*.docx
+jnac info_Assist/rendered_docx/
+jnac info_Assist/jnac-admin-chat/data/*.json
+jnac info_Assist/jnac-admin-chat/data/*.jsonl
