@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy-corebiz:
-    name: Deploy CoreBiz Center
+    name: Deploy CoreBiz Unified Project
     runs-on: ubuntu-latest
 
     steps:
@@ -20,47 +20,21 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install, lint, and build CoreBiz frontend
-        working-directory: ./frontend
-        run: |
-          npm install
-          npm run lint
-          npm run build
+      - name: Install dependencies
+        run: npm install
 
-      - name: Deploy CoreBiz frontend to Vercel
+      - name: Lint and build all services
+        run: |
+          npm run lint:corebiz
+          npm run lint:jnac
+          npm run build:corebiz
+          npm run build:jnac
+
+      - name: Deploy CoreBiz unified project to Vercel
         uses: amondnet/vercel-action@v25
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_COREBIZ_PROJECT_ID || secrets.VERCEL_PROJECT_ID }}
-          working-directory: ./frontend
-          vercel-args: '--prod'
-
-  deploy-jnac-admin-chat:
-    name: Deploy JNAC Admin Chat
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Install, lint, and build JNAC Admin Chat
-        working-directory: ./jnac info_Assist/jnac-admin-chat
-        run: |
-          npm install
-          npm run lint
-          npm run build
-
-      - name: Deploy JNAC Admin Chat to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_JNAC_ADMIN_CHAT_PROJECT_ID }}
-          working-directory: ./jnac info_Assist/jnac-admin-chat
+          working-directory: ./
           vercel-args: '--prod'
