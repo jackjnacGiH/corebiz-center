@@ -7,7 +7,7 @@
       "framework": "vite"
     },
     "jnac": {
-      "entrypoint": "jnac info_Assist/jnac-admin-chat",
+      "entrypoint": "apps/jnac-admin-chat",
       "routePrefix": "/jnac",
       "framework": "nextjs"
     }

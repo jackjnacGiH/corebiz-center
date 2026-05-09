@@ -6,7 +6,7 @@ CoreBiz Center is the main workspace. CoreBiz and JNAC Admin Chat are deployed t
 
 - `frontend` - CoreBiz Center Vite/React admin shell.
 - `api` - Openclaw RAG Express API used by the CoreBiz RAG screen.
-- `jnac info_Assist/jnac-admin-chat` - JNAC Admin Chat Next.js app with Supabase Auth, product/price search, chat history, and sheet sync.
+- `apps/jnac-admin-chat` - JNAC Admin Chat Next.js app with Supabase Auth, product/price search, chat history, and sheet sync.
 - `jnac info_Assist` - JNAC crawl, document, CSV, JSONL, and sheet sync source artifacts.
 
 ## Commands
