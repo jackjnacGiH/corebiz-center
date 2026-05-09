@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 
 import { isAdminEmail } from "@/lib/config";
+import { jnacPath } from "@/lib/paths";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
@@ -10,12 +11,12 @@ export async function GET(request: Request) {
   const supabase = await getSupabaseServerClient();
 
   if (!code || !supabase) {
-    redirect("/login?error=missing_code");
+    redirect(jnacPath("/login?error=missing_code"));
   }
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    redirect("/login?error=auth_failed");
+    redirect(jnacPath("/login?error=auth_failed"));
   }
 
   const {
@@ -23,8 +24,8 @@ export async function GET(request: Request) {
   } = await supabase.auth.getUser();
   if (!isAdminEmail(user?.email)) {
     await supabase.auth.signOut();
-    return NextResponse.redirect(new URL("/login?error=not_allowed", request.url));
+    return NextResponse.redirect(new URL(jnacPath("/login?error=not_allowed"), request.url));
   }
 
-  return NextResponse.redirect(new URL("/", request.url));
+  return NextResponse.redirect(new URL(jnacPath("/"), request.url));
 }

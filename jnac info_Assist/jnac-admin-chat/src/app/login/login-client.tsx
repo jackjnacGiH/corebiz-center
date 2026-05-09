@@ -4,6 +4,8 @@ import { createBrowserClient } from "@supabase/ssr";
 import { LogIn } from "lucide-react";
 import { useState } from "react";
 
+import { jnacPath } from "@/lib/paths";
+
 export function LoginClient({
   supabaseEnabled,
   supabaseUrl,
@@ -31,13 +33,13 @@ export function LoginClient({
         const { error: signInError } = await supabase.auth.signInWithOtp({
           email,
           options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            emailRedirectTo: `${window.location.origin}${jnacPath("/auth/callback")}`,
           },
         });
         if (signInError) throw signInError;
         setStatus("ส่งลิงก์เข้าสู่ระบบไปที่อีเมลแล้ว");
       } else {
-        const response = await fetch("/api/dev-login", {
+        const response = await fetch(jnacPath("/api/dev-login"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email }),
@@ -46,7 +48,7 @@ export function LoginClient({
           const body = (await response.json()) as { error?: string };
           throw new Error(body.error ?? "Login failed");
         }
-        window.location.href = "/";
+        window.location.href = jnacPath("/");
       }
     } catch (caught) {
       setStatus(caught instanceof Error ? caught.message : "Login failed");

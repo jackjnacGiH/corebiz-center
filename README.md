@@ -1,6 +1,6 @@
 # CoreBiz Center Monorepo
 
-CoreBiz Center is the main workspace. The current merge keeps each existing project operational as its own workspace instead of migrating code between stacks immediately.
+CoreBiz Center is the main workspace. CoreBiz and JNAC Admin Chat are deployed through the single Vercel project `corebiz-center` using Vercel Services.
 
 ## Workspaces
 
@@ -29,9 +29,9 @@ npm run lint
 
 ## Integration Rule
 
-For this phase, CoreBiz Center is the central repo and navigation shell, while `jnac-admin-chat` remains a standalone module. Do not move its Next.js API routes, Supabase logic, auth flow, or sync logic into CoreBiz yet.
+For this phase, CoreBiz Center is the central repo and navigation shell, while `jnac-admin-chat` remains a standalone module under the same Vercel project. Do not move its Next.js API routes, Supabase logic, auth flow, or sync logic into the Vite frontend yet.
 
-The next integration step should be a thin link or module entry from CoreBiz navigation to the JNAC Admin Chat app. After that is stable, shared auth, shared Supabase schema, and API consolidation can be planned as separate migrations.
+JNAC Admin Chat is mounted at `/jnac` on the CoreBiz domain. After that is stable, shared auth, shared Supabase schema, and API consolidation can be planned as separate migrations.
 
 ## Environment
 
@@ -45,19 +45,25 @@ Openclaw RAG API local env variables are documented in `api/.env.example`:
 
 ## Vercel Deployment
 
-This repo deploys to two separate Vercel projects:
+This repo deploys to one Vercel project:
 
-- CoreBiz Center: `corebiz-center`, root directory `frontend`, production URL `https://www.corebiz.online`
-- JNAC Admin Chat: `jnac-admin-chat`, root directory `jnac info_Assist/jnac-admin-chat`, production URL `https://jnac-admin-chat.vercel.app`
+- CoreBiz Center: `corebiz-center`, root directory repo root, production URL `https://www.corebiz.online`
+- CoreBiz Vite shell route: `/`
+- JNAC Admin Chat Next.js route: `/jnac`
 
-GitHub Actions deploys both projects from `.github/workflows/deploy.yml`. Required GitHub repository secrets:
+Vercel project settings must use:
+
+- Framework Preset: `Services`
+- Root Directory: repo root / blank
+
+GitHub Actions deploys the unified project from `.github/workflows/deploy.yml`. Required GitHub repository secrets:
 
 - `VERCEL_TOKEN`
 - `VERCEL_ORG_ID`
 - `VERCEL_COREBIZ_PROJECT_ID` or the legacy `VERCEL_PROJECT_ID`
-- `VERCEL_JNAC_ADMIN_CHAT_PROJECT_ID`
 
-Current Vercel project ids from the linked local workspace:
+Current Vercel project id from the linked local workspace:
 
 - `corebiz-center`: `prj_RgkMC07bPnjK0v9RH1491PC0yMKa`
-- `jnac-admin-chat`: `prj_1uBZQXXhEAWB7XpH9Wz7ph8dBaFK`
+
+Do not delete the old `jnac-admin-chat` Vercel project until `https://www.corebiz.online/jnac` is verified in production.

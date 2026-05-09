@@ -4,10 +4,11 @@ import { redirect } from "next/navigation";
 
 import { getAdminSession } from "@/lib/auth";
 import { listChatSessions } from "@/lib/chat-store";
+import { jnacPath } from "@/lib/paths";
 
 export default async function HistoryPage() {
   const session = await getAdminSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(jnacPath("/login"));
   const sessions = await listChatSessions(session.email);
 
   return (

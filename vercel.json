@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "experimentalServices": {
+    "corebiz": {
+      "entrypoint": "frontend",
+      "routePrefix": "/",
+      "framework": "vite"
+    },
+    "jnac": {
+      "entrypoint": "jnac info_Assist/jnac-admin-chat",
+      "routePrefix": "/jnac",
+      "framework": "nextjs"
+    }
+  }
+}

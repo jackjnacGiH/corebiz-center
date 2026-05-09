@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { jnacPath } from "@/lib/paths";
 import type { ChatMessage, PriceRule, ProductRecord } from "@/lib/types";
 
 type SessionRow = {
@@ -59,7 +60,7 @@ export function ChatShell({
     setLoading(true);
     setMessages((current) => [...current, { role: "user", content: message }]);
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch(jnacPath("/api/chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message, sessionId }),
@@ -95,7 +96,7 @@ export function ChatShell({
     setSyncing(true);
     setSyncStatus(null);
     try {
-      const response = await fetch("/api/sync", { method: "POST" });
+      const response = await fetch(jnacPath("/api/sync"), { method: "POST" });
       const body = (await response.json()) as Record<string, number | string>;
       if (!response.ok) throw new Error("Sync failed");
       setSyncStatus(

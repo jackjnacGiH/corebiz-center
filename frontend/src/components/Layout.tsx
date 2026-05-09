@@ -12,7 +12,8 @@ import {
     Search,
     BrainCircuit,
     Truck,
-    Handshake
+    Handshake,
+    Bot
 } from 'lucide-react';
 
 const Layout: React.FC = () => {
@@ -26,6 +27,7 @@ const Layout: React.FC = () => {
         { name: 'Marketing & Affiliates', path: '/marketing', icon: <TrendingUp size={20} /> },
         { name: 'Affiliate', path: '/affiliate', icon: <Handshake size={20} /> },
         { name: 'Openclaw RAG', path: '/rag', icon: <BrainCircuit size={20} /> },
+        { name: 'JNAC Admin Chat', path: '/jnac', icon: <Bot size={20} />, external: true },
     ];
 
     return (
@@ -40,16 +42,23 @@ const Layout: React.FC = () => {
                 </div>
 
                 <nav className="sidebar-nav">
-                    {menuItems.map((item) => (
-                        <NavLink
-                            key={item.path}
-                            to={item.path}
-                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                        >
-                            {item.icon}
-                            {item.name}
-                        </NavLink>
-                    ))}
+                    {menuItems.map((item) =>
+                        item.external ? (
+                            <a key={item.path} href={item.path} className="nav-link">
+                                {item.icon}
+                                {item.name}
+                            </a>
+                        ) : (
+                            <NavLink
+                                key={item.path}
+                                to={item.path}
+                                className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                            >
+                                {item.icon}
+                                {item.name}
+                            </NavLink>
+                        )
+                    )}
                 </nav>
 
                 <div className="sidebar-footer">
