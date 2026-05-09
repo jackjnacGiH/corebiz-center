@@ -6,7 +6,7 @@
   "workspaces": [
     "frontend",
     "api",
-    "jnac info_Assist/jnac-admin-chat"
+    "apps/jnac-admin-chat"
   ],
   "scripts": {
     "dev:corebiz": "npm run dev -w frontend",
