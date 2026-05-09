@@ -13,7 +13,11 @@ import {
     BrainCircuit,
     Truck,
     Handshake,
-    Bot
+    Bot,
+    ChevronDown,
+    CircleHelp,
+    Command,
+    Store
 } from 'lucide-react';
 
 const Layout: React.FC = () => {
@@ -32,13 +36,15 @@ const Layout: React.FC = () => {
 
     return (
         <div className="app-layout">
-            {/* Sidebar */}
             <aside className="sidebar">
                 <div className="sidebar-header">
-                    <h2 className="sidebar-logo">
-                        CoreBiz Center
-                    </h2>
-                    <p className="text-sm text-muted mt-1">Unified Commerce Platform</p>
+                    <div className="brand-mark">
+                        <Store size={20} />
+                    </div>
+                    <div>
+                        <h2 className="sidebar-logo">CoreBiz Center</h2>
+                        <p className="sidebar-subtitle">Commerce operations</p>
+                    </div>
                 </div>
 
                 <nav className="sidebar-nav">
@@ -62,43 +68,46 @@ const Layout: React.FC = () => {
                 </nav>
 
                 <div className="sidebar-footer">
-                    <button className="btn btn-secondary w-full justify-start" title="System Settings">
-                        <Settings size={20} /> Settings
+                    <button className="settings-link" title="System Settings">
+                        <Settings size={18} />
+                        <span>System settings</span>
                     </button>
                 </div>
             </aside>
 
-            {/* Main Content */}
             <main className="main-content">
-                {/* Header */}
                 <header className="header">
-                    <div className="header-search-container glass-card">
-                        <Search size={18} className="text-muted" />
+                    <div className="header-search-container">
+                        <Search size={18} />
                         <input
                             type="text"
-                            placeholder="Search anything..."
+                            placeholder="Search orders, products, customers..."
                             className="header-search-input"
                         />
+                        <span className="search-shortcut">
+                            <Command size={13} /> K
+                        </span>
                     </div>
 
                     <div className="header-actions">
+                        <button className="header-icon-btn" title="Help">
+                            <CircleHelp size={20} />
+                        </button>
                         <button className="notification-btn" title="Notifications">
-                            <Bell size={22} />
+                            <Bell size={20} />
                             <span className="notification-dot"></span>
                         </button>
                         <div className="user-profile-trigger">
-                            <div className="user-avatar">
-                                ADMIN
-                            </div>
+                            <div className="user-avatar">BJ</div>
                             <div>
-                                <div className="user-info-name">System Admin</div>
-                                <div className="user-info-role">Super User</div>
+                                <div className="user-info-name">Boss Jack</div>
+                                <div className="user-info-role">Admin workspace</div>
                             </div>
+                            <ChevronDown size={16} className="profile-chevron" />
                         </div>
                     </div>
                 </header>
 
-                {/* Dynamic Page Content */}
                 <div className="page-content">
                     <Outlet />
                 </div>
