@@ -1,5 +1,18 @@
-import { useState } from 'react';
-import { ShoppingCart, Package, Search, Filter, Star, Plus, X, Tag, TrendingUp, AlertCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  Filter,
+  Minus,
+  Package,
+  Plus,
+  Search,
+  ShoppingCart,
+  SlidersHorizontal,
+  Trash2,
+  X
+} from 'lucide-react';
 
 interface Product {
   id: string;
@@ -7,9 +20,11 @@ interface Product {
   price: number;
   category: string;
   stock: number;
-  rating: number;
   sku: string;
-  image: string;
+  brand: string;
+  unit: string;
+  leadTime: string;
+  imageTone: string;
 }
 
 interface CartItem extends Product {
@@ -17,17 +32,111 @@ interface CartItem extends Product {
 }
 
 const catalogData: Product[] = [
-  { id: '1', name: 'กระดาษทรายกลมสักหลาด 5"', price: 15, category: 'Abrasives', stock: 1500, rating: 4.5, sku: 'ABR-001', image: '🔵' },
-  { id: '2', name: 'ใบเจียรเหล็ก 4"', price: 25, category: 'Abrasives', stock: 850, rating: 4.8, sku: 'ABR-002', image: '⚙️' },
-  { id: '3', name: 'สว่านไฟฟ้า 12V', price: 1290, category: 'Power Tools', stock: 45, rating: 4.7, sku: 'PWR-001', image: '🔧' },
-  { id: '4', name: 'ประแจปากตาย 8mm', price: 89, category: 'Hand Tools', stock: 320, rating: 4.3, sku: 'HND-001', image: '🔩' },
-  { id: '5', name: 'หมวกนิรภัย PPE Class A', price: 249, category: 'Safety', stock: 200, rating: 4.6, sku: 'SAF-001', image: '⛑️' },
-  { id: '6', name: 'ถุงมือหนังทนความร้อน', price: 120, category: 'Safety', stock: 12, rating: 4.4, sku: 'SAF-002', image: '🧤' },
-  { id: '7', name: 'กาวอีพ็อกซี่ 2 หน้า', price: 180, category: 'Adhesives', stock: 75, rating: 4.2, sku: 'ADH-001', image: '🧪' },
-  { id: '8', name: 'ใบเลื่อยวงเดือน 7.25"', price: 320, category: 'Cutting', stock: 60, rating: 4.9, sku: 'CUT-001', image: '🪚' },
+  {
+    id: '1',
+    name: 'Flap Disc Zirconia 4 inch #80',
+    price: 38,
+    category: 'Abrasives',
+    stock: 1420,
+    sku: 'ABR-FD-4080',
+    brand: 'J NAC',
+    unit: 'pcs',
+    leadTime: 'พร้อมส่ง',
+    imageTone: 'tone-steel',
+  },
+  {
+    id: '2',
+    name: 'Cutting Wheel Stainless 4 inch',
+    price: 22,
+    category: 'Cutting',
+    stock: 860,
+    sku: 'CUT-SUS-4010',
+    brand: 'PFERD',
+    unit: 'pcs',
+    leadTime: 'พร้อมส่ง',
+    imageTone: 'tone-graphite',
+  },
+  {
+    id: '3',
+    name: 'U-Tools Air Die Grinder 6 mm',
+    price: 1850,
+    category: 'Pneumatic Tools',
+    stock: 32,
+    sku: 'UTO-ADG-600',
+    brand: 'U-Tools',
+    unit: 'set',
+    leadTime: '2-3 วัน',
+    imageTone: 'tone-blue',
+  },
+  {
+    id: '4',
+    name: 'Mounted Point A36 10 x 20 mm',
+    price: 44,
+    category: 'Grinding',
+    stock: 210,
+    sku: 'GRD-MPA-1020',
+    brand: 'Norton',
+    unit: 'pcs',
+    leadTime: 'พร้อมส่ง',
+    imageTone: 'tone-copper',
+  },
+  {
+    id: '5',
+    name: 'Non-Woven Wheel 6 inch Medium',
+    price: 245,
+    category: 'Polishing',
+    stock: 78,
+    sku: 'POL-NWW-600M',
+    brand: '3M',
+    unit: 'pcs',
+    leadTime: 'พร้อมส่ง',
+    imageTone: 'tone-green',
+  },
+  {
+    id: '6',
+    name: 'Safety Glove Heat Resistant',
+    price: 120,
+    category: 'Safety',
+    stock: 12,
+    sku: 'SAF-GLV-HR01',
+    brand: 'J NAC',
+    unit: 'pair',
+    leadTime: 'เหลือน้อย',
+    imageTone: 'tone-amber',
+  },
+  {
+    id: '7',
+    name: 'Sandpaper Roll Alox #120',
+    price: 590,
+    category: 'Abrasives',
+    stock: 54,
+    sku: 'ABR-SPR-120',
+    brand: 'Klingspor',
+    unit: 'roll',
+    leadTime: 'พร้อมส่ง',
+    imageTone: 'tone-sand',
+  },
+  {
+    id: '8',
+    name: 'Diamond Blade Concrete 7 inch',
+    price: 680,
+    category: 'Cutting',
+    stock: 25,
+    sku: 'CUT-DIA-700C',
+    brand: 'Bosch',
+    unit: 'pcs',
+    leadTime: '2-3 วัน',
+    imageTone: 'tone-red',
+  },
 ];
 
-const categories = ['All', 'Abrasives', 'Power Tools', 'Hand Tools', 'Safety', 'Adhesives', 'Cutting'];
+const categories = ['All', 'Abrasives', 'Cutting', 'Grinding', 'Polishing', 'Pneumatic Tools', 'Safety'];
+
+function getStockTone(stock: number) {
+  if (stock < 20) return { label: 'Low stock', className: 'status-warning' };
+  if (stock < 60) return { label: 'Watch', className: 'status-info' };
+  return { label: 'Ready', className: 'status-success' };
+}
 
 export default function Ecommerce() {
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -35,269 +144,279 @@ export default function Ecommerce() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [isCartOpen, setIsCartOpen] = useState(false);
 
-  const filteredProducts = catalogData.filter(p => {
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase());
-    const matchCat = selectedCategory === 'All' || p.category === selectedCategory;
-    return matchSearch && matchCat;
-  });
+  const filteredProducts = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    return catalogData.filter((product) => {
+      const matchSearch =
+        !normalizedSearch ||
+        product.name.toLowerCase().includes(normalizedSearch) ||
+        product.sku.toLowerCase().includes(normalizedSearch) ||
+        product.brand.toLowerCase().includes(normalizedSearch);
+      const matchCategory = selectedCategory === 'All' || product.category === selectedCategory;
+
+      return matchSearch && matchCategory;
+    });
+  }, [search, selectedCategory]);
 
   const addToCart = (product: Product) => {
-    setCart(prev => {
-      const exists = prev.find(c => c.id === product.id);
-      if (exists) return prev.map(c => c.id === product.id ? { ...c, qty: c.qty + 1 } : c);
+    setCart((prev) => {
+      const exists = prev.find((item) => item.id === product.id);
+      if (exists) {
+        return prev.map((item) =>
+          item.id === product.id ? { ...item, qty: item.qty + 1 } : item,
+        );
+      }
+
       return [...prev, { ...product, qty: 1 }];
     });
   };
 
-  const removeFromCart = (id: string) => setCart(prev => prev.filter(c => c.id !== id));
+  const removeFromCart = (id: string) => setCart((prev) => prev.filter((item) => item.id !== id));
+
   const updateQty = (id: string, qty: number) => {
-    if (qty <= 0) return removeFromCart(id);
-    setCart(prev => prev.map(c => c.id === id ? { ...c, qty } : c));
+    if (qty <= 0) {
+      removeFromCart(id);
+      return;
+    }
+
+    setCart((prev) => prev.map((item) => (item.id === id ? { ...item, qty } : item)));
   };
 
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+  const lowStockCount = catalogData.filter((item) => item.stock < 20).length;
+  const inventoryValue = catalogData.reduce((sum, item) => sum + item.price * item.stock, 0);
 
   return (
-    <div className="animate-fade-in ecommerce-container">
-
-      {/* Page Header */}
-      <div className="ecommerce-header">
-        <div className="ecommerce-title-container">
-          <h1>
-            <ShoppingCart size={28} color="var(--primary)" />
-            E-Commerce Catalog
-          </h1>
-          <p className="ecommerce-subtitle">
-            รายการสินค้าสำหรับองค์กร — {catalogData.length} รายการ
+    <div className="commerce-page">
+      <section className="commerce-hero">
+        <div>
+          <div className="eyebrow">B2B Commerce Workspace</div>
+          <h1>Industrial Product Catalog</h1>
+          <p>
+            Manage product availability, quote baskets, and sales-ready catalog items for
+            abrasive, cutting, grinding, and pneumatic tool customers.
           </p>
         </div>
 
-        {/* Cart Button */}
         <button
           onClick={() => setIsCartOpen(true)}
-          className="cart-button"
-          title="ดูตะกร้าสินค้า"
+          className="commerce-cart-button"
+          title="Open quote cart"
         >
           <ShoppingCart size={18} />
-          ตะกร้าสินค้า
-          {cartCount > 0 && (
-            <span className="cart-badge">{cartCount}</span>
-          )}
+          Quote Cart
+          <span>{cartCount}</span>
         </button>
-      </div>
+      </section>
 
-      {/* Stats Bar */}
-      <div className="stats-grid">
-        {[
-          { icon: <Package size={18} />, label: 'สินค้าทั้งหมด', value: catalogData.length, type: 'primary' },
-          { icon: <Tag size={18} />, label: 'หมวดหมู่', value: categories.length - 1, type: 'accent' },
-          { icon: <TrendingUp size={18} />, label: 'สินค้าในตะกร้า', value: cartCount, type: 'secondary' },
-          { icon: <AlertCircle size={18} />, label: 'สต๊อกต่ำ', value: catalogData.filter(p => p.stock < 20).length, type: 'warning' },
-        ].map((stat, i) => (
-          <div key={i} className="glass-card stat-card">
-            <div className={`stat-icon-wrapper stat-icon-${stat.type}`}>
-              {stat.icon}
-            </div>
-            <div>
-              <div className="stat-value">{stat.value}</div>
-              <div className="stat-label">{stat.label}</div>
-            </div>
+      <section className="commerce-metrics" aria-label="Commerce overview">
+        <div className="metric-tile">
+          <Package size={18} />
+          <div>
+            <span>Products</span>
+            <strong>{catalogData.length}</strong>
           </div>
-        ))}
-      </div>
+        </div>
+        <div className="metric-tile">
+          <BarChart3 size={18} />
+          <div>
+            <span>Inventory value</span>
+            <strong>฿{inventoryValue.toLocaleString()}</strong>
+          </div>
+        </div>
+        <div className="metric-tile">
+          <ShoppingCart size={18} />
+          <div>
+            <span>Quote items</span>
+            <strong>{cartCount}</strong>
+          </div>
+        </div>
+        <div className="metric-tile warning">
+          <AlertTriangle size={18} />
+          <div>
+            <span>Low stock</span>
+            <strong>{lowStockCount}</strong>
+          </div>
+        </div>
+      </section>
 
-      {/* Filters */}
-      <div className="filter-bar">
-        {/* Search */}
-        <div className="search-input-wrapper">
-          <Search size={16} color="var(--text-muted)" />
+      <section className="commerce-toolbar">
+        <div className="commerce-search">
+          <Search size={18} />
           <input
             type="text"
-            placeholder="ค้นหาสินค้า หรือ รหัส SKU..."
+            placeholder="Search product name, SKU, or brand"
             value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="search-input"
+            onChange={(event) => setSearch(event.target.value)}
           />
         </div>
 
-        {/* Category Filter */}
-        <div className="category-filters">
-          <Filter size={15} color="var(--text-muted)" />
-          {categories.map(cat => (
+        <div className="commerce-filter-group" aria-label="Product categories">
+          <Filter size={16} />
+          {categories.map((category) => (
             <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`category-btn ${selectedCategory === cat ? 'active' : ''}`}
-            >{cat}</button>
+              key={category}
+              onClick={() => setSelectedCategory(category)}
+              className={selectedCategory === category ? 'active' : ''}
+            >
+              {category}
+            </button>
           ))}
         </div>
-      </div>
 
-      {/* Product Grid */}
-      <div className="product-grid">
-        {filteredProducts.map(item => (
-          <div key={item.id} className="glass-card product-card">
-            {/* Product Image Area */}
-            <div className="product-image-area">
-              {item.image}
-              {item.stock < 20 && (
-                <span className="stock-warning-badge">สต๊อกต่ำ</span>
-              )}
-            </div>
+        <button className="commerce-secondary-action" title="More filters">
+          <SlidersHorizontal size={17} />
+          Filters
+        </button>
+      </section>
 
-            {/* Product Info */}
-            <div className="product-info">
-              <div className="product-meta">
-                {item.category} · {item.sku}
-              </div>
-              <h4 className="product-name">
-                {item.name}
-              </h4>
+      <section className="commerce-list-header">
+        <div>
+          <h2>Product shelf</h2>
+          <p>{filteredProducts.length} items matched</p>
+        </div>
+        <div className="list-view-toggle" aria-label="View mode">
+          <button className="active">Grid</button>
+          <button>Table</button>
+        </div>
+      </section>
 
-              {/* Rating */}
-              <div className="rating-container">
-                {[...Array(5)].map((_, i) => (
-                  <Star key={i} size={11} fill={i < Math.floor(item.rating) ? '#f59e0b' : 'none'} color={i < Math.floor(item.rating) ? '#f59e0b' : '#475569'} />
-                ))}
-                <span className="rating-value">{item.rating}</span>
+      <section className="commerce-product-grid">
+        {filteredProducts.map((item) => {
+          const stockTone = getStockTone(item.stock);
+
+          return (
+            <article key={item.id} className="commerce-product-card">
+              <div className={`product-visual ${item.imageTone}`}>
+                <Package size={34} />
+                <span>{item.category}</span>
               </div>
 
-              <div className="product-footer">
-                <div>
-                  <div className="product-price">
-                    ฿{item.price.toLocaleString()}
-                  </div>
-                  <div className={`product-stock ${item.stock < 20 ? 'text-warning' : 'text-success'}`}>
-                    คงเหลือ {item.stock.toLocaleString()} ชิ้น
-                  </div>
+              <div className="product-card-body">
+                <div className="product-card-meta">
+                  <span>{item.brand}</span>
+                  <span>{item.sku}</span>
                 </div>
-                <button
-                  onClick={() => addToCart(item)}
-                  className="add-to-cart-btn"
-                  title="ใส่ตะกร้า"
-                >
-                  <Plus size={16} />
-                </button>
+
+                <h3>{item.name}</h3>
+
+                <div className="product-card-details">
+                  <span className={stockTone.className}>
+                    <CheckCircle2 size={13} />
+                    {stockTone.label}
+                  </span>
+                  <span>{item.leadTime}</span>
+                </div>
+
+                <div className="product-card-footer">
+                  <div>
+                    <strong>฿{item.price.toLocaleString()}</strong>
+                    <span>
+                      {item.stock.toLocaleString()} {item.unit} available
+                    </span>
+                  </div>
+                  <button onClick={() => addToCart(item)} title={`Add ${item.name} to quote`}>
+                    <Plus size={17} />
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>
-        ))}
-      </div>
+            </article>
+          );
+        })}
+      </section>
 
       {filteredProducts.length === 0 && (
-        <div className="empty-state">
-          <Package size={48} />
-          <p>ไม่พบสินค้าที่ค้นหา</p>
+        <div className="commerce-empty-state">
+          <Package size={42} />
+          <strong>No products found</strong>
+          <span>Try another SKU, brand, or category.</span>
         </div>
       )}
 
-      {/* Cart Drawer */}
       {isCartOpen && (
         <div className="cart-overlay">
-          <div className="cart-backdrop" onClick={() => setIsCartOpen(false)} />
-          <div className="cart-content">
-            {/* Cart Header */}
-            <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-br from-indigo-500/10 to-transparent">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
-                  <ShoppingCart size={20} />
-                </div>
-                <div>
-                  <h2 className="text-xl font-extrabold text-white leading-tight">ตะกร้าสินค้า</h2>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black mt-0.5">Order Summary · {cartCount} รายการ</p>
-                </div>
+          <button
+            type="button"
+            className="cart-backdrop"
+            aria-label="Close quote cart"
+            onClick={() => setIsCartOpen(false)}
+          />
+
+          <aside className="cart-content" aria-label="Quote cart">
+            <div className="cart-drawer-header">
+              <div>
+                <span>Quote basket</span>
+                <h2>{cartCount} selected items</h2>
               </div>
-              <button 
-                onClick={() => setIsCartOpen(false)} 
-                title="ปิดตะกร้าสินค้า"
-                className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-500 hover:text-white transition-all border border-white/5"
-              >
+              <button onClick={() => setIsCartOpen(false)} title="Close cart">
                 <X size={20} />
               </button>
             </div>
 
-            {/* Cart Items */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 custom-scrollbar">
+            <div className="cart-items-container">
               {cart.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center opacity-30 py-20">
-                  <ShoppingCart size={64} className="mb-4" />
-                  <p className="text-lg font-bold">ตะกร้าว่างเปล่า</p>
-                  <p className="text-xs uppercase tracking-widest mt-1">ยังไม่มีรายการสินค้า</p>
+                <div className="cart-empty">
+                  <ShoppingCart size={42} />
+                  <strong>Your quote cart is empty</strong>
+                  <span>Add products from the catalog to prepare a quotation.</span>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {cart.map(item => (
-                    <div key={item.id} className="glass-card hover:bg-white/[0.04] transition-colors p-3 border border-white/5 flex gap-4 group">
-                      <div className="w-16 h-16 rounded-xl bg-slate-950 flex items-center justify-center text-2xl shadow-inner flex-shrink-0 border border-white/5">
-                        {item.image}
+                cart.map((item) => (
+                  <div key={item.id} className="cart-line-item">
+                    <div className={`cart-line-thumb ${item.imageTone}`}>
+                      <Package size={20} />
+                    </div>
+
+                    <div className="cart-line-info">
+                      <strong>{item.name}</strong>
+                      <span>
+                        {item.sku} · ฿{item.price.toLocaleString()} / {item.unit}
+                      </span>
+                      <div className="quantity-stepper">
+                        <button onClick={() => updateQty(item.id, item.qty - 1)} title="Decrease quantity">
+                          <Minus size={14} />
+                        </button>
+                        <span>{item.qty}</span>
+                        <button onClick={() => updateQty(item.id, item.qty + 1)} title="Increase quantity">
+                          <Plus size={14} />
+                        </button>
                       </div>
-                      <div className="flex-1 min-w-0 flex flex-col justify-between">
-                        <div>
-                          <div className="text-sm font-bold text-white truncate">{item.name}</div>
-                          <div className="text-[10px] text-slate-500 font-black uppercase tracking-wider">{item.sku}</div>
-                        </div>
-                        <div className="flex items-center justify-between mt-1">
-                          <div className="text-sm font-black text-indigo-400">฿{(item.price * item.qty).toLocaleString()}</div>
-                          <div className="flex items-center bg-slate-950 rounded-lg p-0.5 border border-white/5">
-                            <button 
-                              className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-md transition-all font-bold" 
-                              onClick={() => updateQty(item.id, item.qty - 1)} 
-                              title="ลดจำนวน"
-                            >-</button>
-                            <span className="min-w-[24px] text-center text-xs font-black text-white">{item.qty}</span>
-                            <button 
-                              className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-md transition-all font-bold" 
-                              onClick={() => updateQty(item.id, item.qty + 1)} 
-                              title="เพิ่มจำนวน"
-                            >+</button>
-                          </div>
-                        </div>
-                      </div>
-                      <button 
-                        className="self-start p-1.5 text-slate-600 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all" 
-                        onClick={() => removeFromCart(item.id)} 
-                        title="ลบออกจากตะกร้า"
-                      >
-                        <X size={14} />
+                    </div>
+
+                    <div className="cart-line-total">
+                      <strong>฿{(item.price * item.qty).toLocaleString()}</strong>
+                      <button onClick={() => removeFromCart(item.id)} title="Remove item">
+                        <Trash2 size={15} />
                       </button>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))
               )}
             </div>
 
-            {/* Cart Footer */}
             {cart.length > 0 && (
-              <div className="p-8 border-t border-white/5 bg-slate-900/80 backdrop-blur-xl">
-                <div className="space-y-3 mb-6">
-                  <div className="flex justify-between items-center text-sm font-bold">
-                    <span className="text-slate-400">รายการรวม ({cartCount})</span>
-                    <span className="text-white">฿{cartTotal.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm font-bold">
-                    <span className="text-slate-400">ภาษีมูลค่าเพิ่ม (7%)</span>
-                    <span className="text-white">฿{(cartTotal * 0.07).toLocaleString()}</span>
-                  </div>
-                  <div className="pt-3 border-t border-white/5 flex justify-between items-center">
-                    <span className="text-xs font-black text-slate-500 uppercase tracking-widest">ยอดชำระสุทธิ (Grand Total)</span>
-                    <span className="text-2xl font-black text-emerald-400 tracking-tighter">฿{(cartTotal * 1.07).toLocaleString()}</span>
-                  </div>
+              <div className="cart-summary">
+                <div>
+                  <span>Subtotal</span>
+                  <strong>฿{cartTotal.toLocaleString()}</strong>
                 </div>
-                <div className="grid grid-cols-1 gap-3">
-                  <button className="w-full py-4 rounded-xl bg-indigo-500 text-white font-black hover:bg-indigo-600 transition-all shadow-xl shadow-indigo-500/30 uppercase tracking-[0.2em] text-[10px]">
-                    ยืนยันการทำรายการ
-                  </button>
-                  <button 
-                    onClick={() => setIsCartOpen(false)} 
-                    className="w-full py-3 rounded-xl border border-white/5 bg-white/5 text-slate-400 font-bold hover:bg-white/10 hover:text-white transition-all uppercase tracking-widest text-[10px]"
-                  >
-                    เลือกซื้อสินค้าต่อ
-                  </button>
+                <div>
+                  <span>VAT 7%</span>
+                  <strong>฿{Math.round(cartTotal * 0.07).toLocaleString()}</strong>
                 </div>
+                <div className="grand-total">
+                  <span>Grand total</span>
+                  <strong>฿{Math.round(cartTotal * 1.07).toLocaleString()}</strong>
+                </div>
+                <button className="checkout-button">Create quotation</button>
+                <button className="continue-button" onClick={() => setIsCartOpen(false)}>
+                  Continue browsing
+                </button>
               </div>
             )}
-          </div>
+          </aside>
         </div>
       )}
     </div>
