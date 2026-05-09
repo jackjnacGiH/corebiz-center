@@ -7,7 +7,6 @@ import {
   SUPABASE_ANON_KEY,
   SUPABASE_URL,
 } from "@/lib/config";
-import { jnacPath } from "@/lib/paths";
 import { LoginClient } from "@/app/login/login-client";
 
 export default async function LoginPage({
@@ -16,7 +15,7 @@ export default async function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const session = await getAdminSession();
-  if (session) redirect(jnacPath("/"));
+  if (session) redirect("/");
 
   const params = await searchParams;
   return (
