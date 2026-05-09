@@ -13,17 +13,29 @@ import {
   Trash2,
   X
 } from 'lucide-react';
+import { useLanguage } from '../i18n';
+
+type CategoryKey =
+  | 'all'
+  | 'abrasives'
+  | 'cutting'
+  | 'grinding'
+  | 'polishing'
+  | 'pneumaticTools'
+  | 'safety';
+type LeadTimeKey = 'ready' | 'twoThreeDays' | 'low';
+type UnitKey = 'pcs' | 'set' | 'pair' | 'roll';
 
 interface Product {
   id: string;
   name: string;
   price: number;
-  category: string;
+  category: Exclude<CategoryKey, 'all'>;
   stock: number;
   sku: string;
   brand: string;
-  unit: string;
-  leadTime: string;
+  unit: UnitKey;
+  leadTime: LeadTimeKey;
   imageTone: string;
 }
 
@@ -36,113 +48,127 @@ const catalogData: Product[] = [
     id: '1',
     name: 'Flap Disc Zirconia 4 inch #80',
     price: 38,
-    category: 'Abrasives',
+    category: 'abrasives',
     stock: 1420,
     sku: 'ABR-FD-4080',
     brand: 'J NAC',
     unit: 'pcs',
-    leadTime: 'พร้อมส่ง',
+    leadTime: 'ready',
     imageTone: 'tone-steel',
   },
   {
     id: '2',
     name: 'Cutting Wheel Stainless 4 inch',
     price: 22,
-    category: 'Cutting',
+    category: 'cutting',
     stock: 860,
     sku: 'CUT-SUS-4010',
     brand: 'PFERD',
     unit: 'pcs',
-    leadTime: 'พร้อมส่ง',
+    leadTime: 'ready',
     imageTone: 'tone-graphite',
   },
   {
     id: '3',
     name: 'U-Tools Air Die Grinder 6 mm',
     price: 1850,
-    category: 'Pneumatic Tools',
+    category: 'pneumaticTools',
     stock: 32,
     sku: 'UTO-ADG-600',
     brand: 'U-Tools',
     unit: 'set',
-    leadTime: '2-3 วัน',
+    leadTime: 'twoThreeDays',
     imageTone: 'tone-blue',
   },
   {
     id: '4',
     name: 'Mounted Point A36 10 x 20 mm',
     price: 44,
-    category: 'Grinding',
+    category: 'grinding',
     stock: 210,
     sku: 'GRD-MPA-1020',
     brand: 'Norton',
     unit: 'pcs',
-    leadTime: 'พร้อมส่ง',
+    leadTime: 'ready',
     imageTone: 'tone-copper',
   },
   {
     id: '5',
     name: 'Non-Woven Wheel 6 inch Medium',
     price: 245,
-    category: 'Polishing',
+    category: 'polishing',
     stock: 78,
     sku: 'POL-NWW-600M',
     brand: '3M',
     unit: 'pcs',
-    leadTime: 'พร้อมส่ง',
+    leadTime: 'ready',
     imageTone: 'tone-green',
   },
   {
     id: '6',
     name: 'Safety Glove Heat Resistant',
     price: 120,
-    category: 'Safety',
+    category: 'safety',
     stock: 12,
     sku: 'SAF-GLV-HR01',
     brand: 'J NAC',
     unit: 'pair',
-    leadTime: 'เหลือน้อย',
+    leadTime: 'low',
     imageTone: 'tone-amber',
   },
   {
     id: '7',
     name: 'Sandpaper Roll Alox #120',
     price: 590,
-    category: 'Abrasives',
+    category: 'abrasives',
     stock: 54,
     sku: 'ABR-SPR-120',
     brand: 'Klingspor',
     unit: 'roll',
-    leadTime: 'พร้อมส่ง',
+    leadTime: 'ready',
     imageTone: 'tone-sand',
   },
   {
     id: '8',
     name: 'Diamond Blade Concrete 7 inch',
     price: 680,
-    category: 'Cutting',
+    category: 'cutting',
     stock: 25,
     sku: 'CUT-DIA-700C',
     brand: 'Bosch',
     unit: 'pcs',
-    leadTime: '2-3 วัน',
+    leadTime: 'twoThreeDays',
     imageTone: 'tone-red',
   },
 ];
 
-const categories = ['All', 'Abrasives', 'Cutting', 'Grinding', 'Polishing', 'Pneumatic Tools', 'Safety'];
+const categories: CategoryKey[] = [
+  'all',
+  'abrasives',
+  'cutting',
+  'grinding',
+  'polishing',
+  'pneumaticTools',
+  'safety',
+];
 
 function getStockTone(stock: number) {
-  if (stock < 20) return { label: 'Low stock', className: 'status-warning' };
-  if (stock < 60) return { label: 'Watch', className: 'status-info' };
-  return { label: 'Ready', className: 'status-success' };
+  if (stock < 20) return { labelKey: 'low' as const, className: 'status-warning' };
+  if (stock < 60) return { labelKey: 'watch' as const, className: 'status-info' };
+  return { labelKey: 'ready' as const, className: 'status-success' };
 }
 
 export default function Ecommerce() {
+  const { language, t } = useLanguage();
+  const ecommerceText = t.ecommerce;
+  const locale = language === 'th' ? 'th-TH' : 'en-US';
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [selectedCategory, setSelectedCategory] = useState<CategoryKey>('all');
   const [isCartOpen, setIsCartOpen] = useState(false);
+
+  const formatNumber = (value: number) => value.toLocaleString(locale);
+  const formatCurrency = (value: number) => `฿${formatNumber(value)}`;
 
   const filteredProducts = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -153,7 +179,7 @@ export default function Ecommerce() {
         product.name.toLowerCase().includes(normalizedSearch) ||
         product.sku.toLowerCase().includes(normalizedSearch) ||
         product.brand.toLowerCase().includes(normalizedSearch);
-      const matchCategory = selectedCategory === 'All' || product.category === selectedCategory;
+      const matchCategory = selectedCategory === 'all' || product.category === selectedCategory;
 
       return matchSearch && matchCategory;
     });
@@ -192,52 +218,49 @@ export default function Ecommerce() {
     <div className="commerce-page">
       <section className="commerce-hero">
         <div>
-          <div className="eyebrow">B2B Commerce Workspace</div>
-          <h1>Industrial Product Catalog</h1>
-          <p>
-            Manage product availability, quote baskets, and sales-ready catalog items for
-            abrasive, cutting, grinding, and pneumatic tool customers.
-          </p>
+          <div className="eyebrow">{ecommerceText.eyebrow}</div>
+          <h1>{ecommerceText.title}</h1>
+          <p>{ecommerceText.description}</p>
         </div>
 
         <button
           onClick={() => setIsCartOpen(true)}
           className="commerce-cart-button"
-          title="Open quote cart"
+          title={ecommerceText.openQuoteCart}
         >
           <ShoppingCart size={18} />
-          Quote Cart
-          <span>{cartCount}</span>
+          {ecommerceText.quoteCart}
+          <span>{formatNumber(cartCount)}</span>
         </button>
       </section>
 
-      <section className="commerce-metrics" aria-label="Commerce overview">
+      <section className="commerce-metrics" aria-label={ecommerceText.overview}>
         <div className="metric-tile">
           <Package size={18} />
           <div>
-            <span>Products</span>
-            <strong>{catalogData.length}</strong>
+            <span>{ecommerceText.products}</span>
+            <strong>{formatNumber(catalogData.length)}</strong>
           </div>
         </div>
         <div className="metric-tile">
           <BarChart3 size={18} />
           <div>
-            <span>Inventory value</span>
-            <strong>฿{inventoryValue.toLocaleString()}</strong>
+            <span>{ecommerceText.inventoryValue}</span>
+            <strong>{formatCurrency(inventoryValue)}</strong>
           </div>
         </div>
         <div className="metric-tile">
           <ShoppingCart size={18} />
           <div>
-            <span>Quote items</span>
-            <strong>{cartCount}</strong>
+            <span>{ecommerceText.quoteItems}</span>
+            <strong>{formatNumber(cartCount)}</strong>
           </div>
         </div>
         <div className="metric-tile warning">
           <AlertTriangle size={18} />
           <div>
-            <span>Low stock</span>
-            <strong>{lowStockCount}</strong>
+            <span>{ecommerceText.lowStock}</span>
+            <strong>{formatNumber(lowStockCount)}</strong>
           </div>
         </div>
       </section>
@@ -247,13 +270,13 @@ export default function Ecommerce() {
           <Search size={18} />
           <input
             type="text"
-            placeholder="Search product name, SKU, or brand"
+            placeholder={ecommerceText.searchPlaceholder}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
 
-        <div className="commerce-filter-group" aria-label="Product categories">
+        <div className="commerce-filter-group" aria-label={ecommerceText.categoriesLabel}>
           <Filter size={16} />
           {categories.map((category) => (
             <button
@@ -261,25 +284,27 @@ export default function Ecommerce() {
               onClick={() => setSelectedCategory(category)}
               className={selectedCategory === category ? 'active' : ''}
             >
-              {category}
+              {ecommerceText.categories[category]}
             </button>
           ))}
         </div>
 
-        <button className="commerce-secondary-action" title="More filters">
+        <button className="commerce-secondary-action" title={ecommerceText.moreFilters}>
           <SlidersHorizontal size={17} />
-          Filters
+          {ecommerceText.filters}
         </button>
       </section>
 
       <section className="commerce-list-header">
         <div>
-          <h2>Product shelf</h2>
-          <p>{filteredProducts.length} items matched</p>
+          <h2>{ecommerceText.productShelf}</h2>
+          <p>
+            {formatNumber(filteredProducts.length)} {ecommerceText.itemsMatched}
+          </p>
         </div>
-        <div className="list-view-toggle" aria-label="View mode">
-          <button className="active">Grid</button>
-          <button>Table</button>
+        <div className="list-view-toggle" aria-label={ecommerceText.viewMode}>
+          <button className="active">{ecommerceText.grid}</button>
+          <button>{ecommerceText.table}</button>
         </div>
       </section>
 
@@ -291,7 +316,7 @@ export default function Ecommerce() {
             <article key={item.id} className="commerce-product-card">
               <div className={`product-visual ${item.imageTone}`}>
                 <Package size={34} />
-                <span>{item.category}</span>
+                <span>{ecommerceText.categories[item.category]}</span>
               </div>
 
               <div className="product-card-body">
@@ -305,19 +330,23 @@ export default function Ecommerce() {
                 <div className="product-card-details">
                   <span className={stockTone.className}>
                     <CheckCircle2 size={13} />
-                    {stockTone.label}
+                    {ecommerceText.stock[stockTone.labelKey]}
                   </span>
-                  <span>{item.leadTime}</span>
+                  <span>{ecommerceText.leadTimes[item.leadTime]}</span>
                 </div>
 
                 <div className="product-card-footer">
                   <div>
-                    <strong>฿{item.price.toLocaleString()}</strong>
+                    <strong>{formatCurrency(item.price)}</strong>
                     <span>
-                      {item.stock.toLocaleString()} {item.unit} available
+                      {formatNumber(item.stock)} {ecommerceText.units[item.unit]}{' '}
+                      {ecommerceText.available}
                     </span>
                   </div>
-                  <button onClick={() => addToCart(item)} title={`Add ${item.name} to quote`}>
+                  <button
+                    onClick={() => addToCart(item)}
+                    title={`${ecommerceText.addToQuote}: ${item.name}`}
+                  >
                     <Plus size={17} />
                   </button>
                 </div>
@@ -330,8 +359,8 @@ export default function Ecommerce() {
       {filteredProducts.length === 0 && (
         <div className="commerce-empty-state">
           <Package size={42} />
-          <strong>No products found</strong>
-          <span>Try another SKU, brand, or category.</span>
+          <strong>{ecommerceText.noProducts}</strong>
+          <span>{ecommerceText.noProductsHint}</span>
         </div>
       )}
 
@@ -340,17 +369,19 @@ export default function Ecommerce() {
           <button
             type="button"
             className="cart-backdrop"
-            aria-label="Close quote cart"
+            aria-label={ecommerceText.closeQuoteCart}
             onClick={() => setIsCartOpen(false)}
           />
 
-          <aside className="cart-content" aria-label="Quote cart">
+          <aside className="cart-content" aria-label={ecommerceText.quoteCart}>
             <div className="cart-drawer-header">
               <div>
-                <span>Quote basket</span>
-                <h2>{cartCount} selected items</h2>
+                <span>{ecommerceText.quoteBasket}</span>
+                <h2>
+                  {formatNumber(cartCount)} {ecommerceText.selectedItems}
+                </h2>
               </div>
-              <button onClick={() => setIsCartOpen(false)} title="Close cart">
+              <button onClick={() => setIsCartOpen(false)} title={ecommerceText.closeCart}>
                 <X size={20} />
               </button>
             </div>
@@ -359,8 +390,8 @@ export default function Ecommerce() {
               {cart.length === 0 ? (
                 <div className="cart-empty">
                   <ShoppingCart size={42} />
-                  <strong>Your quote cart is empty</strong>
-                  <span>Add products from the catalog to prepare a quotation.</span>
+                  <strong>{ecommerceText.emptyCart}</strong>
+                  <span>{ecommerceText.emptyCartHint}</span>
                 </div>
               ) : (
                 cart.map((item) => (
@@ -372,22 +403,28 @@ export default function Ecommerce() {
                     <div className="cart-line-info">
                       <strong>{item.name}</strong>
                       <span>
-                        {item.sku} · ฿{item.price.toLocaleString()} / {item.unit}
+                        {item.sku} / {formatCurrency(item.price)} / {ecommerceText.units[item.unit]}
                       </span>
                       <div className="quantity-stepper">
-                        <button onClick={() => updateQty(item.id, item.qty - 1)} title="Decrease quantity">
+                        <button
+                          onClick={() => updateQty(item.id, item.qty - 1)}
+                          title={ecommerceText.decreaseQuantity}
+                        >
                           <Minus size={14} />
                         </button>
-                        <span>{item.qty}</span>
-                        <button onClick={() => updateQty(item.id, item.qty + 1)} title="Increase quantity">
+                        <span>{formatNumber(item.qty)}</span>
+                        <button
+                          onClick={() => updateQty(item.id, item.qty + 1)}
+                          title={ecommerceText.increaseQuantity}
+                        >
                           <Plus size={14} />
                         </button>
                       </div>
                     </div>
 
                     <div className="cart-line-total">
-                      <strong>฿{(item.price * item.qty).toLocaleString()}</strong>
-                      <button onClick={() => removeFromCart(item.id)} title="Remove item">
+                      <strong>{formatCurrency(item.price * item.qty)}</strong>
+                      <button onClick={() => removeFromCart(item.id)} title={ecommerceText.removeItem}>
                         <Trash2 size={15} />
                       </button>
                     </div>
@@ -399,20 +436,20 @@ export default function Ecommerce() {
             {cart.length > 0 && (
               <div className="cart-summary">
                 <div>
-                  <span>Subtotal</span>
-                  <strong>฿{cartTotal.toLocaleString()}</strong>
+                  <span>{ecommerceText.subtotal}</span>
+                  <strong>{formatCurrency(cartTotal)}</strong>
                 </div>
                 <div>
-                  <span>VAT 7%</span>
-                  <strong>฿{Math.round(cartTotal * 0.07).toLocaleString()}</strong>
+                  <span>{ecommerceText.vat}</span>
+                  <strong>{formatCurrency(Math.round(cartTotal * 0.07))}</strong>
                 </div>
                 <div className="grand-total">
-                  <span>Grand total</span>
-                  <strong>฿{Math.round(cartTotal * 1.07).toLocaleString()}</strong>
+                  <span>{ecommerceText.grandTotal}</span>
+                  <strong>{formatCurrency(Math.round(cartTotal * 1.07))}</strong>
                 </div>
-                <button className="checkout-button">Create quotation</button>
+                <button className="checkout-button">{ecommerceText.createQuotation}</button>
                 <button className="continue-button" onClick={() => setIsCartOpen(false)}>
-                  Continue browsing
+                  {ecommerceText.continueBrowsing}
                 </button>
               </div>
             )}
