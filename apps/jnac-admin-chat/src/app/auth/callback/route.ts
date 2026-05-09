@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 
 import { isAdminEmail } from "@/lib/config";
@@ -11,12 +10,12 @@ export async function GET(request: Request) {
   const supabase = await getSupabaseServerClient();
 
   if (!code || !supabase) {
-    redirect(jnacPath("/login?error=missing_code"));
+    return NextResponse.redirect(new URL(jnacPath("/login?error=missing_code"), request.url));
   }
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    redirect(jnacPath("/login?error=auth_failed"));
+    return NextResponse.redirect(new URL(jnacPath("/login?error=auth_failed"), request.url));
   }
 
   const {

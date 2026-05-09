@@ -3,7 +3,6 @@ import Link from "next/link";
 
 import { getAdminSession } from "@/lib/auth";
 import { listChatMessages } from "@/lib/chat-store";
-import { jnacPath } from "@/lib/paths";
 
 export default async function HistoryDetailPage({
   params,
@@ -11,7 +10,7 @@ export default async function HistoryDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const session = await getAdminSession();
-  if (!session) redirect(jnacPath("/login"));
+  if (!session) redirect("/login");
 
   const { id } = await params;
   const messages = await listChatMessages(id, session.email);
