@@ -1,246 +1,319 @@
-import { useState } from 'react';
-import { Package, Plus, Search, Edit2, Trash2, AlertTriangle, TrendingUp, DollarSign, BarChart2, Filter, Activity } from 'lucide-react';
-import ProductModal from '../components/ProductModal';
+import { useEffect, useMemo, useState } from 'react';
+import { Package, Plus, Search, Edit2, Trash2, AlertTriangle, DollarSign, RefreshCw } from 'lucide-react';
+import ProductModal, { type ProductFormData } from '../components/ProductModal';
+import {
+  productsApi,
+  inventoryApi,
+  categoriesApi,
+  warehousesApi,
+  type ProductWithInventory,
+} from '../lib/api';
+import type { Category, Warehouse } from '../lib/database.types';
+import { useLanguage } from '../i18n';
+import { useRealtimeTable } from '../lib/useRealtimeTable';
 
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  stock: number;
-  category: string;
+type StockStatus = 'out' | 'low' | 'warning' | 'normal';
+
+function deriveStatus(p: ProductWithInventory): StockStatus {
+  if (p.total_quantity === 0) return 'out';
+  if (p.low_stock) return 'low';
+  if (p.total_quantity < 50) return 'warning';
+  return 'normal';
 }
 
-const mockData: Product[] = [
-  { id: '1', name: 'กระดาษทรายกลมสักหลาด 5"', price: 15, stock: 1500, category: 'Abrasives' },
-  { id: '2', name: 'ใบเจียรเหล็ก 4"', price: 25, stock: 850, category: 'Abrasives' },
-  { id: '3', name: 'สว่านไฟฟ้า 12V', price: 1290, stock: 45, category: 'Power Tools' },
-  { id: '4', name: 'ประแจปากตาย 8mm', price: 89, stock: 320, category: 'Hand Tools' },
-  { id: '5', name: 'หมวกนิรภัย PPE Class A', price: 249, stock: 200, category: 'Safety' },
-  { id: '6', name: 'ถุงมือหนังทนความร้อน', price: 120, stock: 8, category: 'Safety' },
-];
-
-const CATEGORIES = ['All', 'Abrasives', 'Power Tools', 'Hand Tools', 'Safety', 'General'];
-
-function getStockStatus(stock: number) {
-  if (stock === 0) return { label: 'หมด', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20' };
-  if (stock < 10) return { label: 'ใกล้หมด', color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' };
-  if (stock < 50) return { label: 'ต่ำ', color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20' };
-  return { label: 'ปกติ', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' };
-}
+const STATUS_STYLES: Record<StockStatus, { color: string; bg: string; border: string }> = {
+  out:     { color: 'text-rose-400',    bg: 'bg-rose-500/10',    border: 'border-rose-500/20' },
+  low:     { color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/20' },
+  warning: { color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/20' },
+  normal:  { color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+};
 
 export default function Inventory() {
-  const [products, setProducts] = useState<Product[]>(mockData);
+  const { t } = useLanguage();
+  const [products, setProducts] = useState<ProductWithInventory[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingProduct, setEditingProduct] = useState<ProductWithInventory | null>(null);
+
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
 
-  const handleSave = (product: Product) => {
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const [p, c, w] = await Promise.all([
+        productsApi.list(),
+        categoriesApi.list(),
+        warehousesApi.list(),
+      ]);
+      setProducts(p);
+      setCategories(c);
+      setWarehouses(w);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void load(); }, []);
+  useRealtimeTable('products', () => void load());
+  useRealtimeTable('inventory', () => void load());
+
+  const filtered = useMemo(() => {
+    return products.filter(p => {
+      if (selectedCategoryId !== 'all' && p.category_id !== selectedCategoryId) return false;
+      if (!search) return true;
+      const s = search.toLowerCase();
+      return p.name_th.toLowerCase().includes(s)
+        || (p.name_en?.toLowerCase().includes(s) ?? false)
+        || p.sku.toLowerCase().includes(s)
+        || (p.brand?.toLowerCase().includes(s) ?? false);
+    });
+  }, [products, search, selectedCategoryId]);
+
+  const stats = useMemo(() => {
+    const value = products.reduce((acc, p) => acc + p.total_quantity * Number(p.price), 0);
+    const lowCount = products.filter(p => p.low_stock || p.total_quantity === 0).length;
+    return { count: products.length, value, lowCount };
+  }, [products]);
+
+  const defaultWarehouseId = warehouses.find(w => w.is_default)?.id;
+
+  async function handleSave(form: ProductFormData) {
     if (editingProduct) {
-      setProducts(products.map(p => p.id === product.id ? product : p));
+      await productsApi.update(editingProduct.id, {
+        name_th: form.name_th,
+        name_en: form.name_en || null,
+        category_id: form.category_id,
+        brand: form.brand || null,
+        unit: form.unit,
+        price: form.price,
+        cost: form.cost,
+        status: form.status,
+      });
+      const inv = editingProduct.inventory[0];
+      if (inv) {
+        await inventoryApi.adjustQuantity(inv.id, form.initial_quantity);
+      } else if (defaultWarehouseId) {
+        await inventoryApi.upsert({
+          product_id: editingProduct.id,
+          warehouse_id: defaultWarehouseId,
+          quantity: form.initial_quantity,
+          reorder_level: form.reorder_level,
+        });
+      }
     } else {
-      setProducts([...products, product]);
+      if (!defaultWarehouseId) throw new Error('ไม่พบ default warehouse');
+      const newProd = await productsApi.create({
+        sku: form.sku,
+        name_th: form.name_th,
+        name_en: form.name_en || null,
+        category_id: form.category_id,
+        brand: form.brand || null,
+        unit: form.unit,
+        price: form.price,
+        cost: form.cost,
+        status: form.status,
+      });
+      await inventoryApi.upsert({
+        product_id: newProd.id,
+        warehouse_id: defaultWarehouseId,
+        quantity: form.initial_quantity,
+        reorder_level: form.reorder_level,
+      });
     }
-  };
+    await load();
+  }
 
-  const handleDelete = (id: string) => {
-    if (window.confirm('ยืนยันการลบสินค้านี้?')) {
-      setProducts(products.filter(p => p.id !== id));
+  async function handleDelete(p: ProductWithInventory) {
+    if (!window.confirm(t.inventory.confirmDelete)) return;
+    try {
+      await productsApi.remove(p.id);
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
     }
-  };
-
-  const openEditModal = (product: Product) => {
-    setEditingProduct(product);
-    setIsModalOpen(true);
-  };
-
-  const openAddModal = () => {
-    setEditingProduct(null);
-    setIsModalOpen(true);
-  };
-
-  const filtered = products.filter(p => {
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.id.includes(search);
-    const matchCat = selectedCategory === 'All' || p.category === selectedCategory;
-    return matchSearch && matchCat;
-  });
-
-  const totalValue = products.reduce((sum, p) => sum + p.price * p.stock, 0);
-  const lowStockCount = products.filter(p => p.stock < 10).length;
-  const outOfStock = products.filter(p => p.stock === 0).length;
+  }
 
   return (
-    <div className="animate-fade-in space-y-6">
-
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="animate-fade-in p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-3">
-            <Package size={28} className="text-indigo-400" />
-            Inventory Management
+          <h1 className="text-3xl font-bold flex items-center gap-3 text-white">
+            <Package className="w-8 h-8 text-indigo-400" />
+            {t.inventory.title}
           </h1>
-          <p className="text-slate-400 mt-1">จัดการคลังสินค้าและสต๊อกขององค์กรแบบเรียลไทม์</p>
+          <p className="text-slate-400 mt-1">{t.inventory.subtitle}</p>
         </div>
-        <button
-          onClick={openAddModal}
-          className="btn btn-primary shadow-lg shadow-indigo-500/20 py-2.5"
-          title="เพิ่มสินค้าใหม่"
-        >
-          <Plus size={18} />
-          <span>เพิ่มสินค้าใหม่</span>
-        </button>
-      </div>
 
-      {/* KPI Stats Section */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { icon: <Package size={20} />, label: 'รายการสินค้า', value: products.length, unit: 'รายการ', color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
-          { icon: <DollarSign size={20} />, label: 'มูลค่าคลังสินค้า', value: `฿${totalValue.toLocaleString()}`, unit: '', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-          { icon: <AlertTriangle size={20} />, label: 'สต๊อกต่ำ', value: lowStockCount, unit: 'รายการ', color: 'text-amber-400', bg: 'bg-amber-500/10' },
-          { icon: <BarChart2 size={20} />, label: 'หมดสต๊อก', value: outOfStock, unit: 'รายการ', color: 'text-rose-400', bg: 'bg-rose-500/10' },
-        ].map((stat, i) => (
-          <div key={i} className="glass-card hover:bg-white/[0.04] transition-colors duration-200">
-            <div className="flex items-center gap-4">
-              <div className={`w-11 h-11 rounded-xl ${stat.bg} ${stat.color} flex items-center justify-center flex-shrink-0`}>
-                {stat.icon}
-              </div>
-              <div>
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">{stat.label}</div>
-                <div className="text-xl font-bold text-white mt-0.5">
-                  {stat.value} <span className="text-xs text-slate-500 font-normal">{stat.unit}</span>
-                </div>
-              </div>
-            </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => load()}
+            className="btn btn-secondary flex items-center gap-2"
+            title="Reload"
+            disabled={loading}
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <div className="relative">
+            <input
+              type="text"
+              placeholder={t.common.search + '...'}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="bg-gray-800/50 border border-gray-700/50 text-white text-sm rounded-lg pl-10 pr-3 py-2.5 w-64 focus:border-indigo-500 outline-none"
+            />
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
           </div>
-        ))}
+          <button
+            onClick={() => { setEditingProduct(null); setIsModalOpen(true); }}
+            className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white font-medium py-2 px-4 rounded-lg shadow-lg shadow-indigo-500/20"
+          >
+            <Plus size={18} /> {t.inventory.addProduct}
+          </button>
+        </div>
       </div>
 
-      {/* Filter & Search Controls */}
-      <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-center">
-        <div className="flex-1 min-w-[280px] relative group">
-          <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
-          <input
-            type="text"
-            placeholder="ค้นหาสินค้า หรือ รหัส..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full bg-slate-900/50 border border-white/5 rounded-xl py-3 pl-11 pr-4 text-white placeholder:text-slate-600 outline-none focus:border-indigo-500/50 transition-all shadow-inner"
-            title="ค้นหาสินค้า"
-          />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="glass-card flex items-center gap-4 py-4 px-5">
+          <div className="bg-indigo-500/20 p-3 rounded-xl border border-indigo-500/30">
+            <Package className="w-6 h-6 text-indigo-400" />
+          </div>
+          <div>
+            <p className="text-sm text-slate-400">{t.inventory.table.name}</p>
+            <h3 className="text-2xl font-bold text-white">{stats.count}</h3>
+          </div>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 lg:pb-0 custom-scrollbar">
-          <span className="text-slate-500 p-2"><Filter size={16} /></span>
-          {CATEGORIES.map(cat => (
+        <div className="glass-card flex items-center gap-4 py-4 px-5">
+          <div className="bg-emerald-500/20 p-3 rounded-xl border border-emerald-500/30">
+            <DollarSign className="w-6 h-6 text-emerald-400" />
+          </div>
+          <div>
+            <p className="text-sm text-slate-400">มูลค่าสต๊อก</p>
+            <h3 className="text-2xl font-bold text-emerald-400">฿{stats.value.toLocaleString()}</h3>
+          </div>
+        </div>
+        <div className="glass-card flex items-center gap-4 py-4 px-5">
+          <div className="bg-amber-500/20 p-3 rounded-xl border border-amber-500/30">
+            <AlertTriangle className="w-6 h-6 text-amber-400" />
+          </div>
+          <div>
+            <p className="text-sm text-slate-400">{t.inventory.lowStockAlert}</p>
+            <h3 className="text-2xl font-bold text-amber-400">{stats.lowCount}</h3>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setSelectedCategoryId('all')}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+            selectedCategoryId === 'all'
+              ? 'bg-indigo-500 border-indigo-500 text-white'
+              : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
+          }`}
+        >
+          ทั้งหมด ({products.length})
+        </button>
+        {categories.map(c => {
+          const count = products.filter(p => p.category_id === c.id).length;
+          return (
             <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${
-                selectedCategory === cat 
-                ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' 
-                : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+              key={c.id}
+              onClick={() => setSelectedCategoryId(c.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+                selectedCategoryId === c.id
+                  ? 'bg-indigo-500 border-indigo-500 text-white'
+                  : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
               }`}
-              title={`หมวดหมู่ ${cat}`}
-            >{cat}</button>
-          ))}
-        </div>
+            >
+              {c.name_th} ({count})
+            </button>
+          );
+        })}
       </div>
 
-      {/* Data Table Section */}
-      <div className="glass-card overflow-hidden border border-white/5">
-        <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-white/5 border-b border-white/5">
-                <th className="text-left py-4 px-6 text-xs font-bold text-slate-400 uppercase tracking-widest">รหัส</th>
-                <th className="text-left py-4 px-6 text-xs font-bold text-slate-400 uppercase tracking-widest">ชื่อสินค้า</th>
-                <th className="text-left py-4 px-6 text-xs font-bold text-slate-400 uppercase tracking-widest">หมวดหมู่</th>
-                <th className="text-right py-4 px-6 text-xs font-bold text-slate-400 uppercase tracking-widest">ราคาทุน</th>
-                <th className="text-right py-4 px-6 text-xs font-bold text-slate-400 uppercase tracking-widest">สต๊อก</th>
-                <th className="text-center py-4 px-6 text-xs font-bold text-slate-400 uppercase tracking-widest">จัดการ</th>
+      {err && (
+        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+          ✗ {err}
+        </div>
+      )}
+
+      <div className="glass-card overflow-hidden p-0 border border-gray-800">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left">
+            <thead className="bg-gray-800/50 border-b border-gray-700/50">
+              <tr>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider">SKU</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider">{t.inventory.table.name}</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider">{t.inventory.table.category}</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-right">{t.inventory.table.price}</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-right">{t.inventory.table.stock}</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-center">สถานะ</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-center">{t.common.actions}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-20 text-center">
-                    <div className="flex flex-col items-center opacity-20">
-                      <Package size={56} className="mb-4" />
-                      <p className="text-xl font-medium">ไม่พบรายการที่มีข้อมูล</p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((product) => {
-                  const status = getStockStatus(product.stock);
-                  return (
-                    <tr 
-                      key={product.id} 
-                      className="group hover:bg-indigo-500/[0.03] transition-colors"
-                    >
-                      <td className="py-4 px-6 font-mono text-sm text-slate-500 group-hover:text-indigo-400 transition-colors">
-                        #{product.id.padStart(4, '0')}
-                      </td>
-                      <td className="py-4 px-6 font-bold text-slate-200">{product.name}</td>
-                      <td className="py-4 px-6">
-                        <span className="px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-bold text-indigo-400 uppercase">
-                          {product.category}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-right font-bold text-white tracking-wider">
-                        ฿{product.price.toLocaleString()}
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        <div className="flex flex-col items-end">
-                          <span className={`text-sm font-black ${status.color}`}>
-                            {product.stock.toLocaleString()}
-                          </span>
-                          <span className={`${status.bg} ${status.color} ${status.border} border text-[9px] font-black px-2 py-0.5 rounded-md uppercase mt-1`}>
-                            {status.label}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-4 px-6">
-                        <div className="flex justify-center gap-2">
-                          <button
-                            onClick={() => openEditModal(product)}
-                            className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white transition-all border border-indigo-500/20"
-                            title="แก้ไขสินค้า"
-                          >
-                            <Edit2 size={15} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(product.id)}
-                            className="p-2 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white transition-all border border-rose-500/20"
-                            title="ลบสินค้า"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+            <tbody className="divide-y divide-gray-800/50">
+              {loading && (
+                <tr><td colSpan={7} className="py-12 text-center text-slate-500">{t.common.loading}</td></tr>
               )}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={7} className="py-12 text-center text-slate-500">{t.common.noData}</td></tr>
+              )}
+              {!loading && filtered.map(p => {
+                const status = deriveStatus(p);
+                const s = STATUS_STYLES[status];
+                return (
+                  <tr key={p.id} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="py-3 px-4 text-sm font-mono text-indigo-400">{p.sku}</td>
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-gray-100">{p.name_th}</div>
+                      {p.brand && <div className="text-xs text-slate-500 mt-0.5">{p.brand}</div>}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-slate-400">
+                      {p.category?.name_th ?? '—'}
+                    </td>
+                    <td className="py-3 px-4 text-right font-semibold text-emerald-400">
+                      ฿{Number(p.price).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="font-bold text-white">{p.total_quantity}</div>
+                      <div className="text-xs text-slate-500">{p.unit}</div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold border ${s.bg} ${s.color} ${s.border}`}>
+                        {t.inventory.stockStatus[status]}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={() => { setEditingProduct(p); setIsModalOpen(true); }}
+                          className="p-2 text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded transition"
+                          title={t.common.edit}
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(p)}
+                          className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition"
+                          title={t.common.delete}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        </div>
-
-        {/* Table Summary Footer */}
-        <div className="bg-slate-900/40 px-6 py-4 border-t border-white/5 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-            <Activity size={14} />
-            แสดง {filtered.length} จาก {products.length} รายการ
-          </div>
-          <div className="flex items-center gap-6">
-             <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
-                <span>มูลค่ารวม:</span>
-                <span className="text-indigo-400 text-sm">฿{totalValue.toLocaleString()}</span>
-             </div>
-             <div className="flex items-center gap-2">
-                <TrendingUp size={14} className="text-emerald-400" />
-                <span className="text-[10px] font-black text-emerald-400/80 uppercase">In Sync</span>
-             </div>
-          </div>
         </div>
       </div>
 
@@ -249,6 +322,7 @@ export default function Inventory() {
         onClose={() => setIsModalOpen(false)}
         onSave={handleSave}
         editingProduct={editingProduct}
+        categories={categories}
       />
     </div>
   );

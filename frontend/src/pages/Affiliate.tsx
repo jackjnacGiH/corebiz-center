@@ -1,301 +1,230 @@
-import React, { useState } from 'react';
-import { 
-    Link as LinkIcon, 
-    Copy, 
-    TrendingUp, 
-    ShoppingBag, 
-    DollarSign, 
-    CheckCircle2, 
-    Clock, 
-    ExternalLink,
-    ChevronRight,
-    Search
-} from 'lucide-react';
-import { 
-    AreaChart, 
-    Area, 
-    XAxis, 
-    YAxis, 
-    CartesianGrid, 
-    Tooltip, 
-    ResponsiveContainer 
-} from 'recharts';
+import { useEffect, useMemo, useState } from 'react';
+import { Handshake, Award, TrendingUp, Link2, Copy, RefreshCw, CheckCircle, Clock, Ban } from 'lucide-react';
+import { agentsApi, type Agent, type AgentLink } from '../lib/api';
+import { useLanguage } from '../i18n';
 
-const mockChartData = [
-    { name: '01 Apr', sales: 4000, commission: 2400 },
-    { name: '02 Apr', sales: 3000, commission: 1398 },
-    { name: '03 Apr', sales: 2000, commission: 9800 },
-    { name: '04 Apr', sales: 2780, commission: 3908 },
-    { name: '05 Apr', sales: 1890, commission: 4800 },
-    { name: '06 Apr', sales: 2390, commission: 3800 },
-    { name: '07 Apr', sales: 3490, commission: 4300 },
-];
-
-const mockRecentReferrals = [
-    { id: '1', date: '2026-04-07 14:12', user: 'Somchai Jaidee', order: '#ORD-9921', amount: 12500, commission: 1250, status: 'Success' },
-    { id: '2', date: '2026-04-07 11:45', user: 'Wichai Rakthai', order: '#ORD-9918', amount: 3200, commission: 320, status: 'Pending' },
-    { id: '3', date: '2026-04-06 20:05', user: 'Anong Sornsin', order: '#ORD-9905', amount: 8400, commission: 840, status: 'Success' },
-    { id: '4', date: '2026-04-06 18:30', user: 'Piti Manee', order: '#ORD-9902', amount: 1500, commission: 150, status: 'Success' },
-    { id: '5', date: '2026-04-05 09:12', user: 'Somsak King', order: '#ORD-9888', amount: 45000, commission: 4500, status: 'Cancelled' },
-];
-
-const Affiliate: React.FC = () => {
-    const [referralLink] = useState('https://corebiz.center/ref?id=AFFID9902');
-    const [copied, setCopied] = useState(false);
-
-    const handleCopy = () => {
-        navigator.clipboard.writeText(referralLink);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
-    return (
-        <div className="animate-fade-in space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold">ระบบตัวแทนขาย (Affiliate Dashboard)</h1>
-                    <p className="text-muted text-sm mt-1">ติดตามประสิทธิภาพการแนะนำเพื่อนและรายได้ของคุณ</p>
-                </div>
-                <div className="flex gap-2">
-                    <button className="btn btn-secondary flex items-center gap-2">
-                        <DollarSign size={18} /> แจ้งถอนเงิน
-                    </button>
-                    <button className="btn btn-primary flex items-center gap-2 text-white">
-                        <ExternalLink size={18} /> ดูคู่มือตัวแทน
-                    </button>
-                </div>
-            </div>
-
-            {/* Overview Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="glass-card p-6 flex items-start justify-between">
-                    <div>
-                        <p className="text-sm text-muted mb-1">ยอดคลิกลิงก์สะสม</p>
-                        <h3 className="text-2xl font-bold">1,452</h3>
-                        <span className="text-xs text-green-500 font-medium flex items-center mt-2">
-                            <TrendingUp size={12} className="mr-1" /> +12% จากสัปดาห์ที่แล้ว
-                        </span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-primary/10 text-primary">
-                        <LinkIcon size={24} />
-                    </div>
-                </div>
-                
-                <div className="glass-card p-6 flex items-start justify-between">
-                    <div>
-                        <p className="text-sm text-muted mb-1">จำนวนออเดอร์ยอดคงเหลือ</p>
-                        <h3 className="text-2xl font-bold">84</h3>
-                        <span className="text-xs text-green-500 font-medium flex items-center mt-2">
-                            <TrendingUp size={12} className="mr-1" /> +5% จากสัปดาห์ที่แล้ว
-                        </span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500">
-                        <ShoppingBag size={24} />
-                    </div>
-                </div>
-
-                <div className="glass-card p-6 flex items-start justify-between">
-                    <div>
-                        <p className="text-sm text-muted mb-1">ค่าคอมมิชชันรอเบิก (฿)</p>
-                        <h3 className="text-2xl font-bold text-primary">฿12,450.00</h3>
-                        <button className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full mt-2 font-medium hover:bg-primary/20 transition-colors">
-                            รออนุมัติ: ฿3,200
-                        </button>
-                    </div>
-                    <div className="p-3 rounded-xl bg-green-500/10 text-green-500">
-                        <DollarSign size={24} />
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Affiliate Link Section */}
-                <div className="lg:col-span-1 space-y-6">
-                    <div className="glass-card p-6">
-                        <h4 className="font-semibold mb-4 flex items-center gap-2">
-                            <LinkIcon size={18} className="text-primary" /> ลิงก์แนะนำของคุณ
-                        </h4>
-                        <p className="text-sm text-muted mb-4">
-                            แชร์ลิงก์นี้ให้กับเพื่อนหรือลูกค้าของคุณเพื่อรับค่าคอมมิชชันเมื่อมีการสั่งซื้อ
-                        </p>
-                        <div className="flex items-center gap-2 p-3 bg-background/50 border border-border rounded-lg mb-4">
-                            <input 
-                                type="text" 
-                                value={referralLink} 
-                                readOnly 
-                                title="Referral Link"
-                                className="bg-transparent border-none focus:ring-0 text-sm flex-1 truncate"
-                            />
-                            <button 
-                                onClick={handleCopy}
-                                className={`p-2 rounded-md transition-all ${copied ? 'bg-green-500 text-white' : 'hover:bg-primary/10 text-primary'}`}
-                                title="Copy Link"
-                            >
-                                {copied ? <CheckCircle2 size={18} /> : <Copy size={18} />}
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <button className="btn btn-secondary text-xs h-9">แชร์ไป Facebook</button>
-                            <button className="btn btn-secondary text-xs h-9">แชร์ไป Line</button>
-                        </div>
-                    </div>
-
-                    <div className="glass-card p-6">
-                        <h4 className="font-semibold mb-4">ระดับโปรแกรม (Affiliate Tier)</h4>
-                        <div className="space-y-4">
-                            <div className="flex justify-between items-end mb-1 text-sm">
-                                <span className="font-medium">Silver Member (5%)</span>
-                                <span className="text-xs text-muted">เป้าหมาย: ฿100,000</span>
-                            </div>
-                            <div className="w-full bg-border rounded-full h-1.5 overflow-hidden">
-                                <div className="bg-primary h-full w-[65%]"></div>
-                            </div>
-                            <p className="text-xs text-muted text-center">
-                                มียอดขายสะสมอีกเพียง ฿35,000 เพื่อเลื่อนเป็น Gold (8%)
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Performance Chart */}
-                <div className="lg:col-span-2 glass-card p-6">
-                    <div className="flex items-center justify-between mb-6">
-                        <h4 className="font-semibold">สถิติผลตอบแทน (ย้อนหลัง 7 วัน)</h4>
-                        <select className="bg-background border border-border rounded-md px-2 py-1 text-xs" title="Select time range">
-                            <option>7 วันล่าสุด</option>
-                            <option>30 วันล่าสุด</option>
-                        </select>
-                    </div>
-                    <div className="h-[250px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={mockChartData}>
-                                <defs>
-                                    <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
-                                        <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                                <XAxis 
-                                    dataKey="name" 
-                                    axisLine={false} 
-                                    tickLine={false} 
-                                    tick={{fontSize: 12, fill: 'var(--text-muted)'}}
-                                />
-                                <YAxis 
-                                    axisLine={false} 
-                                    tickLine={false} 
-                                    tick={{fontSize: 12, fill: 'var(--text-muted)'}}
-                                />
-                                <Tooltip 
-                                    contentStyle={{ 
-                                        backgroundColor: 'rgba(23, 23, 23, 0.95)', 
-                                        borderRadius: '12px', 
-                                        border: '1px solid rgba(255,255,255,0.1)',
-                                        boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)'
-                                    }}
-                                />
-                                <Area 
-                                    type="monotone" 
-                                    dataKey="sales" 
-                                    stroke="var(--primary)" 
-                                    fillOpacity={1} 
-                                    fill="url(#colorSales)" 
-                                    strokeWidth={3}
-                                />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </div>
-                    <div className="grid grid-cols-2 mt-6 pt-6 border-t border-border/50">
-                        <div className="text-center border-r border-border/50">
-                            <p className="text-xs text-muted">Conversion Rate</p>
-                            <p className="text-lg font-bold">5.78%</p>
-                        </div>
-                        <div className="text-center">
-                            <p className="text-xs text-muted">เฉลี่ยต่อออเดอร์</p>
-                            <p className="text-lg font-bold">฿1,480</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Recent Referrals Table */}
-            <div className="glass-card overflow-hidden">
-                <div className="p-6 border-b border-border/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <h4 className="font-semibold">รายชื่อผู้สมัครหรือออเดอร์ล่าสุด</h4>
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
-                        <input 
-                            type="text" 
-                            placeholder="ค้นหาลูกค้า/ออเดอร์..." 
-                            title="Search referrals"
-                            className="pl-10 pr-4 py-1.5 bg-background/50 border border-border rounded-lg text-sm focus:ring-1 focus:ring-primary outline-none transition-all w-full md:w-64"
-                        />
-                    </div>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="bg-muted/30 text-xs font-semibold text-muted uppercase tracking-wider">
-                                <th className="px-6 py-4">วันที่ - เวลา</th>
-                                <th className="px-6 py-4">ลูกค้า / เลขออเดอร์</th>
-                                <th className="px-6 py-4 text-right">ยอดสั่งซื้อ</th>
-                                <th className="px-6 py-4 text-center">สถานะค่าคอมมิชชัน</th>
-                                <th className="px-6 py-4 text-right">ค่าคอมมิชชัน</th>
-                                <th className="px-6 py-4"></th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border/50">
-                            {mockRecentReferrals.map((item) => (
-                                <tr key={item.id} className="hover:bg-white/5 transition-colors group">
-                                    <td className="px-6 py-4 text-sm font-medium">
-                                        <p>{item.date.split(' ')[0]}</p>
-                                        <p className="text-xs text-muted font-normal">{item.date.split(' ')[1]}</p>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold">
-                                                {item.user.split(' ')[0][0]}{item.user.split(' ')[1]?.[0] || ''}
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-semibold">{item.user}</p>
-                                                <p className="text-xs text-muted">{item.order}</p>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-sm font-semibold text-right">
-                                        ฿{item.amount.toLocaleString()}
-                                    </td>
-                                    <td className="px-6 py-4 text-center">
-                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                            item.status === 'Success' ? 'bg-green-500/10 text-green-500' :
-                                            item.status === 'Pending' ? 'bg-orange-500/10 text-orange-500' :
-                                            'bg-red-500/10 text-red-500'
-                                        }`}>
-                                            {item.status === 'Pending' && <Clock size={12} className="mr-1" />}
-                                            {item.status === 'Success' && <CheckCircle2 size={12} className="mr-1" />}
-                                            {item.status}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 text-sm font-bold text-primary text-right">
-                                        ฿{item.commission.toLocaleString()}
-                                    </td>
-                                    <td className="px-6 py-4 text-right">
-                                        <button className="p-1 rounded-md text-muted hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-all" title="View details">
-                                            <ChevronRight size={18} />
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-                <div className="p-4 border-t border-border/50 flex items-center justify-center">
-                    <button className="text-sm font-medium text-primary hover:underline">ดูประวัติทั้งหมด</button>
-                </div>
-            </div>
-        </div>
-    );
+const TIER_STYLE: Record<Agent['tier'], string> = {
+  starter:  'bg-slate-500/20 text-slate-300 border-slate-500/30',
+  silver:   'bg-slate-400/20 text-slate-200 border-slate-400/30',
+  gold:     'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  platinum: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
 };
 
-export default Affiliate;
+const STATUS_STYLE: Record<Agent['status'], { className: string; Icon: React.ComponentType<{ size?: number }> }> = {
+  pending:   { className: 'bg-amber-500/10 text-amber-400 border-amber-500/30',       Icon: Clock },
+  active:    { className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', Icon: CheckCircle },
+  suspended: { className: 'bg-rose-500/10 text-rose-400 border-rose-500/30',           Icon: Ban },
+};
+
+export default function Affiliate() {
+  const { t } = useLanguage();
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [links, setLinks] = useState<AgentLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true); setErr(null);
+    try {
+      const [a, l] = await Promise.all([agentsApi.list(), agentsApi.listLinks()]);
+      setAgents(a); setLinks(l);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { void load(); }, []);
+
+  const stats = useMemo(() => {
+    const active = agents.filter(a => a.status === 'active');
+    const totalSales = agents.reduce((acc, a) => acc + Number(a.total_sales), 0);
+    const totalCommission = agents.reduce((acc, a) => acc + Number(a.total_commission), 0);
+    const pendingCommission = agents.reduce((acc, a) => acc + Number(a.pending_commission), 0);
+    return { active: active.length, total: agents.length, totalSales, totalCommission, pendingCommission };
+  }, [agents]);
+
+  async function copyLink(short: string) {
+    const url = `https://www.corebiz.online/ref/${short}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedCode(short);
+      setTimeout(() => setCopiedCode(null), 2000);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function approve(id: string) {
+    try { await agentsApi.approve(id); await load(); }
+    catch (e) { setErr((e as Error).message); }
+  }
+  async function suspend(id: string) {
+    try { await agentsApi.suspend(id); await load(); }
+    catch (e) { setErr((e as Error).message); }
+  }
+
+  return (
+    <div className="animate-fade-in p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-3 text-white">
+            <Handshake className="w-8 h-8 text-indigo-400" />
+            {t.affiliate.title}
+          </h1>
+          <p className="text-slate-400 mt-1">{t.affiliate.subtitle}</p>
+        </div>
+        <button onClick={() => load()} className="btn btn-secondary flex items-center gap-2" disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatTile icon={<Handshake size={20} />} label="ตัวแทนที่ใช้งาน" value={`${stats.active}/${stats.total}`} color="indigo" />
+        <StatTile icon={<TrendingUp size={20} />} label="ยอดขายรวม" value={`฿${stats.totalSales.toLocaleString()}`} color="emerald" />
+        <StatTile icon={<Award size={20} />} label="คอมมิชชั่นจ่ายแล้ว" value={`฿${stats.totalCommission.toLocaleString()}`} color="amber" />
+        <StatTile icon={<Clock size={20} />} label="ค้างจ่าย" value={`฿${stats.pendingCommission.toLocaleString()}`} color="rose" />
+      </div>
+
+      {err && <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">✗ {err}</div>}
+
+      <div className="glass-card overflow-hidden p-0">
+        <div className="px-6 py-4 border-b border-white/5">
+          <h2 className="text-xl font-bold text-white">ตัวแทนจำหน่าย ({agents.length})</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left">
+            <thead className="bg-gray-800/50 border-b border-gray-700/50">
+              <tr>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase">รหัส</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase">ชื่อ / ติดต่อ</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase text-center">Tier</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase text-right">คอม %</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase text-right">Conversions</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase text-right">ยอดขาย</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase text-right">ค้างจ่าย</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase text-center">สถานะ</th>
+                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase text-center">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/50">
+              {loading && <tr><td colSpan={9} className="py-12 text-center text-slate-500">{t.common.loading}</td></tr>}
+              {!loading && agents.length === 0 && <tr><td colSpan={9} className="py-12 text-center text-slate-500">{t.common.noData}</td></tr>}
+              {agents.map(a => {
+                const statusMeta = STATUS_STYLE[a.status];
+                const StatusIcon = statusMeta.Icon;
+                return (
+                  <tr key={a.id} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="py-3 px-4 text-sm font-mono text-indigo-400">{a.code}</td>
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-gray-100">{a.name}</div>
+                      <div className="text-xs text-slate-500">{a.email}</div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase border ${TIER_STYLE[a.tier]}`}>
+                        {a.tier}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right text-sm font-semibold text-slate-200">{a.commission_rate}%</td>
+                    <td className="py-3 px-4 text-right text-sm text-slate-300">
+                      {a.total_conversions.toLocaleString()}
+                      <span className="text-slate-500 text-xs"> / {a.total_clicks.toLocaleString()} clicks</span>
+                    </td>
+                    <td className="py-3 px-4 text-right font-bold text-emerald-400">
+                      ฿{Number(a.total_sales).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-right text-amber-400 font-semibold">
+                      ฿{Number(a.pending_commission).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold border ${statusMeta.className}`}>
+                        <StatusIcon size={11} /> {a.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      {a.status === 'pending' && (
+                        <button onClick={() => approve(a.id)} className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20">
+                          อนุมัติ
+                        </button>
+                      )}
+                      {a.status === 'active' && (
+                        <button onClick={() => suspend(a.id)} className="text-xs px-2 py-1 rounded bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20">
+                          ระงับ
+                        </button>
+                      )}
+                      {a.status === 'suspended' && (
+                        <button onClick={() => approve(a.id)} className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20">
+                          คืนสถานะ
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="glass-card">
+        <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-white">
+          <Link2 size={20} className="text-indigo-400" />
+          Tracking Links ({links.length})
+        </h2>
+        <div className="space-y-2">
+          {links.length === 0 && <div className="text-sm text-slate-500 py-4">ยังไม่มี link</div>}
+          {links.map(l => {
+            const agent = agents.find(a => a.id === l.agent_id);
+            const isCopied = copiedCode === l.short_code;
+            return (
+              <div key={l.id} className="flex items-center gap-4 p-3 rounded-lg border border-white/5 bg-white/5">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <code className="text-sm font-mono text-indigo-400">/ref/{l.short_code}</code>
+                    <span className="text-xs text-slate-500">→ {agent?.name ?? 'Unknown'}</span>
+                  </div>
+                  {l.label && <div className="text-xs text-slate-400 mt-0.5">{l.label}</div>}
+                  <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
+                    <span>👁 {l.clicks.toLocaleString()} clicks</span>
+                    <span className="text-emerald-400">✓ {l.conversions} conv</span>
+                    <span className="text-emerald-400">฿{Number(l.revenue).toLocaleString()}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => copyLink(l.short_code)}
+                  className={`text-xs px-3 py-2 rounded flex items-center gap-1.5 font-semibold transition ${
+                    isCopied
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {isCopied ? <CheckCircle size={13} /> : <Copy size={13} />}
+                  {isCopied ? 'Copied!' : 'Copy link'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
+  const colorMap: Record<string, string> = {
+    indigo:  'bg-indigo-500/20 border-indigo-500/30 text-indigo-400',
+    emerald: 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400',
+    amber:   'bg-amber-500/20 border-amber-500/30 text-amber-400',
+    rose:    'bg-rose-500/20 border-rose-500/30 text-rose-400',
+  };
+  return (
+    <div className="glass-card flex items-center gap-4 py-4 px-5">
+      <div className={`p-3 rounded-xl border ${colorMap[color]}`}>{icon}</div>
+      <div>
+        <p className="text-sm text-slate-400 mb-0.5">{label}</p>
+        <h3 className="text-xl font-bold text-white">{value}</h3>
+      </div>
+    </div>
+  );
+}

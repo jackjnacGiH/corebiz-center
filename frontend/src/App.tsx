@@ -9,26 +9,43 @@ import Chat from './pages/Chat';
 import Marketing from './pages/Marketing';
 import OpenclawRAG from './pages/OpenclawRAG';
 import Affiliate from './pages/Affiliate';
+import Login from './pages/auth/Login';
+import AuthCallback from './pages/auth/AuthCallback';
+import LineCallback from './pages/auth/LineCallback';
 import { LanguageProvider } from './LanguageProvider';
+import { AuthProvider } from './lib/AuthProvider';
+import ProtectedRoute from './lib/ProtectedRoute';
 
 function App() {
   return (
     <LanguageProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="ecommerce" element={<Ecommerce />} />
-            <Route path="inventory" element={<Inventory />} />
-            <Route path="orders" element={<Orders />} />
-            <Route path="crm" element={<CRM />} />
-            <Route path="chat" element={<Chat />} />
-            <Route path="marketing" element={<Marketing />} />
-            <Route path="affiliate" element={<Affiliate />} />
-            <Route path="rag" element={<OpenclawRAG />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/auth/line-callback" element={<LineCallback />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Dashboard />} />
+              <Route path="ecommerce" element={<Ecommerce />} />
+              <Route path="inventory" element={<Inventory />} />
+              <Route path="orders" element={<Orders />} />
+              <Route path="crm" element={<CRM />} />
+              <Route path="chat" element={<Chat />} />
+              <Route path="marketing" element={<Marketing />} />
+              <Route path="affiliate" element={<Affiliate />} />
+              <Route path="rag" element={<OpenclawRAG />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </LanguageProvider>
   );
 }

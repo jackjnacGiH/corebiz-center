@@ -1,296 +1,217 @@
-import { useState, type FormEvent, type ChangeEvent } from 'react';
-import { Upload, Link as LinkIcon, FileText, FileImage, Youtube, HardDriveUpload, CheckCircle, AlertCircle } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { BrainCircuit, Send, Sparkles, Loader2, ExternalLink } from 'lucide-react';
+import { knowledgeApi, type KnowledgeMatch } from '../lib/api';
 
-const OpenclawRAG = () => {
-    const [uploadMode, setUploadMode] = useState<'files' | 'links'>('files');
-    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-    const [links, setLinks] = useState([{ type: 'website', url: '' }]);
-    const [isUploading, setIsUploading] = useState(false);
-    const [statusText, setStatusText] = useState('');
+interface ChatTurn {
+  id: string;
+  role: 'user' | 'system';
+  text: string;
+  matches?: KnowledgeMatch[];
+  embed_ms?: number;
+  search_ms?: number;
+}
 
-    const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files) {
-            setSelectedFiles(Array.from(e.target.files));
-        }
-    };
+const SAMPLE_QUESTIONS = [
+  'คืนสินค้าได้กี่วัน',
+  'มีใบกำกับภาษีไหม',
+  'ส่งของไปต่างจังหวัดกี่วัน',
+  'สมัครเป็นตัวแทนจำหน่ายได้ไหม',
+  'รับบัตรเครดิตไหม',
+];
 
-    const handleLinkChange = (index: number, field: string, value: string) => {
-        const newLinks = [...links];
-        if (field === 'type' && (value === 'website' || value === 'youtube')) {
-            newLinks[index].type = value;
-        } else if (field === 'url') {
-            newLinks[index].url = value;
-        }
-        setLinks(newLinks);
-    };
+function relativeScore(score: number): string {
+  if (score >= 0.7) return 'ตรงมาก';
+  if (score >= 0.5) return 'ค่อนข้างตรง';
+  if (score >= 0.4) return 'พอเกี่ยวข้อง';
+  return 'น้อย';
+}
 
-    const addLinkField = () => {
-        setLinks([...links, { type: 'website', url: '' }]);
-    };
+export default function OpenclawRAG() {
+  const [turns, setTurns] = useState<ChatTurn[]>([
+    {
+      id: 'welcome',
+      role: 'system',
+      text: 'สวัสดีครับ ลองถามผมเรื่องสินค้า นโยบาย หรือคำถามที่พบบ่อย — ผมจะค้นหาจากความรู้ใน Obsidian Vault ผ่าน Phaya embedding + pgvector ให้ครับ',
+    },
+  ]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-    const removeLinkField = (index: number) => {
-        const newLinks = [...links];
-        newLinks.splice(index, 1);
-        setLinks(newLinks);
-    };
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [turns]);
 
-    const handleSubmit = async (e: FormEvent) => {
-        e.preventDefault();
-        setIsUploading(true);
-        setStatusText('กำลังอัปโหลดข้อมูลไปยัง Openclaw RAG...');
+  async function ask(q: string) {
+    const userTurn: ChatTurn = { id: `u-${Date.now()}`, role: 'user', text: q };
+    setTurns(prev => [...prev, userTurn]);
+    setInput('');
+    setLoading(true);
+    setErr(null);
+    try {
+      const { matches, embed_ms, search_ms } = await knowledgeApi.ask(q, {
+        matchCount: 3,
+        threshold: 0.4,
+      });
+      const systemTurn: ChatTurn = {
+        id: `s-${Date.now()}`,
+        role: 'system',
+        text: matches.length > 0
+          ? `พบ ${matches.length} ผลลัพธ์ที่เกี่ยวข้อง (จัดอันดับตามความใกล้เคียง)`
+          : 'ขออภัย ไม่พบข้อมูลที่เกี่ยวข้อง — ลองถามด้วยคำอื่นหรือเพิ่มเนื้อหาใน vault ครับ',
+        matches,
+        embed_ms,
+        search_ms,
+      };
+      setTurns(prev => [...prev, systemTurn]);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-        try {
-            if (uploadMode === 'files') {
-                if (selectedFiles.length === 0) {
-                    throw new Error('กรุณาเลือกไฟล์ที่ต้องการอัปโหลด');
-                }
-                const formData = new FormData();
-                selectedFiles.forEach((file) => {
-                    formData.append('documents', file);
-                });
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!input.trim() || loading) return;
+    void ask(input.trim());
+  }
 
-                const response = await fetch('http://localhost:3001/api/upload', {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-            } else {
-                const validLinks = links.filter(link => link.url.trim() !== '');
-                if (validLinks.length === 0) {
-                    throw new Error('กรุณากรอกลิงก์ที่ต้องการเพิ่ม');
-                }
-
-                const response = await fetch('http://localhost:3001/api/links', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ links: validLinks }),
-                });
-
-                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-            }
-
-            setStatusText('✅ นำเข้าข้อมูลสู่ระบบ AI เรียบร้อยแล้ว!');
-            setTimeout(() => {
-                setStatusText('');
-                setSelectedFiles([]);
-                setLinks([{ type: 'website', url: '' }]);
-            }, 5000);
-        } catch (error: unknown) {
-            const msg = error instanceof Error ? error.message : 'Unknown error';
-            setStatusText(`❌ ข้อผิดพลาด: ไม่สามารถเชื่อมต่อ n8n Webhook ได้ (${msg})`);
-        } finally {
-            setIsUploading(false);
-        }
-    };
-
-    return (
-        <div className="animate-fade-in" style={{ padding: '1rem', maxWidth: '900px', margin: '0 auto' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '2rem' }}>
-                <div style={{ padding: '1rem', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '12px' }}>
-                    <HardDriveUpload size={32} color="var(--primary)" />
-                </div>
-                <div>
-                    <h1 style={{ fontSize: '2rem', fontWeight: 700, margin: 0 }}>Openclaw RAG Data Center</h1>
-                    <p style={{ color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>อัปโหลดเอกสาร คู่มือ หรือลิงก์ที่เกี่ยวข้อง เพื่อเชื่อมต่อเข้าสู่ระบบสมองกล (Memory) ของ AI</p>
-                </div>
-            </div>
-
-            <div className="glass-card" style={{ padding: '2rem', borderRadius: '16px' }}>
-                <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid var(--panel-border)', paddingBottom: '1rem' }}>
-                    <button
-                        onClick={() => setUploadMode('files')}
-                        style={{
-                            background: uploadMode === 'files' ? 'var(--primary)' : 'transparent',
-                            color: uploadMode === 'files' ? '#fff' : 'var(--text-muted)',
-                            border: '1px solid',
-                            borderColor: uploadMode === 'files' ? 'var(--primary)' : 'var(--panel-border)',
-                            padding: '0.75rem 1.5rem',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            fontWeight: 600,
-                            transition: 'var(--transition)'
-                        }}
-                    >
-                        <FileText size={18} /> อัปโหลดไฟล์เอกสาร
-                    </button>
-                    <button
-                        onClick={() => setUploadMode('links')}
-                        style={{
-                            background: uploadMode === 'links' ? 'var(--secondary)' : 'transparent',
-                            color: uploadMode === 'links' ? '#fff' : 'var(--text-muted)',
-                            border: '1px solid',
-                            borderColor: uploadMode === 'links' ? 'var(--secondary)' : 'var(--panel-border)',
-                            padding: '0.75rem 1.5rem',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            fontWeight: 600,
-                            transition: 'var(--transition)'
-                        }}
-                    >
-                        <LinkIcon size={18} /> อัปโหลดลิงก์เว็บไซต์/YouTube
-                    </button>
-                </div>
-
-                <form onSubmit={handleSubmit}>
-                    {uploadMode === 'files' ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                            <div style={{
-                                border: '2px dashed var(--panel-border)',
-                                borderRadius: '12px',
-                                padding: '3rem 2rem',
-                                textAlign: 'center',
-                                background: 'rgba(255,255,255,0.02)',
-                                cursor: 'pointer',
-                                transition: 'all 0.3s ease'
-                            }}
-                                onClick={() => document.getElementById('file-upload')?.click()}>
-                                <Upload size={48} style={{ color: 'var(--primary)', margin: '0 auto 1rem auto' }} />
-                                <h3>คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางที่นี่</h3>
-                                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.5rem' }}>
-                                    รองรับ Text, Word, Excel, PDF, และไฟล์รูปภาพ
-                                </p>
-                                <input
-                                    id="file-upload"
-                                    type="file"
-                                    multiple
-                                    onChange={handleFileChange}
-                                    style={{ display: 'none' }}
-                                    accept=".txt,.doc,.docx,.xls,.xlsx,.pdf,.png,.jpg,.jpeg"
-                                />
-                            </div>
-
-                            {selectedFiles.length > 0 && (
-                                <div style={{ background: 'var(--panel-bg)', padding: '1.5rem', borderRadius: '12px' }}>
-                                    <h4 style={{ margin: '0 0 1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <CheckCircle size={18} color="var(--success)" /> ไฟล์ที่เลือก ({selectedFiles.length})
-                                    </h4>
-                                    <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                        {selectedFiles.map((f, i) => (
-                                            <li key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.95rem', padding: '0.5rem', background: 'rgba(0,0,0,0.1)', borderRadius: '6px' }}>
-                                                {f.type.startsWith('image/') ? <FileImage size={16} color="var(--secondary)" /> : <FileText size={16} color="var(--primary)" />}
-                                                {f.name} <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>({(f.size / 1024).toFixed(1)} KB)</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                            <div style={{ marginBottom: '1rem' }}>
-                                <p style={{ color: 'var(--text-muted)' }}>เพิ่มลิงก์เว็บไซต์ หรือวิดีโอ YouTube ที่ต้องการให้ AI เข้าไปดึงข้อมูลมาเรียนรู้</p>
-                            </div>
-
-                            {links.map((link, index) => (
-                                <div key={index} style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                    <select
-                                        value={link.type}
-                                        onChange={(e) => handleLinkChange(index, 'type', e.target.value)}
-                                        style={{
-                                            padding: '0.75rem',
-                                            background: 'var(--panel-bg)',
-                                            border: '1px solid var(--panel-border)',
-                                            borderRadius: '8px',
-                                            color: '#fff',
-                                            outline: 'none',
-                                            width: '150px'
-                                        }}
-                                    >
-                                        <option value="website">Website URL</option>
-                                        <option value="youtube">YouTube URL</option>
-                                    </select>
-                                    <div style={{ position: 'relative', flex: 1 }}>
-                                        <div style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '1rem', color: 'var(--text-muted)' }}>
-                                            {link.type === 'website' ? <LinkIcon size={16} /> : <Youtube size={16} />}
-                                        </div>
-                                        <input
-                                            type="url"
-                                            value={link.url}
-                                            onChange={(e) => handleLinkChange(index, 'url', e.target.value)}
-                                            placeholder={link.type === 'website' ? 'https://example.com/article' : 'https://youtube.com/watch?v=...'}
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.75rem 1rem 0.75rem 2.5rem',
-                                                background: 'var(--panel-bg)',
-                                                border: '1px solid var(--panel-border)',
-                                                borderRadius: '8px',
-                                                color: '#fff',
-                                                outline: 'none'
-                                            }}
-                                            required={index === 0}
-                                        />
-                                    </div>
-                                    {links.length > 1 && (
-                                        <button
-                                            type="button"
-                                            onClick={() => removeLinkField(index)}
-                                            style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '0.5rem' }}
-                                        >
-                                            ลบ
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
-                            <button
-                                type="button"
-                                onClick={addLinkField}
-                                style={{
-                                    background: 'transparent',
-                                    border: '1px dashed var(--panel-border)',
-                                    color: 'var(--text-muted)',
-                                    padding: '0.75rem',
-                                    borderRadius: '8px',
-                                    cursor: 'pointer',
-                                    marginTop: '0.5rem'
-                                }}
-                            >
-                                + เพิ่มลิงก์อีก
-                            </button>
-                        </div>
-                    )}
-
-                    <div style={{ marginTop: '2.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div style={{
-                            color: statusText.includes('❌') ? 'var(--danger)' : statusText.includes('✅') ? 'var(--success)' : 'var(--text-muted)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            fontWeight: 500
-                        }}>
-                            {statusText && (
-                                <>
-                                    {statusText.includes('❌') ? <AlertCircle size={18} /> : null}
-                                    {statusText}
-                                </>
-                            )}
-                        </div>
-                        <button
-                            type="submit"
-                            disabled={isUploading || (uploadMode === 'files' && selectedFiles.length === 0)}
-                            className="btn btn-primary"
-                            style={{
-                                padding: '0.75rem 2rem',
-                                fontSize: '1.05rem',
-                                opacity: isUploading || (uploadMode === 'files' && selectedFiles.length === 0) ? 0.6 : 1,
-                                cursor: isUploading || (uploadMode === 'files' && selectedFiles.length === 0) ? 'not-allowed' : 'pointer',
-                                width: '200px',
-                                justifyContent: 'center'
-                            }}
-                        >
-                            {isUploading ? 'กำลังทำงาน...' : 'เชื่อมต่อข้อมูล ✨'}
-                        </button>
-                    </div>
-                </form>
-            </div>
+  return (
+    <div className="animate-fade-in p-6 space-y-6 flex flex-col" style={{ height: 'calc(100vh - 100px)' }}>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-3 text-white">
+            <BrainCircuit className="w-8 h-8 text-indigo-400" />
+            Openclaw RAG
+          </h1>
+          <p className="text-slate-400 mt-1">
+            ค้นหาความรู้จาก Obsidian Vault ผ่าน Phaya embedding (4096-dim) + pgvector
+          </p>
         </div>
-    );
-};
+        <span className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+          <Sparkles size={12} /> Thai-optimized
+        </span>
+      </div>
 
-export default OpenclawRAG;
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1" style={{ minHeight: 0 }}>
+        <aside className="glass-card p-4 lg:col-span-1 flex flex-col">
+          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+            ลองถามตัวอย่าง
+          </div>
+          <div className="space-y-2">
+            {SAMPLE_QUESTIONS.map(q => (
+              <button
+                key={q}
+                onClick={() => ask(q)}
+                disabled={loading}
+                className="w-full text-left text-xs px-3 py-2 rounded-lg border border-white/5 bg-white/5 hover:bg-indigo-500/10 hover:border-indigo-500/30 hover:text-indigo-300 text-slate-300 transition disabled:opacity-50"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+          <div className="mt-auto pt-4 border-t border-white/5 text-[10px] text-slate-500 leading-relaxed">
+            <div className="font-semibold text-slate-400 mb-1">⚙️ Settings</div>
+            • Phaya embedding (4096-dim)<br/>
+            • Top-3 cosine similarity<br/>
+            • Threshold ≥ 0.40<br/>
+            • Public visibility only
+          </div>
+        </aside>
+
+        <div className="glass-card p-0 lg:col-span-3 flex flex-col overflow-hidden">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+            {turns.map(t => (
+              <div key={t.id} className={`flex ${t.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                  t.role === 'user'
+                    ? 'bg-indigo-500 text-white rounded-br-sm'
+                    : 'bg-white/5 border border-white/10 text-slate-200 rounded-bl-sm'
+                }`}>
+                  <div className="text-sm whitespace-pre-wrap">{t.text}</div>
+
+                  {t.matches && t.matches.length > 0 && (
+                    <div className="mt-4 space-y-3">
+                      {t.matches.map((m, i) => (
+                        <div key={m.id} className="rounded-lg border border-white/10 bg-slate-900/50 p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">#{i + 1}</span>
+                              <span className="text-xs font-semibold text-white">{m.title ?? 'Untitled'}</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-emerald-400">
+                              {(m.similarity * 100).toFixed(0)}% • {relativeScore(m.similarity)}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
+                            {m.content.slice(0, 300)}{m.content.length > 300 ? '...' : ''}
+                          </div>
+                          <div className="flex items-center justify-between mt-2 text-[10px] text-slate-500">
+                            <span className="font-mono">{m.source_path}</span>
+                            {m.tags && m.tags.length > 0 && (
+                              <div className="flex gap-1">
+                                {m.tags.slice(0, 3).map(t2 => (
+                                  <span key={t2} className="bg-white/5 px-1.5 py-0.5 rounded">{t2}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {t.embed_ms !== undefined && (
+                    <div className="mt-3 text-[10px] text-slate-500 flex items-center gap-3">
+                      <span>⚡ Phaya: {t.embed_ms}ms</span>
+                      <span>🔍 Search: {t.search_ms}ms</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl px-4 py-3 bg-white/5 border border-white/10 text-slate-300">
+                  <Loader2 size={16} className="inline animate-spin mr-2" />
+                  กำลังค้นหา...
+                </div>
+              </div>
+            )}
+          </div>
+
+          {err && (
+            <div className="mx-6 mb-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+              ✗ {err}
+              <div className="mt-2 text-xs text-rose-300/80">
+                <ExternalLink size={11} className="inline mr-1" />
+                ตั้ง <code className="bg-rose-500/20 px-1 rounded">PHAYA_API_KEY</code> ใน Supabase Dashboard → Edge Functions → Secrets
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="p-4 border-t border-white/5 flex gap-3">
+            <input
+              type="text"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              placeholder="ถามอะไรก็ได้เกี่ยวกับสินค้า นโยบาย หรือคำถามทั่วไป..."
+              disabled={loading}
+              className="flex-1 bg-slate-900/50 border border-white/10 rounded-lg px-4 py-2.5 text-white text-sm outline-none focus:border-indigo-500 disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold px-5 rounded-lg transition flex items-center gap-2"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              ถาม
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}

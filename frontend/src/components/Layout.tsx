@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
     LayoutDashboard,
@@ -17,12 +17,38 @@ import {
     ChevronDown,
     CircleHelp,
     Command,
-    Store
+    Store,
+    LogOut,
+    UserCircle
 } from 'lucide-react';
 import { useLanguage, type Language } from '../i18n';
+import { useAuth } from '../lib/AuthProvider';
+import { signOut } from '../lib/auth';
 
 const Layout: React.FC = () => {
     const { language, setLanguage, t } = useLanguage();
+    const { profile } = useAuth();
+    const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+    const profileMenuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        function handleClickOutside(e: MouseEvent) {
+            if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+                setProfileMenuOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const initials = profile?.full_name
+        ? profile.full_name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()
+        : profile?.email?.slice(0, 2).toUpperCase() ?? '??';
+
+    const displayName = profile?.full_name ?? profile?.email ?? 'User';
+    const roleLabel = profile?.role
+        ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
+        : t.layout.adminWorkspace;
 
     const menuItems = [
         { name: t.nav.dashboard, path: '/', icon: <LayoutDashboard size={20} /> },
@@ -118,13 +144,53 @@ const Layout: React.FC = () => {
                             <Bell size={20} />
                             <span className="notification-dot"></span>
                         </button>
-                        <div className="user-profile-trigger">
-                            <div className="user-avatar">BJ</div>
-                            <div>
-                                <div className="user-info-name">Boss Jack</div>
-                                <div className="user-info-role">{t.layout.adminWorkspace}</div>
-                            </div>
-                            <ChevronDown size={16} className="profile-chevron" />
+                        <div className="user-profile-trigger relative" ref={profileMenuRef}>
+                            <button
+                                type="button"
+                                onClick={() => setProfileMenuOpen(o => !o)}
+                                className="flex items-center gap-3 cursor-pointer w-full text-left bg-transparent border-0 p-0"
+                            >
+                                {profile?.avatar_url ? (
+                                    <img src={profile.avatar_url} alt={displayName} className="user-avatar rounded-full" />
+                                ) : (
+                                    <div className="user-avatar">{initials}</div>
+                                )}
+                                <div>
+                                    <div className="user-info-name">{displayName}</div>
+                                    <div className="user-info-role">{roleLabel}</div>
+                                </div>
+                                <ChevronDown size={16} className={`profile-chevron transition-transform ${profileMenuOpen ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {profileMenuOpen && (
+                                <div className="absolute right-0 top-full mt-2 w-64 rounded-xl bg-slate-900 border border-white/10 shadow-2xl shadow-black/50 overflow-hidden z-50">
+                                    <div className="px-4 py-3 border-b border-white/5">
+                                        <div className="text-sm font-semibold text-white truncate">{displayName}</div>
+                                        <div className="text-xs text-slate-400 truncate">{profile?.email}</div>
+                                        {profile?.provider && (
+                                            <div className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider">
+                                                via {profile.provider}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
+                                        onClick={() => setProfileMenuOpen(false)}
+                                    >
+                                        <UserCircle size={16} />
+                                        {t.layout.adminWorkspace}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-rose-400 hover:bg-rose-500/10 transition border-t border-white/5"
+                                        onClick={() => signOut()}
+                                    >
+                                        <LogOut size={16} />
+                                        {t.layout.signOut}
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </header>
