@@ -61,7 +61,6 @@ const Layout: React.FC = () => {
         { name: t.nav.affiliate, path: '/affiliate', icon: <Handshake size={20} /> },
         { name: t.nav.rag, path: '/rag', icon: <BrainCircuit size={20} /> },
         { name: t.nav.ask, path: '/ask', icon: <Bot size={20} /> },
-        { name: t.nav.jnac, path: '/jnac', icon: <Bot size={20} />, external: true },
     ];
 
     const languageOptions: { value: Language; label: string }[] = [
@@ -83,13 +82,7 @@ const Layout: React.FC = () => {
                 </div>
 
                 <nav className="sidebar-nav">
-                    {menuItems.map((item) =>
-                        item.external ? (
-                            <a key={item.path} href={item.path} className="nav-link">
-                                {item.icon}
-                                {item.name}
-                            </a>
-                        ) : (
+                    {menuItems.map((item) => (
                             <NavLink
                                 key={item.path}
                                 to={item.path}
