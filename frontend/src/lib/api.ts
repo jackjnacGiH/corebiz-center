@@ -772,6 +772,106 @@ export interface KnowledgeMatch {
   similarity: number;
 }
 
+// =========================================================================
+// Knowledge admin — list / add / delete chunks
+// =========================================================================
+export interface KnowledgeChunkRow {
+  id: string;
+  source_path: string;
+  source_type: 'obsidian'|'manual'|'upload'|'crawl';
+  title: string | null;
+  content: string;
+  language: string;
+  chunk_index: number;
+  visibility: 'public'|'internal';
+  tags: string[];
+  token_count: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeSource {
+  source_path: string;
+  source_type: string;
+  title: string | null;
+  chunks_count: number;
+  total_tokens: number;
+  language: string;
+  visibility: string;
+  tags: string[];
+  updated_at: string;
+}
+
+export const knowledgeAdminApi = {
+  /** List chunks grouped by source_path. */
+  async listSources(): Promise<KnowledgeSource[]> {
+    const { data, error } = await supabase
+      .from('knowledge_chunks')
+      .select('source_path,source_type,title,language,visibility,tags,token_count,updated_at')
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+
+    const rows = (data ?? []) as Array<Pick<KnowledgeChunkRow, 'source_path'|'source_type'|'title'|'language'|'visibility'|'tags'|'token_count'|'updated_at'>>;
+    const grouped = new Map<string, KnowledgeSource>();
+    for (const r of rows) {
+      const existing = grouped.get(r.source_path);
+      if (existing) {
+        existing.chunks_count += 1;
+        existing.total_tokens += r.token_count ?? 0;
+        if (r.updated_at > existing.updated_at) existing.updated_at = r.updated_at;
+      } else {
+        grouped.set(r.source_path, {
+          source_path: r.source_path,
+          source_type: r.source_type,
+          title: r.title,
+          chunks_count: 1,
+          total_tokens: r.token_count ?? 0,
+          language: r.language,
+          visibility: r.visibility,
+          tags: r.tags,
+          updated_at: r.updated_at,
+        });
+      }
+    }
+    return Array.from(grouped.values()).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  },
+
+  async listChunksForSource(source_path: string): Promise<KnowledgeChunkRow[]> {
+    const { data, error } = await supabase
+      .from('knowledge_chunks')
+      .select('id,source_path,source_type,title,content,language,chunk_index,visibility,tags,token_count,metadata,created_at,updated_at')
+      .eq('source_path', source_path)
+      .order('chunk_index', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as unknown as KnowledgeChunkRow[];
+  },
+
+  async deleteSource(source_path: string): Promise<void> {
+    const { error } = await supabase
+      .from('knowledge_chunks')
+      .delete()
+      .eq('source_path', source_path);
+    if (error) throw error;
+  },
+
+  /** Call add-knowledge edge function — chunks + embeds + inserts. */
+  async addManual(input: {
+    title: string;
+    content: string;
+    category?: string;
+    tags?: string[];
+    language?: 'th' | 'en' | 'mixed';
+    visibility?: 'public' | 'internal';
+  }): Promise<{ source_path: string; chunks_count: number }> {
+    const { data, error } = await supabase.functions.invoke('add-knowledge', {
+      body: input,
+    });
+    if (error) throw error;
+    return data as { source_path: string; chunks_count: number };
+  },
+};
+
 export const knowledgeApi = {
   /**
    * Call edge function `rag-search` — handles Phaya embedding + match_knowledge() internally.
