@@ -43,6 +43,7 @@ export const translations = {
       marketing: 'Marketing & Affiliates',
       affiliate: 'Affiliate',
       rag: 'Openclaw RAG',
+      ask: 'AI Admin Chat',
       jnac: 'JNAC Admin Chat',
     },
     auth: {
@@ -268,6 +269,7 @@ export const translations = {
       marketing: 'การตลาดและพาร์ทเนอร์',
       affiliate: 'พาร์ทเนอร์',
       rag: 'Openclaw RAG',
+      ask: 'AI ผู้ช่วย',
       jnac: 'แชทแอดมิน JNAC',
     },
     auth: {

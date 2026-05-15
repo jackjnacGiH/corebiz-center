@@ -803,6 +803,55 @@ export interface KnowledgeSource {
   updated_at: string;
 }
 
+// =========================================================================
+// Knowledge Chat (RAG + LLM via rag-chat Edge Function)
+// =========================================================================
+export interface ChatHistoryItem {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface RagChatSource {
+  id: string;
+  title: string | null;
+  source_path: string;
+  similarity: number;
+  tags: string[];
+  content_preview: string;
+}
+
+export interface RagChatResponse {
+  answer: string;
+  sources: RagChatSource[];
+  tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  elapsed_ms: { embed: number; search: number; llm: number };
+  model: string;
+}
+
+export const knowledgeChatApi = {
+  async ask(input: {
+    query: string;
+    history?: ChatHistoryItem[];
+    matchCount?: number;
+    threshold?: number;
+    model?: string;
+    language?: 'th' | 'en' | 'mixed' | null;
+  }): Promise<RagChatResponse> {
+    const { data, error } = await supabase.functions.invoke('rag-chat', {
+      body: {
+        query: input.query,
+        history: input.history ?? [],
+        match_count: input.matchCount ?? 5,
+        match_threshold: input.threshold ?? 0.4,
+        model: input.model,
+        language: input.language ?? null,
+      },
+    });
+    if (error) throw error;
+    return data as RagChatResponse;
+  },
+};
+
 export const knowledgeAdminApi = {
   /** List chunks grouped by source_path. */
   async listSources(): Promise<KnowledgeSource[]> {

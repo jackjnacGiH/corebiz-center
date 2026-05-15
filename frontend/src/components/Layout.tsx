@@ -60,6 +60,7 @@ const Layout: React.FC = () => {
         { name: t.nav.marketing, path: '/marketing', icon: <TrendingUp size={20} /> },
         { name: t.nav.affiliate, path: '/affiliate', icon: <Handshake size={20} /> },
         { name: t.nav.rag, path: '/rag', icon: <BrainCircuit size={20} /> },
+        { name: t.nav.ask, path: '/ask', icon: <Bot size={20} /> },
         { name: t.nav.jnac, path: '/jnac', icon: <Bot size={20} />, external: true },
     ];
 
