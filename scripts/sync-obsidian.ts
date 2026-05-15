@@ -26,9 +26,22 @@ import 'dotenv/config';
 // ---------------------------------------------------------------------------
 const SUPABASE_URL = required('SUPABASE_URL');
 const SUPABASE_SERVICE_ROLE_KEY = required('SUPABASE_SERVICE_ROLE_KEY');
-const PHAYA_API_KEY = required('PHAYA_API_KEY');
+const EMBED_PROVIDER = (process.env.EMBED_PROVIDER ?? 'openai').toLowerCase();
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_EMBED_MODEL = process.env.OPENAI_EMBED_MODEL ?? 'text-embedding-3-small';
+const PHAYA_API_KEY = process.env.PHAYA_API_KEY;
 const PHAYA_API_URL = process.env.PHAYA_API_URL
   ?? 'https://api.phaya.io/api/v1/embedding/create';
+
+if (EMBED_PROVIDER === 'openai' && !OPENAI_API_KEY) {
+  console.error('Missing OPENAI_API_KEY (EMBED_PROVIDER=openai)');
+  process.exit(1);
+}
+if (EMBED_PROVIDER === 'phaya' && !PHAYA_API_KEY) {
+  console.error('Missing PHAYA_API_KEY (EMBED_PROVIDER=phaya)');
+  process.exit(1);
+}
+console.log(`Embedding provider: ${EMBED_PROVIDER}${EMBED_PROVIDER === 'openai' ? ` (${OPENAI_EMBED_MODEL})` : ''}`);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VAULT_PATH = process.env.VAULT_PATH
@@ -303,9 +316,40 @@ function tailTokens(text: string, tokens: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Phaya embedding API call (batched)
+// Embedding API call (batched, OpenAI or Phaya)
 // ---------------------------------------------------------------------------
 async function embedBatch(texts: string[]): Promise<number[][]> {
+  return EMBED_PROVIDER === 'phaya' ? embedBatchPhaya(texts) : embedBatchOpenAI(texts);
+}
+
+async function embedBatchOpenAI(texts: string[]): Promise<number[][]> {
+  const BATCH = 50; // OpenAI supports up to 2048 inputs per request; use 50 for safety
+  const results: number[][] = [];
+  for (let i = 0; i < texts.length; i += BATCH) {
+    const slice = texts.slice(i, i + BATCH);
+    const res = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ input: slice, model: OPENAI_EMBED_MODEL }),
+    });
+    if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+    const data = await res.json() as {
+      data?: Array<{ embedding: number[]; index: number }>;
+    };
+    if (!data.data || data.data.length !== slice.length) {
+      throw new Error(`OpenAI returned ${data.data?.length ?? 0} embeddings for ${slice.length} inputs`);
+    }
+    // Sort by index to ensure order
+    const sorted = [...data.data].sort((a, b) => a.index - b.index);
+    for (const item of sorted) results.push(item.embedding);
+  }
+  return results;
+}
+
+async function embedBatchPhaya(texts: string[]): Promise<number[][]> {
   const BATCH = 8;
   const results: number[][] = [];
   for (let i = 0; i < texts.length; i += BATCH) {
@@ -318,12 +362,10 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
       },
       body: JSON.stringify({ input: slice }),
     });
-    if (!res.ok) {
-      throw new Error(`Phaya API ${res.status}: ${await res.text()}`);
-    }
+    if (!res.ok) throw new Error(`Phaya ${res.status}: ${await res.text()}`);
     const data = await res.json() as { data?: Array<{ embedding: number[] }> };
     if (!data.data || data.data.length !== slice.length) {
-      throw new Error(`Phaya API returned ${data.data?.length ?? 0} embeddings for ${slice.length} inputs`);
+      throw new Error(`Phaya returned ${data.data?.length ?? 0} embeddings for ${slice.length} inputs`);
     }
     for (const item of data.data) results.push(item.embedding);
   }
