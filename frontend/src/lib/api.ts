@@ -20,7 +20,7 @@ import type {
 // =========================================================================
 export interface ProductWithInventory extends Product {
   category: Pick<Category, 'id' | 'slug' | 'name_th' | 'name_en'> | null;
-  inventory: Array<Pick<Inventory, 'id' | 'warehouse_id' | 'quantity' | 'reserved' | 'reorder_level' | 'shelf'>>;
+  inventory: Array<Pick<Inventory, 'id' | 'warehouse_id' | 'quantity' | 'reserved' | 'reorder_level' | 'shelf' | 'row_no'>>;
   /** Sum of quantity across all warehouses */
   total_quantity: number;
   /** True if at least one warehouse is below its reorder_level */
@@ -34,7 +34,7 @@ export const productsApi = {
       .select(`
         *,
         category:categories(id,slug,name_th,name_en),
-        inventory(id,warehouse_id,quantity,reserved,reorder_level,shelf)
+        inventory(id,warehouse_id,quantity,reserved,reorder_level,shelf,row_no)
       `)
       .order('created_at', { ascending: false });
     if (error) throw error;
