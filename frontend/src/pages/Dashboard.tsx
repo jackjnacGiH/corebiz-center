@@ -262,7 +262,7 @@ const Dashboard = () => {
         : [];
 
     return (
-        <div className="animate-fade-in space-y-6 max-w-[1440px] mx-auto">
+        <div className="animate-fade-in space-y-6">
             {/* ── Page header ─────────────────────────────────────────────── */}
             <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-5 border-b border-neutral-200">
                 <div>

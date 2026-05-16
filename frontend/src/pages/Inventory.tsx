@@ -212,7 +212,7 @@ export default function Inventory() {
   const rowPad = density === 'compact' ? 'py-2.5' : 'py-4';
 
   return (
-    <div className="animate-fade-in space-y-6 max-w-[1440px] mx-auto">
+    <div className="animate-fade-in space-y-6">
       {/* ─── Header ─────────────────────────────────────────────────── */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-5 border-b border-slate-200">
         <div className="flex items-center gap-3">

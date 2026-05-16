@@ -86,7 +86,7 @@ export default function OpenclawRAG() {
     }, [sources, search]);
 
     return (
-        <div className="animate-fade-in space-y-6 max-w-[1440px] mx-auto">
+        <div className="animate-fade-in space-y-6">
             <PageHeader
                 title="Openclaw RAG — Knowledge Base"
                 subtitle={

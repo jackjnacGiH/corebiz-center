@@ -144,7 +144,7 @@ export default function KnowledgeChat() {
 
     return (
         <div
-            className="animate-fade-in flex flex-col max-w-[1440px] mx-auto"
+            className="animate-fade-in flex flex-col"
             style={{ height: 'calc(100vh - 56px - 48px)' }}
         >
             {/* ── Page header (compact) ──────────────────────────────── */}
