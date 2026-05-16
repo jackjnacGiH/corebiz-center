@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -13,7 +13,12 @@ import {
   Trash2,
   X,
   RefreshCw,
+  LayoutGrid,
+  LayoutList,
+  List,
+  Table2,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { useLanguage } from '../i18n';
 import {
   productsApi,
@@ -53,6 +58,41 @@ function deriveStockTone(qty: number): { className: string; labelKey: 'ready' | 
   return { className: 'stock-tone tone-emerald', labelKey: 'ready' };
 }
 
+function getHeroImage(p: ProductWithInventory): string | null {
+  if (!Array.isArray(p.images)) return null;
+  const imgs = (p.images as unknown[]).filter((x): x is string => typeof x === 'string');
+  return imgs[0] ?? null;
+}
+
+// ─── View modes ──────────────────────────────────────────────────────────
+// Extensible: add a new entry to VIEW_MODES + a matching render*() function.
+
+type ViewMode = 'grid' | 'compact' | 'list' | 'table';
+
+const VIEW_MODES: ReadonlyArray<{
+  value: ViewMode;
+  label: string;
+  icon: ReactNode;
+}> = [
+  { value: 'grid',    label: 'Grid',    icon: <LayoutGrid size={14} /> },
+  { value: 'compact', label: 'Compact', icon: <LayoutList size={14} /> },
+  { value: 'list',    label: 'List',    icon: <List size={14} /> },
+  { value: 'table',   label: 'Table',   icon: <Table2 size={14} /> },
+];
+
+const VIEW_MODE_STORAGE_KEY = 'corebiz.ecommerce.view';
+
+function readSavedViewMode(): ViewMode {
+  if (typeof window === 'undefined') return 'grid';
+  try {
+    const v = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (v === 'grid' || v === 'compact' || v === 'list' || v === 'table') return v;
+  } catch {
+    /* localStorage unavailable */
+  }
+  return 'grid';
+}
+
 export default function Ecommerce() {
   const { t } = useLanguage();
   const ecom = t.ecommerce;
@@ -69,6 +109,16 @@ export default function Ecommerce() {
   const [saving, setSaving] = useState(false);
   const [savedCode, setSavedCode] = useState<string | null>(null);
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>(readSavedViewMode);
+
+  // Persist view mode across visits
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [viewMode]);
 
   async function load() {
     setLoading(true); setErr(null);
@@ -317,9 +367,32 @@ export default function Ecommerce() {
             {formatNumber(filteredProducts.length)} {ecom.itemsMatched}
           </p>
         </div>
-        <div className="list-view-toggle" aria-label={ecom.viewMode}>
-          <button className="active">{ecom.grid}</button>
-          <button>{ecom.table}</button>
+        <div
+          className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-1"
+          role="group"
+          aria-label={ecom.viewMode}
+        >
+          {VIEW_MODES.map((m) => {
+            const active = viewMode === m.value;
+            return (
+              <button
+                key={m.value}
+                type="button"
+                onClick={() => setViewMode(m.value)}
+                aria-pressed={active}
+                title={m.label}
+                className={cn(
+                  'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-semibold transition',
+                  active
+                    ? 'bg-indigo-500 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+                )}
+              >
+                {m.icon}
+                <span className="hidden md:inline">{m.label}</span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
@@ -330,86 +403,297 @@ export default function Ecommerce() {
         </div>
       )}
 
-      <section className="commerce-product-grid">
-        {!loading && filteredProducts.map(p => {
-          const stockTone = deriveStockTone(p.total_quantity);
-          const leadTime = deriveLeadTime(p.total_quantity);
-          return (
-            <article key={p.id} className="commerce-product-card">
-              {(() => {
-                const imgs = Array.isArray(p.images)
-                  ? (p.images as unknown[]).filter((x): x is string => typeof x === 'string')
-                  : [];
-                const hero = imgs[0];
-                if (hero) {
-                  return (
-                    <div
-                      className="product-visual"
+      {!loading && viewMode === 'grid' && (
+        <section className="commerce-product-grid">
+          {filteredProducts.map(p => {
+            const stockTone = deriveStockTone(p.total_quantity);
+            const leadTime = deriveLeadTime(p.total_quantity);
+            const hero = getHeroImage(p);
+            return (
+              <article key={p.id} className="commerce-product-card">
+                {hero ? (
+                  <div
+                    className="product-visual"
+                    style={{
+                      padding: '0.5rem',
+                      background: '#ffffff',
+                      height: 'auto',
+                      aspectRatio: '1 / 1',
+                    }}
+                  >
+                    <img
+                      src={hero}
+                      alt={p.name_th}
+                      loading="lazy"
                       style={{
-                        padding: '0.5rem',
-                        background: '#ffffff',
-                        height: 'auto',
-                        aspectRatio: '1 / 1',
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
                       }}
-                    >
-                      <img
-                        src={hero}
-                        alt={p.name_th}
-                        loading="lazy"
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'contain',
-                        }}
-                      />
-                    </div>
-                  );
-                }
-                return (
+                    />
+                  </div>
+                ) : (
                   <div className="product-visual tone-steel">
                     <Package size={34} />
                     <span>{p.category?.name_th ?? '—'}</span>
                   </div>
-                );
-              })()}
+                )}
 
-              <div className="product-card-body">
-                <div className="product-card-meta">
-                  <span>{p.brand ?? '—'}</span>
-                  <span>{p.sku}</span>
+                <div className="product-card-body">
+                  <div className="product-card-meta">
+                    <span>{p.brand ?? '—'}</span>
+                    <span>{p.sku}</span>
+                  </div>
+
+                  <h3>{p.name_th}</h3>
+
+                  <div className="product-card-details">
+                    <span className={stockTone.className}>
+                      <CheckCircle2 size={13} />
+                      {ecom.stock[stockTone.labelKey]}
+                    </span>
+                    <span>{ecom.leadTimes[leadTime]}</span>
+                  </div>
+
+                  <div className="product-card-footer">
+                    <div>
+                      <strong>{formatCurrency(Number(p.price))}</strong>
+                      <span>
+                        {formatNumber(p.total_quantity)} {p.unit}{' '}
+                        {ecom.available}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => addToCart(p)}
+                      disabled={p.total_quantity === 0}
+                      title={`${ecom.addToQuote}: ${p.name_th}`}
+                    >
+                      <Plus size={17} />
+                    </button>
+                  </div>
                 </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
 
-                <h3>{p.name_th}</h3>
-
-                <div className="product-card-details">
-                  <span className={stockTone.className}>
-                    <CheckCircle2 size={13} />
+      {/* ── Compact: dense grid, smaller thumbs, 6 cols ─────────────── */}
+      {!loading && viewMode === 'compact' && (
+        <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+          {filteredProducts.map((p) => {
+            const stockTone = deriveStockTone(p.total_quantity);
+            const hero = getHeroImage(p);
+            return (
+              <article
+                key={p.id}
+                className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-slate-300 hover:shadow-sm transition"
+              >
+                <div className="aspect-square bg-white p-1.5 border-b border-slate-100">
+                  {hero ? (
+                    <img
+                      src={hero}
+                      alt={p.name_th}
+                      loading="lazy"
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <div className="w-full h-full grid place-items-center text-slate-300">
+                      <Package size={28} />
+                    </div>
+                  )}
+                </div>
+                <div className="p-2.5 flex flex-col gap-1 flex-1">
+                  <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                    <span className="truncate">{p.brand ?? '—'}</span>
+                    <span className="font-mono">{p.sku}</span>
+                  </div>
+                  <h3 className="text-[12px] font-semibold text-slate-900 leading-tight line-clamp-2 min-h-[2.2em]">
+                    {p.name_th}
+                  </h3>
+                  <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold mt-auto', stockTone.className)}>
+                    <CheckCircle2 size={10} />
                     {ecom.stock[stockTone.labelKey]}
                   </span>
-                  <span>{ecom.leadTimes[leadTime]}</span>
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 mt-1">
+                    <strong className="text-sm text-slate-900 tabular-nums">
+                      {formatCurrency(Number(p.price))}
+                    </strong>
+                    <button
+                      type="button"
+                      onClick={() => addToCart(p)}
+                      disabled={p.total_quantity === 0}
+                      className="w-7 h-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={`${ecom.addToQuote}: ${p.name_th}`}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
                 </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
 
-                <div className="product-card-footer">
-                  <div>
-                    <strong>{formatCurrency(Number(p.price))}</strong>
-                    <span>
-                      {formatNumber(p.total_quantity)} {p.unit}{' '}
-                      {ecom.available}
+      {/* ── List: 1 col rows, image-left + full details right ──────── */}
+      {!loading && viewMode === 'list' && (
+        <section className="flex flex-col gap-2">
+          {filteredProducts.map((p) => {
+            const stockTone = deriveStockTone(p.total_quantity);
+            const leadTime = deriveLeadTime(p.total_quantity);
+            const hero = getHeroImage(p);
+            return (
+              <article
+                key={p.id}
+                className="flex gap-4 rounded-lg border border-slate-200 bg-white p-3 hover:border-slate-300 hover:shadow-sm transition"
+              >
+                <div className="w-28 h-28 flex-shrink-0 rounded-md border border-slate-200 bg-white p-1 grid place-items-center overflow-hidden">
+                  {hero ? (
+                    <img
+                      src={hero}
+                      alt={p.name_th}
+                      loading="lazy"
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <Package size={32} className="text-slate-300" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                  <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        {p.brand ?? '—'}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">{p.sku}</span>
+                      {p.category?.name_th && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                          {p.category.name_th}
+                        </span>
+                      )}
+                    </div>
+                    <strong className="text-base font-bold text-slate-900 tabular-nums">
+                      {formatCurrency(Number(p.price))}
+                    </strong>
+                  </div>
+                  <h3 className="text-sm font-semibold text-slate-900 leading-snug">
+                    {p.name_th}
+                    {p.name_en && (
+                      <span className="font-normal italic text-slate-500 ml-2">{p.name_en}</span>
+                    )}
+                  </h3>
+                  {p.description_th && (
+                    <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                      {p.description_th}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-3 mt-auto pt-1">
+                    <span className={cn('inline-flex items-center gap-1 text-[11px] font-semibold', stockTone.className)}>
+                      <CheckCircle2 size={12} />
+                      {ecom.stock[stockTone.labelKey]}
+                    </span>
+                    <span className="text-[11px] text-slate-500">{ecom.leadTimes[leadTime]}</span>
+                    <span className="text-[11px] text-slate-500 tabular-nums">
+                      {formatNumber(p.total_quantity)} {p.unit} {ecom.available}
                     </span>
                   </div>
+                </div>
+                <div className="flex flex-col justify-center">
                   <button
+                    type="button"
                     onClick={() => addToCart(p)}
                     disabled={p.total_quantity === 0}
+                    className="h-9 px-4 rounded-md bg-indigo-500 text-white text-sm font-semibold hover:bg-indigo-600 disabled:opacity-40 inline-flex items-center gap-1.5"
                     title={`${ecom.addToQuote}: ${p.name_th}`}
                   >
-                    <Plus size={17} />
+                    <Plus size={14} /> เพิ่ม
                   </button>
                 </div>
-              </div>
-            </article>
-          );
-        })}
-      </section>
+              </article>
+            );
+          })}
+        </section>
+      )}
+
+      {/* ── Table: compact rows for scanning ─────────────────────── */}
+      {!loading && viewMode === 'table' && (
+        <section className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-600 font-semibold">
+                <tr>
+                  <th className="w-14 px-3 py-3"></th>
+                  <th className="px-3 py-3 text-left">SKU</th>
+                  <th className="px-3 py-3 text-left">{ecom.productShelf}</th>
+                  <th className="px-3 py-3 text-left">{ecom.brand ?? 'Brand'}</th>
+                  <th className="px-3 py-3 text-left">หมวด</th>
+                  <th className="px-3 py-3 text-center">สถานะ</th>
+                  <th className="px-3 py-3 text-right">ราคา</th>
+                  <th className="px-3 py-3 text-right">สต๊อก</th>
+                  <th className="w-20 px-3 py-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredProducts.map((p) => {
+                  const stockTone = deriveStockTone(p.total_quantity);
+                  const hero = getHeroImage(p);
+                  return (
+                    <tr key={p.id} className="hover:bg-slate-50/70 transition">
+                      <td className="px-3 py-2">
+                        {hero ? (
+                          <img
+                            src={hero}
+                            alt={p.name_th}
+                            loading="lazy"
+                            className="w-10 h-10 rounded-md object-contain border border-slate-200 bg-white"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-md border border-dashed border-slate-200 bg-slate-50 grid place-items-center text-slate-300">
+                            <Package size={16} />
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-indigo-600 font-semibold">{p.sku}</td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-900">{p.name_th}</div>
+                        {p.name_en && (
+                          <div className="text-[11px] italic text-slate-500 mt-0.5">{p.name_en}</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">{p.brand ?? '—'}</td>
+                      <td className="px-3 py-2 text-slate-700">{p.category?.name_th ?? '—'}</td>
+                      <td className="px-3 py-2 text-center">
+                        <span className={cn('inline-flex items-center gap-1 text-[11px] font-semibold', stockTone.className)}>
+                          <CheckCircle2 size={11} />
+                          {ecom.stock[stockTone.labelKey]}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">
+                        {formatCurrency(Number(p.price))}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                        {formatNumber(p.total_quantity)} {p.unit}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => addToCart(p)}
+                          disabled={p.total_quantity === 0}
+                          className="h-7 w-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-40 ml-auto"
+                          title={`${ecom.addToQuote}: ${p.name_th}`}
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {!loading && filteredProducts.length === 0 && (
         <div className="commerce-empty-state">
