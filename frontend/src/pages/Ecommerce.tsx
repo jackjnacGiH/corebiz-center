@@ -25,6 +25,7 @@ import {
   categoriesApi,
   quotesApi,
   quoteRecordApi,
+  getEffectivePrice,
   type ProductWithInventory,
 } from '../lib/api';
 import type { Category } from '../lib/database.types';
@@ -62,6 +63,14 @@ function getHeroImage(p: ProductWithInventory): string | null {
   if (!Array.isArray(p.images)) return null;
   const imgs = (p.images as unknown[]).filter((x): x is string => typeof x === 'string');
   return imgs[0] ?? null;
+}
+
+/** Build a short discount badge label, or null if no discount. */
+function discountBadge(p: ProductWithInventory): string | null {
+  const val = Number(p.discount_value ?? 0);
+  if (!val) return null;
+  if (p.discount_type === 'percent') return `-${val.toFixed(0)}%`;
+  return `-฿${val.toLocaleString('th-TH')}`;
 }
 
 // ─── View modes ──────────────────────────────────────────────────────────
@@ -160,7 +169,7 @@ export default function Ecommerce() {
   }, [products]);
 
   const cartCount = cart.reduce((sum, i) => sum + i.qty, 0);
-  const cartSubtotal = cart.reduce((sum, i) => sum + Number(i.product.price) * i.qty, 0);
+  const cartSubtotal = cart.reduce((sum, i) => sum + getEffectivePrice(i.product) * i.qty, 0);
   const cartVat = Math.round(cartSubtotal * 0.07);
   const cartTotal = cartSubtotal + cartVat;
 
@@ -198,7 +207,7 @@ export default function Ecommerce() {
           sku: i.product.sku,
           product_name: i.product.name_th,
           quantity: i.qty,
-          unit_price: Number(i.product.price),
+          unit_price: getEffectivePrice(i.product),
         })),
       });
       setSavedCode(result.code);
@@ -409,8 +418,16 @@ export default function Ecommerce() {
             const stockTone = deriveStockTone(p.total_quantity);
             const leadTime = deriveLeadTime(p.total_quantity);
             const hero = getHeroImage(p);
+            const effective = getEffectivePrice(p);
+            const hasDiscount = effective < Number(p.price);
+            const badge = discountBadge(p);
             return (
-              <article key={p.id} className="commerce-product-card">
+              <article key={p.id} className="commerce-product-card relative">
+                {badge && (
+                  <span className="absolute top-2 right-2 z-10 inline-flex items-center px-2 py-0.5 rounded-full bg-rose-500 text-white text-[11px] font-bold shadow-sm">
+                    {badge}
+                  </span>
+                )}
                 {hero ? (
                   <div
                     className="product-visual"
@@ -457,11 +474,25 @@ export default function Ecommerce() {
 
                   <div className="product-card-footer">
                     <div>
-                      <strong>{formatCurrency(Number(p.price))}</strong>
-                      <span>
-                        {formatNumber(p.total_quantity)} {p.unit}{' '}
-                        {ecom.available}
-                      </span>
+                      {hasDiscount ? (
+                        <div>
+                          <strong className="text-rose-600">{formatCurrency(effective)}</strong>
+                          <span className="line-through text-slate-400 mr-2">
+                            {formatCurrency(Number(p.price))}
+                          </span>
+                          <span>
+                            {formatNumber(p.total_quantity)} {p.unit} {ecom.available}
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <strong>{formatCurrency(Number(p.price))}</strong>
+                          <span>
+                            {formatNumber(p.total_quantity)} {p.unit}{' '}
+                            {ecom.available}
+                          </span>
+                        </>
+                      )}
                     </div>
                     <button
                       onClick={() => addToCart(p)}
@@ -478,17 +509,25 @@ export default function Ecommerce() {
         </section>
       )}
 
-      {/* ── Compact: dense grid, smaller thumbs, 6 cols ─────────────── */}
+      {/* ── Compact: dense grid, smaller thumbs, 7-8 cols ─────────── */}
       {!loading && viewMode === 'compact' && (
         <section className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-2">
           {filteredProducts.map((p) => {
             const stockTone = deriveStockTone(p.total_quantity);
             const hero = getHeroImage(p);
+            const effective = getEffectivePrice(p);
+            const hasDiscount = effective < Number(p.price);
+            const badge = discountBadge(p);
             return (
               <article
                 key={p.id}
-                className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-slate-300 hover:shadow-sm transition"
+                className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-slate-300 hover:shadow-sm transition relative"
               >
+                {badge && (
+                  <span className="absolute top-1.5 right-1.5 z-10 inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[9px] font-bold shadow-sm">
+                    {badge}
+                  </span>
+                )}
                 <div className="aspect-square bg-white p-1.5 border-b border-slate-100">
                   {hero ? (
                     <img
@@ -516,9 +555,16 @@ export default function Ecommerce() {
                     {ecom.stock[stockTone.labelKey]}
                   </span>
                   <div className="flex items-center justify-between pt-1 border-t border-slate-100 mt-1">
-                    <strong className="text-sm text-slate-900 tabular-nums">
-                      {formatCurrency(Number(p.price))}
-                    </strong>
+                    <div className="flex flex-col leading-tight">
+                      <strong className={cn('text-sm tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
+                        {formatCurrency(effective)}
+                      </strong>
+                      {hasDiscount && (
+                        <span className="text-[10px] line-through text-slate-400 tabular-nums">
+                          {formatCurrency(Number(p.price))}
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={() => addToCart(p)}
@@ -543,6 +589,9 @@ export default function Ecommerce() {
             const stockTone = deriveStockTone(p.total_quantity);
             const leadTime = deriveLeadTime(p.total_quantity);
             const hero = getHeroImage(p);
+            const effective = getEffectivePrice(p);
+            const hasDiscount = effective < Number(p.price);
+            const badge = discountBadge(p);
             return (
               <article
                 key={p.id}
@@ -573,9 +622,21 @@ export default function Ecommerce() {
                         </span>
                       )}
                     </div>
-                    <strong className="text-base font-bold text-slate-900 tabular-nums">
-                      {formatCurrency(Number(p.price))}
-                    </strong>
+                    <div className="flex items-baseline gap-2 flex-shrink-0">
+                      {hasDiscount && (
+                        <span className="text-xs line-through text-slate-400 tabular-nums">
+                          {formatCurrency(Number(p.price))}
+                        </span>
+                      )}
+                      <strong className={cn('text-base font-bold tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
+                        {formatCurrency(effective)}
+                      </strong>
+                      {badge && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-rose-500 text-white text-[10px] font-bold">
+                          {badge}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <h3 className="text-sm font-semibold text-slate-900 leading-snug">
                     {p.name_th}
@@ -638,6 +699,9 @@ export default function Ecommerce() {
                 {filteredProducts.map((p) => {
                   const stockTone = deriveStockTone(p.total_quantity);
                   const hero = getHeroImage(p);
+                  const effective = getEffectivePrice(p);
+                  const hasDiscount = effective < Number(p.price);
+                  const badge = discountBadge(p);
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/70 transition">
                       <td className="px-3 py-2">
@@ -669,8 +733,20 @@ export default function Ecommerce() {
                           {ecom.stock[stockTone.labelKey]}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">
-                        {formatCurrency(Number(p.price))}
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                        {hasDiscount && (
+                          <span className="text-xs line-through text-slate-400 mr-1.5">
+                            {formatCurrency(Number(p.price))}
+                          </span>
+                        )}
+                        <strong className={cn('font-bold', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
+                          {formatCurrency(effective)}
+                        </strong>
+                        {badge && (
+                          <span className="ml-1.5 inline-flex items-center px-1 py-0.5 rounded bg-rose-500 text-white text-[9px] font-bold align-middle">
+                            {badge}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-700">
                         {formatNumber(p.total_quantity)} {p.unit}
@@ -740,7 +816,7 @@ export default function Ecommerce() {
                     <div className="cart-line-info">
                       <strong>{item.product.name_th}</strong>
                       <span>
-                        {item.product.sku} / {formatCurrency(Number(item.product.price))} / {item.product.unit}
+                        {item.product.sku} / {formatCurrency(getEffectivePrice(item.product))} / {item.product.unit}
                       </span>
                       <div className="quantity-stepper">
                         <button
@@ -760,7 +836,7 @@ export default function Ecommerce() {
                     </div>
 
                     <div className="cart-line-total">
-                      <strong>{formatCurrency(Number(item.product.price) * item.qty)}</strong>
+                      <strong>{formatCurrency(getEffectivePrice(item.product) * item.qty)}</strong>
                       <button onClick={() => removeFromCart(item.product.id)} title={ecom.removeItem}>
                         <Trash2 size={15} />
                       </button>

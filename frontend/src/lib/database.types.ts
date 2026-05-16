@@ -290,7 +290,8 @@ export type Database = {
         Row: {
           barcode: string | null; brand: string | null; category_id: string | null;
           cost: number | null; created_at: string; description_en: string | null;
-          description_th: string | null; feature_tags: string[]; id: string;
+          description_th: string | null; discount_type: string; discount_value: number;
+          feature_tags: string[]; id: string;
           images: Json; is_featured: boolean;
           name_en: string | null; name_th: string; price: number; sku: string; spec: Json;
           status: string; tags: string[]; unit: string; updated_at: string; weight_kg: number | null;
@@ -298,7 +299,8 @@ export type Database = {
         Insert: {
           barcode?: string | null; brand?: string | null; category_id?: string | null;
           cost?: number | null; created_at?: string; description_en?: string | null;
-          description_th?: string | null; feature_tags?: string[]; id?: string;
+          description_th?: string | null; discount_type?: string; discount_value?: number;
+          feature_tags?: string[]; id?: string;
           images?: Json; is_featured?: boolean;
           name_en?: string | null; name_th: string; price?: number; sku: string; spec?: Json;
           status?: string; tags?: string[]; unit?: string; updated_at?: string; weight_kg?: number | null;

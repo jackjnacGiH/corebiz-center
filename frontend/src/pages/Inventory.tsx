@@ -180,6 +180,8 @@ export default function Inventory() {
       price: form.price,
       cost: form.cost,
       weight_kg: form.weight_kg,
+      discount_value: form.discount_value,
+      discount_type: form.discount_type,
       feature_tags: form.feature_tags,
       // Keep boolean flag in sync (back-compat for any reader of is_featured)
       is_featured: form.feature_tags.length > 0,

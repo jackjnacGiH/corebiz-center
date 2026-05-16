@@ -12,6 +12,7 @@ import {
     Weight,
     Star,
     GripVertical,
+    Percent,
 } from 'lucide-react';
 import type { Category } from '../lib/database.types';
 import type { ProductWithInventory } from '../lib/api';
@@ -61,6 +62,8 @@ export interface ProductFormData {
     unit: string;
     price: number;
     cost: number;
+    discount_value: number;
+    discount_type: 'fixed' | 'percent';
     weight_kg: number;
     feature_tags: string[];
     status: 'active' | 'draft' | 'archived';
@@ -96,6 +99,8 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
             unit: 'ชิ้น',
             price: 0,
             cost: 0,
+            discount_value: 0,
+            discount_type: 'fixed',
             weight_kg: 0,
             feature_tags: [],
             status: 'active',
@@ -120,6 +125,8 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
         unit: p.unit,
         price: Number(p.price),
         cost: Number(p.cost ?? 0),
+        discount_value: Number(p.discount_value ?? 0),
+        discount_type: (p.discount_type === 'percent' ? 'percent' : 'fixed') as 'fixed' | 'percent',
         weight_kg: Number(p.weight_kg ?? 0),
         feature_tags: Array.isArray(p.feature_tags) ? [...p.feature_tags] : [],
         status: p.status as ProductFormData['status'],
@@ -641,6 +648,85 @@ function ProductModalForm({
                                     className="tabular-nums"
                                 />
                             </div>
+                        </div>
+
+                        {/* ── Discount ───────────────────────────────── */}
+                        <div className="space-y-2">
+                            <Label
+                                htmlFor="prod-discount"
+                                className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider"
+                            >
+                                <Percent size={12} /> ส่วนลด
+                                {form.discount_value > 0 && (
+                                    <span className="font-normal normal-case tracking-normal text-emerald-700">
+                                        — ราคาหลังลด ฿
+                                        {(form.discount_type === 'percent'
+                                            ? form.price * (1 - form.discount_value / 100)
+                                            : Math.max(0, form.price - form.discount_value)
+                                        ).toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                    </span>
+                                )}
+                            </Label>
+                            <div className="flex gap-2">
+                                <Input
+                                    id="prod-discount"
+                                    type="number"
+                                    min="0"
+                                    step={form.discount_type === 'percent' ? '1' : '0.01'}
+                                    max={form.discount_type === 'percent' ? 100 : undefined}
+                                    placeholder="0"
+                                    value={form.discount_value}
+                                    onChange={(e) =>
+                                        setForm({
+                                            ...form,
+                                            discount_value: Number(e.target.value),
+                                        })
+                                    }
+                                    className="tabular-nums flex-1"
+                                />
+                                {/* Segment toggle: ฿ | % */}
+                                <div
+                                    className="inline-flex h-9 items-center gap-0.5 rounded-md border border-neutral-200 bg-neutral-50 p-0.5"
+                                    role="group"
+                                    aria-label="ประเภทส่วนลด"
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setForm({ ...form, discount_type: 'fixed' })
+                                        }
+                                        aria-pressed={form.discount_type === 'fixed'}
+                                        className={cn(
+                                            'h-full min-w-[44px] px-2.5 rounded text-sm font-semibold transition',
+                                            form.discount_type === 'fixed'
+                                                ? 'bg-white shadow-sm text-indigo-700 border border-indigo-200'
+                                                : 'text-neutral-500 hover:text-neutral-900',
+                                        )}
+                                    >
+                                        ฿
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setForm({ ...form, discount_type: 'percent' })
+                                        }
+                                        aria-pressed={form.discount_type === 'percent'}
+                                        className={cn(
+                                            'h-full min-w-[44px] px-2.5 rounded text-sm font-semibold transition',
+                                            form.discount_type === 'percent'
+                                                ? 'bg-white shadow-sm text-indigo-700 border border-indigo-200'
+                                                : 'text-neutral-500 hover:text-neutral-900',
+                                        )}
+                                    >
+                                        %
+                                    </button>
+                                </div>
+                            </div>
+                            <p className="text-[11px] text-neutral-500">
+                                {form.discount_type === 'percent'
+                                    ? 'ลดเป็นเปอร์เซ็นต์ของราคาขาย (0–100)'
+                                    : 'ลดเป็นจำนวนบาท หักจากราคาขาย'}
+                            </p>
                         </div>
 
                         {/* ── Weight ──────────────────────────────────── */}

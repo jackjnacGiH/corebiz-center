@@ -27,6 +27,26 @@ export interface ProductWithInventory extends Product {
   low_stock: boolean;
 }
 
+/**
+ * Compute the effective (after-discount) price of a product.
+ *
+ *   discount_type = 'percent' → price - price * (discount_value / 100)
+ *   discount_type = 'fixed'   → price - discount_value
+ *
+ * Never returns negative; clamps to 0.
+ */
+export function getEffectivePrice(p: {
+  price: number | string;
+  discount_value?: number | string | null;
+  discount_type?: string | null;
+}): number {
+  const base = Number(p.price ?? 0);
+  const val = Number(p.discount_value ?? 0);
+  if (!val) return base;
+  const off = p.discount_type === 'percent' ? (base * val) / 100 : val;
+  return Math.max(0, base - off);
+}
+
 export const productsApi = {
   async list(): Promise<ProductWithInventory[]> {
     const { data, error } = await supabase
