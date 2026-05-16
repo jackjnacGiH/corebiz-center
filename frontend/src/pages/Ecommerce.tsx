@@ -343,7 +343,15 @@ export default function Ecommerce() {
                 const hero = imgs[0];
                 if (hero) {
                   return (
-                    <div className="product-visual" style={{ padding: 0, background: '#f8fafc' }}>
+                    <div
+                      className="product-visual"
+                      style={{
+                        padding: '0.5rem',
+                        background: '#ffffff',
+                        height: 'auto',
+                        aspectRatio: '1 / 1',
+                      }}
+                    >
                       <img
                         src={hero}
                         alt={p.name_th}
@@ -351,7 +359,7 @@ export default function Ecommerce() {
                         style={{
                           width: '100%',
                           height: '100%',
-                          objectFit: 'cover',
+                          objectFit: 'contain',
                         }}
                       />
                     </div>
