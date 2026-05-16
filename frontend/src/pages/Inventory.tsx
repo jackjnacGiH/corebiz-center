@@ -14,6 +14,7 @@ import {
 } from '../lib/api';
 import type { Category, Warehouse } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 
 // ─── types & helpers ─────────────────────────────────────────────────────
 type StockStatus = 'out' | 'low' | 'watch' | 'normal';
@@ -424,7 +425,10 @@ export default function Inventory() {
                         )}
                       </td>
 
-                      <td className={`${rowPad} px-3 w-14`}>
+                      <td
+                        className={`${rowPad} px-3 w-14`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {(() => {
                           const imgs = Array.isArray(p.images)
                             ? (p.images as unknown[]).filter((x): x is string => typeof x === 'string')
@@ -432,12 +436,33 @@ export default function Inventory() {
                           const hero = imgs[0];
                           if (hero) {
                             return (
-                              <img
-                                src={hero}
-                                alt={p.name_th}
-                                className="w-10 h-10 rounded-md object-cover border border-slate-200 bg-white"
-                                loading="lazy"
-                              />
+                              <HoverCard openDelay={150} closeDelay={50}>
+                                <HoverCardTrigger asChild>
+                                  <img
+                                    src={hero}
+                                    alt={p.name_th}
+                                    className="w-10 h-10 rounded-md object-cover border border-slate-200 bg-white cursor-zoom-in"
+                                    loading="lazy"
+                                  />
+                                </HoverCardTrigger>
+                                <HoverCardContent
+                                  side="right"
+                                  align="start"
+                                  sideOffset={8}
+                                  className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
+                                >
+                                  <img
+                                    src={hero}
+                                    alt={p.name_th}
+                                    className="w-[200px] h-[200px] object-contain bg-white"
+                                  />
+                                  {imgs.length > 1 && (
+                                    <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 text-[11px] text-slate-600">
+                                      + อีก {imgs.length - 1} รูป
+                                    </div>
+                                  )}
+                                </HoverCardContent>
+                              </HoverCard>
                             );
                           }
                           return (
