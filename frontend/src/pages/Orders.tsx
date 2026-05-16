@@ -4,215 +4,300 @@ import { ordersApi, type OrderWithCustomer } from '../lib/api';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import OrderDetailModal from '../components/OrderDetailModal';
+import PageHeader from '../components/PageHeader';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
 type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'returned';
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
-  pending:    'bg-amber-500/10 text-amber-400 border-amber-500/30',
-  processing: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30',
-  shipped:    'bg-sky-500/10 text-sky-400 border-sky-500/30',
-  delivered:  'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  cancelled:  'bg-slate-500/10 text-slate-400 border-slate-500/30',
-  returned:   'bg-rose-500/10 text-rose-400 border-rose-500/30',
+    pending:    'bg-amber-50    text-amber-700   border-amber-200',
+    processing: 'bg-indigo-50   text-indigo-700  border-indigo-200',
+    shipped:    'bg-sky-50      text-sky-700     border-sky-200',
+    delivered:  'bg-emerald-50  text-emerald-700 border-emerald-200',
+    cancelled:  'bg-neutral-100 text-neutral-700 border-neutral-200',
+    returned:   'bg-red-50      text-red-700     border-red-200',
 };
 
 const TIER_STYLES: Record<string, string> = {
-  vip:     'bg-purple-500/20 text-purple-400 border-purple-500/30',
-  gold:    'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  silver:  'bg-slate-400/20 text-slate-300 border-slate-400/30',
-  general: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+    vip:     'bg-purple-50  text-purple-700  border-purple-200',
+    gold:    'bg-amber-50   text-amber-800   border-amber-300',
+    silver:  'bg-slate-100  text-slate-700   border-slate-300',
+    general: 'bg-neutral-100 text-neutral-700 border-neutral-200',
 };
 
+const STATUS_ORDER: OrderStatus[] = [
+    'pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned',
+];
+
 export default function Orders() {
-  const { t } = useLanguage();
-  const [orders, setOrders] = useState<OrderWithCustomer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | OrderStatus>('all');
-  const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
+    const { t } = useLanguage();
+    const [orders, setOrders] = useState<OrderWithCustomer[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+    const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState<'all' | OrderStatus>('all');
+    const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true); setErr(null);
-    try {
-      setOrders(await ordersApi.list());
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setLoading(false);
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            setOrders(await ordersApi.list());
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
     }
-  }
 
-  useEffect(() => { void load(); }, []);
-  useRealtimeTable('orders', () => void load());
+    useEffect(() => {
+        void load();
+    }, []);
+    useRealtimeTable('orders', () => void load());
 
-  const filtered = useMemo(() => {
-    return orders.filter(o => {
-      if (statusFilter !== 'all' && o.status !== statusFilter) return false;
-      if (!search) return true;
-      const s = search.toLowerCase();
-      return o.code.toLowerCase().includes(s)
-        || (o.customer?.name.toLowerCase().includes(s) ?? false);
-    });
-  }, [orders, search, statusFilter]);
+    const filtered = useMemo(() => {
+        return orders.filter((o) => {
+            if (statusFilter !== 'all' && o.status !== statusFilter) return false;
+            if (!search) return true;
+            const s = search.toLowerCase();
+            return (
+                o.code.toLowerCase().includes(s) ||
+                (o.customer?.name.toLowerCase().includes(s) ?? false)
+            );
+        });
+    }, [orders, search, statusFilter]);
 
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: orders.length };
-    for (const o of orders) counts[o.status] = (counts[o.status] ?? 0) + 1;
-    return counts;
-  }, [orders]);
+    const statusCounts = useMemo(() => {
+        const counts: Record<string, number> = { all: orders.length };
+        for (const o of orders) counts[o.status] = (counts[o.status] ?? 0) + 1;
+        return counts;
+    }, [orders]);
 
-  async function handleStatusChange(o: OrderWithCustomer, newStatus: OrderStatus) {
-    try {
-      await ordersApi.updateStatus(o.id, newStatus);
-      await load();
-    } catch (e) {
-      setErr((e as Error).message);
+    async function handleStatusChange(o: OrderWithCustomer, newStatus: OrderStatus) {
+        try {
+            await ordersApi.updateStatus(o.id, newStatus);
+            await load();
+        } catch (e) {
+            setErr((e as Error).message);
+        }
     }
-  }
 
-  return (
-    <div className="animate-fade-in p-6 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3 text-white">
-            <ShoppingCart className="w-8 h-8 text-indigo-400" />
-            {t.orders.title}
-          </h1>
-          <p className="text-slate-400 mt-1">{t.orders.subtitle}</p>
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            onClick={() => load()}
-            className="btn btn-secondary flex items-center gap-2"
-            disabled={loading}
-            title="Reload"
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <div className="relative">
-            <input
-              type="text"
-              placeholder={t.orders.searchPlaceholder}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="bg-gray-800/50 border border-gray-700/50 text-white text-sm rounded-lg pl-10 pr-3 py-2.5 w-64 focus:border-indigo-500 outline-none"
+    return (
+        <div className="animate-fade-in space-y-6">
+            <PageHeader
+                title={t.orders.title}
+                subtitle={t.orders.subtitle}
+                icon={<ShoppingCart size={20} />}
+                actions={
+                    <>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => load()}
+                            disabled={loading}
+                            className="gap-2"
+                        >
+                            <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
+                            Reload
+                        </Button>
+                        <div className="relative">
+                            <Search
+                                size={14}
+                                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
+                            />
+                            <Input
+                                type="text"
+                                placeholder={t.orders.searchPlaceholder}
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                className="pl-9 w-64"
+                            />
+                        </div>
+                    </>
+                }
             />
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-          </div>
-        </div>
-      </div>
 
-      {/* Status filter chips */}
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => setStatusFilter('all')}
-          className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
-            statusFilter === 'all'
-              ? 'bg-indigo-500 border-indigo-500 text-white'
-              : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
-          }`}
-        >
-          ทั้งหมด ({statusCounts.all ?? 0})
-        </button>
-        {(['pending','processing','shipped','delivered','cancelled','returned'] as OrderStatus[]).map(s => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
-              statusFilter === s
-                ? STATUS_STYLES[s] + ' ring-2 ring-offset-1 ring-offset-slate-950 ring-current'
-                : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
-            }`}
-          >
-            {t.orders.status[s]} ({statusCounts[s] ?? 0})
-          </button>
-        ))}
-      </div>
-
-      {err && (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
-          ✗ {err}
-        </div>
-      )}
-
-      <div className="glass-card overflow-hidden p-0 border border-gray-800">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left">
-            <thead className="bg-gray-800/50 border-b border-gray-700/50">
-              <tr>
-                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider">{t.orders.table.code}</th>
-                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider">{t.orders.table.customer}</th>
-                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-center">รายการ</th>
-                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-right">{t.orders.table.total}</th>
-                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-center">{t.common.status}</th>
-                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider">{t.orders.table.date}</th>
-                <th className="py-3 px-4 text-xs font-semibold text-gray-300 uppercase tracking-wider text-center">{t.common.actions}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {loading && (
-                <tr><td colSpan={7} className="py-12 text-center text-slate-500">{t.common.loading}</td></tr>
-              )}
-              {!loading && filtered.length === 0 && (
-                <tr><td colSpan={7} className="py-12 text-center text-slate-500">{t.common.noData}</td></tr>
-              )}
-              {!loading && filtered.map(o => (
-                <tr key={o.id} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="py-3 px-4 text-sm font-mono text-indigo-400">{o.code}</td>
-                  <td className="py-3 px-4">
-                    <div className="font-medium text-gray-100">{o.customer?.name ?? '—'}</div>
-                    {o.customer?.tier && (
-                      <span className={`inline-flex items-center mt-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${TIER_STYLES[o.customer.tier] ?? TIER_STYLES.general}`}>
-                        {o.customer.tier}
-                      </span>
+            {/* Status filter chips */}
+            <div className="flex flex-wrap gap-2">
+                <button
+                    type="button"
+                    onClick={() => setStatusFilter('all')}
+                    className={cn(
+                        'px-3 py-1.5 rounded-full text-xs font-semibold border transition',
+                        statusFilter === 'all'
+                            ? 'bg-indigo-500 border-indigo-500 text-white'
+                            : 'bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-50',
                     )}
-                  </td>
-                  <td className="py-3 px-4 text-center text-sm text-slate-300">
-                    {o.item_count ?? 0}
-                  </td>
-                  <td className="py-3 px-4 text-right font-bold text-emerald-400">
-                    ฿{Number(o.total).toLocaleString()}
-                  </td>
-                  <td className="py-3 px-4 text-center">
-                    <select
-                      value={o.status}
-                      onChange={e => handleStatusChange(o, e.target.value as OrderStatus)}
-                      className={`text-xs font-semibold px-2.5 py-1 rounded border outline-none cursor-pointer ${STATUS_STYLES[o.status as OrderStatus]}`}
-                    >
-                      {(['pending','processing','shipped','delivered','cancelled','returned'] as OrderStatus[]).map(s => (
-                        <option key={s} value={s} className="bg-slate-900 text-white">
-                          {t.orders.status[s]}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="py-3 px-4 text-sm text-slate-400">
-                    {new Date(o.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}
-                  </td>
-                  <td className="py-3 px-4 text-center">
+                >
+                    ทั้งหมด ({statusCounts.all ?? 0})
+                </button>
+                {STATUS_ORDER.map((s) => (
                     <button
-                      onClick={() => setDetailOrderId(o.id)}
-                      className="text-blue-400 hover:text-blue-300 text-sm font-medium px-3 py-1.5 rounded flex items-center gap-1 mx-auto bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-                      title={t.common.details}
+                        key={s}
+                        type="button"
+                        onClick={() => setStatusFilter(s)}
+                        className={cn(
+                            'px-3 py-1.5 rounded-full text-xs font-semibold border transition',
+                            statusFilter === s
+                                ? STATUS_STYLES[s] + ' ring-2 ring-offset-1 ring-current'
+                                : 'bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-50',
+                        )}
                     >
-                      <Eye size={14} /> {t.common.details}
+                        {t.orders.status[s]} ({statusCounts[s] ?? 0})
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                ))}
+            </div>
 
-      <OrderDetailModal
-        isOpen={detailOrderId !== null}
-        orderId={detailOrderId}
-        onClose={() => setDetailOrderId(null)}
-        onStatusChange={() => void load()}
-      />
-    </div>
-  );
+            {err && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    ✗ {err}
+                </div>
+            )}
+
+            <Card className="gap-0 py-0 overflow-hidden">
+                <CardContent className="px-0 overflow-x-auto">
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="bg-neutral-50 hover:bg-neutral-50">
+                                <TableHead className="px-5 text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    {t.orders.table.code}
+                                </TableHead>
+                                <TableHead className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    {t.orders.table.customer}
+                                </TableHead>
+                                <TableHead className="text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    รายการ
+                                </TableHead>
+                                <TableHead className="text-right text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    {t.orders.table.total}
+                                </TableHead>
+                                <TableHead className="text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    {t.common.status}
+                                </TableHead>
+                                <TableHead className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    {t.orders.table.date}
+                                </TableHead>
+                                <TableHead className="px-5 text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    {t.common.actions}
+                                </TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {loading && (
+                                <TableRow>
+                                    <TableCell
+                                        colSpan={7}
+                                        className="text-center text-sm text-neutral-500 py-12"
+                                    >
+                                        {t.common.loading}
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                            {!loading && filtered.length === 0 && (
+                                <TableRow>
+                                    <TableCell
+                                        colSpan={7}
+                                        className="text-center text-sm text-neutral-500 py-12"
+                                    >
+                                        {t.common.noData}
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                            {!loading &&
+                                filtered.map((o) => (
+                                    <TableRow key={o.id}>
+                                        <TableCell className="px-5 font-mono text-sm text-indigo-600">
+                                            {o.code}
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="font-semibold text-neutral-900">
+                                                {o.customer?.name ?? '—'}
+                                            </div>
+                                            {o.customer?.tier && (
+                                                <span
+                                                    className={cn(
+                                                        'inline-flex items-center mt-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase border tracking-wider',
+                                                        TIER_STYLES[o.customer.tier] ??
+                                                            TIER_STYLES.general,
+                                                    )}
+                                                >
+                                                    {o.customer.tier}
+                                                </span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="text-center text-sm text-neutral-700 tabular-nums">
+                                            {o.item_count ?? 0}
+                                        </TableCell>
+                                        <TableCell className="text-right font-bold text-emerald-700 tabular-nums">
+                                            ฿{Number(o.total).toLocaleString()}
+                                        </TableCell>
+                                        <TableCell className="text-center">
+                                            <select
+                                                value={o.status}
+                                                onChange={(e) =>
+                                                    handleStatusChange(
+                                                        o,
+                                                        e.target.value as OrderStatus,
+                                                    )
+                                                }
+                                                className={cn(
+                                                    'text-xs font-semibold px-2.5 py-1 rounded-md border outline-none cursor-pointer',
+                                                    STATUS_STYLES[o.status as OrderStatus],
+                                                )}
+                                            >
+                                                {STATUS_ORDER.map((s) => (
+                                                    <option
+                                                        key={s}
+                                                        value={s}
+                                                        className="bg-white text-neutral-900"
+                                                    >
+                                                        {t.orders.status[s]}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </TableCell>
+                                        <TableCell className="text-sm text-neutral-500 tabular-nums">
+                                            {new Date(o.created_at).toLocaleDateString('th-TH', {
+                                                year: 'numeric',
+                                                month: 'short',
+                                                day: 'numeric',
+                                            })}
+                                        </TableCell>
+                                        <TableCell className="px-5 text-center">
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => setDetailOrderId(o.id)}
+                                                className="h-8 gap-1 border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800"
+                                                title={t.common.details}
+                                            >
+                                                <Eye size={13} /> {t.common.details}
+                                            </Button>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
+
+            <OrderDetailModal
+                isOpen={detailOrderId !== null}
+                orderId={detailOrderId}
+                onClose={() => setDetailOrderId(null)}
+                onStatusChange={() => void load()}
+            />
+        </div>
+    );
 }
