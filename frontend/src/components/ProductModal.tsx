@@ -9,6 +9,8 @@ import {
     ImagePlus,
     X,
     AlertTriangle,
+    Weight,
+    Star,
 } from 'lucide-react';
 import type { Category } from '../lib/database.types';
 import type { ProductWithInventory } from '../lib/api';
@@ -39,6 +41,8 @@ export interface ProductFormData {
     unit: string;
     price: number;
     cost: number;
+    weight_kg: number;
+    is_featured: boolean;
     status: 'active' | 'draft' | 'archived';
     /** Used only when creating a new product — initial qty in default warehouse */
     initial_quantity: number;
@@ -72,6 +76,8 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
             unit: 'ชิ้น',
             price: 0,
             cost: 0,
+            weight_kg: 0,
+            is_featured: false,
             status: 'active',
             initial_quantity: 0,
             reorder_level: 10,
@@ -94,6 +100,8 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
         unit: p.unit,
         price: Number(p.price),
         cost: Number(p.cost ?? 0),
+        weight_kg: Number(p.weight_kg ?? 0),
+        is_featured: Boolean(p.is_featured),
         status: p.status as ProductFormData['status'],
         initial_quantity: inv0?.quantity ?? 0,
         reorder_level: inv0?.reorder_level ?? 10,
@@ -520,6 +528,76 @@ function ProductModalForm({
                                     }
                                     className="tabular-nums"
                                 />
+                            </div>
+                        </div>
+
+                        {/* ── Weight + Featured ──────────────────────── */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="prod-weight" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                    <Weight size={12} /> น้ำหนัก (kg)
+                                </Label>
+                                <Input
+                                    id="prod-weight"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="0.00"
+                                    value={form.weight_kg}
+                                    onChange={(e) =>
+                                        setForm({
+                                            ...form,
+                                            weight_kg: Number(e.target.value),
+                                        })
+                                    }
+                                    className="tabular-nums"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                    <Star size={12} /> สินค้าแนะนำ
+                                </Label>
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setForm((f) => ({ ...f, is_featured: !f.is_featured }))
+                                    }
+                                    className={cn(
+                                        'h-9 w-full flex items-center justify-between gap-2 rounded-md border px-3 text-sm transition',
+                                        form.is_featured
+                                            ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                            : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50',
+                                    )}
+                                    role="switch"
+                                    aria-checked={form.is_featured}
+                                >
+                                    <span className="flex items-center gap-1.5">
+                                        <Star
+                                            size={14}
+                                            className={cn(
+                                                form.is_featured
+                                                    ? 'fill-amber-500 text-amber-500'
+                                                    : 'text-neutral-400',
+                                            )}
+                                        />
+                                        {form.is_featured ? 'Featured' : 'ปกติ'}
+                                    </span>
+                                    <span
+                                        className={cn(
+                                            'relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0',
+                                            form.is_featured ? 'bg-amber-500' : 'bg-neutral-300',
+                                        )}
+                                    >
+                                        <span
+                                            className={cn(
+                                                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                                form.is_featured
+                                                    ? 'translate-x-4'
+                                                    : 'translate-x-0.5',
+                                            )}
+                                        />
+                                    </span>
+                                </button>
                             </div>
                         </div>
                     </div>

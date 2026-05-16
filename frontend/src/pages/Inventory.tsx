@@ -177,6 +177,8 @@ export default function Inventory() {
       unit: form.unit,
       price: form.price,
       cost: form.cost,
+      weight_kg: form.weight_kg,
+      is_featured: form.is_featured,
       status: form.status,
     };
 
