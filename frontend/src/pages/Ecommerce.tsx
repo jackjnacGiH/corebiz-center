@@ -485,7 +485,7 @@ export default function Ecommerce() {
                     <div>
                       {hasDiscount ? (
                         <div>
-                          <strong className="text-rose-600">{formatCurrency(effective)}</strong>
+                          <strong className="text-rose-600 font-bold">{formatCurrency(effective)}</strong>
                           <span className="block text-base line-through text-slate-400 tabular-nums leading-none mt-0.5">
                             {formatCurrency(Number(p.price))}
                           </span>
@@ -559,13 +559,18 @@ export default function Ecommerce() {
                   <h3 className="text-[12px] font-semibold text-slate-900 leading-tight line-clamp-2 min-h-[2.2em]">
                     {p.name_th}
                   </h3>
-                  <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold mt-auto', stockTone.className)}>
-                    <CheckCircle2 size={10} />
-                    {ecom.stock[stockTone.labelKey]}
-                  </span>
+                  <div className="mt-auto flex flex-col gap-0.5">
+                    <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold', stockTone.className)}>
+                      <CheckCircle2 size={10} />
+                      {ecom.stock[stockTone.labelKey]}
+                    </span>
+                    <span className="text-[10px] text-slate-500 tabular-nums">
+                      {formatNumber(p.total_quantity)} {p.unit} {ecom.available}
+                    </span>
+                  </div>
                   <div className="flex items-center justify-between pt-1 border-t border-slate-100 mt-1">
                     <div className="flex flex-col leading-tight">
-                      <strong className={cn('text-sm tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
+                      <strong className={cn('text-base font-bold tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
                         {formatCurrency(effective)}
                       </strong>
                       {hasDiscount && (
