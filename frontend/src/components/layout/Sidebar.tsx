@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard,
     ShoppingCart,
@@ -32,9 +32,15 @@ const Sidebar: React.FC<SidebarProps> = ({
     onItemClick,
 }) => {
     const { t } = useLanguage();
+    const navigate = useNavigate();
 
     // When inside mobile Sheet, never render in collapsed form
     const collapsed = !isMobile && isCollapsed;
+
+    function goSettings() {
+        navigate('/settings');
+        onItemClick?.();
+    }
 
     const menuItems = [
         { name: t.nav.dashboard, path: '/', icon: <LayoutDashboard size={20} /> },
@@ -95,6 +101,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <div className="sidebar-footer">
                 <button
                     type="button"
+                    onClick={goSettings}
                     className={cn('settings-link', collapsed && 'settings-link--collapsed')}
                     title={collapsed ? t.layout.systemSettings : undefined}
                 >

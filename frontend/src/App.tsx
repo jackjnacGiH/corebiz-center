@@ -10,6 +10,7 @@ import Marketing from './pages/Marketing';
 import OpenclawRAG from './pages/OpenclawRAG';
 import KnowledgeChat from './pages/KnowledgeChat';
 import Affiliate from './pages/Affiliate';
+import Settings from './pages/Settings';
 import Login from './pages/auth/Login';
 import AuthCallback from './pages/auth/AuthCallback';
 import LineCallback from './pages/auth/LineCallback';
@@ -44,6 +45,7 @@ function App() {
               <Route path="affiliate" element={<Affiliate />} />
               <Route path="rag" element={<OpenclawRAG />} />
               <Route path="ask" element={<KnowledgeChat />} />
+              <Route path="settings" element={<Settings />} />
             </Route>
           </Routes>
         </BrowserRouter>
