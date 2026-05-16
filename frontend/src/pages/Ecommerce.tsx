@@ -626,7 +626,7 @@ export default function Ecommerce() {
                   <th className="w-14 px-3 py-3"></th>
                   <th className="px-3 py-3 text-left">SKU</th>
                   <th className="px-3 py-3 text-left">{ecom.productShelf}</th>
-                  <th className="px-3 py-3 text-left">{ecom.brand ?? 'Brand'}</th>
+                  <th className="px-3 py-3 text-left">Brand</th>
                   <th className="px-3 py-3 text-left">หมวด</th>
                   <th className="px-3 py-3 text-center">สถานะ</th>
                   <th className="px-3 py-3 text-right">ราคา</th>
