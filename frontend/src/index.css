@@ -954,7 +954,11 @@ button, input, select, textarea {
 
 .product-card-footer strong {
     display: block;
-    color: var(--text-main);
+    /* color: var(--text-main) intentionally omitted so Tailwind
+       utilities like `text-rose-600` (used for discounted price) can
+       win — this legacy rule lives outside @layer, so otherwise it
+       would beat any utility class. Fallback color is inherited from
+       body / parent, which is text-main by default. */
     font-size: 1.15rem;
     line-height: 1.1;
 }
