@@ -40,7 +40,14 @@ interface CartItem {
 }
 
 function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', maximumFractionDigits: 0 }).format(value);
+  // 0 decimals when integer, up to 2 decimals when not — so 15 → "฿15"
+  // but 14.55 (after a percent discount) → "฿14.55"
+  return new Intl.NumberFormat('th-TH', {
+    style: 'currency',
+    currency: 'THB',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function formatNumber(value: number): string {
@@ -479,7 +486,7 @@ export default function Ecommerce() {
                       {hasDiscount ? (
                         <div>
                           <strong className="text-rose-600">{formatCurrency(effective)}</strong>
-                          <span className="line-through text-slate-400 mr-2">
+                          <span className="block text-base line-through text-slate-400 tabular-nums leading-none mt-0.5">
                             {formatCurrency(Number(p.price))}
                           </span>
                           <span>
@@ -562,7 +569,7 @@ export default function Ecommerce() {
                         {formatCurrency(effective)}
                       </strong>
                       {hasDiscount && (
-                        <span className="text-[10px] line-through text-slate-400 tabular-nums">
+                        <span className="text-xs line-through text-slate-400 tabular-nums leading-tight">
                           {formatCurrency(Number(p.price))}
                         </span>
                       )}
@@ -626,11 +633,11 @@ export default function Ecommerce() {
                     </div>
                     <div className="flex items-baseline gap-2 flex-shrink-0">
                       {hasDiscount && (
-                        <span className="text-xs line-through text-slate-400 tabular-nums">
+                        <span className="text-sm line-through text-slate-400 tabular-nums">
                           {formatCurrency(Number(p.price))}
                         </span>
                       )}
-                      <strong className={cn('text-base font-bold tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
+                      <strong className={cn('text-lg font-bold tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
                         {formatCurrency(effective)}
                       </strong>
                       {badge && (
@@ -737,11 +744,11 @@ export default function Ecommerce() {
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                         {hasDiscount && (
-                          <span className="text-xs line-through text-slate-400 mr-1.5">
+                          <span className="text-sm line-through text-slate-400 mr-1.5">
                             {formatCurrency(Number(p.price))}
                           </span>
                         )}
-                        <strong className={cn('font-bold', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
+                        <strong className={cn('text-base font-bold', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
                           {formatCurrency(effective)}
                         </strong>
                         {badge && (
@@ -828,10 +835,10 @@ export default function Ecommerce() {
                               {item.product.sku} /{' '}
                               {lineHasDisc ? (
                                 <>
-                                  <span className="line-through text-slate-400 mr-1">
+                                  <span className="text-sm line-through text-slate-400 mr-1 tabular-nums">
                                     {formatCurrency(lineList)}
                                   </span>
-                                  <span className="text-rose-600 font-semibold">
+                                  <span className="text-rose-600 font-semibold tabular-nums">
                                     {formatCurrency(lineEff)}
                                   </span>
                                   {lineBadge && (
@@ -864,7 +871,7 @@ export default function Ecommerce() {
 
                           <div className="cart-line-total">
                             {lineHasDisc && (
-                              <span className="text-[10px] line-through text-slate-400 tabular-nums">
+                              <span className="text-xs line-through text-slate-400 tabular-nums">
                                 {formatCurrency(lineList * item.qty)}
                               </span>
                             )}

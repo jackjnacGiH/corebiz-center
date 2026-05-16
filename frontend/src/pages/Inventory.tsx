@@ -47,7 +47,13 @@ const PRODUCT_STATUS_META: Record<string, { label: string; dot: string; text: st
 function formatTHB(value: number, options: { compact?: boolean } = {}): string {
   if (options.compact && value >= 1_000_000) return `฿${(value / 1_000_000).toFixed(2)}M`;
   if (options.compact && value >= 1_000)     return `฿${(value / 1_000).toFixed(1)}K`;
-  return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', maximumFractionDigits: 0 }).format(value);
+  // 0 decimals for round numbers, up to 2 for fractional (e.g. 15 - 3%)
+  return new Intl.NumberFormat('th-TH', {
+    style: 'currency',
+    currency: 'THB',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function formatNumber(value: number): string {
@@ -496,10 +502,10 @@ export default function Inventory() {
                         {hasDisc ? (
                           <>
                             <div className="flex items-baseline justify-end gap-1.5">
-                              <span className="text-[11px] line-through text-slate-400 tabular-nums">
+                              <span className="text-xs line-through text-slate-400 tabular-nums">
                                 {formatTHB(listPrice)}
                               </span>
-                              <span className="text-sm font-semibold text-rose-600 tabular-nums">
+                              <span className="text-base font-bold text-rose-600 tabular-nums">
                                 {formatTHB(effective)}
                               </span>
                             </div>
