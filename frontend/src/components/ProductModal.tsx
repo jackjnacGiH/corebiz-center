@@ -654,16 +654,28 @@ function ProductModalForm({
                         <div className="space-y-2">
                             <Label
                                 htmlFor="prod-discount"
-                                className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider"
+                                className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider flex-wrap"
                             >
                                 <Percent size={12} /> ส่วนลด
-                                {form.discount_value > 0 && (
-                                    <span className="font-normal normal-case tracking-normal text-emerald-700">
-                                        — ราคาหลังลด ฿
-                                        {(form.discount_type === 'percent'
-                                            ? form.price * (1 - form.discount_value / 100)
-                                            : Math.max(0, form.price - form.discount_value)
-                                        ).toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                {form.discount_value > 0 && form.price > 0 && (
+                                    <span className="font-normal normal-case tracking-normal flex items-baseline gap-1.5">
+                                        <span className="text-neutral-500">— ราคาตั้ง</span>
+                                        <span className="line-through text-neutral-400 tabular-nums">
+                                            ฿
+                                            {form.price.toLocaleString('th-TH', {
+                                                maximumFractionDigits: 2,
+                                            })}
+                                        </span>
+                                        <span className="text-neutral-500">ขายจริง</span>
+                                        <span className="text-rose-600 font-semibold tabular-nums">
+                                            ฿
+                                            {Math.max(
+                                                0,
+                                                form.discount_type === 'percent'
+                                                    ? form.price * (1 - form.discount_value / 100)
+                                                    : form.price - form.discount_value,
+                                            ).toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                        </span>
                                     </span>
                                 )}
                             </Label>

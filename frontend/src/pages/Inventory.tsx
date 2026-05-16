@@ -10,6 +10,7 @@ import {
   inventoryApi,
   categoriesApi,
   warehousesApi,
+  getEffectivePrice,
   type ProductWithInventory,
 } from '../lib/api';
 import type { Category, Warehouse } from '../lib/database.types';
@@ -145,7 +146,7 @@ export default function Inventory() {
 
   // KPI stats
   const stats = useMemo(() => {
-    const value = products.reduce((acc, p) => acc + p.total_quantity * Number(p.price), 0);
+    const value = products.reduce((acc, p) => acc + p.total_quantity * getEffectivePrice(p), 0);
     const cost  = products.reduce((acc, p) => acc + p.total_quantity * Number(p.cost ?? 0), 0);
     const totalUnits = products.reduce((acc, p) => acc + p.total_quantity, 0);
     const lowCount = products.filter(p => p.low_stock && p.total_quantity > 0).length;
@@ -394,8 +395,12 @@ export default function Inventory() {
                 const prodM    = PRODUCT_STATUS_META[p.status] ?? PRODUCT_STATUS_META.active;
                 const inv0     = p.inventory[0];
                 const reorder  = inv0?.reorder_level ?? 10;
-                const margin   = calcMargin(Number(p.price), Number(p.cost ?? 0));
-                const value    = p.total_quantity * Number(p.price);
+                const listPrice = Number(p.price);
+                const effective = getEffectivePrice(p);
+                const hasDisc   = effective < listPrice;
+                const discPct   = hasDisc ? Math.round(((listPrice - effective) / listPrice) * 100) : 0;
+                const margin   = calcMargin(effective, Number(p.cost ?? 0));
+                const value    = p.total_quantity * effective;
                 const expanded = expandedId === p.id;
                 const isSelected = selected.has(p.id);
 
@@ -488,13 +493,32 @@ export default function Inventory() {
                       </td>
 
                       <td className={`${rowPad} px-4 text-right`}>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {formatTHB(Number(p.price))}
-                        </div>
-                        {margin !== null && (
-                          <div className="text-[10px] text-slate-500 mt-0.5">
-                            margin {margin.toFixed(0)}%
-                          </div>
+                        {hasDisc ? (
+                          <>
+                            <div className="flex items-baseline justify-end gap-1.5">
+                              <span className="text-[11px] line-through text-slate-400 tabular-nums">
+                                {formatTHB(listPrice)}
+                              </span>
+                              <span className="text-sm font-semibold text-rose-600 tabular-nums">
+                                {formatTHB(effective)}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5 flex items-center justify-end gap-1.5">
+                              <span className="text-rose-600 font-semibold">-{discPct}%</span>
+                              {margin !== null && <span>margin {margin.toFixed(0)}%</span>}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-sm font-semibold text-slate-900">
+                              {formatTHB(listPrice)}
+                            </div>
+                            {margin !== null && (
+                              <div className="text-[10px] text-slate-500 mt-0.5">
+                                margin {margin.toFixed(0)}%
+                              </div>
+                            )}
+                          </>
                         )}
                       </td>
 
@@ -698,6 +722,10 @@ function StockCell({
 }
 
 function ExpandedRow({ p, warehouses }: { p: ProductWithInventory; warehouses: Warehouse[] }) {
+  const listPrice = Number(p.price);
+  const effective = getEffectivePrice(p);
+  const hasDisc = effective < listPrice;
+  const discVal = Number(p.discount_value ?? 0);
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
       <div>
@@ -705,6 +733,32 @@ function ExpandedRow({ p, warehouses }: { p: ProductWithInventory; warehouses: W
         <dl className="space-y-1.5 text-xs">
           <DetailRow label="ID"       value={<code className="font-mono text-slate-700">{p.id.slice(0, 8)}…</code>} />
           <DetailRow label="Cost"     value={p.cost ? formatTHB(Number(p.cost)) : '—'} />
+          <DetailRow
+            label="ราคาตั้ง"
+            value={
+              hasDisc ? (
+                <span className="line-through text-slate-400">{formatTHB(listPrice)}</span>
+              ) : (
+                formatTHB(listPrice)
+              )
+            }
+          />
+          {hasDisc && (
+            <DetailRow
+              label="ส่วนลด"
+              value={
+                <span className="text-rose-600 font-semibold">
+                  {p.discount_type === 'percent' ? `-${discVal}%` : `-${formatTHB(discVal)}`}
+                </span>
+              }
+            />
+          )}
+          {hasDisc && (
+            <DetailRow
+              label="ราคาขายจริง"
+              value={<span className="text-rose-600 font-bold">{formatTHB(effective)}</span>}
+            />
+          )}
           <DetailRow label="Weight"   value={p.weight_kg ? `${p.weight_kg} kg` : '—'} />
           <DetailRow
             label="Feature"

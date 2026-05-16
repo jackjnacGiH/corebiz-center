@@ -169,7 +169,9 @@ export default function Ecommerce() {
   }, [products]);
 
   const cartCount = cart.reduce((sum, i) => sum + i.qty, 0);
+  const cartListSubtotal = cart.reduce((sum, i) => sum + Number(i.product.price) * i.qty, 0);
   const cartSubtotal = cart.reduce((sum, i) => sum + getEffectivePrice(i.product) * i.qty, 0);
+  const cartSavings = cartListSubtotal - cartSubtotal;
   const cartVat = Math.round(cartSubtotal * 0.07);
   const cartTotal = cartSubtotal + cartVat;
 
@@ -813,34 +815,72 @@ export default function Ecommerce() {
                       <Package size={20} />
                     </div>
 
-                    <div className="cart-line-info">
-                      <strong>{item.product.name_th}</strong>
-                      <span>
-                        {item.product.sku} / {formatCurrency(getEffectivePrice(item.product))} / {item.product.unit}
-                      </span>
-                      <div className="quantity-stepper">
-                        <button
-                          onClick={() => updateQty(item.product.id, item.qty - 1)}
-                          title={ecom.decreaseQuantity}
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span>{formatNumber(item.qty)}</span>
-                        <button
-                          onClick={() => updateQty(item.product.id, item.qty + 1)}
-                          title={ecom.increaseQuantity}
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
-                    </div>
+                    {(() => {
+                      const lineList = Number(item.product.price);
+                      const lineEff = getEffectivePrice(item.product);
+                      const lineHasDisc = lineEff < lineList;
+                      const lineBadge = discountBadge(item.product);
+                      return (
+                        <>
+                          <div className="cart-line-info">
+                            <strong>{item.product.name_th}</strong>
+                            <span>
+                              {item.product.sku} /{' '}
+                              {lineHasDisc ? (
+                                <>
+                                  <span className="line-through text-slate-400 mr-1">
+                                    {formatCurrency(lineList)}
+                                  </span>
+                                  <span className="text-rose-600 font-semibold">
+                                    {formatCurrency(lineEff)}
+                                  </span>
+                                  {lineBadge && (
+                                    <span className="ml-1 px-1 py-0.5 rounded bg-rose-500 text-white text-[9px] font-bold">
+                                      {lineBadge}
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                formatCurrency(lineEff)
+                              )}{' '}
+                              / {item.product.unit}
+                            </span>
+                            <div className="quantity-stepper">
+                              <button
+                                onClick={() => updateQty(item.product.id, item.qty - 1)}
+                                title={ecom.decreaseQuantity}
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <span>{formatNumber(item.qty)}</span>
+                              <button
+                                onClick={() => updateQty(item.product.id, item.qty + 1)}
+                                title={ecom.increaseQuantity}
+                              >
+                                <Plus size={14} />
+                              </button>
+                            </div>
+                          </div>
 
-                    <div className="cart-line-total">
-                      <strong>{formatCurrency(getEffectivePrice(item.product) * item.qty)}</strong>
-                      <button onClick={() => removeFromCart(item.product.id)} title={ecom.removeItem}>
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
+                          <div className="cart-line-total">
+                            {lineHasDisc && (
+                              <span className="text-[10px] line-through text-slate-400 tabular-nums">
+                                {formatCurrency(lineList * item.qty)}
+                              </span>
+                            )}
+                            <strong className={lineHasDisc ? 'text-rose-600' : ''}>
+                              {formatCurrency(lineEff * item.qty)}
+                            </strong>
+                            <button
+                              onClick={() => removeFromCart(item.product.id)}
+                              title={ecom.removeItem}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 ))
               )}
@@ -848,6 +888,22 @@ export default function Ecommerce() {
 
             {cart.length > 0 && (
               <div className="cart-summary">
+                {cartSavings > 0 && (
+                  <>
+                    <div>
+                      <span>ราคารวมก่อนลด</span>
+                      <strong className="line-through text-slate-400">
+                        {formatCurrency(cartListSubtotal)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-rose-600">ส่วนลดรวม</span>
+                      <strong className="text-rose-600">
+                        − {formatCurrency(cartSavings)}
+                      </strong>
+                    </div>
+                  </>
+                )}
                 <div>
                   <span>{ecom.subtotal}</span>
                   <strong>{formatCurrency(cartSubtotal)}</strong>
