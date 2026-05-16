@@ -1,298 +1,463 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Target, BarChart2, Zap, Ticket, RefreshCw, Play, Pause, Plus, X } from 'lucide-react';
+import {
+    Target,
+    BarChart2,
+    Zap,
+    Ticket,
+    RefreshCw,
+    Play,
+    Pause,
+    Plus,
+    AlertCircle,
+    Eye,
+    CheckCircle2,
+} from 'lucide-react';
 import { campaignsApi, couponsApi, type Campaign, type Coupon } from '../lib/api';
 import { useLanguage } from '../i18n';
+import PageHeader from '../components/PageHeader';
+import StatTile from '../components/StatTile';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
+
+// ─── Lookup tables ────────────────────────────────────────────────────────────
 
 const CAMPAIGN_STATUS_STYLE: Record<Campaign['status'], string> = {
-  draft:     'bg-slate-500/10 text-slate-400 border-slate-500/30',
-  scheduled: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-  running:   'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  paused:    'bg-orange-500/10 text-orange-400 border-orange-500/30',
-  completed: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30',
-  cancelled: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
+    draft:     'bg-neutral-100 text-neutral-700 border-neutral-200',
+    scheduled: 'bg-amber-50    text-amber-700   border-amber-200',
+    running:   'bg-emerald-50  text-emerald-700 border-emerald-200',
+    paused:    'bg-orange-50   text-orange-700  border-orange-200',
+    completed: 'bg-indigo-50   text-indigo-700  border-indigo-200',
+    cancelled: 'bg-red-50      text-red-700     border-red-200',
 };
 
 const CAMPAIGN_TYPE_LABEL: Record<Campaign['type'], string> = {
-  promotion:      'โปรโมชั่น',
-  flash_sale:     'Flash Sale',
-  popup:          'Pop-up',
-  abandoned_cart: 'Abandoned Cart',
-  email:          'Email',
-  sms:            'SMS',
-  banner:         'Banner',
+    promotion:      'โปรโมชั่น',
+    flash_sale:     'Flash Sale',
+    popup:          'Pop-up',
+    abandoned_cart: 'Abandoned Cart',
+    email:          'Email',
+    sms:            'SMS',
+    banner:         'Banner',
 };
 
 const COUPON_TYPE_LABEL: Record<Coupon['discount_type'], string> = {
-  percent:       '%',
-  fixed:         'บาท',
-  free_shipping: 'ส่งฟรี',
+    percent:       '%',
+    fixed:         'บาท',
+    free_shipping: 'ส่งฟรี',
 };
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function Marketing() {
-  const { t } = useLanguage();
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newCampaign, setNewCampaign] = useState({ name: '', type: 'promotion' as Campaign['type'], description: '' });
+    const { t } = useLanguage();
+    const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+    const [coupons, setCoupons] = useState<Coupon[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+    const [isCreating, setIsCreating] = useState(false);
+    const [newCampaign, setNewCampaign] = useState({
+        name: '',
+        type: 'promotion' as Campaign['type'],
+        description: '',
+    });
 
-  async function load() {
-    setLoading(true); setErr(null);
-    try {
-      const [c, cp] = await Promise.all([campaignsApi.list(), couponsApi.list()]);
-      setCampaigns(c); setCoupons(cp);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setLoading(false);
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            const [c, cp] = await Promise.all([campaignsApi.list(), couponsApi.list()]);
+            setCampaigns(c);
+            setCoupons(cp);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
     }
-  }
-  useEffect(() => { void load(); }, []);
 
-  const stats = useMemo(() => {
-    const running = campaigns.filter(c => c.status === 'running').length;
-    const totalImpr = campaigns.reduce((acc, c) => acc + (c.metrics.impressions ?? 0), 0);
-    const totalConv = campaigns.reduce((acc, c) => acc + (c.metrics.conversions ?? 0), 0);
-    const totalRev = campaigns.reduce((acc, c) => acc + (c.metrics.revenue ?? 0), 0);
-    return { running, totalImpr, totalConv, totalRev };
-  }, [campaigns]);
+    useEffect(() => {
+        void load();
+    }, []);
 
-  async function handleCreateCampaign() {
-    if (!newCampaign.name.trim()) return;
-    try {
-      await campaignsApi.create({
-        name: newCampaign.name,
-        type: newCampaign.type,
-        description: newCampaign.description || null,
-      });
-      setIsCreating(false);
-      setNewCampaign({ name: '', type: 'promotion', description: '' });
-      await load();
-    } catch (e) {
-      setErr((e as Error).message);
+    const stats = useMemo(() => {
+        const running = campaigns.filter((c) => c.status === 'running').length;
+        const totalImpr = campaigns.reduce((acc, c) => acc + (c.metrics.impressions ?? 0), 0);
+        const totalConv = campaigns.reduce((acc, c) => acc + (c.metrics.conversions ?? 0), 0);
+        const totalRev = campaigns.reduce((acc, c) => acc + (c.metrics.revenue ?? 0), 0);
+        return { running, totalImpr, totalConv, totalRev };
+    }, [campaigns]);
+
+    async function handleCreateCampaign() {
+        if (!newCampaign.name.trim()) return;
+        try {
+            await campaignsApi.create({
+                name: newCampaign.name,
+                type: newCampaign.type,
+                description: newCampaign.description || null,
+            });
+            setIsCreating(false);
+            setNewCampaign({ name: '', type: 'promotion', description: '' });
+            await load();
+        } catch (e) {
+            setErr((e as Error).message);
+        }
     }
-  }
 
-  async function toggleStatus(c: Campaign) {
-    try {
-      await campaignsApi.updateStatus(c.id, c.status === 'running' ? 'paused' : 'running');
-      await load();
-    } catch (e) {
-      setErr((e as Error).message);
+    async function toggleStatus(c: Campaign) {
+        try {
+            await campaignsApi.updateStatus(c.id, c.status === 'running' ? 'paused' : 'running');
+            await load();
+        } catch (e) {
+            setErr((e as Error).message);
+        }
     }
-  }
 
-  return (
-    <div className="animate-fade-in p-6 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3 text-white">
-            <Target className="w-8 h-8 text-indigo-400" />
-            {t.marketing.title}
-          </h1>
-          <p className="text-slate-400 mt-1">{t.marketing.subtitle}</p>
-        </div>
-        <div className="flex gap-3">
-          <button onClick={() => load()} className="btn btn-secondary flex items-center gap-2" disabled={loading}>
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <button
-            onClick={() => setIsCreating(true)}
-            className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white font-medium py-2 px-4 rounded-lg shadow-lg shadow-indigo-500/20"
-          >
-            <Zap size={18} /> {t.marketing.createCampaign}
-          </button>
-        </div>
-      </div>
+    return (
+        <div className="animate-fade-in space-y-6 max-w-[1440px] mx-auto">
+            <PageHeader
+                title={t.marketing.title}
+                subtitle={t.marketing.subtitle}
+                icon={<Target size={20} />}
+                actions={
+                    <>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => load()}
+                            disabled={loading}
+                            className="gap-2"
+                        >
+                            <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
+                            Reload
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={() => setIsCreating(true)}
+                            className="gap-2 bg-indigo-500 hover:bg-indigo-600"
+                        >
+                            <Zap size={14} />
+                            {t.marketing.createCampaign}
+                        </Button>
+                    </>
+                }
+            />
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatTile icon={<Zap size={20} />} label="แคมเปญที่ใช้งาน" value={stats.running.toString()} color="indigo" />
-        <StatTile icon={<BarChart2 size={20} />} label="Impressions" value={stats.totalImpr.toLocaleString()} color="blue" />
-        <StatTile icon={<Target size={20} />} label="Conversions" value={stats.totalConv.toLocaleString()} color="emerald" />
-        <StatTile icon={<BarChart2 size={20} />} label="Revenue" value={`฿${stats.totalRev.toLocaleString()}`} color="amber" />
-      </div>
+            {/* ── KPI ──────────────────────────────────────────────────── */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatTile
+                    icon={<Zap size={18} />}
+                    label="แคมเปญที่ใช้งาน"
+                    value={stats.running.toString()}
+                    tone="indigo"
+                />
+                <StatTile
+                    icon={<Eye size={18} />}
+                    label="Impressions"
+                    value={stats.totalImpr.toLocaleString()}
+                    tone="blue"
+                />
+                <StatTile
+                    icon={<Target size={18} />}
+                    label="Conversions"
+                    value={stats.totalConv.toLocaleString()}
+                    tone="emerald"
+                />
+                <StatTile
+                    icon={<BarChart2 size={18} />}
+                    label="Revenue"
+                    value={`฿${stats.totalRev.toLocaleString()}`}
+                    tone="amber"
+                />
+            </div>
 
-      {err && <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">✗ {err}</div>}
-
-      {/* Campaigns */}
-      <div className="glass-card">
-        <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-white">
-          <Target size={20} className="text-indigo-400" />
-          {t.marketing.activeCampaigns}
-        </h2>
-        <div className="space-y-3">
-          {loading && <div className="text-sm text-slate-500 py-4">{t.common.loading}</div>}
-          {!loading && campaigns.length === 0 && (
-            <div className="text-sm text-slate-500 py-4 text-center">ยังไม่มีแคมเปญ — คลิก "สร้างแคมเปญ" ด้านบน</div>
-          )}
-          {campaigns.map(c => (
-            <div key={c.id} className="flex items-center justify-between p-4 rounded-lg border border-white/5 bg-white/5">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-white">{c.name}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-400 uppercase">
-                    {CAMPAIGN_TYPE_LABEL[c.type]}
-                  </span>
+            {err && (
+                <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                    <span>{err}</span>
                 </div>
-                {c.description && <div className="text-xs text-slate-400 mt-1">{c.description}</div>}
-                <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
-                  {c.metrics.impressions !== undefined && (
-                    <span>👁 {c.metrics.impressions.toLocaleString()}</span>
-                  )}
-                  {c.metrics.conversions !== undefined && (
-                    <span className="text-emerald-400">✓ {c.metrics.conversions} conv</span>
-                  )}
-                  {c.metrics.revenue !== undefined && c.metrics.revenue > 0 && (
-                    <span className="text-emerald-400">฿{c.metrics.revenue.toLocaleString()}</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 ml-4">
-                <span className={`px-2.5 py-1 rounded text-xs font-semibold border ${CAMPAIGN_STATUS_STYLE[c.status]}`}>
-                  {c.status}
-                </span>
-                {(c.status === 'running' || c.status === 'paused') && (
-                  <button
-                    onClick={() => toggleStatus(c)}
-                    className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded"
-                    title={c.status === 'running' ? 'Pause' : 'Resume'}
-                  >
-                    {c.status === 'running' ? <Pause size={14} /> : <Play size={14} />}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+            )}
 
-      {/* Coupons */}
-      <div className="glass-card">
-        <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-white">
-          <Ticket size={20} className="text-pink-400" />
-          คูปอง / Discount Codes
-        </h2>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left">
-            <thead className="border-b border-white/10">
-              <tr>
-                <th className="py-3 px-2 text-xs font-semibold text-gray-300 uppercase">รหัส</th>
-                <th className="py-3 px-2 text-xs font-semibold text-gray-300 uppercase">รายละเอียด</th>
-                <th className="py-3 px-2 text-xs font-semibold text-gray-300 uppercase text-right">ส่วนลด</th>
-                <th className="py-3 px-2 text-xs font-semibold text-gray-300 uppercase text-right">ขั้นต่ำ</th>
-                <th className="py-3 px-2 text-xs font-semibold text-gray-300 uppercase text-center">ใช้แล้ว</th>
-                <th className="py-3 px-2 text-xs font-semibold text-gray-300 uppercase">หมดอายุ</th>
-                <th className="py-3 px-2 text-xs font-semibold text-gray-300 uppercase text-center">สถานะ</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {coupons.length === 0 && (
-                <tr><td colSpan={7} className="py-6 text-center text-slate-500">ยังไม่มีคูปอง</td></tr>
-              )}
-              {coupons.map(c => (
-                <tr key={c.id} className="hover:bg-white/5">
-                  <td className="py-3 px-2 text-sm font-mono font-bold text-pink-400">{c.code}</td>
-                  <td className="py-3 px-2 text-sm text-slate-300">{c.description ?? '—'}</td>
-                  <td className="py-3 px-2 text-sm text-right font-semibold text-white">
-                    {c.discount_type === 'free_shipping' ? 'ส่งฟรี' :
-                      c.discount_type === 'percent' ? `${c.discount_value}%` :
-                      `฿${c.discount_value}`}
-                    {' '}
-                    <span className="text-[10px] text-slate-500">{COUPON_TYPE_LABEL[c.discount_type]}</span>
-                  </td>
-                  <td className="py-3 px-2 text-sm text-right text-slate-300">
-                    {c.min_purchase > 0 ? `฿${Number(c.min_purchase).toLocaleString()}` : '—'}
-                  </td>
-                  <td className="py-3 px-2 text-sm text-center text-slate-300">
-                    {c.used_count}{c.max_uses ? ` / ${c.max_uses}` : ''}
-                  </td>
-                  <td className="py-3 px-2 text-xs text-slate-400">
-                    {c.valid_until ? new Date(c.valid_until).toLocaleDateString('th-TH') : '—'}
-                  </td>
-                  <td className="py-3 px-2 text-center">
-                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                      c.status === 'active' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-500/10 text-slate-400'
-                    }`}>
-                      {c.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            {/* ── Campaigns list ──────────────────────────────────────── */}
+            <Card className="gap-4 py-5">
+                <CardHeader className="px-5">
+                    <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-900">
+                        <Target size={16} className="text-indigo-600" />
+                        {t.marketing.activeCampaigns}
+                        <span className="text-xs font-normal text-neutral-500 ml-1">
+                            ({campaigns.length})
+                        </span>
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="px-5 space-y-2.5">
+                    {loading && (
+                        <div className="text-sm text-neutral-500 py-6 text-center">
+                            {t.common.loading}
+                        </div>
+                    )}
+                    {!loading && campaigns.length === 0 && (
+                        <div className="text-sm text-neutral-500 py-8 text-center border border-dashed border-neutral-300 rounded-lg">
+                            ยังไม่มีแคมเปญ — คลิก "สร้างแคมเปญ" ด้านบน
+                        </div>
+                    )}
+                    {campaigns.map((c) => (
+                        <div
+                            key={c.id}
+                            className="flex items-center justify-between p-4 rounded-lg border border-neutral-200 bg-white hover:border-neutral-300 transition gap-4"
+                        >
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold text-neutral-900">{c.name}</span>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600 uppercase font-medium tracking-wider">
+                                        {CAMPAIGN_TYPE_LABEL[c.type]}
+                                    </span>
+                                </div>
+                                {c.description && (
+                                    <div className="text-xs text-neutral-500 mt-1">
+                                        {c.description}
+                                    </div>
+                                )}
+                                <div className="flex items-center gap-4 mt-2 text-xs text-neutral-500 tabular-nums">
+                                    {c.metrics.impressions !== undefined && (
+                                        <span className="inline-flex items-center gap-1">
+                                            <Eye size={11} />
+                                            {c.metrics.impressions.toLocaleString()}
+                                        </span>
+                                    )}
+                                    {c.metrics.conversions !== undefined && (
+                                        <span className="inline-flex items-center gap-1 text-emerald-700">
+                                            <CheckCircle2 size={11} />
+                                            {c.metrics.conversions} conv
+                                        </span>
+                                    )}
+                                    {c.metrics.revenue !== undefined && c.metrics.revenue > 0 && (
+                                        <span className="text-emerald-700 font-semibold">
+                                            ฿{c.metrics.revenue.toLocaleString()}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span
+                                    className={cn(
+                                        'px-2.5 py-1 rounded-full text-xs font-semibold border',
+                                        CAMPAIGN_STATUS_STYLE[c.status],
+                                    )}
+                                >
+                                    {c.status}
+                                </span>
+                                {(c.status === 'running' || c.status === 'paused') && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => toggleStatus(c)}
+                                        className="h-8 w-8"
+                                        title={c.status === 'running' ? 'Pause' : 'Resume'}
+                                    >
+                                        {c.status === 'running' ? (
+                                            <Pause size={14} />
+                                        ) : (
+                                            <Play size={14} />
+                                        )}
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </CardContent>
+            </Card>
 
-      {/* Create modal */}
-      {isCreating && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setIsCreating(false)} />
-          <div className="relative bg-slate-900 border border-white/10 rounded-2xl w-full max-w-lg p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Plus size={20} className="text-indigo-400" />
-                สร้างแคมเปญใหม่
-              </h2>
-              <button onClick={() => setIsCreating(false)} className="text-slate-400 hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="ชื่อแคมเปญ"
-                value={newCampaign.name}
-                onChange={e => setNewCampaign({ ...newCampaign, name: e.target.value })}
-                className="w-full bg-slate-950 border border-white/5 rounded-lg py-3 px-4 text-white outline-none focus:border-indigo-500"
-              />
-              <select
-                value={newCampaign.type}
-                onChange={e => setNewCampaign({ ...newCampaign, type: e.target.value as Campaign['type'] })}
-                className="w-full bg-slate-950 border border-white/5 rounded-lg py-3 px-4 text-white"
-              >
-                {Object.entries(CAMPAIGN_TYPE_LABEL).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
-              <textarea
-                placeholder="คำอธิบาย (optional)"
-                value={newCampaign.description}
-                onChange={e => setNewCampaign({ ...newCampaign, description: e.target.value })}
-                rows={3}
-                className="w-full bg-slate-950 border border-white/5 rounded-lg py-3 px-4 text-white outline-none focus:border-indigo-500 resize-none"
-              />
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => setIsCreating(false)} className="flex-1 py-2.5 rounded-lg border border-white/10 bg-white/5 text-slate-300 font-semibold hover:bg-white/10">
-                ยกเลิก
-              </button>
-              <button onClick={handleCreateCampaign} className="flex-1 py-2.5 rounded-lg bg-indigo-500 text-white font-semibold hover:bg-indigo-600">
-                สร้าง
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+            {/* ── Coupons table ──────────────────────────────────────── */}
+            <Card className="gap-4 py-5">
+                <CardHeader className="px-5">
+                    <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-900">
+                        <Ticket size={16} className="text-pink-600" />
+                        คูปอง / Discount Codes
+                        <span className="text-xs font-normal text-neutral-500 ml-1">
+                            ({coupons.length})
+                        </span>
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="px-0 pb-0">
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="bg-neutral-50 hover:bg-neutral-50">
+                                <TableHead className="px-5 text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    รหัส
+                                </TableHead>
+                                <TableHead className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    รายละเอียด
+                                </TableHead>
+                                <TableHead className="text-right text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    ส่วนลด
+                                </TableHead>
+                                <TableHead className="text-right text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    ขั้นต่ำ
+                                </TableHead>
+                                <TableHead className="text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    ใช้แล้ว
+                                </TableHead>
+                                <TableHead className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    หมดอายุ
+                                </TableHead>
+                                <TableHead className="px-5 text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                    สถานะ
+                                </TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {coupons.length === 0 && (
+                                <TableRow>
+                                    <TableCell
+                                        colSpan={7}
+                                        className="text-center text-sm text-neutral-500 py-8"
+                                    >
+                                        ยังไม่มีคูปอง
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                            {coupons.map((c) => (
+                                <TableRow key={c.id}>
+                                    <TableCell className="px-5 font-mono font-bold text-pink-600">
+                                        {c.code}
+                                    </TableCell>
+                                    <TableCell className="text-sm text-neutral-700">
+                                        {c.description ?? '—'}
+                                    </TableCell>
+                                    <TableCell className="text-right text-sm font-semibold text-neutral-900 tabular-nums">
+                                        {c.discount_type === 'free_shipping'
+                                            ? 'ส่งฟรี'
+                                            : c.discount_type === 'percent'
+                                              ? `${c.discount_value}%`
+                                              : `฿${c.discount_value}`}
+                                        <span className="text-[10px] text-neutral-500 ml-1">
+                                            {COUPON_TYPE_LABEL[c.discount_type]}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell className="text-right text-sm text-neutral-700 tabular-nums">
+                                        {c.min_purchase > 0
+                                            ? `฿${Number(c.min_purchase).toLocaleString()}`
+                                            : '—'}
+                                    </TableCell>
+                                    <TableCell className="text-center text-sm text-neutral-700 tabular-nums">
+                                        {c.used_count}
+                                        {c.max_uses ? ` / ${c.max_uses}` : ''}
+                                    </TableCell>
+                                    <TableCell className="text-xs text-neutral-500 tabular-nums">
+                                        {c.valid_until
+                                            ? new Date(c.valid_until).toLocaleDateString('th-TH')
+                                            : '—'}
+                                    </TableCell>
+                                    <TableCell className="px-5 text-center">
+                                        <span
+                                            className={cn(
+                                                'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border',
+                                                c.status === 'active'
+                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                    : 'bg-neutral-100 text-neutral-600 border-neutral-200',
+                                            )}
+                                        >
+                                            {c.status}
+                                        </span>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
 
-function StatTile({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
-  const colorMap: Record<string, string> = {
-    indigo:  'bg-indigo-500/20 border-indigo-500/30 text-indigo-400',
-    blue:    'bg-blue-500/20 border-blue-500/30 text-blue-400',
-    emerald: 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400',
-    amber:   'bg-amber-500/20 border-amber-500/30 text-amber-400',
-  };
-  return (
-    <div className="glass-card flex items-center gap-4 py-4 px-5">
-      <div className={`p-3 rounded-xl border ${colorMap[color]}`}>{icon}</div>
-      <div>
-        <p className="text-sm text-slate-400 mb-0.5">{label}</p>
-        <h3 className="text-xl font-bold text-white">{value}</h3>
-      </div>
-    </div>
-  );
+            {/* ── Create Campaign modal ───────────────────────────────── */}
+            <Dialog open={isCreating} onOpenChange={setIsCreating}>
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-lg">
+                            <Plus size={18} className="text-indigo-600" />
+                            สร้างแคมเปญใหม่
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-2">
+                            <Label htmlFor="campaign-name">ชื่อแคมเปญ</Label>
+                            <Input
+                                id="campaign-name"
+                                placeholder="เช่น Songkran Promo 2026"
+                                value={newCampaign.name}
+                                onChange={(e) =>
+                                    setNewCampaign({ ...newCampaign, name: e.target.value })
+                                }
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="campaign-type">ประเภท</Label>
+                            <select
+                                id="campaign-type"
+                                value={newCampaign.type}
+                                onChange={(e) =>
+                                    setNewCampaign({
+                                        ...newCampaign,
+                                        type: e.target.value as Campaign['type'],
+                                    })
+                                }
+                                className="w-full h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                            >
+                                {Object.entries(CAMPAIGN_TYPE_LABEL).map(([k, v]) => (
+                                    <option key={k} value={k}>
+                                        {v}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="campaign-desc">คำอธิบาย (optional)</Label>
+                            <textarea
+                                id="campaign-desc"
+                                rows={3}
+                                value={newCampaign.description}
+                                onChange={(e) =>
+                                    setNewCampaign({
+                                        ...newCampaign,
+                                        description: e.target.value,
+                                    })
+                                }
+                                className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-none"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter className="gap-2">
+                        <Button
+                            variant="outline"
+                            onClick={() => setIsCreating(false)}
+                        >
+                            ยกเลิก
+                        </Button>
+                        <Button
+                            onClick={handleCreateCampaign}
+                            disabled={!newCampaign.name.trim()}
+                            className="bg-indigo-500 hover:bg-indigo-600"
+                        >
+                            สร้าง
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </div>
+    );
 }
