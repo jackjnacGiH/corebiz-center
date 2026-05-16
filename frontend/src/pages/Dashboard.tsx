@@ -1,245 +1,469 @@
-import { useEffect, useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import {
-  TrendingUp, ShoppingCart, Package, Users, ArrowUpRight, ArrowDownRight, Activity,
-  ShoppingBag, UserPlus, Boxes, RefreshCw,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    ResponsiveContainer,
+    Area,
+    AreaChart,
+} from 'recharts';
+import {
+    TrendingUp,
+    ShoppingCart,
+    Package,
+    Users,
+    ArrowUpRight,
+    ArrowDownRight,
+    Activity,
+    ShoppingBag,
+    UserPlus,
+    Boxes,
+    RefreshCw,
+    Download,
+    FileText,
+    AlertCircle,
 } from 'lucide-react';
 import N8nAssistant from '../components/N8nAssistant';
-import { dashboardApi, type DashboardKPI, type MonthlyRevenue, type ActivityEvent } from '../lib/api';
+import {
+    dashboardApi,
+    type DashboardKPI,
+    type MonthlyRevenue,
+    type ActivityEvent,
+} from '../lib/api';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { useLanguage } from '../i18n';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatTHB(value: number): string {
-  return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', maximumFractionDigits: 0 }).format(value);
+    return new Intl.NumberFormat('th-TH', {
+        style: 'currency',
+        currency: 'THB',
+        maximumFractionDigits: 0,
+    }).format(value);
 }
 
 const MONTH_LABEL: Record<string, string> = {
-  '01': 'Jan', '02': 'Feb', '03': 'Mar', '04': 'Apr', '05': 'May', '06': 'Jun',
-  '07': 'Jul', '08': 'Aug', '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Dec',
+    '01': 'Jan', '02': 'Feb', '03': 'Mar', '04': 'Apr',
+    '05': 'May', '06': 'Jun', '07': 'Jul', '08': 'Aug',
+    '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Dec',
 };
 
 function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} min${mins > 1 ? 's' : ''} ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hr${hrs > 1 ? 's' : ''} ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days} day${days > 1 ? 's' : ''} ago`;
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min${mins > 1 ? 's' : ''} ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hr${hrs > 1 ? 's' : ''} ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days} day${days > 1 ? 's' : ''} ago`;
 }
 
-const ACTIVITY_STYLE: Record<ActivityEvent['type'], { color: string; Icon: React.ComponentType<{ size?: number }> }> = {
-  order:     { color: 'bg-indigo-500',  Icon: ShoppingBag },
-  customer:  { color: 'bg-emerald-500', Icon: UserPlus },
-  inventory: { color: 'bg-amber-500',   Icon: Boxes },
-  system:    { color: 'bg-slate-500',   Icon: Activity },
+// ─── Activity icon palette ────────────────────────────────────────────────────
+
+const ACTIVITY_STYLE: Record<
+    ActivityEvent['type'],
+    { iconBg: string; iconColor: string; Icon: ComponentType<{ size?: number }> }
+> = {
+    order:     { iconBg: 'bg-indigo-50',   iconColor: 'text-indigo-600',   Icon: ShoppingBag },
+    customer:  { iconBg: 'bg-emerald-50',  iconColor: 'text-emerald-600',  Icon: UserPlus },
+    inventory: { iconBg: 'bg-amber-50',    iconColor: 'text-amber-700',    Icon: Boxes },
+    system:    { iconBg: 'bg-neutral-100', iconColor: 'text-neutral-600',  Icon: Activity },
 };
 
-const Dashboard = () => {
-  const { t } = useLanguage();
-  const [kpi, setKpi] = useState<DashboardKPI | null>(null);
-  const [monthly, setMonthly] = useState<MonthlyRevenue[]>([]);
-  const [activity, setActivity] = useState<ActivityEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+// ─── KPI sub-components ───────────────────────────────────────────────────────
 
-  async function load() {
-    setLoading(true); setErr(null);
-    try {
-      const [k, m, a] = await Promise.all([
-        dashboardApi.getKPI(),
-        dashboardApi.getMonthlyRevenue(7),
-        dashboardApi.getRecentActivity(8),
-      ]);
-      setKpi(k); setMonthly(m); setActivity(a);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
+interface KpiTone {
+    iconBg: string;
+    iconColor: string;
+}
 
-  useEffect(() => { void load(); }, []);
-  // Realtime refresh on order/customer/inventory changes
-  useRealtimeTable('orders', () => void load());
-  useRealtimeTable('customers', () => void load());
-  useRealtimeTable('inventory', () => void load());
+const KPI_TONES = {
+    revenue:   { iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' } as KpiTone,
+    orders:    { iconBg: 'bg-indigo-50',  iconColor: 'text-indigo-600'  } as KpiTone,
+    lowStock:  { iconBg: 'bg-amber-50',   iconColor: 'text-amber-700'   } as KpiTone,
+    customers: { iconBg: 'bg-violet-50',  iconColor: 'text-violet-600'  } as KpiTone,
+};
 
-  const chartData = monthly.map(m => {
-    const monthCode = m.month.split('-')[1];
-    return { name: MONTH_LABEL[monthCode] ?? m.month, sales: m.revenue };
-  });
+interface KpiCardProps {
+    title: string;
+    value: string;
+    icon: ReactNode;
+    tone: KpiTone;
+    delta?: { label: string; isUp: boolean | null };
+}
 
-  const kpiCards = kpi ? [
-    {
-      title: t.dashboard.kpi.revenue,
-      value: formatTHB(kpi.total_revenue),
-      change: `${kpi.revenue_delta_pct >= 0 ? '+' : ''}${kpi.revenue_delta_pct.toFixed(1)}%`,
-      isUp: kpi.revenue_delta_pct >= 0,
-      icon: <TrendingUp size={20} />,
-      colorCls: 'text-emerald-400',
-      bgCls: 'bg-emerald-500/10',
-    },
-    {
-      title: t.dashboard.kpi.activeOrders,
-      value: String(kpi.active_orders),
-      change: 'active',
-      isUp: true,
-      icon: <ShoppingCart size={20} />,
-      colorCls: 'text-indigo-400',
-      bgCls: 'bg-indigo-500/10',
-    },
-    {
-      title: t.dashboard.kpi.lowStock,
-      value: String(kpi.low_stock_count),
-      change: kpi.low_stock_count > 0 ? 'attention' : 'OK',
-      isUp: kpi.low_stock_count === 0,
-      icon: <Package size={20} />,
-      colorCls: 'text-amber-400',
-      bgCls: 'bg-amber-500/10',
-    },
-    {
-      title: t.dashboard.kpi.newCustomers,
-      value: String(kpi.new_customers_30d),
-      change: '30d',
-      isUp: true,
-      icon: <Users size={20} />,
-      colorCls: 'text-rose-400',
-      bgCls: 'bg-rose-500/10',
-    },
-  ] : [];
-
-  return (
-    <div className="animate-fade-in space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-2">
-            {t.dashboard.title}
-          </h1>
-          <p className="text-slate-400 mt-1">{t.dashboard.subtitle}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            className="btn btn-secondary text-sm flex items-center gap-2"
-            onClick={() => load()}
-            disabled={loading}
-            title="Reload"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            Reload
-          </button>
-          <button className="btn btn-secondary text-sm">{t.dashboard.downloadLogs}</button>
-          <button className="btn btn-primary text-sm shadow-lg shadow-indigo-500/20">{t.dashboard.generateReport}</button>
-        </div>
-      </div>
-
-      <N8nAssistant />
-
-      {err && (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
-          ✗ {err}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {loading && Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="glass-card animate-pulse">
-            <div className="h-12 bg-white/5 rounded mb-3" />
-            <div className="h-4 bg-white/5 rounded w-2/3 mb-2" />
-            <div className="h-8 bg-white/5 rounded w-1/2" />
-          </div>
-        ))}
-        {!loading && kpiCards.map((c, i) => (
-          <div key={i} className="glass-card group hover:translate-y-[-4px] transition-all duration-300">
-            <div className="flex justify-between items-start mb-4">
-              <div className={`${c.colorCls} ${c.bgCls} p-2.5 rounded-xl`}>{c.icon}</div>
-              <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-full ${
-                c.isUp ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
-              }`}>
-                {c.isUp ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                {c.change}
-              </div>
-            </div>
-            <h3 className="text-slate-400 text-sm font-medium">{c.title}</h3>
-            <div className="text-2xl font-bold mt-1 text-white tracking-tight">{c.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-        <div className="glass-card xl:col-span-2 overflow-hidden">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h2 className="text-xl font-bold text-white">{t.dashboard.chart.title}</h2>
-              <p className="text-slate-400 text-sm">{t.dashboard.chart.subtitle}</p>
-            </div>
-          </div>
-          <div className="h-[320px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} dy={10} />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: '#94a3b8', fontSize: 12 }}
-                  tickFormatter={(v) => `฿${Math.round(v / 1000)}k`}
-                />
-                <Tooltip
-                  cursor={{ stroke: 'var(--primary)', strokeWidth: 1, strokeDasharray: '4 4' }}
-                  contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
-                  itemStyle={{ color: '#fff', fontSize: '14px' }}
-                  labelStyle={{ color: '#94a3b8', marginBottom: '4px', fontSize: '12px' }}
-                  formatter={(value) => formatTHB(Number(value))}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="sales"
-                  stroke="var(--primary)"
-                  strokeWidth={4}
-                  dot={{ r: 4, fill: 'var(--primary)', strokeWidth: 2, stroke: '#1e293b' }}
-                  activeDot={{ r: 8, strokeWidth: 0 }}
-                  animationDuration={1500}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="glass-card flex flex-col">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-white">{t.dashboard.activity.title}</h2>
-            <span className="text-indigo-400 bg-indigo-500/10 p-2 rounded-lg">
-              <Activity size={18} />
-            </span>
-          </div>
-          <div className="space-y-5 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-            {loading && Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="h-10 bg-white/5 rounded animate-pulse" />
-            ))}
-            {!loading && activity.length === 0 && (
-              <div className="text-sm text-slate-500 py-4">{t.common.noData}</div>
-            )}
-            {!loading && activity.map(e => {
-              const { color, Icon } = ACTIVITY_STYLE[e.type];
-              return (
-                <div key={e.id} className="flex gap-3 group">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color}/20 text-white flex-shrink-0`}>
-                    <Icon size={14} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{e.message}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{relativeTime(e.created_at)}</div>
-                  </div>
+function KpiCard({ title, value, icon, tone, delta }: KpiCardProps) {
+    return (
+        <Card className="gap-0 py-5 transition hover:shadow-md hover:-translate-y-0.5 duration-200">
+            <CardContent className="flex flex-col gap-4">
+                <div className="flex items-start justify-between">
+                    <div className={cn('w-11 h-11 grid place-items-center rounded-lg', tone.iconBg, tone.iconColor)}>
+                        {icon}
+                    </div>
+                    {delta && (
+                        <span
+                            className={cn(
+                                'inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-full',
+                                delta.isUp === true && 'bg-emerald-50 text-emerald-700',
+                                delta.isUp === false && 'bg-red-50 text-red-700',
+                                delta.isUp === null && 'bg-neutral-100 text-neutral-600',
+                            )}
+                        >
+                            {delta.isUp === true && <ArrowUpRight size={12} />}
+                            {delta.isUp === false && <ArrowDownRight size={12} />}
+                            {delta.label}
+                        </span>
+                    )}
                 </div>
-              );
-            })}
-          </div>
+                <div>
+                    <div className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                        {title}
+                    </div>
+                    <div className="text-2xl font-bold mt-1.5 text-neutral-900 tracking-tight tabular-nums">
+                        {value}
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
+
+function KpiSkeleton() {
+    return (
+        <Card className="gap-0 py-5">
+            <CardContent className="flex flex-col gap-4">
+                <div className="flex items-start justify-between">
+                    <div className="w-11 h-11 rounded-lg bg-neutral-100 animate-pulse" />
+                    <div className="w-14 h-5 rounded-full bg-neutral-100 animate-pulse" />
+                </div>
+                <div>
+                    <div className="h-3 w-20 rounded bg-neutral-100 animate-pulse" />
+                    <div className="h-7 w-28 mt-2 rounded bg-neutral-100 animate-pulse" />
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
+
+// ─── Chart tooltip (light theme) ──────────────────────────────────────────────
+
+function ChartTooltip({
+    active,
+    payload,
+    label,
+}: {
+    active?: boolean;
+    payload?: Array<{ value: number }>;
+    label?: string;
+}) {
+    if (!active || !payload || payload.length === 0) return null;
+    return (
+        <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2 shadow-md">
+            <div className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                {label}
+            </div>
+            <div className="text-sm font-semibold text-neutral-900 mt-0.5 tabular-nums">
+                {formatTHB(Number(payload[0].value))}
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+const Dashboard = () => {
+    const { t } = useLanguage();
+    const [kpi, setKpi] = useState<DashboardKPI | null>(null);
+    const [monthly, setMonthly] = useState<MonthlyRevenue[]>([]);
+    const [activity, setActivity] = useState<ActivityEvent[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            const [k, m, a] = await Promise.all([
+                dashboardApi.getKPI(),
+                dashboardApi.getMonthlyRevenue(7),
+                dashboardApi.getRecentActivity(8),
+            ]);
+            setKpi(k);
+            setMonthly(m);
+            setActivity(a);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        void load();
+    }, []);
+
+    // Realtime refresh on data changes
+    useRealtimeTable('orders', () => void load());
+    useRealtimeTable('customers', () => void load());
+    useRealtimeTable('inventory', () => void load());
+
+    const chartData = monthly.map((m) => {
+        const monthCode = m.month.split('-')[1];
+        return { name: MONTH_LABEL[monthCode] ?? m.month, sales: m.revenue };
+    });
+
+    const kpiCards = kpi
+        ? [
+              {
+                  key: 'revenue',
+                  title: t.dashboard.kpi.revenue,
+                  value: formatTHB(kpi.total_revenue),
+                  icon: <TrendingUp size={20} />,
+                  tone: KPI_TONES.revenue,
+                  delta: {
+                      label: `${kpi.revenue_delta_pct >= 0 ? '+' : ''}${kpi.revenue_delta_pct.toFixed(1)}%`,
+                      isUp: kpi.revenue_delta_pct >= 0,
+                  },
+              },
+              {
+                  key: 'orders',
+                  title: t.dashboard.kpi.activeOrders,
+                  value: String(kpi.active_orders),
+                  icon: <ShoppingCart size={20} />,
+                  tone: KPI_TONES.orders,
+                  delta: { label: 'active', isUp: null },
+              },
+              {
+                  key: 'lowStock',
+                  title: t.dashboard.kpi.lowStock,
+                  value: String(kpi.low_stock_count),
+                  icon: <Package size={20} />,
+                  tone: KPI_TONES.lowStock,
+                  delta: {
+                      label: kpi.low_stock_count > 0 ? 'attention' : 'OK',
+                      isUp: kpi.low_stock_count === 0,
+                  },
+              },
+              {
+                  key: 'customers',
+                  title: t.dashboard.kpi.newCustomers,
+                  value: String(kpi.new_customers_30d),
+                  icon: <Users size={20} />,
+                  tone: KPI_TONES.customers,
+                  delta: { label: '30d', isUp: null },
+              },
+          ]
+        : [];
+
+    return (
+        <div className="animate-fade-in space-y-6 max-w-[1440px] mx-auto">
+            {/* ── Page header ─────────────────────────────────────────────── */}
+            <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-5 border-b border-neutral-200">
+                <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-neutral-900">
+                        {t.dashboard.title}
+                    </h1>
+                    <p className="text-sm text-neutral-500 mt-1">{t.dashboard.subtitle}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => load()}
+                        disabled={loading}
+                        className="gap-2"
+                    >
+                        <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
+                        Reload
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-2">
+                        <Download size={14} />
+                        {t.dashboard.downloadLogs}
+                    </Button>
+                    <Button size="sm" className="gap-2 bg-indigo-500 hover:bg-indigo-600">
+                        <FileText size={14} />
+                        {t.dashboard.generateReport}
+                    </Button>
+                </div>
+            </header>
+
+            {/* ── n8n widget (kept untouched) ─────────────────────────────── */}
+            <N8nAssistant />
+
+            {/* ── Error banner ────────────────────────────────────────────── */}
+            {err && (
+                <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                    <span>{err}</span>
+                </div>
+            )}
+
+            {/* ── KPI cards ───────────────────────────────────────────────── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {loading &&
+                    Array.from({ length: 4 }).map((_, i) => <KpiSkeleton key={i} />)}
+                {!loading &&
+                    kpiCards.map((c) => (
+                        <KpiCard
+                            key={c.key}
+                            title={c.title}
+                            value={c.value}
+                            icon={c.icon}
+                            tone={c.tone}
+                            delta={c.delta}
+                        />
+                    ))}
+            </div>
+
+            {/* ── Chart + Activity row ────────────────────────────────────── */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                {/* Revenue chart — 2/3 */}
+                <Card className="xl:col-span-2 gap-4 py-5">
+                    <CardHeader className="flex items-start justify-between gap-2 px-5">
+                        <div>
+                            <CardTitle className="text-base font-semibold text-neutral-900">
+                                {t.dashboard.chart.title}
+                            </CardTitle>
+                            <p className="text-xs text-neutral-500 mt-0.5">
+                                {t.dashboard.chart.subtitle}
+                            </p>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="px-3 pb-1">
+                        <div className="h-[280px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart
+                                    data={chartData}
+                                    margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+                                >
+                                    <defs>
+                                        <linearGradient id="revGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#6366F1" stopOpacity={0.18} />
+                                            <stop offset="95%" stopColor="#6366F1" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid
+                                        strokeDasharray="4 4"
+                                        vertical={false}
+                                        stroke="#E5E7EB"
+                                    />
+                                    <XAxis
+                                        dataKey="name"
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#6B7280', fontSize: 11 }}
+                                        dy={8}
+                                    />
+                                    <YAxis
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#6B7280', fontSize: 11 }}
+                                        tickFormatter={(v) => `฿${Math.round(v / 1000)}k`}
+                                        width={50}
+                                    />
+                                    <Tooltip
+                                        cursor={{
+                                            stroke: '#6366F1',
+                                            strokeWidth: 1,
+                                            strokeDasharray: '4 4',
+                                        }}
+                                        content={<ChartTooltip />}
+                                    />
+                                    <Area
+                                        type="monotone"
+                                        dataKey="sales"
+                                        stroke="#6366F1"
+                                        strokeWidth={2.5}
+                                        fill="url(#revGradient)"
+                                        dot={{
+                                            r: 3,
+                                            fill: '#FFFFFF',
+                                            strokeWidth: 2,
+                                            stroke: '#6366F1',
+                                        }}
+                                        activeDot={{
+                                            r: 5,
+                                            strokeWidth: 2,
+                                            stroke: '#FFFFFF',
+                                            fill: '#6366F1',
+                                        }}
+                                        animationDuration={600}
+                                    />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* Activity — 1/3 */}
+                <Card className="gap-4 py-5">
+                    <CardHeader className="flex items-center justify-between gap-2 px-5">
+                        <CardTitle className="text-base font-semibold text-neutral-900">
+                            {t.dashboard.activity.title}
+                        </CardTitle>
+                        <span className="grid place-items-center w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600">
+                            <Activity size={16} />
+                        </span>
+                    </CardHeader>
+                    <CardContent className="px-5 pb-2 max-h-[280px] overflow-y-auto">
+                        {loading && (
+                            <div className="space-y-3">
+                                {Array.from({ length: 5 }).map((_, i) => (
+                                    <div key={i} className="flex gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-neutral-100 animate-pulse flex-shrink-0" />
+                                        <div className="flex-1 space-y-1.5">
+                                            <div className="h-3 w-3/4 rounded bg-neutral-100 animate-pulse" />
+                                            <div className="h-2.5 w-1/3 rounded bg-neutral-100 animate-pulse" />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {!loading && activity.length === 0 && (
+                            <div className="text-sm text-neutral-500 py-8 text-center">
+                                {t.common.noData}
+                            </div>
+                        )}
+                        {!loading && activity.length > 0 && (
+                            <ul className="space-y-3">
+                                {activity.map((e) => {
+                                    const { iconBg, iconColor, Icon } = ACTIVITY_STYLE[e.type];
+                                    return (
+                                        <li key={e.id} className="flex gap-3 group">
+                                            <div
+                                                className={cn(
+                                                    'w-8 h-8 rounded-lg grid place-items-center flex-shrink-0',
+                                                    iconBg,
+                                                    iconColor,
+                                                )}
+                                            >
+                                                <Icon size={14} />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-sm text-neutral-900 leading-tight group-hover:text-indigo-700 transition-colors">
+                                                    {e.message}
+                                                </p>
+                                                <p className="text-xs text-neutral-500 mt-1 tabular-nums">
+                                                    {relativeTime(e.created_at)}
+                                                </p>
+                                            </div>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
+
+        </div>
+    );
 };
 
 export default Dashboard;
