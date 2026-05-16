@@ -46,16 +46,18 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-4">
-      <div className="w-full max-w-md space-y-6">
+    <div className="min-h-screen flex items-center justify-center bg-neutral-50 text-neutral-900 px-4 py-16">
+      <div className="w-full max-w-md space-y-12">
         {/* Language toggle */}
         <div className="flex justify-end">
-          <div className="inline-flex rounded-lg border border-white/10 bg-white/5 p-0.5 text-xs font-semibold">
+          <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-1 text-xs font-semibold shadow-xs">
             <button
               type="button"
               onClick={() => setLanguage('th')}
-              className={`px-3 py-1 rounded-md transition ${
-                language === 'th' ? 'bg-indigo-500 text-white' : 'text-slate-400'
+              className={`px-3.5 py-1.5 rounded-md transition ${
+                language === 'th'
+                  ? 'bg-neutral-900 text-white'
+                  : 'text-neutral-500 hover:text-neutral-900'
               }`}
             >
               TH
@@ -63,8 +65,10 @@ export default function Login() {
             <button
               type="button"
               onClick={() => setLanguage('en')}
-              className={`px-3 py-1 rounded-md transition ${
-                language === 'en' ? 'bg-indigo-500 text-white' : 'text-slate-400'
+              className={`px-3.5 py-1.5 rounded-md transition ${
+                language === 'en'
+                  ? 'bg-neutral-900 text-white'
+                  : 'text-neutral-500 hover:text-neutral-900'
               }`}
             >
               EN
@@ -73,26 +77,29 @@ export default function Login() {
         </div>
 
         {/* Logo / title */}
-        <div className="text-center">
-          <div className="text-3xl font-bold tracking-tight">CoreBiz Center</div>
-          <p className="text-slate-400 text-sm mt-1">{t.auth.subtitle}</p>
+        <div className="text-center space-y-4">
+          <div className="text-3xl font-bold tracking-tight text-neutral-900">
+            CoreBiz Center
+          </div>
+          <p className="text-sm text-neutral-500">{t.auth.subtitle}</p>
         </div>
 
-        <div className="glass-card p-8 space-y-5">
+        {/* Card */}
+        <div className="bg-white border border-neutral-200 rounded-xl shadow-sm p-10 space-y-9">
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+            <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
               <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
               <span>{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label htmlFor="email" className="text-xs font-medium text-slate-300">
+          <form onSubmit={handleSubmit} className="space-y-7">
+            <div className="space-y-3">
+              <label htmlFor="email" className="block text-xs font-semibold text-neutral-700 uppercase tracking-wider">
                 {t.auth.emailLabel}
               </label>
               <div className="relative">
-                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
                 <input
                   id="email"
                   type="email"
@@ -100,18 +107,18 @@ export default function Login() {
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-slate-900/50 border border-white/10 rounded-lg pl-10 pr-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                  className="w-full h-12 bg-neutral-50 border border-neutral-200 rounded-lg pl-12 pr-4 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition"
                   placeholder="you@corebiz.online"
                 />
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label htmlFor="password" className="text-xs font-medium text-slate-300">
+            <div className="space-y-3">
+              <label htmlFor="password" className="block text-xs font-semibold text-neutral-700 uppercase tracking-wider">
                 {t.auth.passwordLabel}
               </label>
               <div className="relative">
-                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
                 <input
                   id="password"
                   type="password"
@@ -119,7 +126,7 @@ export default function Login() {
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-900/50 border border-white/10 rounded-lg pl-10 pr-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                  className="w-full h-12 bg-neutral-50 border border-neutral-200 rounded-lg pl-12 pr-4 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition"
                   placeholder="••••••••"
                 />
               </div>
@@ -128,43 +135,44 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-60 transition"
+              className="w-full h-12 flex items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 text-sm font-semibold text-white hover:bg-indigo-600 disabled:opacity-60 disabled:cursor-not-allowed transition shadow-sm"
             >
               <LogIn size={16} />
               {loading ? t.auth.signingIn : t.auth.signIn}
             </button>
           </form>
 
-          <div className="relative">
+          {/* Divider */}
+          <div className="relative py-2">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10" />
+              <div className="w-full border-t border-neutral-200" />
             </div>
             <div className="relative flex justify-center">
-              <span className="bg-slate-900 px-3 text-xs text-slate-500">
+              <span className="bg-white px-4 text-xs font-medium text-neutral-500 uppercase tracking-wider">
                 {t.auth.orContinueWith}
               </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             <button
               type="button"
               onClick={handleGoogle}
-              className="flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 py-2.5 text-sm font-medium hover:bg-white/10 transition"
+              className="h-12 flex items-center justify-center gap-2.5 rounded-lg border border-neutral-200 bg-white text-sm font-medium text-neutral-700 hover:bg-neutral-50 hover:border-neutral-300 transition"
             >
               <GoogleIcon /> Google
             </button>
             <button
               type="button"
               onClick={handleLine}
-              className="flex items-center justify-center gap-2 rounded-lg bg-[#06C755] py-2.5 text-sm font-medium text-white hover:bg-[#05b34a] transition"
+              className="h-12 flex items-center justify-center gap-2.5 rounded-lg bg-[#06C755] text-sm font-medium text-white hover:bg-[#05b34a] transition shadow-sm"
             >
               <LineIcon /> LINE
             </button>
           </div>
         </div>
 
-        <p className="text-center text-xs text-slate-500">
+        <p className="text-center text-xs text-neutral-500 leading-relaxed pt-2">
           {t.auth.adminOnly}
         </p>
       </div>
