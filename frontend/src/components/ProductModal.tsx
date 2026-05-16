@@ -1,7 +1,18 @@
-import { useState, type FormEvent } from 'react';
-import { Package, Tag, DollarSign, Hash, Barcode, Loader2 } from 'lucide-react';
+import { useRef, useState, type FormEvent, type ChangeEvent } from 'react';
+import {
+    Package,
+    Tag,
+    DollarSign,
+    Hash,
+    Barcode,
+    Loader2,
+    ImagePlus,
+    X,
+    AlertTriangle,
+} from 'lucide-react';
 import type { Category } from '../lib/database.types';
 import type { ProductWithInventory } from '../lib/api';
+import { uploadProductImage, deleteProductImage, validateImage } from '../lib/storage';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -12,11 +23,17 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
+
+const MAX_IMAGES = 5;
 
 export interface ProductFormData {
     sku: string;
     name_th: string;
     name_en: string;
+    description_th: string;
+    description_en: string;
+    images: string[]; // public URLs
     category_id: string | null;
     brand: string;
     unit: string;
@@ -47,6 +64,9 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
             sku: '',
             name_th: '',
             name_en: '',
+            description_th: '',
+            description_en: '',
+            images: [],
             category_id: null,
             brand: '',
             unit: 'ชิ้น',
@@ -58,10 +78,17 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
         };
     }
     const inv0 = p.inventory[0];
+    // images stored as jsonb (string[] of public URLs)
+    const imgs = Array.isArray(p.images)
+        ? (p.images as unknown[]).filter((x): x is string => typeof x === 'string')
+        : [];
     return {
         sku: p.sku,
         name_th: p.name_th,
         name_en: p.name_en ?? '',
+        description_th: p.description_th ?? '',
+        description_en: p.description_en ?? '',
+        images: imgs,
         category_id: p.category_id,
         brand: p.brand ?? '',
         unit: p.unit,
@@ -89,7 +116,63 @@ function ProductModalForm({
     const [form, setForm] = useState<ProductFormData>(() => buildInitialForm(editingProduct));
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
+    const [uploadingCount, setUploadingCount] = useState(0);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const isNew = !editingProduct;
+
+    /** Stable namespace under which uploaded files live. For a new product we
+        mint a one-off key — the files end up under `pending-xxx/...` regardless
+        of which product they later belong to. */
+    const productKeyRef = useRef<string>(
+        editingProduct?.id ?? `pending-${Math.random().toString(36).slice(2, 10)}`,
+    );
+
+    async function handleFilesPicked(e: ChangeEvent<HTMLInputElement>) {
+        const files = Array.from(e.target.files ?? []);
+        // reset input so picking the same file again still fires the event
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        if (files.length === 0) return;
+
+        const slotsLeft = MAX_IMAGES - form.images.length;
+        if (slotsLeft <= 0) {
+            setErr(`อัปโหลดได้สูงสุด ${MAX_IMAGES} รูป — ลบรูปเก่าก่อน`);
+            return;
+        }
+        const toUpload = files.slice(0, slotsLeft);
+        if (files.length > slotsLeft) {
+            setErr(
+                `เลือกมา ${files.length} ไฟล์ แต่เหลือช่องว่างแค่ ${slotsLeft} — รับไปแค่ ${slotsLeft} ไฟล์แรก`,
+            );
+        } else {
+            setErr(null);
+        }
+
+        // Quick client-side validation before kicking off uploads
+        try {
+            for (const f of toUpload) validateImage(f);
+        } catch (e) {
+            setErr((e as Error).message);
+            return;
+        }
+
+        setUploadingCount(toUpload.length);
+        try {
+            const urls = await Promise.all(
+                toUpload.map((f) => uploadProductImage(f, productKeyRef.current)),
+            );
+            setForm((prev) => ({ ...prev, images: [...prev.images, ...urls] }));
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setUploadingCount(0);
+        }
+    }
+
+    function removeImage(url: string) {
+        setForm((prev) => ({ ...prev, images: prev.images.filter((u) => u !== url) }));
+        // Fire-and-forget cleanup from storage (best-effort)
+        void deleteProductImage(url);
+    }
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -131,16 +214,82 @@ function ProductModalForm({
                 >
                     <div className="px-6 py-5 space-y-5 overflow-y-auto">
                         {err && (
-                            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                                ✗ {err}
+                            <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+                                <span>{err}</span>
                             </div>
                         )}
 
-                        {/* SKU + Status */}
+                        {/* ── Images uploader ─────────────────────────── */}
+                        <div className="space-y-2">
+                            <Label className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                <ImagePlus size={12} /> รูปสินค้า ({form.images.length}/{MAX_IMAGES})
+                            </Label>
+                            <div className="grid grid-cols-5 gap-3">
+                                {form.images.map((url) => (
+                                    <div
+                                        key={url}
+                                        className="group relative aspect-square rounded-lg border border-neutral-200 bg-neutral-50 overflow-hidden"
+                                    >
+                                        <img
+                                            src={url}
+                                            alt="product"
+                                            className="w-full h-full object-cover"
+                                            loading="lazy"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => removeImage(url)}
+                                            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/95 border border-neutral-200 shadow-sm grid place-items-center text-neutral-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition opacity-0 group-hover:opacity-100"
+                                            title="ลบรูปนี้"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </div>
+                                ))}
+                                {form.images.length < MAX_IMAGES && (
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={uploadingCount > 0}
+                                        className="aspect-square rounded-lg border-2 border-dashed border-neutral-300 hover:border-indigo-400 hover:bg-indigo-50 transition flex flex-col items-center justify-center gap-1 text-neutral-500 hover:text-indigo-700 disabled:opacity-50"
+                                    >
+                                        {uploadingCount > 0 ? (
+                                            <>
+                                                <Loader2 size={20} className="animate-spin" />
+                                                <span className="text-[10px] font-semibold">
+                                                    กำลังอัปโหลด...
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <ImagePlus size={20} />
+                                                <span className="text-[10px] font-semibold">
+                                                    เพิ่มรูป
+                                                </span>
+                                            </>
+                                        )}
+                                    </button>
+                                )}
+                            </div>
+                            <p className="text-[11px] text-neutral-500">
+                                JPG / PNG / WebP / GIF · ขนาดไม่เกิน 5 MB · สูงสุด {MAX_IMAGES} รูป
+                            </p>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                multiple
+                                onChange={handleFilesPicked}
+                                className="hidden"
+                            />
+                        </div>
+
+                        {/* ── SKU + Status ────────────────────────────── */}
                         <div className="grid grid-cols-3 gap-3">
                             <div className="col-span-2 space-y-2">
                                 <Label htmlFor="prod-sku" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
-                                    <Barcode size={12} /> SKU (รหัสสินค้า)
+                                    <Barcode size={12} /> SKU (รหัสสินค้า) *
                                 </Label>
                                 <Input
                                     id="prod-sku"
@@ -151,7 +300,6 @@ function ProductModalForm({
                                     onChange={(e) =>
                                         setForm({ ...form, sku: e.target.value.toUpperCase() })
                                     }
-                                    disabled={!isNew}
                                     className="font-mono"
                                 />
                             </div>
@@ -177,7 +325,7 @@ function ProductModalForm({
                             </div>
                         </div>
 
-                        {/* Names */}
+                        {/* ── Names ───────────────────────────────────── */}
                         <div className="space-y-2">
                             <Label htmlFor="prod-name-th" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
                                 <Tag size={12} /> ชื่อภาษาไทย *
@@ -205,7 +353,42 @@ function ProductModalForm({
                             />
                         </div>
 
-                        {/* Category + Brand */}
+                        {/* ── Description (TH/EN) ─────────────────────── */}
+                        <div className="space-y-2">
+                            <Label htmlFor="prod-desc-th" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                รายละเอียดสินค้า (ภาษาไทย)
+                            </Label>
+                            <textarea
+                                id="prod-desc-th"
+                                rows={4}
+                                placeholder="เช่น สเปคสินค้า, จุดเด่น, การใช้งาน..."
+                                value={form.description_th}
+                                onChange={(e) =>
+                                    setForm({ ...form, description_th: e.target.value })
+                                }
+                                className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-y"
+                            />
+                        </div>
+
+                        <details className="group">
+                            <summary className="cursor-pointer text-xs font-semibold text-neutral-500 uppercase tracking-wider hover:text-indigo-700 transition select-none">
+                                + Description (English) — optional
+                            </summary>
+                            <div className="space-y-2 mt-2">
+                                <textarea
+                                    id="prod-desc-en"
+                                    rows={4}
+                                    placeholder="e.g. specs, key features, use cases..."
+                                    value={form.description_en}
+                                    onChange={(e) =>
+                                        setForm({ ...form, description_en: e.target.value })
+                                    }
+                                    className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-y"
+                                />
+                            </div>
+                        </details>
+
+                        {/* ── Category + Brand ────────────────────────── */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-2">
                                 <Label htmlFor="prod-cat" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
@@ -244,7 +427,7 @@ function ProductModalForm({
                             </div>
                         </div>
 
-                        {/* Price + Cost + Unit */}
+                        {/* ── Price + Cost + Unit ─────────────────────── */}
                         <div className="grid grid-cols-3 gap-3">
                             <div className="space-y-2">
                                 <Label htmlFor="prod-price" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
@@ -298,7 +481,7 @@ function ProductModalForm({
                             </div>
                         </div>
 
-                        {/* Stock */}
+                        {/* ── Stock ───────────────────────────────────── */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-2">
                                 <Label htmlFor="prod-qty" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
@@ -342,7 +525,12 @@ function ProductModalForm({
                     </div>
 
                     {/* Footer */}
-                    <DialogFooter className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 gap-2">
+                    <DialogFooter
+                        className={cn(
+                            'px-6 py-4 border-t border-neutral-200 bg-neutral-50 gap-2',
+                            uploadingCount > 0 && 'opacity-60 pointer-events-none',
+                        )}
+                    >
                         <Button
                             type="button"
                             variant="outline"
@@ -353,7 +541,7 @@ function ProductModalForm({
                         </Button>
                         <Button
                             type="submit"
-                            disabled={saving}
+                            disabled={saving || uploadingCount > 0}
                             className="gap-2 bg-indigo-500 hover:bg-indigo-600"
                         >
                             {saving && <Loader2 size={14} className="animate-spin" />}

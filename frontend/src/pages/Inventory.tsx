@@ -164,14 +164,24 @@ export default function Inventory() {
   }
 
   async function handleSave(form: ProductFormData) {
+    // Shared payload — sku is editable now (UUID id remains the FK target).
+    const productPayload = {
+      sku: form.sku,
+      name_th: form.name_th,
+      name_en: form.name_en || null,
+      description_th: form.description_th || null,
+      description_en: form.description_en || null,
+      images: form.images,
+      category_id: form.category_id,
+      brand: form.brand || null,
+      unit: form.unit,
+      price: form.price,
+      cost: form.cost,
+      status: form.status,
+    };
+
     if (editingProduct) {
-      await productsApi.update(editingProduct.id, {
-        name_th: form.name_th,
-        name_en: form.name_en || null,
-        category_id: form.category_id,
-        brand: form.brand || null,
-        unit: form.unit, price: form.price, cost: form.cost, status: form.status,
-      });
+      await productsApi.update(editingProduct.id, productPayload);
       const inv = editingProduct.inventory[0];
       if (inv) {
         await inventoryApi.adjustQuantity(inv.id, form.initial_quantity);
@@ -185,14 +195,7 @@ export default function Inventory() {
       }
     } else {
       if (!defaultWarehouseId) throw new Error('ไม่พบ default warehouse');
-      const newProd = await productsApi.create({
-        sku: form.sku,
-        name_th: form.name_th,
-        name_en: form.name_en || null,
-        category_id: form.category_id,
-        brand: form.brand || null,
-        unit: form.unit, price: form.price, cost: form.cost, status: form.status,
-      });
+      const newProd = await productsApi.create(productPayload);
       await inventoryApi.upsert({
         product_id: newProd.id,
         warehouse_id: defaultWarehouseId,

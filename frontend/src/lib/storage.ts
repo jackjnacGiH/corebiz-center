@@ -1,0 +1,90 @@
+/**
+ * Storage helpers for the `products` bucket (Supabase Storage).
+ *
+ * Bucket settings (see migration `create_products_storage_bucket`):
+ *   - public read (so <img src> works without signing)
+ *   - 5 MB max per file
+ *   - only image/jpeg|png|webp|gif allowed
+ *   - authenticated users (admin/staff) may upload/update/delete
+ */
+import { supabase } from './supabase';
+
+const BUCKET = 'products';
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+function extFor(file: File): string {
+    // Prefer real extension from filename, fall back to MIME map
+    const m = file.name.toLowerCase().match(/\.([a-z0-9]+)$/);
+    if (m) return m[1];
+    switch (file.type) {
+        case 'image/jpeg': return 'jpg';
+        case 'image/png':  return 'png';
+        case 'image/webp': return 'webp';
+        case 'image/gif':  return 'gif';
+        default: return 'bin';
+    }
+}
+
+/**
+ * Validate a file before upload. Throws if invalid.
+ */
+export function validateImage(file: File): void {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+        throw new Error(
+            `ไฟล์ ${file.name} ไม่รองรับ — ใช้ได้แค่ JPG / PNG / WebP / GIF`,
+        );
+    }
+    if (file.size > MAX_FILE_SIZE) {
+        throw new Error(
+            `ไฟล์ ${file.name} ใหญ่เกิน 5 MB (ตอนนี้ ${(file.size / 1024 / 1024).toFixed(1)} MB)`,
+        );
+    }
+}
+
+/**
+ * Upload one image and return its public URL.
+ *
+ * `productKey` is used to namespace files (typically the product `id` for
+ * existing products, or `pending-{random}` for unsaved drafts).
+ */
+export async function uploadProductImage(file: File, productKey: string): Promise<string> {
+    validateImage(file);
+
+    const ext = extFor(file);
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const path = `${productKey}/${stamp}.${ext}`;
+
+    const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, file, {
+            cacheControl: '31536000', // 1 year
+            upsert: false,
+            contentType: file.type,
+        });
+
+    if (uploadErr) throw uploadErr;
+
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    return data.publicUrl;
+}
+
+/**
+ * Best-effort delete by public URL. Silently ignores errors (cleanup task).
+ *
+ * Parses the storage object path out of the public URL, e.g.:
+ *   https://xxx.supabase.co/storage/v1/object/public/products/abc/123.jpg
+ *                                                       ^^^^^^^^^^^^^^^^^^ path
+ */
+export async function deleteProductImage(publicUrl: string): Promise<void> {
+    try {
+        const marker = `/object/public/${BUCKET}/`;
+        const idx = publicUrl.indexOf(marker);
+        if (idx === -1) return;
+        const path = publicUrl.slice(idx + marker.length);
+        if (!path) return;
+        await supabase.storage.from(BUCKET).remove([path]);
+    } catch {
+        // Cleanup failures shouldn't block UI
+    }
+}
