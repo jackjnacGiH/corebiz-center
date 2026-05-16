@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Package, Plus, Search, Edit2, Trash2, AlertTriangle, RefreshCw,
+  Package, Plus, Search, Edit2, Trash2, Copy, AlertTriangle, RefreshCw,
   ArrowUpDown, ArrowUp, ArrowDown, MapPin, Box, Tag, ChevronDown,
   ChevronRight, Upload, FileDown, Filter,
 } from 'lucide-react';
@@ -97,6 +97,7 @@ export default function Inventory() {
 
   const [isModalOpen, setIsModalOpen]       = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProductWithInventory | null>(null);
+  const [copyFromProduct, setCopyFromProduct] = useState<ProductWithInventory | null>(null);
 
   async function load() {
     setLoading(true); setErr(null);
@@ -255,7 +256,7 @@ export default function Inventory() {
           <IconBtn disabled title="Import CSV (coming soon)"><Upload size={15} /></IconBtn>
           <IconBtn disabled title="Export (coming soon)"><FileDown size={15} /></IconBtn>
           <button
-            onClick={() => { setEditingProduct(null); setIsModalOpen(true); }}
+            onClick={() => { setEditingProduct(null); setCopyFromProduct(null); setIsModalOpen(true); }}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg shadow-sm transition"
           >
             <Plus size={15} />
@@ -561,11 +562,18 @@ export default function Inventory() {
                       <td className={`${rowPad} px-4`}>
                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
                           <button
-                            onClick={e => { e.stopPropagation(); setEditingProduct(p); setIsModalOpen(true); }}
+                            onClick={e => { e.stopPropagation(); setEditingProduct(p); setCopyFromProduct(null); setIsModalOpen(true); }}
                             className="p-1.5 rounded text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition"
                             title="แก้ไข"
                           >
                             <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditingProduct(null); setCopyFromProduct(p); setIsModalOpen(true); }}
+                            className="p-1.5 rounded text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                            title="คัดลอกสินค้า"
+                          >
+                            <Copy size={13} />
                           </button>
                           <button
                             onClick={e => { e.stopPropagation(); handleDelete(p); }}
@@ -596,9 +604,15 @@ export default function Inventory() {
 
       <ProductModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => {
+          setIsModalOpen(false);
+          // Clear both source refs so the form re-inits clean next time
+          setEditingProduct(null);
+          setCopyFromProduct(null);
+        }}
         onSave={handleSave}
         editingProduct={editingProduct}
+        copyFromProduct={copyFromProduct}
         categories={categories}
       />
     </div>

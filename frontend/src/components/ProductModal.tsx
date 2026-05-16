@@ -76,7 +76,12 @@ interface ProductModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSave: (data: ProductFormData) => Promise<void> | void;
+    /** Product being edited. Mutually exclusive with `copyFromProduct`. */
     editingProduct?: ProductWithInventory | null;
+    /** Product whose data should pre-fill a NEW product (Copy flow).
+     *  SKU is cleared so the user must enter a unique one. Mutually
+     *  exclusive with `editingProduct`. */
+    copyFromProduct?: ProductWithInventory | null;
     categories: Category[];
 }
 
@@ -136,9 +141,12 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
 }
 
 export default function ProductModal(props: ProductModalProps) {
-    const { isOpen, editingProduct } = props;
+    const { isOpen, editingProduct, copyFromProduct } = props;
     if (!isOpen) return null;
-    return <ProductModalForm key={editingProduct?.id ?? 'new'} {...props} />;
+    // Key forces a clean form remount when switching between modes
+    const key = editingProduct?.id
+        ?? (copyFromProduct ? `copy-${copyFromProduct.id}` : 'new');
+    return <ProductModalForm key={key} {...props} />;
 }
 
 function ProductModalForm({
@@ -146,16 +154,30 @@ function ProductModalForm({
     onClose,
     onSave,
     editingProduct,
+    copyFromProduct,
     categories,
 }: ProductModalProps) {
-    const [form, setForm] = useState<ProductFormData>(() => buildInitialForm(editingProduct));
+    const isEdit = !!editingProduct;
+    const isCopy = !isEdit && !!copyFromProduct;
+    const isNew = !isEdit; // copy treated as "new product" for save flow
+
+    const [form, setForm] = useState<ProductFormData>(() => {
+        const sourceProduct = editingProduct ?? copyFromProduct ?? null;
+        const base = buildInitialForm(sourceProduct);
+        if (isCopy) {
+            // Force the editor to enter a unique SKU — the DB unique
+            // constraint would reject duplicates anyway, but emptying
+            // it here makes the requirement obvious in the UI.
+            base.sku = '';
+        }
+        return base;
+    });
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [uploadingCount, setUploadingCount] = useState(0);
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const isNew = !editingProduct;
 
     /** Stable namespace under which uploaded files live. For a new product we
         mint a one-off key — the files end up under `pending-xxx/...` regardless
@@ -207,8 +229,12 @@ function ProductModalForm({
 
     function removeImage(url: string) {
         setForm((prev) => ({ ...prev, images: prev.images.filter((u) => u !== url) }));
-        // Fire-and-forget cleanup from storage (best-effort)
-        void deleteProductImage(url);
+        // In copy mode, the URL is still owned by the source product —
+        // dropping it from our form should NOT delete the underlying
+        // storage object. In edit/create the file is ours to clean up.
+        if (!isCopy) {
+            void deleteProductImage(url);
+        }
     }
 
     // ── Drag-and-drop reorder ──────────────────────────────────────────
@@ -278,10 +304,18 @@ function ProductModalForm({
                         </div>
                         <div className="min-w-0">
                             <DialogTitle className="text-lg font-bold text-neutral-900">
-                                {isNew ? 'เพิ่มสินค้าใหม่' : 'แก้ไขข้อมูลสินค้า'}
+                                {isEdit
+                                    ? 'แก้ไขข้อมูลสินค้า'
+                                    : isCopy
+                                      ? 'คัดลอกสินค้า'
+                                      : 'เพิ่มสินค้าใหม่'}
                             </DialogTitle>
                             <p className="text-[11px] text-neutral-500 mt-0.5 uppercase tracking-wider font-semibold font-mono">
-                                {isNew ? 'New Product' : `SKU: ${editingProduct?.sku}`}
+                                {isEdit
+                                    ? `SKU: ${editingProduct?.sku}`
+                                    : isCopy
+                                      ? `Copied from ${copyFromProduct?.sku}`
+                                      : 'New Product'}
                             </p>
                         </div>
                     </div>
@@ -296,6 +330,20 @@ function ProductModalForm({
                             <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                                 <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
                                 <span>{err}</span>
+                            </div>
+                        )}
+
+                        {isCopy && (
+                            <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+                                <span>
+                                    คัดลอกข้อมูลจาก{' '}
+                                    <strong className="font-mono">
+                                        {copyFromProduct?.sku}
+                                    </strong>{' '}
+                                    — กรอก SKU ใหม่ที่ <u>ไม่ซ้ำกับสินค้าตัวอื่น</u>{' '}
+                                    ก่อนบันทึก
+                                </span>
                             </div>
                         )}
 
@@ -422,7 +470,12 @@ function ProductModalForm({
                                     id="prod-sku"
                                     type="text"
                                     required
-                                    placeholder="เช่น ABR-001"
+                                    placeholder={
+                                        isCopy
+                                            ? 'กรอกรหัสใหม่ — ห้ามซ้ำกับสินค้าตัวอื่น'
+                                            : 'เช่น ABR-001'
+                                    }
+                                    autoFocus={isCopy}
                                     value={form.sku}
                                     onChange={(e) =>
                                         setForm({ ...form, sku: e.target.value.toUpperCase() })
@@ -833,9 +886,11 @@ function ProductModalForm({
                             {saving && <Loader2 size={14} className="animate-spin" />}
                             {saving
                                 ? 'กำลังบันทึก...'
-                                : isNew
-                                  ? 'เพิ่มสินค้า'
-                                  : 'บันทึก'}
+                                : isCopy
+                                  ? 'สร้างสำเนา'
+                                  : isEdit
+                                    ? 'บันทึก'
+                                    : 'เพิ่มสินค้า'}
                         </Button>
                     </DialogFooter>
                 </form>
