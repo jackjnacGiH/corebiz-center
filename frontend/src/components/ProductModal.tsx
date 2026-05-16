@@ -30,6 +30,25 @@ import { cn } from '@/lib/utils';
 
 const MAX_IMAGES = 5;
 
+/** Sentinel meaning "do not show on storefront" — when selected, all other
+    tags are cleared. Empty `feature_tags` array == this state. */
+export const FEATURE_TAG_NONE = 'ไม่แสดง';
+
+/** Feature tags shown as checkboxes — kept in alphabetical order so editors
+    can scan them. `ไม่แสดง` is rendered first as an exclusive option. */
+export const FEATURE_TAG_OPTIONS = [
+    'Aluminium',
+    'Furniture',
+    'Glass',
+    'Metal',
+    'Paint',
+    'Plastic',
+    'Stainless',
+    'Steel',
+    'Titanum',
+    'Wood',
+];
+
 export interface ProductFormData {
     sku: string;
     name_th: string;
@@ -43,7 +62,7 @@ export interface ProductFormData {
     price: number;
     cost: number;
     weight_kg: number;
-    is_featured: boolean;
+    feature_tags: string[];
     status: 'active' | 'draft' | 'archived';
     /** Used only when creating a new product — initial qty in default warehouse */
     initial_quantity: number;
@@ -78,7 +97,7 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
             price: 0,
             cost: 0,
             weight_kg: 0,
-            is_featured: false,
+            feature_tags: [],
             status: 'active',
             initial_quantity: 0,
             reorder_level: 10,
@@ -102,7 +121,7 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
         price: Number(p.price),
         cost: Number(p.cost ?? 0),
         weight_kg: Number(p.weight_kg ?? 0),
-        is_featured: Boolean(p.is_featured),
+        feature_tags: Array.isArray(p.feature_tags) ? [...p.feature_tags] : [],
         status: p.status as ProductFormData['status'],
         initial_quantity: inv0?.quantity ?? 0,
         reorder_level: inv0?.reorder_level ?? 10,
@@ -624,7 +643,7 @@ function ProductModalForm({
                             </div>
                         </div>
 
-                        {/* ── Weight + Featured ──────────────────────── */}
+                        {/* ── Weight ──────────────────────────────────── */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-2">
                                 <Label htmlFor="prod-weight" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
@@ -646,52 +665,50 @@ function ProductModalForm({
                                     className="tabular-nums"
                                 />
                             </div>
-                            <div className="space-y-2">
-                                <Label className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
-                                    <Star size={12} /> สินค้าแนะนำ
-                                </Label>
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setForm((f) => ({ ...f, is_featured: !f.is_featured }))
+                        </div>
+
+                        {/* ── Feature tags ────────────────────────────── */}
+                        <div className="space-y-2">
+                            <Label className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                <Star size={12} /> Feature
+                                {form.feature_tags.length > 0 && (
+                                    <span className="font-normal text-neutral-500 normal-case tracking-normal">
+                                        ({form.feature_tags.length} ที่เลือก)
+                                    </span>
+                                )}
+                            </Label>
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+                                {/* "ไม่แสดง" — exclusive: selecting clears all other tags. */}
+                                <FeatureCheckbox
+                                    label={FEATURE_TAG_NONE}
+                                    checked={form.feature_tags.length === 0}
+                                    onChange={() =>
+                                        setForm((f) => ({ ...f, feature_tags: [] }))
                                     }
-                                    className={cn(
-                                        'h-9 w-full flex items-center justify-between gap-2 rounded-md border px-3 text-sm transition',
-                                        form.is_featured
-                                            ? 'border-amber-200 bg-amber-50 text-amber-800'
-                                            : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50',
-                                    )}
-                                    role="switch"
-                                    aria-checked={form.is_featured}
-                                >
-                                    <span className="flex items-center gap-1.5">
-                                        <Star
-                                            size={14}
-                                            className={cn(
-                                                form.is_featured
-                                                    ? 'fill-amber-500 text-amber-500'
-                                                    : 'text-neutral-400',
-                                            )}
+                                    accent="muted"
+                                />
+                                {FEATURE_TAG_OPTIONS.map((tag) => {
+                                    const checked = form.feature_tags.includes(tag);
+                                    return (
+                                        <FeatureCheckbox
+                                            key={tag}
+                                            label={tag}
+                                            checked={checked}
+                                            onChange={() =>
+                                                setForm((f) => ({
+                                                    ...f,
+                                                    feature_tags: checked
+                                                        ? f.feature_tags.filter((t) => t !== tag)
+                                                        : [...f.feature_tags, tag],
+                                                }))
+                                            }
                                         />
-                                        {form.is_featured ? 'Featured' : 'ปกติ'}
-                                    </span>
-                                    <span
-                                        className={cn(
-                                            'relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0',
-                                            form.is_featured ? 'bg-amber-500' : 'bg-neutral-300',
-                                        )}
-                                    >
-                                        <span
-                                            className={cn(
-                                                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                                                form.is_featured
-                                                    ? 'translate-x-4'
-                                                    : 'translate-x-0.5',
-                                            )}
-                                        />
-                                    </span>
-                                </button>
+                                    );
+                                })}
                             </div>
+                            <p className="text-[11px] text-neutral-500">
+                                เลือกได้มากกว่า 1 รายการ — ติ๊ก "{FEATURE_TAG_NONE}" เพื่อไม่ให้แสดง
+                            </p>
                         </div>
                     </div>
 
@@ -726,5 +743,44 @@ function ProductModalForm({
                 </form>
             </DialogContent>
         </Dialog>
+    );
+}
+
+// ─── FeatureCheckbox ──────────────────────────────────────────────────────────
+// Custom checkbox styled to match the rest of the form.
+// `accent="muted"` is used for "ไม่แสดง" (neutral grey) vs. the default
+// indigo for actual feature tags.
+
+interface FeatureCheckboxProps {
+    label: string;
+    checked: boolean;
+    onChange: () => void;
+    accent?: 'indigo' | 'muted';
+}
+
+function FeatureCheckbox({ label, checked, onChange, accent = 'indigo' }: FeatureCheckboxProps) {
+    const isMuted = accent === 'muted';
+    return (
+        <label
+            className={cn(
+                'flex items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer transition select-none text-sm',
+                checked
+                    ? isMuted
+                        ? 'border-neutral-300 bg-white text-neutral-900 ring-1 ring-neutral-300'
+                        : 'border-indigo-300 bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200'
+                    : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50',
+            )}
+        >
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={onChange}
+                className={cn(
+                    'h-4 w-4 rounded border-neutral-300 focus:ring-2 focus:ring-offset-0',
+                    isMuted ? 'accent-neutral-700' : 'accent-indigo-500',
+                )}
+            />
+            <span className="truncate">{label}</span>
+        </label>
     );
 }

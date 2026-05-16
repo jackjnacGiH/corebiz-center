@@ -178,7 +178,9 @@ export default function Inventory() {
       price: form.price,
       cost: form.cost,
       weight_kg: form.weight_kg,
-      is_featured: form.is_featured,
+      feature_tags: form.feature_tags,
+      // Keep boolean flag in sync (back-compat for any reader of is_featured)
+      is_featured: form.feature_tags.length > 0,
       status: form.status,
     };
 
@@ -685,7 +687,25 @@ function ExpandedRow({ p, warehouses }: { p: ProductWithInventory; warehouses: W
           <DetailRow label="ID"       value={<code className="font-mono text-slate-700">{p.id.slice(0, 8)}…</code>} />
           <DetailRow label="Cost"     value={p.cost ? formatTHB(Number(p.cost)) : '—'} />
           <DetailRow label="Weight"   value={p.weight_kg ? `${p.weight_kg} kg` : '—'} />
-          <DetailRow label="Featured" value={p.is_featured ? '⭐ Yes' : '—'} />
+          <DetailRow
+            label="Feature"
+            value={
+              p.feature_tags && p.feature_tags.length > 0 ? (
+                <div className="flex flex-wrap gap-1 justify-end">
+                  {p.feature_tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                '—'
+              )
+            }
+          />
           <DetailRow label="Created"  value={new Date(p.created_at).toLocaleDateString('th-TH')} />
         </dl>
       </div>
