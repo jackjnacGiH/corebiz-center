@@ -15,6 +15,7 @@ import {
 import type { Category, Warehouse } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
+import ProductImagePreview from '../components/ProductImagePreview';
 
 // ─── types & helpers ─────────────────────────────────────────────────────
 type StockStatus = 'out' | 'low' | 'watch' | 'normal';
@@ -436,7 +437,7 @@ export default function Inventory() {
                           const hero = imgs[0];
                           if (hero) {
                             return (
-                              <HoverCard openDelay={150} closeDelay={50}>
+                              <HoverCard openDelay={150} closeDelay={150}>
                                 <HoverCardTrigger asChild>
                                   <img
                                     src={hero}
@@ -451,16 +452,7 @@ export default function Inventory() {
                                   sideOffset={8}
                                   className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
                                 >
-                                  <img
-                                    src={hero}
-                                    alt={p.name_th}
-                                    className="w-[200px] h-[200px] object-contain bg-white"
-                                  />
-                                  {imgs.length > 1 && (
-                                    <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 text-[11px] text-slate-600">
-                                      + อีก {imgs.length - 1} รูป
-                                    </div>
-                                  )}
+                                  <ProductImagePreview images={imgs} alt={p.name_th} />
                                 </HoverCardContent>
                               </HoverCard>
                             );
