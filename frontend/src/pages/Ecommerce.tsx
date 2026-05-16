@@ -336,10 +336,34 @@ export default function Ecommerce() {
           const leadTime = deriveLeadTime(p.total_quantity);
           return (
             <article key={p.id} className="commerce-product-card">
-              <div className="product-visual tone-steel">
-                <Package size={34} />
-                <span>{p.category?.name_th ?? '—'}</span>
-              </div>
+              {(() => {
+                const imgs = Array.isArray(p.images)
+                  ? (p.images as unknown[]).filter((x): x is string => typeof x === 'string')
+                  : [];
+                const hero = imgs[0];
+                if (hero) {
+                  return (
+                    <div className="product-visual" style={{ padding: 0, background: '#f8fafc' }}>
+                      <img
+                        src={hero}
+                        alt={p.name_th}
+                        loading="lazy"
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                        }}
+                      />
+                    </div>
+                  );
+                }
+                return (
+                  <div className="product-visual tone-steel">
+                    <Package size={34} />
+                    <span>{p.category?.name_th ?? '—'}</span>
+                  </div>
+                );
+              })()}
 
               <div className="product-card-body">
                 <div className="product-card-meta">

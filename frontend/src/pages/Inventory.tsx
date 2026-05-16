@@ -341,6 +341,7 @@ export default function Inventory() {
                   />
                 </th>
                 <SortableTh label="SKU"    sortKey="sku"    active={sortKey} dir={sortDir} onClick={toggleSort} />
+                <th className="w-14 px-3 py-3"></th>
                 <SortableTh label="สินค้า" sortKey="name"   active={sortKey} dir={sortDir} onClick={toggleSort} />
                 <th className="px-4 py-3 text-left">หมวด</th>
                 <th className="px-4 py-3 text-center">สถานะ</th>
@@ -354,7 +355,7 @@ export default function Inventory() {
             <tbody className="divide-y divide-slate-100">
               {loading && Array.from({ length: 5 }).map((_, i) => (
                 <tr key={`s-${i}`} className="animate-pulse">
-                  <td colSpan={10} className="px-4 py-4">
+                  <td colSpan={11} className="px-4 py-4">
                     <div className="h-8 bg-slate-100 rounded" />
                   </td>
                 </tr>
@@ -362,7 +363,7 @@ export default function Inventory() {
 
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-16 text-center">
+                  <td colSpan={11} className="px-4 py-16 text-center">
                     <Box size={32} className="mx-auto mb-3 text-slate-300" />
                     <p className="text-sm text-slate-500">
                       {search || selectedCategoryId !== 'all' || stockFilter !== 'all'
@@ -419,6 +420,30 @@ export default function Inventory() {
                         {p.barcode && (
                           <div className="text-[10px] font-mono text-slate-400 mt-0.5">{p.barcode}</div>
                         )}
+                      </td>
+
+                      <td className={`${rowPad} px-3 w-14`}>
+                        {(() => {
+                          const imgs = Array.isArray(p.images)
+                            ? (p.images as unknown[]).filter((x): x is string => typeof x === 'string')
+                            : [];
+                          const hero = imgs[0];
+                          if (hero) {
+                            return (
+                              <img
+                                src={hero}
+                                alt={p.name_th}
+                                className="w-10 h-10 rounded-md object-cover border border-slate-200 bg-white"
+                                loading="lazy"
+                              />
+                            );
+                          }
+                          return (
+                            <div className="w-10 h-10 rounded-md border border-dashed border-slate-200 bg-slate-50 grid place-items-center text-slate-300">
+                              <Box size={16} />
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       <td className={`${rowPad} px-4 max-w-md`}>

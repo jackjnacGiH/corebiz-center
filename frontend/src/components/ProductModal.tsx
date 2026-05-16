@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type ChangeEvent } from 'react';
+import { useRef, useState, type FormEvent, type ChangeEvent, type DragEvent } from 'react';
 import {
     Package,
     Tag,
@@ -11,6 +11,7 @@ import {
     AlertTriangle,
     Weight,
     Star,
+    GripVertical,
 } from 'lucide-react';
 import type { Category } from '../lib/database.types';
 import type { ProductWithInventory } from '../lib/api';
@@ -125,6 +126,8 @@ function ProductModalForm({
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [uploadingCount, setUploadingCount] = useState(0);
+    const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const isNew = !editingProduct;
 
@@ -182,6 +185,48 @@ function ProductModalForm({
         void deleteProductImage(url);
     }
 
+    // ── Drag-and-drop reorder ──────────────────────────────────────────
+    // Index 0 is the "hero" image shown in Inventory thumbnail column and
+    // the Ecommerce product card. Reordering changes which image is the hero.
+
+    function handleDragStart(e: DragEvent<HTMLDivElement>, index: number) {
+        setDraggedIndex(index);
+        e.dataTransfer.effectAllowed = 'move';
+        // Firefox requires non-empty data to allow drag
+        e.dataTransfer.setData('text/plain', String(index));
+    }
+
+    function handleDragOver(e: DragEvent<HTMLDivElement>, index: number) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (index !== dragOverIndex) setDragOverIndex(index);
+    }
+
+    function handleDragLeave() {
+        setDragOverIndex(null);
+    }
+
+    function handleDrop(e: DragEvent<HTMLDivElement>, targetIndex: number) {
+        e.preventDefault();
+        setDragOverIndex(null);
+        if (draggedIndex === null || draggedIndex === targetIndex) {
+            setDraggedIndex(null);
+            return;
+        }
+        setForm((prev) => {
+            const next = [...prev.images];
+            const [moved] = next.splice(draggedIndex, 1);
+            next.splice(targetIndex, 0, moved);
+            return { ...prev, images: next };
+        });
+        setDraggedIndex(null);
+    }
+
+    function handleDragEnd() {
+        setDraggedIndex(null);
+        setDragOverIndex(null);
+    }
+
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
         setErr(null);
@@ -234,27 +279,72 @@ function ProductModalForm({
                                 <ImagePlus size={12} /> รูปสินค้า ({form.images.length}/{MAX_IMAGES})
                             </Label>
                             <div className="grid grid-cols-5 gap-3">
-                                {form.images.map((url) => (
-                                    <div
-                                        key={url}
-                                        className="group relative aspect-square rounded-lg border border-neutral-200 bg-neutral-50 overflow-hidden"
-                                    >
-                                        <img
-                                            src={url}
-                                            alt="product"
-                                            className="w-full h-full object-cover"
-                                            loading="lazy"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => removeImage(url)}
-                                            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/95 border border-neutral-200 shadow-sm grid place-items-center text-neutral-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition opacity-0 group-hover:opacity-100"
-                                            title="ลบรูปนี้"
+                                {form.images.map((url, idx) => {
+                                    const isHero = idx === 0;
+                                    const isDragging = draggedIndex === idx;
+                                    const isDragOver = dragOverIndex === idx && draggedIndex !== idx;
+                                    return (
+                                        <div
+                                            key={url}
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, idx)}
+                                            onDragOver={(e) => handleDragOver(e, idx)}
+                                            onDragLeave={handleDragLeave}
+                                            onDrop={(e) => handleDrop(e, idx)}
+                                            onDragEnd={handleDragEnd}
+                                            className={cn(
+                                                'group relative aspect-square rounded-lg border bg-neutral-50 overflow-hidden cursor-grab active:cursor-grabbing transition',
+                                                isHero
+                                                    ? 'border-amber-300 ring-2 ring-amber-200'
+                                                    : 'border-neutral-200',
+                                                isDragging && 'opacity-40',
+                                                isDragOver &&
+                                                    'ring-2 ring-indigo-400 border-indigo-400 scale-105',
+                                            )}
+                                            title={
+                                                isHero
+                                                    ? 'รูป hero — แสดงในตาราง Inventory + Ecommerce. ลากเพื่อย้ายตำแหน่ง'
+                                                    : 'ลากเพื่อจัดลำดับ — รูปแรก (#1) คือรูปที่แสดง'
+                                            }
                                         >
-                                            <X size={12} />
-                                        </button>
-                                    </div>
-                                ))}
+                                            <img
+                                                src={url}
+                                                alt={`product ${idx + 1}`}
+                                                className="w-full h-full object-cover pointer-events-none"
+                                                loading="lazy"
+                                                draggable={false}
+                                            />
+
+                                            {/* Drag handle hint (top-left) */}
+                                            <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded bg-white/90 border border-neutral-200 grid place-items-center text-neutral-500 opacity-0 group-hover:opacity-100 transition">
+                                                <GripVertical size={12} />
+                                            </div>
+
+                                            {/* Hero badge (#1 = first image, used everywhere) */}
+                                            {isHero && (
+                                                <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-amber-500 text-white text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                                                    <Star size={9} className="fill-white" />
+                                                    หลัก
+                                                </div>
+                                            )}
+                                            {!isHero && (
+                                                <div className="absolute bottom-1.5 left-1.5 w-5 h-5 rounded-full bg-white/90 border border-neutral-200 text-neutral-700 text-[10px] font-bold grid place-items-center">
+                                                    {idx + 1}
+                                                </div>
+                                            )}
+
+                                            {/* Remove button */}
+                                            <button
+                                                type="button"
+                                                onClick={() => removeImage(url)}
+                                                className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/95 border border-neutral-200 shadow-sm grid place-items-center text-neutral-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition opacity-0 group-hover:opacity-100"
+                                                title="ลบรูปนี้"
+                                            >
+                                                <X size={12} />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
                                 {form.images.length < MAX_IMAGES && (
                                     <button
                                         type="button"
@@ -281,7 +371,10 @@ function ProductModalForm({
                                 )}
                             </div>
                             <p className="text-[11px] text-neutral-500">
-                                JPG / PNG / WebP / GIF · ขนาดไม่เกิน 5 MB · สูงสุด {MAX_IMAGES} รูป
+                                JPG / PNG / WebP / GIF · ขนาดไม่เกิน 5 MB · สูงสุด {MAX_IMAGES} รูป ·{' '}
+                                <span className="font-medium text-amber-700">
+                                    ลากรูปเพื่อจัดลำดับ — รูปที่ #1 (มีดาว) คือรูปหลักใน Inventory + Ecommerce
+                                </span>
                             </p>
                             <input
                                 ref={fileInputRef}
