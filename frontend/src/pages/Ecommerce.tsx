@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -128,6 +128,9 @@ export default function Ecommerce() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<'all' | string>('all');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  // Refs for the add-to-cart fly animation: the cart button is the target,
+  // the trigger element gives us the source bounding rect.
+  const cartBtnRef = useRef<HTMLButtonElement | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedCode, setSavedCode] = useState<string | null>(null);
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
@@ -188,6 +191,23 @@ export default function Ecommerce() {
   const cartVat = Math.round(cartSubtotal * 0.07);
   const cartTotal = cartSubtotal + cartVat;
 
+  // Bump the cart button whenever the count grows. Watching cart length
+  // wouldn't be enough — adding more of the same SKU doesn't grow the array.
+  const prevCartCountRef = useRef(cartCount);
+  useEffect(() => {
+    if (cartCount > prevCartCountRef.current) {
+      const el = cartBtnRef.current;
+      if (el) {
+        el.classList.remove('cart-bump');
+        // Force a reflow so re-adding the class actually restarts the
+        // animation; otherwise React skips the no-op className change.
+        void el.offsetWidth;
+        el.classList.add('cart-bump');
+      }
+    }
+    prevCartCountRef.current = cartCount;
+  }, [cartCount]);
+
   function addToCart(p: ProductWithInventory, opts?: { madeToOrder?: boolean }) {
     const mto = opts?.madeToOrder ?? false;
     setCart(prev => {
@@ -203,6 +223,65 @@ export default function Ecommerce() {
       }
       return [...prev, { product: p, qty: 1, madeToOrder: mto }];
     });
+  }
+
+  /**
+   * Plays a "fly to cart" animation: a small copy of the product image (or a
+   * coloured circle if there's no hero image) travels from where the +
+   * button was clicked to the cart button in the header. Pure DOM mutation,
+   * no React state — the element lives < 700ms and gets garbage-collected
+   * the moment it lands.
+   */
+  function flyToCart(
+    evt: ReactMouseEvent<HTMLButtonElement>,
+    p: ProductWithInventory,
+    mto: boolean,
+  ) {
+    const cartEl = cartBtnRef.current;
+    if (!cartEl) return;
+    const sourceEl = evt.currentTarget;
+    if (!sourceEl) return;
+    const sRect = sourceEl.getBoundingClientRect();
+    const tRect = cartEl.getBoundingClientRect();
+    const heroUrl = getHeroImage(p);
+
+    const flyer = document.createElement('div');
+    flyer.className = `fly-to-cart ${mto ? 'fly-to-cart-mto' : ''}`;
+    // Centre it on the click source.
+    flyer.style.left = `${sRect.left + sRect.width / 2 - 22}px`;
+    flyer.style.top  = `${sRect.top + sRect.height / 2 - 22}px`;
+
+    if (heroUrl) {
+      const img = document.createElement('img');
+      img.src = heroUrl;
+      img.alt = '';
+      flyer.appendChild(img);
+    } else {
+      flyer.textContent = '+';
+    }
+
+    document.body.appendChild(flyer);
+
+    // Next frame: snap the transform to the cart-button centre and fade out.
+    // The transition runs on transform + opacity for GPU-accelerated motion.
+    requestAnimationFrame(() => {
+      const dx = tRect.left + tRect.width / 2 - (sRect.left + sRect.width / 2);
+      const dy = tRect.top  + tRect.height / 2 - (sRect.top  + sRect.height / 2);
+      flyer.style.transform = `translate(${dx}px, ${dy}px) scale(0.15) rotate(20deg)`;
+      flyer.style.opacity = '0';
+    });
+
+    window.setTimeout(() => flyer.remove(), 700);
+  }
+
+  /** Combined helper bound to every + / + สั่งผลิต button. */
+  function handleAddClick(
+    evt: ReactMouseEvent<HTMLButtonElement>,
+    p: ProductWithInventory,
+    mto: boolean,
+  ) {
+    flyToCart(evt, p, mto);
+    addToCart(p, { madeToOrder: mto });
   }
 
   /**
@@ -281,6 +360,7 @@ export default function Ecommerce() {
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button
+            ref={cartBtnRef}
             onClick={() => setIsCartOpen(true)}
             className="commerce-cart-button"
             title={ecom.openQuoteCart}
@@ -539,7 +619,7 @@ export default function Ecommerce() {
                     {p.total_quantity <= 0 ? (
                       <button
                         type="button"
-                        onClick={() => addToCart(p, { madeToOrder: true })}
+                        onClick={(e) => handleAddClick(e, p, true)}
                         className="btn-mto"
                         title={`สั่งผลิต ${p.name_th} — เพิ่มในตะกร้าแบบสั่งผลิต`}
                       >
@@ -547,7 +627,7 @@ export default function Ecommerce() {
                       </button>
                     ) : (
                       <button
-                        onClick={() => addToCart(p)}
+                        onClick={(e) => handleAddClick(e, p, false)}
                         title={`${ecom.addToQuote}: ${p.name_th}`}
                       >
                         <Plus size={17} />
@@ -625,7 +705,7 @@ export default function Ecommerce() {
                     {p.total_quantity <= 0 ? (
                       <button
                         type="button"
-                        onClick={() => addToCart(p, { madeToOrder: true })}
+                        onClick={(e) => handleAddClick(e, p, true)}
                         className="h-7 px-2 rounded-md bg-orange-500 text-white hover:bg-orange-600 text-[10px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap"
                         title={`สั่งผลิต ${p.name_th}`}
                       >
@@ -634,7 +714,7 @@ export default function Ecommerce() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => addToCart(p)}
+                        onClick={(e) => handleAddClick(e, p, false)}
                         className="w-7 h-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600"
                         title={`${ecom.addToQuote}: ${p.name_th}`}
                       >
@@ -731,7 +811,7 @@ export default function Ecommerce() {
                   {p.total_quantity <= 0 ? (
                     <button
                       type="button"
-                      onClick={() => addToCart(p, { madeToOrder: true })}
+                      onClick={(e) => handleAddClick(e, p, true)}
                       className="h-9 px-4 rounded-md bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 inline-flex items-center gap-1.5 whitespace-nowrap"
                       title={`สั่งผลิต ${p.name_th}`}
                     >
@@ -740,7 +820,7 @@ export default function Ecommerce() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => addToCart(p)}
+                      onClick={(e) => handleAddClick(e, p, false)}
                       className="h-9 px-4 rounded-md bg-indigo-500 text-white text-sm font-semibold hover:bg-indigo-600 inline-flex items-center gap-1.5"
                       title={`${ecom.addToQuote}: ${p.name_th}`}
                     >
@@ -832,7 +912,7 @@ export default function Ecommerce() {
                         {p.total_quantity <= 0 ? (
                           <button
                             type="button"
-                            onClick={() => addToCart(p, { madeToOrder: true })}
+                            onClick={(e) => handleAddClick(e, p, true)}
                             className="h-7 px-2 rounded-md bg-orange-500 text-white text-[11px] font-bold hover:bg-orange-600 inline-flex items-center gap-1 ml-auto whitespace-nowrap"
                             title={`สั่งผลิต ${p.name_th}`}
                           >
@@ -841,7 +921,7 @@ export default function Ecommerce() {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => addToCart(p)}
+                            onClick={(e) => handleAddClick(e, p, false)}
                             className="h-7 w-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600 ml-auto"
                             title={`${ecom.addToQuote}: ${p.name_th}`}
                           >

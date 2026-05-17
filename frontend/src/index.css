@@ -1362,3 +1362,56 @@ button, input, select, textarea {
     .commerce-metrics { grid-template-columns: 1fr; }
     .commerce-product-grid { grid-template-columns: 1fr; }
 }
+
+/* =========================================================================
+   Add-to-cart visual feedback
+   - .fly-to-cart : DOM node injected on every click that animates from the
+                    + / + สั่งผลิต button to the cart button in the header.
+   - .cart-bump   : one-shot pulse on the cart button whenever cartCount
+                    grows (also triggers on +1 of an existing SKU).
+   ========================================================================= */
+
+.fly-to-cart {
+    position: fixed;
+    z-index: 9999;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    border: 2px solid var(--primary-500);
+    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.35);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    pointer-events: none;
+    /* Easing: snappy start, soft overshoot near the end — feels like the
+       item is "snapping" into the cart icon. */
+    transition:
+        transform 0.6s cubic-bezier(0.5, -0.1, 0.55, 1.25),
+        opacity   0.6s ease-out;
+    color: var(--primary-600);
+    font-size: 1.5rem;
+    font-weight: 800;
+    line-height: 1;
+}
+.fly-to-cart img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.fly-to-cart-mto {
+    border-color: #EA580C;            /* orange-600 */
+    box-shadow: 0 8px 20px rgba(234, 88, 12, 0.4);
+    color: #EA580C;
+}
+
+@keyframes cart-bump {
+    0%   { transform: scale(1);    }
+    25%  { transform: scale(1.15); }
+    55%  { transform: scale(0.94); }
+    80%  { transform: scale(1.05); }
+    100% { transform: scale(1);    }
+}
+.commerce-cart-button.cart-bump {
+    animation: cart-bump 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+}
