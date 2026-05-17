@@ -30,6 +30,7 @@ export interface Profile {
   id: string;
   email: string;
   full_name: string | null;
+  phone: string | null;
   avatar_url: string | null;
   role: AppRole;
   language: 'th' | 'en';
@@ -42,7 +43,7 @@ export type { Session, User };
 export async function fetchProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, email, full_name, avatar_url, role, language, provider, is_active')
+    .select('id, email, full_name, phone, avatar_url, role, language, provider, is_active')
     .eq('id', userId)
     .maybeSingle();
 

@@ -286,6 +286,32 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['product_variants']['Insert']>
         Relationships: []
       }
+      notifications: {
+        Row: {
+          id: string;
+          recipient_id: string | null;
+          type: 'order' | 'customer' | 'inventory' | 'system';
+          title: string;
+          body: string;
+          link: string | null;
+          metadata: Json;
+          read_at: string | null;
+          created_at: string;
+        }
+        Insert: {
+          id?: string;
+          recipient_id?: string | null;
+          type: 'order' | 'customer' | 'inventory' | 'system';
+          title: string;
+          body: string;
+          link?: string | null;
+          metadata?: Json;
+          read_at?: string | null;
+          created_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['notifications']['Insert']>
+        Relationships: []
+      }
       products: {
         Row: {
           barcode: string | null; brand: string | null; category_id: string | null;
@@ -390,6 +416,7 @@ export type Database = {
 export type Product   = Database['public']['Tables']['products']['Row']
 export type ProductInsert = Database['public']['Tables']['products']['Insert']
 export type ProductUpdate = Database['public']['Tables']['products']['Update']
+export type Notification = Database['public']['Tables']['notifications']['Row']
 
 export type Category  = Database['public']['Tables']['categories']['Row']
 export type Warehouse = Database['public']['Tables']['warehouses']['Row']

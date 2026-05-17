@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     Settings as SettingsIcon,
     User,
@@ -9,8 +9,12 @@ import {
     Save,
     Mail,
     Phone,
+    CheckCircle,
+    AlertTriangle,
+    Loader2,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthProvider';
+import { supabase } from '../lib/supabase';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -22,11 +26,52 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
 export default function Settings() {
-    const { profile } = useAuth();
+    const { profile, refresh } = useAuth();
     const { language, setLanguage, t } = useLanguage();
     const [tab, setTab] = useState<'profile' | 'notifications' | 'security' | 'workspace'>(
         'profile',
     );
+
+    // ── Profile form state ────────────────────────────────────────────
+    const [fullName, setFullName] = useState(profile?.full_name ?? '');
+    const [phone, setPhone] = useState(profile?.phone ?? '');
+    const [savingProfile, setSavingProfile] = useState(false);
+    const [profileErr, setProfileErr] = useState<string | null>(null);
+    const [profileSavedAt, setProfileSavedAt] = useState<number | null>(null);
+
+    // Keep form in sync when AuthProvider's profile becomes available
+    // (first load) or refreshes after a save in another tab.
+    useEffect(() => {
+        setFullName(profile?.full_name ?? '');
+        setPhone(profile?.phone ?? '');
+    }, [profile?.id, profile?.full_name, profile?.phone]);
+
+    async function handleSaveProfile() {
+        if (!profile?.id) return;
+        setSavingProfile(true);
+        setProfileErr(null);
+        setProfileSavedAt(null);
+        try {
+            const { error } = await supabase
+                .from('profiles')
+                .update({
+                    full_name: fullName.trim() || null,
+                    phone: phone.trim() || null,
+                })
+                .eq('id', profile.id);
+            if (error) throw error;
+            await refresh();
+            setProfileSavedAt(Date.now());
+        } catch (e) {
+            setProfileErr((e as Error).message);
+        } finally {
+            setSavingProfile(false);
+        }
+    }
+
+    const profileDirty =
+        (fullName.trim() || null) !== (profile?.full_name ?? null) ||
+        (phone.trim() || null) !== (profile?.phone ?? null);
 
     return (
         <div className="animate-fade-in space-y-6">
@@ -101,8 +146,10 @@ export default function Settings() {
                                     <Label htmlFor="full-name">ชื่อ-นามสกุล</Label>
                                     <Input
                                         id="full-name"
-                                        defaultValue={profile?.full_name ?? ''}
+                                        value={fullName}
+                                        onChange={(e) => setFullName(e.target.value)}
                                         placeholder="กรอกชื่อ"
+                                        disabled={savingProfile}
                                     />
                                 </div>
                                 <div className="space-y-2">
@@ -130,13 +177,43 @@ export default function Settings() {
                                     <Label htmlFor="phone" className="flex items-center gap-1.5">
                                         <Phone size={12} /> โทรศัพท์
                                     </Label>
-                                    <Input id="phone" type="tel" placeholder="08x-xxx-xxxx" />
+                                    <Input
+                                        id="phone"
+                                        type="tel"
+                                        value={phone}
+                                        onChange={(e) => setPhone(e.target.value)}
+                                        placeholder="08x-xxx-xxxx"
+                                        disabled={savingProfile}
+                                    />
                                 </div>
                             </div>
 
-                            <div className="flex justify-end pt-2">
-                                <Button className="gap-2 bg-indigo-500 hover:bg-indigo-600">
-                                    <Save size={14} /> บันทึก
+                            {profileErr && (
+                                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                                    <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                                    <span>{profileErr}</span>
+                                </div>
+                            )}
+
+                            <div className="flex items-center justify-end gap-3 pt-2">
+                                {profileSavedAt && !profileDirty && (
+                                    <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                                        <CheckCircle size={12} />
+                                        บันทึกเรียบร้อย
+                                    </span>
+                                )}
+                                <Button
+                                    type="button"
+                                    onClick={() => void handleSaveProfile()}
+                                    disabled={savingProfile || !profileDirty || !profile}
+                                    className="gap-2 bg-indigo-500 hover:bg-indigo-600"
+                                >
+                                    {savingProfile ? (
+                                        <Loader2 size={14} className="animate-spin" />
+                                    ) : (
+                                        <Save size={14} />
+                                    )}
+                                    {savingProfile ? 'กำลังบันทึก...' : 'บันทึก'}
                                 </Button>
                             </div>
                         </CardContent>

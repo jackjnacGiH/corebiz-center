@@ -13,6 +13,7 @@ import type {
   Customer, CustomerInsert, CustomerUpdate,
   Order, OrderInsert, OrderUpdate,
   OrderItem,
+  Notification,
 } from './database.types';
 
 // =========================================================================
@@ -980,5 +981,40 @@ export const knowledgeApi = {
     });
     if (error) throw error;
     return (data ?? []) as KnowledgeMatch[];
+  },
+};
+
+// =========================================================================
+// Notifications
+// =========================================================================
+export const notificationsApi = {
+  /** List most recent notifications visible to the current staff user. */
+  async list(limit = 50): Promise<Notification[]> {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []) as Notification[];
+  },
+
+  /** Mark a single notification as read. */
+  async markRead(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('read_at', null);
+    if (error) throw error;
+  },
+
+  /** Mark every currently-unread notification as read. */
+  async markAllRead(): Promise<void> {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .is('read_at', null);
+    if (error) throw error;
   },
 };

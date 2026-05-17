@@ -23,6 +23,8 @@ import {
 import { useLanguage, type Language } from '../../i18n';
 import { useAuth } from '../../lib/AuthProvider';
 import { signOut } from '../../lib/auth';
+import { useNotifications } from '../../hooks/useNotifications';
+import type { Notification } from '../../lib/database.types';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -39,62 +41,28 @@ export interface TopBarProps {
     onOpenMobileMenu: () => void;  // mobile: open Sheet drawer
 }
 
-// ─── Mock notification data ─────────────────────────────────────────────
-// TODO: replace with real-time hook off a `notifications` table once the
-// schema is wired up.
-interface NotificationItem {
-    id: string;
-    type: 'order' | 'customer' | 'inventory' | 'system';
-    title: string;
-    body: string;
-    elapsed: string;
-    unread: boolean;
-}
-
+// ─── Notification icon style per type ────────────────────────────────────
 const NOTIFICATION_STYLE: Record<
-    NotificationItem['type'],
+    Notification['type'],
     { icon: React.ComponentType<{ size?: number }>; iconBg: string; iconFg: string }
 > = {
-    order:     { icon: ShoppingBag, iconBg: 'bg-indigo-50',  iconFg: 'text-indigo-600' },
-    customer:  { icon: UserPlus,    iconBg: 'bg-emerald-50', iconFg: 'text-emerald-600' },
-    inventory: { icon: Boxes,       iconBg: 'bg-amber-50',   iconFg: 'text-amber-700' },
+    order:     { icon: ShoppingBag, iconBg: 'bg-indigo-50',   iconFg: 'text-indigo-600' },
+    customer:  { icon: UserPlus,    iconBg: 'bg-emerald-50',  iconFg: 'text-emerald-600' },
+    inventory: { icon: Boxes,       iconBg: 'bg-amber-50',    iconFg: 'text-amber-700' },
     system:    { icon: Activity,    iconBg: 'bg-neutral-100', iconFg: 'text-neutral-600' },
 };
 
-const MOCK_NOTIFICATIONS: NotificationItem[] = [
-    {
-        id: 'n1',
-        type: 'order',
-        title: 'คำสั่งซื้อใหม่',
-        body: 'ORD-2026-0005 จากลูกค้า บจก. ก่อสร้างไทย — ฿4,500',
-        elapsed: '2 นาทีที่แล้ว',
-        unread: true,
-    },
-    {
-        id: 'n2',
-        type: 'inventory',
-        title: 'สต็อกต่ำ',
-        body: 'ใบเจียรเหล็ก 4" หนา 6mm (GRN-001) เหลือ 0 ชิ้น',
-        elapsed: '15 นาทีที่แล้ว',
-        unread: true,
-    },
-    {
-        id: 'n3',
-        type: 'customer',
-        title: 'ลูกค้าใหม่',
-        body: 'บริษัท เจริญการช่าง จำกัด ลงทะเบียน VIP tier',
-        elapsed: '1 ชั่วโมงที่แล้ว',
-        unread: true,
-    },
-    {
-        id: 'n4',
-        type: 'system',
-        title: 'Backup เสร็จสิ้น',
-        body: 'Daily backup ของ Supabase ทำงานสำเร็จ',
-        elapsed: '3 ชั่วโมงที่แล้ว',
-        unread: false,
-    },
-];
+/** Short relative-time label (just-now / Nm / Nh / Nd). */
+function relativeTime(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return 'เมื่อสักครู่';
+    if (mins < 60) return `${mins} นาทีที่แล้ว`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} ชั่วโมงที่แล้ว`;
+    const days = Math.floor(hrs / 24);
+    return `${days} วันที่แล้ว`;
+}
 
 // ─── TopBar ─────────────────────────────────────────────────────────────
 
@@ -102,6 +70,7 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
     const { language, setLanguage, t } = useLanguage();
     const { profile } = useAuth();
     const navigate = useNavigate();
+    const { notifications, unreadCount, markRead, markAllRead } = useNotifications();
 
     const initials = profile?.full_name
         ? profile.full_name
@@ -122,7 +91,14 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
         { value: 'en', label: t.common.english },
     ];
 
-    const unreadCount = MOCK_NOTIFICATIONS.filter((n) => n.unread).length;
+    async function handleNotificationClick(n: Notification) {
+        // Mark read first (optimistic) so the dot disappears immediately,
+        // then navigate to the link if one was attached by the trigger.
+        if (!n.read_at) {
+            try { await markRead(n.id); } catch { /* noop */ }
+        }
+        if (n.link) navigate(n.link);
+    }
 
     return (
         <header className="header">
@@ -258,33 +234,41 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
                             </div>
                             <button
                                 type="button"
-                                className="text-[11px] text-indigo-600 hover:text-indigo-700 font-semibold"
+                                onClick={() => {
+                                    void markAllRead();
+                                }}
+                                disabled={unreadCount === 0}
+                                className="text-[11px] text-indigo-600 hover:text-indigo-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 ทำเครื่องหมายว่าอ่านแล้วทั้งหมด
                             </button>
                         </div>
                         <div className="max-h-[400px] overflow-y-auto">
-                            {MOCK_NOTIFICATIONS.length === 0 ? (
+                            {notifications.length === 0 ? (
                                 <div className="px-4 py-8 text-center text-sm text-neutral-500">
                                     ไม่มีการแจ้งเตือนใหม่
                                 </div>
                             ) : (
-                                MOCK_NOTIFICATIONS.map((n) => {
-                                    const { icon: Icon, iconBg, iconFg } = NOTIFICATION_STYLE[n.type];
+                                notifications.map((n) => {
+                                    const style = NOTIFICATION_STYLE[n.type] ??
+                                        NOTIFICATION_STYLE.system;
+                                    const Icon = style.icon;
+                                    const isUnread = !n.read_at;
                                     return (
                                         <button
                                             key={n.id}
                                             type="button"
+                                            onClick={() => void handleNotificationClick(n)}
                                             className={cn(
                                                 'w-full text-left flex gap-3 px-4 py-3 border-b border-neutral-100 last:border-0 hover:bg-neutral-50 transition',
-                                                n.unread && 'bg-indigo-50/30',
+                                                isUnread && 'bg-indigo-50/30',
                                             )}
                                         >
                                             <div
                                                 className={cn(
                                                     'w-9 h-9 rounded-lg grid place-items-center flex-shrink-0',
-                                                    iconBg,
-                                                    iconFg,
+                                                    style.iconBg,
+                                                    style.iconFg,
                                                 )}
                                             >
                                                 <Icon size={14} />
@@ -294,7 +278,7 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
                                                     <span className="text-sm font-semibold text-neutral-900 truncate">
                                                         {n.title}
                                                     </span>
-                                                    {n.unread && (
+                                                    {isUnread && (
                                                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
                                                     )}
                                                 </div>
@@ -302,7 +286,7 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
                                                     {n.body}
                                                 </div>
                                                 <div className="text-[10px] text-neutral-400 mt-1 tabular-nums">
-                                                    {n.elapsed}
+                                                    {relativeTime(n.created_at)}
                                                 </div>
                                             </div>
                                         </button>
