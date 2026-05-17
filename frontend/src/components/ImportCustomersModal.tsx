@@ -284,7 +284,7 @@ function PickStage({
                 <div className="text-sm font-semibold text-neutral-900">รูปแบบไฟล์</div>
                 <ul className="text-xs text-neutral-600 leading-relaxed list-disc list-inside space-y-0.5">
                     <li>คอลัมน์ที่จำเป็น: <code className="text-indigo-700">name</code></li>
-                    <li><code>customer_type</code>: <code>individual</code> หรือ <code>company</code></li>
+                    <li><code>customer_type</code>: <code>company</code> / <code>shop</code> / <code>individual</code> / <code>unspecified</code></li>
                     <li><code>tier</code>: <code>general</code> / <code>silver</code> / <code>gold</code> / <code>vip</code></li>
                     <li><code>tags</code> ใช้ <code>|</code> คั่นหลายค่า (เช่น <code>VIP|wholesale</code>)</li>
                     <li>ถ้ามี <code>code</code> ตรงกับลูกค้าเดิม → จะปรับปรุง; ถ้าไม่มี → จะสร้างใหม่</li>

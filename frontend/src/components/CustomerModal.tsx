@@ -12,10 +12,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+export type CustomerType = 'company' | 'shop' | 'individual' | 'unspecified';
+
 export interface CustomerFormData {
     code: string;
     name: string;
-    customer_type: 'individual' | 'company';
+    customer_type: CustomerType;
     tier: 'general' | 'silver' | 'gold' | 'vip';
     email: string;
     phone: string;
@@ -30,11 +32,18 @@ interface Props {
     editing?: Customer | null;
 }
 
+const ALLOWED_TYPES = new Set<CustomerType>(['company', 'shop', 'individual', 'unspecified']);
+
+function normalizeType(v: string | null | undefined): CustomerType {
+    if (v && ALLOWED_TYPES.has(v as CustomerType)) return v as CustomerType;
+    return 'unspecified';
+}
+
 function build(c: Customer | null | undefined): CustomerFormData {
     return {
         code: c?.code ?? '',
         name: c?.name ?? '',
-        customer_type: (c?.customer_type as 'individual' | 'company') ?? 'individual',
+        customer_type: normalizeType(c?.customer_type),
         tier: (c?.tier as CustomerFormData['tier']) ?? 'general',
         email: c?.email ?? '',
         phone: c?.phone ?? '',
@@ -131,8 +140,10 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
                                         })
                                     }
                                 >
+                                    <option value="company">นิติบุคคล</option>
+                                    <option value="shop">ร้านค้า</option>
                                     <option value="individual">บุคคล</option>
-                                    <option value="company">บริษัท</option>
+                                    <option value="unspecified">ไม่ระบุ</option>
                                 </select>
                             </div>
                             <div className="space-y-2">

@@ -8,11 +8,14 @@ import {
     Edit2,
     Briefcase,
     User,
+    Store,
+    HelpCircle,
     RefreshCw,
     Upload,
     FileDown,
     Trash2,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { customersApi } from '../lib/api';
 import type { Customer } from '../lib/database.types';
 import { useLanguage } from '../i18n';
@@ -41,6 +44,19 @@ const TIER_STYLES: Record<string, string> = {
     silver:  'bg-slate-100 text-slate-700  border-slate-300',
     general: 'bg-neutral-100 text-neutral-700 border-neutral-200',
 };
+
+type CustomerTypeKey = 'company' | 'shop' | 'individual' | 'unspecified';
+
+const TYPE_META: Record<CustomerTypeKey, { label: string; icon: LucideIcon; iconClass: string }> = {
+    company:     { label: 'นิติบุคคล', icon: Briefcase,  iconClass: 'text-blue-600'    },
+    shop:        { label: 'ร้านค้า',   icon: Store,      iconClass: 'text-amber-600'   },
+    individual:  { label: 'บุคคล',     icon: User,       iconClass: 'text-emerald-600' },
+    unspecified: { label: 'ไม่ระบุ',   icon: HelpCircle, iconClass: 'text-neutral-400' },
+};
+
+function typeMeta(t: string | null | undefined) {
+    return t && t in TYPE_META ? TYPE_META[t as CustomerTypeKey] : TYPE_META.unspecified;
+}
 
 export default function CRM() {
     const { t } = useLanguage();
@@ -406,25 +422,16 @@ export default function CRM() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-center align-top pt-4">
-                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border bg-white border-neutral-200 text-neutral-700">
-                                                {c.customer_type === 'company' ? (
-                                                    <>
-                                                        <Briefcase
-                                                            size={11}
-                                                            className="text-blue-600"
-                                                        />
-                                                        บริษัท
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <User
-                                                            size={11}
-                                                            className="text-emerald-600"
-                                                        />
-                                                        บุคคล
-                                                    </>
-                                                )}
-                                            </span>
+                                            {(() => {
+                                                const meta = typeMeta(c.customer_type);
+                                                const Icon = meta.icon;
+                                                return (
+                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border bg-white border-neutral-200 text-neutral-700">
+                                                        <Icon size={11} className={meta.iconClass} />
+                                                        {meta.label}
+                                                    </span>
+                                                );
+                                            })()}
                                         </TableCell>
                                         <TableCell className="text-center align-top pt-4">
                                             <span

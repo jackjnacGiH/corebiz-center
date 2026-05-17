@@ -34,7 +34,7 @@ export function customerToCsvRow(c: Customer): CustomerCsvRow {
     return {
         code: c.code ?? '',
         name: c.name,
-        customer_type: c.customer_type ?? 'individual',
+        customer_type: c.customer_type ?? 'unspecified',
         tier: c.tier ?? 'general',
         email: c.email ?? '',
         phone: c.phone ?? '',
@@ -86,7 +86,7 @@ export interface CustomerImportPreview {
     codelessInserts: number;
 }
 
-const VALID_TYPES = new Set(['individual', 'company']);
+const VALID_TYPES = new Set(['company', 'shop', 'individual', 'unspecified']);
 const VALID_TIERS = new Set(['general', 'silver', 'gold', 'vip']);
 
 function cell(v: unknown): string {
@@ -142,10 +142,10 @@ export function parseCustomersCsv(
 
         const warnings: string[] = [];
 
-        let customer_type = cell(rawRow.customer_type) || 'individual';
+        let customer_type = cell(rawRow.customer_type) || 'unspecified';
         if (!VALID_TYPES.has(customer_type)) {
-            warnings.push(`customer_type "${customer_type}" ไม่ถูกต้อง → ใช้ individual`);
-            customer_type = 'individual';
+            warnings.push(`customer_type "${customer_type}" ไม่ถูกต้อง → ใช้ unspecified`);
+            customer_type = 'unspecified';
         }
 
         let tier = cell(rawRow.tier) || 'general';
