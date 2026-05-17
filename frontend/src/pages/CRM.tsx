@@ -9,14 +9,19 @@ import {
     Briefcase,
     User,
     RefreshCw,
+    Upload,
+    FileDown,
+    Trash2,
 } from 'lucide-react';
 import { customersApi } from '../lib/api';
 import type { Customer } from '../lib/database.types';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import CustomerModal, { type CustomerFormData } from '../components/CustomerModal';
+import ImportCustomersModal from '../components/ImportCustomersModal';
 import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
+import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -45,6 +50,9 @@ export default function CRM() {
     const [search, setSearch] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editing, setEditing] = useState<Customer | null>(null);
+    const [isImportOpen, setIsImportOpen] = useState(false);
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [bulkDeleting, setBulkDeleting] = useState(false);
 
     async function load() {
         setLoading(true);
@@ -80,6 +88,37 @@ export default function CRM() {
             await customersApi.create(payload);
         }
         await load();
+    }
+
+    async function handleBulkDelete() {
+        const ids = Array.from(selected);
+        if (ids.length === 0) return;
+        const items = customers.filter((c) => selected.has(c.id));
+        const preview = items.slice(0, 3).map((c) => c.code ?? c.name).join(', ');
+        const more = items.length > 3 ? ` และอีก ${items.length - 3} รายการ` : '';
+        if (
+            !window.confirm(
+                `ต้องการลบ ${ids.length} รายการที่เลือกใช่ไหม?\n\n${preview}${more}\n\nการลบนี้ไม่สามารถยกเลิกได้`,
+            )
+        )
+            return;
+
+        setBulkDeleting(true);
+        setErr(null);
+        const results = await Promise.allSettled(ids.map((id) => customersApi.remove(id)));
+        const failed = results.filter((r) => r.status === 'rejected').length;
+        setSelected(new Set());
+        await load();
+        setBulkDeleting(false);
+        if (failed > 0) {
+            const firstErr = results.find((r) => r.status === 'rejected') as
+                | PromiseRejectedResult
+                | undefined;
+            setErr(
+                `ลบไม่สำเร็จ ${failed}/${ids.length} รายการ` +
+                    (firstErr ? ` — ${(firstErr.reason as Error).message}` : ''),
+            );
+        }
     }
 
     const filtered = useMemo(() => {
@@ -118,6 +157,35 @@ export default function CRM() {
                         >
                             <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
                             Reload
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setIsImportOpen(true)}
+                            className="gap-2"
+                            title="นำเข้าลูกค้าจาก CSV"
+                        >
+                            <Upload size={14} />
+                            <span className="hidden md:inline">Import</span>
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                                const list = filtered.length > 0 ? filtered : customers;
+                                const stamp = new Date().toISOString().slice(0, 10);
+                                downloadCsv(`customers-${stamp}.csv`, buildCustomersCsv(list));
+                            }}
+                            disabled={customers.length === 0}
+                            className="gap-2"
+                            title={
+                                filtered.length !== customers.length
+                                    ? `Export ${filtered.length} รายการที่กรอง`
+                                    : `Export ทั้งหมด ${customers.length} รายการ`
+                            }
+                        >
+                            <FileDown size={14} />
+                            <span className="hidden md:inline">Export</span>
                         </Button>
                         <div className="relative">
                             <Search
@@ -181,11 +249,71 @@ export default function CRM() {
                 </div>
             )}
 
+            {/* Selection action bar */}
+            <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-500">
+                <span>
+                    แสดง <span className="text-neutral-900 font-medium">{filtered.length}</span> /{' '}
+                    {customers.length} รายการ
+                </span>
+                {selected.size > 0 && (
+                    <div className="flex items-center gap-3">
+                        <span className="font-medium text-neutral-700">
+                            เลือก <span className="text-indigo-700">{selected.size}</span> รายการ
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => void handleBulkDelete()}
+                            disabled={bulkDeleting}
+                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 hover:border-red-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {bulkDeleting ? (
+                                <RefreshCw size={12} className="animate-spin" />
+                            ) : (
+                                <Trash2 size={12} />
+                            )}
+                            {bulkDeleting ? 'กำลังลบ...' : `ลบที่เลือก (${selected.size})`}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setSelected(new Set())}
+                            disabled={bulkDeleting}
+                            className="text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50"
+                        >
+                            ยกเลิก
+                        </button>
+                    </div>
+                )}
+            </div>
+
             <Card className="gap-0 py-0 overflow-hidden">
                 <CardContent className="px-0 overflow-x-auto">
                     <Table>
                         <TableHeader>
                             <TableRow className="bg-neutral-50 hover:bg-neutral-50">
+                                <TableHead className="w-10 px-3">
+                                    <input
+                                        type="checkbox"
+                                        checked={
+                                            filtered.length > 0 &&
+                                            selected.size === filtered.length
+                                        }
+                                        ref={(el) => {
+                                            if (el) {
+                                                el.indeterminate =
+                                                    selected.size > 0 &&
+                                                    selected.size < filtered.length;
+                                            }
+                                        }}
+                                        onChange={(e) =>
+                                            setSelected(
+                                                e.target.checked
+                                                    ? new Set(filtered.map((c) => c.id))
+                                                    : new Set(),
+                                            )
+                                        }
+                                        className="w-3.5 h-3.5 rounded border-neutral-300 accent-indigo-600"
+                                    />
+                                </TableHead>
                                 <TableHead className="px-5 text-xs font-semibold text-neutral-600 uppercase tracking-wider">
                                     {t.crm.table.code}
                                 </TableHead>
@@ -213,7 +341,7 @@ export default function CRM() {
                             {loading && (
                                 <TableRow>
                                     <TableCell
-                                        colSpan={7}
+                                        colSpan={8}
                                         className="text-center text-sm text-neutral-500 py-12"
                                     >
                                         {t.common.loading}
@@ -223,7 +351,7 @@ export default function CRM() {
                             {!loading && filtered.length === 0 && (
                                 <TableRow>
                                     <TableCell
-                                        colSpan={7}
+                                        colSpan={8}
                                         className="text-center text-sm text-neutral-500 py-12"
                                     >
                                         {t.common.noData}
@@ -232,7 +360,23 @@ export default function CRM() {
                             )}
                             {!loading &&
                                 filtered.map((c) => (
-                                    <TableRow key={c.id}>
+                                    <TableRow
+                                        key={c.id}
+                                        className={cn(selected.has(c.id) && 'bg-indigo-50/50')}
+                                    >
+                                        <TableCell className="w-10 px-3 align-top pt-4">
+                                            <input
+                                                type="checkbox"
+                                                checked={selected.has(c.id)}
+                                                onChange={(e) => {
+                                                    const next = new Set(selected);
+                                                    if (e.target.checked) next.add(c.id);
+                                                    else next.delete(c.id);
+                                                    setSelected(next);
+                                                }}
+                                                className="w-3.5 h-3.5 rounded border-neutral-300 accent-indigo-600"
+                                            />
+                                        </TableCell>
                                         <TableCell className="px-5 font-mono text-sm text-indigo-600 align-top pt-4">
                                             {c.code ?? '—'}
                                         </TableCell>
@@ -326,6 +470,13 @@ export default function CRM() {
                 onClose={() => setIsModalOpen(false)}
                 onSave={handleSave}
                 editing={editing}
+            />
+
+            <ImportCustomersModal
+                isOpen={isImportOpen}
+                onClose={() => setIsImportOpen(false)}
+                onImported={() => void load()}
+                existingCustomers={customers}
             />
         </div>
     );
