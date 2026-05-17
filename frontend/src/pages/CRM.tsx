@@ -179,7 +179,9 @@ export default function CRM() {
         const more = items.length > 3 ? ` และอีก ${items.length - 3} รายการ` : '';
         if (
             !window.confirm(
-                `ต้องการลบ ${ids.length} รายการที่เลือกใช่ไหม?\n\n${preview}${more}\n\nการลบนี้ไม่สามารถยกเลิกได้`,
+                `ต้องการลบ ${ids.length} รายการที่เลือกใช่ไหม?\n\n${preview}${more}\n\n` +
+                    `⚠️ จะลบ ออเดอร์ / ใบเสนอราคา / แชท / สาขา / ประวัติพอยต์ ` +
+                    `ของลูกค้าเหล่านี้ทั้งหมดด้วย\n\nการลบนี้ไม่สามารถยกเลิกได้`,
             )
         )
             return;
