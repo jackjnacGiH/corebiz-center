@@ -200,14 +200,30 @@ export type Database = {
         Row: {
           id: string; product_id: string; quantity: number; reorder_level: number; reserved: number;
           row_no: string | null; shelf: string | null; updated_at: string;
+          last_synced_at: string | null;
           variant_id: string | null; warehouse_id: string;
         }
         Insert: {
           id?: string; product_id: string; quantity?: number; reorder_level?: number; reserved?: number;
           row_no?: string | null; shelf?: string | null; updated_at?: string;
+          last_synced_at?: string | null;
           variant_id?: string | null; warehouse_id: string;
         }
         Update: Partial<Database['public']['Tables']['inventory']['Insert']>
+        Relationships: []
+      }
+      inventory_sync_logs: {
+        Row: {
+          id: string; started_at: string; finished_at: string | null;
+          source: string; sheet_rows: number; matched: number; updated: number; skipped: number;
+          status: string; error: string | null; details: Json | null;
+        }
+        Insert: {
+          id?: string; started_at?: string; finished_at?: string | null;
+          source: string; sheet_rows?: number; matched?: number; updated?: number; skipped?: number;
+          status?: string; error?: string | null; details?: Json | null;
+        }
+        Update: Partial<Database['public']['Tables']['inventory_sync_logs']['Insert']>
         Relationships: []
       }
       inventory_movements: {
@@ -454,6 +470,7 @@ export type Database = {
         }>
       }
       recalculate_customer_totals: { Args: { p_customer_id: string }; Returns: undefined }
+      trigger_inventory_sync: { Args: Record<string, never>; Returns: number }
     }
     Enums: {}
     CompositeTypes: {}

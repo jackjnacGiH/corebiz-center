@@ -10,8 +10,10 @@ import {
   inventoryApi,
   categoriesApi,
   warehousesApi,
+  inventorySyncApi,
   getEffectivePrice,
   type ProductWithInventory,
+  type InventorySyncLog,
 } from '../lib/api';
 import type { Category, Warehouse } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
@@ -101,20 +103,57 @@ export default function Inventory() {
   const [editingProduct, setEditingProduct] = useState<ProductWithInventory | null>(null);
   const [copyFromProduct, setCopyFromProduct] = useState<ProductWithInventory | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<InventorySyncLog | null>(null);
 
   async function load() {
     setLoading(true); setErr(null);
     try {
-      const [p, c, w] = await Promise.all([
+      const [p, c, w, sl] = await Promise.all([
         productsApi.list(),
         categoriesApi.list(),
         warehousesApi.list(),
+        inventorySyncApi.latestLog().catch(() => null),
       ]);
       setProducts(p); setCategories(c); setWarehouses(w);
+      setLastSync(sl);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /**
+   * Fire the manual sync RPC, then poll the latest sync log every second
+   * until it transitions out of "pending" (or we hit the timeout). The
+   * pg_net delivery is async so the RPC itself returns immediately.
+   */
+  async function handleSheetSync() {
+    setSyncing(true);
+    setErr(null);
+    try {
+      await inventorySyncApi.triggerManual();
+      // Poll for up to ~20s for the new log row to appear in "success" state
+      const startedBefore = lastSync?.id;
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const fresh = await inventorySyncApi.latestLog().catch(() => null);
+        if (fresh && fresh.id !== startedBefore && fresh.status !== 'pending') {
+          setLastSync(fresh);
+          // Pull fresh inventory rows now that the sync wrote them
+          await load();
+          if (fresh.status === 'error') {
+            setErr(`Sync ผิดพลาด: ${fresh.error ?? 'unknown'}`);
+          }
+          return;
+        }
+      }
+      setErr('Sync รันนานเกินคาด — เช็คใน DB ทีหลังได้');
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -289,6 +328,21 @@ export default function Inventory() {
           <IconBtn onClick={() => load()} disabled={loading} title="Reload">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </IconBtn>
+          <button
+            onClick={() => void handleSheetSync()}
+            disabled={syncing}
+            title={
+              lastSync?.finished_at
+                ? `Last sync: ${new Date(lastSync.finished_at).toLocaleString('th-TH')} — ${lastSync.matched} matched / ${lastSync.updated} updated`
+                : 'ดึงสต็อกจาก Google Sheet ทันที (cron วิ่งทุก 15 นาทีอยู่แล้ว)'
+            }
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline">
+              {syncing ? 'กำลัง Sync…' : 'Sync Sheet'}
+            </span>
+          </button>
           <IconBtn
             onClick={() => setIsImportOpen(true)}
             title="นำเข้าจาก CSV"
@@ -611,6 +665,7 @@ export default function Inventory() {
                           unit={p.unit}
                           statusMeta={statusM}
                           reserved={inv0?.reserved ?? 0}
+                          lastSyncedAt={p.last_synced_at}
                         />
                       </td>
 
@@ -792,13 +847,14 @@ function SortableTh({
 }
 
 function StockCell({
-  qty, reorder, unit, statusMeta, reserved,
+  qty, reorder, unit, statusMeta, reserved, lastSyncedAt,
 }: {
   qty: number;
   reorder: number;
   unit: string;
   statusMeta: typeof STATUS_META[StockStatus];
   reserved: number;
+  lastSyncedAt?: string | null;
 }) {
   const maxScale = Math.max(reorder * 3, 50, qty);
   const pct = Math.min(100, Math.max(0, (qty / maxScale) * 100));
@@ -820,6 +876,15 @@ function StockCell({
         <span>min {reorder}</span>
         {reserved > 0 && <span className="text-amber-600">จอง {reserved}</span>}
       </div>
+      {lastSyncedAt && (
+        <div
+          className="text-[10px] text-emerald-700 mt-1 flex items-center gap-1"
+          title={`Sync จาก Google Sheet: ${new Date(lastSyncedAt).toLocaleString('th-TH')}`}
+        >
+          <RefreshCw size={9} className="text-emerald-600" />
+          อัปเดท {relativeTime(lastSyncedAt)}
+        </div>
+      )}
     </div>
   );
 }

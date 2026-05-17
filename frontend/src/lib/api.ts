@@ -23,11 +23,13 @@ import type {
 // =========================================================================
 export interface ProductWithInventory extends Product {
   category: Pick<Category, 'id' | 'slug' | 'name_th' | 'name_en'> | null;
-  inventory: Array<Pick<Inventory, 'id' | 'warehouse_id' | 'quantity' | 'reserved' | 'reorder_level' | 'shelf' | 'row_no'>>;
+  inventory: Array<Pick<Inventory, 'id' | 'warehouse_id' | 'quantity' | 'reserved' | 'reorder_level' | 'shelf' | 'row_no' | 'last_synced_at'>>;
   /** Sum of quantity across all warehouses */
   total_quantity: number;
   /** True if at least one warehouse is below its reorder_level */
   low_stock: boolean;
+  /** Most recent last_synced_at across the product's inventory rows, if any. */
+  last_synced_at: string | null;
 }
 
 /**
@@ -57,7 +59,7 @@ export const productsApi = {
       .select(`
         *,
         category:categories(id,slug,name_th,name_en),
-        inventory(id,warehouse_id,quantity,reserved,reorder_level,shelf,row_no)
+        inventory(id,warehouse_id,quantity,reserved,reorder_level,shelf,row_no,last_synced_at)
       `)
       .order('created_at', { ascending: false });
     if (error) throw error;
@@ -69,7 +71,15 @@ export const productsApi = {
       const inv = p.inventory ?? [];
       const total = inv.reduce((acc, i) => acc + i.quantity, 0);
       const low = inv.some(i => i.quantity <= i.reorder_level);
-      return { ...p, total_quantity: total, low_stock: low };
+      // Find the freshest sync timestamp across this product's inventory rows.
+      // Sheet sync updates the default-warehouse row only, but if a product
+      // has multiple warehouses the latest-synced one is what we surface.
+      const synced = inv
+        .map((i) => i.last_synced_at)
+        .filter((t): t is string => !!t)
+        .sort()
+        .at(-1) ?? null;
+      return { ...p, total_quantity: total, low_stock: low, last_synced_at: synced };
     });
   },
 
@@ -164,6 +174,46 @@ export const warehousesApi = {
       .single();
     if (error) throw error;
     return data;
+  },
+};
+
+// =========================================================================
+// Inventory sync (Google Sheet → DB)
+// =========================================================================
+export interface InventorySyncLog {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  source: string;
+  sheet_rows: number;
+  matched: number;
+  updated: number;
+  skipped: number;
+  status: string;
+  error: string | null;
+}
+
+export const inventorySyncApi = {
+  /**
+   * Fire a manual sync. Returns the pg_net request id (informational —
+   * the actual sync runs async in an Edge Function; poll `latestLog()`
+   * to see the result).
+   */
+  async triggerManual(): Promise<number> {
+    const { data, error } = await supabase.rpc('trigger_inventory_sync');
+    if (error) throw error;
+    return Number(data ?? 0);
+  },
+
+  async latestLog(): Promise<InventorySyncLog | null> {
+    const { data, error } = await supabase
+      .from('inventory_sync_logs')
+      .select('id, started_at, finished_at, source, sheet_rows, matched, updated, skipped, status, error')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data ?? null;
   },
 };
 
