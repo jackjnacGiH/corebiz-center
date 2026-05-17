@@ -11,6 +11,7 @@ import type {
   Category, Warehouse,
   Inventory, InventoryInsert, InventoryUpdate,
   Customer, CustomerInsert, CustomerUpdate,
+  CustomerBranch, CustomerBranchInsert, CustomerBranchUpdate,
   Order, OrderInsert, OrderUpdate,
   OrderItem,
   Notification,
@@ -203,6 +204,101 @@ export const customersApi = {
   async remove(id: string): Promise<void> {
     const { error } = await supabase.from('customers').delete().eq('id', id);
     if (error) throw error;
+  },
+};
+
+// =========================================================================
+// Customer branches
+// =========================================================================
+export const customerBranchesApi = {
+  /** Fetch all branches that belong to one customer, ordered for display. */
+  async listForCustomer(customerId: string): Promise<CustomerBranch[]> {
+    const { data, error } = await supabase
+      .from('customer_branches')
+      .select('*')
+      .eq('customer_id', customerId)
+      .order('sort_order', { ascending: true })
+      .order('branch_code', { ascending: true });
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  async create(input: CustomerBranchInsert): Promise<CustomerBranch> {
+    const { data, error } = await supabase
+      .from('customer_branches')
+      .insert(input)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async update(id: string, patch: CustomerBranchUpdate): Promise<CustomerBranch> {
+    const { data, error } = await supabase
+      .from('customer_branches')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async remove(id: string): Promise<void> {
+    const { error } = await supabase.from('customer_branches').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  /**
+   * Bulk-sync the branches of one customer:
+   *   - rows in `desired` with no `id` → INSERT
+   *   - rows in `desired` with an `id` matching an existing branch → UPDATE
+   *   - existing branches whose `id` is not in `desired` → DELETE
+   *
+   * Returns the fresh list after sync.
+   *
+   * Done one-at-a-time over Promise.allSettled rather than via a single
+   * upsert because we want clear per-row error reporting and the volumes are
+   * small (typical customer has < 20 branches).
+   */
+  async syncForCustomer(
+    customerId: string,
+    desired: Array<Partial<CustomerBranchInsert> & { id?: string | null }>,
+  ): Promise<CustomerBranch[]> {
+    const existing = await this.listForCustomer(customerId);
+    const desiredIds = new Set(desired.map((d) => d.id).filter(Boolean) as string[]);
+    const toDelete = existing.filter((e) => !desiredIds.has(e.id));
+
+    const tasks: Promise<unknown>[] = [];
+    for (const d of desired) {
+      const { id, ...rest } = d;
+      // Normalise: branch_code + branch_name are required by the DB.
+      if (!rest.branch_name || !rest.branch_code) continue;
+      const payload: CustomerBranchInsert = {
+        customer_id: customerId,
+        branch_code: rest.branch_code,
+        branch_name: rest.branch_name,
+        address: rest.address ?? null,
+        notes: rest.notes ?? null,
+        sort_order: rest.sort_order ?? 0,
+      };
+      if (id) tasks.push(this.update(id, payload));
+      else tasks.push(this.create(payload));
+    }
+    for (const b of toDelete) tasks.push(this.remove(b.id));
+
+    const results = await Promise.allSettled(tasks);
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length > 0) {
+      const first = failed[0] as PromiseRejectedResult;
+      throw new Error(
+        `บันทึกสาขาไม่สำเร็จ ${failed.length}/${tasks.length} รายการ — ${
+          (first.reason as Error).message
+        }`,
+      );
+    }
+
+    return this.listForCustomer(customerId);
   },
 };
 

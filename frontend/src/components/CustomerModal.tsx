@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
     User,
     UserCircle,
@@ -14,8 +14,12 @@ import {
     Truck,
     Search,
     Copy,
+    Building2,
+    Plus,
+    Trash2,
 } from 'lucide-react';
-import type { Customer } from '../lib/database.types';
+import type { Customer, CustomerBranch } from '../lib/database.types';
+import { customerBranchesApi } from '../lib/api';
 import { lookupZipcode, type ThaiAddressEntry } from '../lib/thaiAddress';
 import { Button } from '@/components/ui/button';
 import {
@@ -39,6 +43,16 @@ export interface AddressData {
     postcode: string;
 }
 
+export interface BranchFormItem {
+    /** Stable React key — uuid-ish for new rows, real id for persisted ones. */
+    _key: string;
+    /** undefined for new branches (will be INSERT); string for existing ones (UPDATE). */
+    id?: string;
+    branch_code: string;
+    branch_name: string;
+    address: AddressData;
+}
+
 export interface CustomerFormData {
     code: string;
     name: string;
@@ -58,6 +72,12 @@ export interface CustomerFormData {
     /** When `same_as_billing` is true, this is ignored at save time. */
     shipping_address: AddressData;
     same_as_billing: boolean;
+    /**
+     * "ลูกค้านี้มีสำนักงาน/สาขา". When false at save time, all existing
+     * branches are deleted from DB.
+     */
+    has_branches: boolean;
+    branches: BranchFormItem[];
 }
 
 interface Props {
@@ -110,6 +130,33 @@ function addrEquals(a: AddressData, b: AddressData): boolean {
     );
 }
 
+function makeKey(): string {
+    // Stable enough for React reconciliation — avoids collisions across renders.
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `b-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function newBranch(): BranchFormItem {
+    return {
+        _key: makeKey(),
+        id: undefined,
+        branch_code: '',
+        branch_name: '',
+        address: { ...EMPTY_ADDR },
+    };
+}
+
+function branchFromRow(b: CustomerBranch): BranchFormItem {
+    return {
+        _key: b.id,
+        id: b.id,
+        branch_code: b.branch_code,
+        branch_name: b.branch_name,
+        address: parseAddress(b.address),
+    };
+}
+
 function build(c: Customer | null | undefined): CustomerFormData {
     const billing = parseAddress(c?.billing_address);
     const shipping = parseAddress(c?.shipping_address);
@@ -130,6 +177,8 @@ function build(c: Customer | null | undefined): CustomerFormData {
         billing_address: billing,
         shipping_address: sameAsBilling ? { ...billing } : shipping,
         same_as_billing: sameAsBilling,
+        has_branches: false,         // toggled on once branches load (if any)
+        branches: [],
     };
 }
 
@@ -144,8 +193,61 @@ export default function CustomerModal(props: Props) {
 function Form({ isOpen, onClose, onSave, editing }: Props) {
     const [form, setForm] = useState<CustomerFormData>(() => build(editing));
     const [saving, setSaving] = useState(false);
+    const [loadingBranches, setLoadingBranches] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const isNew = !editing;
+
+    // Load existing branches once the modal opens on an existing customer.
+    // For a fresh customer there's nothing to load (no id yet).
+    useEffect(() => {
+        if (!editing?.id) return;
+        let cancelled = false;
+        setLoadingBranches(true);
+        customerBranchesApi
+            .listForCustomer(editing.id)
+            .then((rows) => {
+                if (cancelled) return;
+                if (rows.length > 0) {
+                    setForm((prev) => ({
+                        ...prev,
+                        has_branches: true,
+                        branches: rows.map(branchFromRow),
+                    }));
+                }
+            })
+            .catch((e) => {
+                if (!cancelled) setErr(`โหลดข้อมูลสาขาไม่สำเร็จ — ${(e as Error).message}`);
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingBranches(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [editing?.id]);
+
+    function updateBranch(idx: number, patch: Partial<BranchFormItem>) {
+        setForm((prev) => {
+            const next = [...prev.branches];
+            next[idx] = { ...next[idx], ...patch };
+            return { ...prev, branches: next };
+        });
+    }
+
+    function addBranch() {
+        setForm((prev) => ({
+            ...prev,
+            has_branches: true,
+            branches: [...prev.branches, newBranch()],
+        }));
+    }
+
+    function removeBranch(idx: number) {
+        setForm((prev) => {
+            const next = prev.branches.filter((_, i) => i !== idx);
+            return { ...prev, branches: next };
+        });
+    }
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -388,6 +490,115 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
                                     value={form.shipping_address}
                                     onChange={(addr) => setForm({ ...form, shipping_address: addr })}
                                 />
+                            )}
+                        </div>
+
+                        {/* ── Branches (สำนักงาน/สาขา) ─────────────────── */}
+                        <div className="space-y-3">
+                            <label className="flex items-center gap-2 text-sm text-neutral-700 select-none cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="h-4 w-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+                                    checked={form.has_branches}
+                                    onChange={(e) =>
+                                        setForm({
+                                            ...form,
+                                            has_branches: e.target.checked,
+                                            // Toggling on with no branches yet → seed one empty card
+                                            // so the user has something to fill in. Toggling off
+                                            // doesn't wipe the list immediately — the user can
+                                            // toggle back on without losing data; the save step is
+                                            // what honors `has_branches=false` (deletes all).
+                                            branches:
+                                                e.target.checked && form.branches.length === 0
+                                                    ? [newBranch()]
+                                                    : form.branches,
+                                        })
+                                    }
+                                />
+                                <Building2 size={13} className="text-emerald-600" />
+                                <span className="font-medium">ลูกค้านี้มีสำนักงาน/สาขาเพิ่มเติม</span>
+                                {loadingBranches && (
+                                    <Loader2 size={12} className="animate-spin text-neutral-400" />
+                                )}
+                            </label>
+
+                            {form.has_branches && (
+                                <div className="space-y-3">
+                                    {form.branches.map((b, idx) => (
+                                        <div
+                                            key={b._key}
+                                            className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4 space-y-3"
+                                        >
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                                                    <Building2 size={14} className="text-emerald-600" />
+                                                    สาขา {idx + 1}
+                                                    {b.branch_name && (
+                                                        <span className="text-neutral-500 font-normal">— {b.branch_name}</span>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeBranch(idx)}
+                                                    title="ลบสาขานี้"
+                                                    className="text-neutral-400 hover:text-red-600 transition p-1 -m-1"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+
+                                            <div className="grid grid-cols-12 gap-3">
+                                                <div className="col-span-12 sm:col-span-4 space-y-1.5">
+                                                    <Label htmlFor={`br-${idx}-code`} className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                                        รหัสสาขา *
+                                                    </Label>
+                                                    <Input
+                                                        id={`br-${idx}-code`}
+                                                        type="text"
+                                                        placeholder="00001"
+                                                        value={b.branch_code}
+                                                        onChange={(e) =>
+                                                            updateBranch(idx, { branch_code: e.target.value })
+                                                        }
+                                                        required={form.has_branches}
+                                                    />
+                                                </div>
+                                                <div className="col-span-12 sm:col-span-8 space-y-1.5">
+                                                    <Label htmlFor={`br-${idx}-name`} className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                                                        ชื่อสาขา *
+                                                    </Label>
+                                                    <Input
+                                                        id={`br-${idx}-name`}
+                                                        type="text"
+                                                        placeholder="สาขาสีลม"
+                                                        value={b.branch_name}
+                                                        onChange={(e) =>
+                                                            updateBranch(idx, { branch_name: e.target.value })
+                                                        }
+                                                        required={form.has_branches}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <AddressSection
+                                                id={`br-${idx}`}
+                                                icon={<MapPin size={14} className="text-emerald-600" />}
+                                                title="ที่อยู่สาขา"
+                                                value={b.address}
+                                                onChange={(addr) => updateBranch(idx, { address: addr })}
+                                            />
+                                        </div>
+                                    ))}
+
+                                    <button
+                                        type="button"
+                                        onClick={addBranch}
+                                        className="inline-flex items-center gap-2 h-9 px-3 rounded-md border border-dashed border-emerald-300 bg-white hover:bg-emerald-50 text-sm font-medium text-emerald-700 transition"
+                                    >
+                                        <Plus size={14} /> เพิ่มสาขา
+                                    </button>
+                                </div>
                             )}
                         </div>
 

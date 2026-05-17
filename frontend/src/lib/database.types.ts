@@ -182,6 +182,20 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['customers']['Insert']>
         Relationships: []
       }
+      customer_branches: {
+        Row: {
+          address: Json | null; branch_code: string; branch_name: string;
+          created_at: string; customer_id: string; id: string; notes: string | null;
+          sort_order: number; updated_at: string;
+        }
+        Insert: {
+          address?: Json | null; branch_code: string; branch_name: string;
+          created_at?: string; customer_id: string; id?: string; notes?: string | null;
+          sort_order?: number; updated_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['customer_branches']['Insert']>
+        Relationships: []
+      }
       inventory: {
         Row: {
           id: string; product_id: string; quantity: number; reorder_level: number; reserved: number;
@@ -464,6 +478,10 @@ export type InventoryUpdate = Database['public']['Tables']['inventory']['Update'
 export type Customer        = Database['public']['Tables']['customers']['Row']
 export type CustomerInsert  = Database['public']['Tables']['customers']['Insert']
 export type CustomerUpdate  = Database['public']['Tables']['customers']['Update']
+
+export type CustomerBranch       = Database['public']['Tables']['customer_branches']['Row']
+export type CustomerBranchInsert = Database['public']['Tables']['customer_branches']['Insert']
+export type CustomerBranchUpdate = Database['public']['Tables']['customer_branches']['Update']
 
 export type Order        = Database['public']['Tables']['orders']['Row']
 export type OrderInsert  = Database['public']['Tables']['orders']['Insert']

@@ -18,7 +18,7 @@ import {
     Trash2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { customersApi } from '../lib/api';
+import { customersApi, customerBranchesApi } from '../lib/api';
 import type { Customer, Json } from '../lib/database.types';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
@@ -116,11 +116,32 @@ export default function CRM() {
             billing_address: billing as Json | null,
             shipping_address: shipping as Json | null,
         };
-        if (editing) {
-            await customersApi.update(editing.id, payload);
-        } else {
-            await customersApi.create(payload);
-        }
+        const saved = editing
+            ? await customersApi.update(editing.id, payload)
+            : await customersApi.create(payload);
+
+        // Sync branches. When `has_branches` is off we still call sync with
+        // an empty array — that path is what deletes orphaned branches if the
+        // user toggled the section off after previously having some.
+        const desiredBranches = data.has_branches
+            ? data.branches
+                  // Only branches with a code AND name are valid; drop empty stubs
+                  // the user added but never filled in.
+                  .filter((b) => b.branch_code.trim() && b.branch_name.trim())
+                  .map((b, idx) => ({
+                      id: b.id || undefined,
+                      branch_code: b.branch_code.trim(),
+                      branch_name: b.branch_name.trim(),
+                      // Strict AddressData → Json crosses an index-signature
+                      // boundary; go through `unknown` to satisfy TS.
+                      address: (isAddrEmpty(b.address)
+                          ? null
+                          : (b.address as unknown as Json)) as Json | null,
+                      sort_order: idx,
+                  }))
+            : [];
+        await customerBranchesApi.syncForCustomer(saved.id, desiredBranches);
+
         await load();
     }
 
