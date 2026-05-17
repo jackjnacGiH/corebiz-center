@@ -17,6 +17,8 @@ import type { Category, Warehouse } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import ProductImagePreview from '../components/ProductImagePreview';
+import ImportInventoryModal from '../components/ImportInventoryModal';
+import { buildInventoryCsv, downloadCsv } from '../lib/inventoryCsv';
 
 // ─── types & helpers ─────────────────────────────────────────────────────
 type StockStatus = 'out' | 'low' | 'watch' | 'normal';
@@ -98,6 +100,7 @@ export default function Inventory() {
   const [isModalOpen, setIsModalOpen]       = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProductWithInventory | null>(null);
   const [copyFromProduct, setCopyFromProduct] = useState<ProductWithInventory | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   async function load() {
     setLoading(true); setErr(null);
@@ -253,8 +256,27 @@ export default function Inventory() {
           <IconBtn onClick={() => load()} disabled={loading} title="Reload">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </IconBtn>
-          <IconBtn disabled title="Import CSV (coming soon)"><Upload size={15} /></IconBtn>
-          <IconBtn disabled title="Export (coming soon)"><FileDown size={15} /></IconBtn>
+          <IconBtn
+            onClick={() => setIsImportOpen(true)}
+            title="นำเข้าจาก CSV"
+          >
+            <Upload size={15} />
+          </IconBtn>
+          <IconBtn
+            onClick={() => {
+              const list = filtered.length > 0 ? filtered : products;
+              const stamp = new Date().toISOString().slice(0, 10);
+              downloadCsv(`inventory-${stamp}.csv`, buildInventoryCsv(list));
+            }}
+            disabled={products.length === 0}
+            title={
+              filtered.length !== products.length
+                ? `Export ${filtered.length} รายการที่กรองอยู่เป็น CSV`
+                : `Export ทั้งหมด ${products.length} รายการเป็น CSV`
+            }
+          >
+            <FileDown size={15} />
+          </IconBtn>
           <button
             onClick={() => { setEditingProduct(null); setCopyFromProduct(null); setIsModalOpen(true); }}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg shadow-sm transition"
@@ -613,6 +635,14 @@ export default function Inventory() {
         onSave={handleSave}
         editingProduct={editingProduct}
         copyFromProduct={copyFromProduct}
+        categories={categories}
+      />
+
+      <ImportInventoryModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onImported={() => void load()}
+        existingProducts={products}
         categories={categories}
       />
     </div>
