@@ -239,7 +239,10 @@ export default function Inventory() {
     const preview = items.slice(0, 3).map(p => p.sku).join(', ');
     const more = items.length > 3 ? ` และอีก ${items.length - 3} รายการ` : '';
     if (!window.confirm(
-      `ต้องการลบ ${ids.length} รายการที่เลือกใช่ไหม?\n\n${preview}${more}\n\nการลบนี้ไม่สามารถยกเลิกได้`,
+      `ต้องการลบ ${ids.length} รายการที่เลือกใช่ไหม?\n\n${preview}${more}\n\n` +
+        `⚠️ จะลบ stock + variant + การเคลื่อนไหวสต็อก + line items ของใบเสนอราคา ` +
+        `ของสินค้าเหล่านี้ด้วย\nสินค้าที่เคยอยู่ในออเดอร์จริงจะลบไม่ได้ (กันลบประวัติยอดขาย)\n\n` +
+        `การลบนี้ไม่สามารถยกเลิกได้`,
     )) return;
 
     setBulkDeleting(true);
