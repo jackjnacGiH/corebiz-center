@@ -233,12 +233,18 @@ export default function Ecommerce() {
       // (admin Quotes page, generated PDFs, etc.) — no DB migration needed
       // for this first cut. We also append an overall note to the quote so
       // the producer-side team has the context.
-      const hasMto = cart.some((i) => i.madeToOrder);
+      //
+      // A line counts as MTO if the customer explicitly added it that way OR
+      // they dialed the qty past the available stock (same logic the cart
+      // badge uses, so the quote stays consistent with what they saw).
+      const isLineMto = (i: typeof cart[number]) =>
+        !!i.madeToOrder || i.qty > i.product.total_quantity;
+      const hasMto = cart.some(isLineMto);
       const result = await quotesApi.createWithItems({
         items: cart.map(i => ({
           product_id: i.product.id,
           sku: i.product.sku,
-          product_name: i.madeToOrder ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
+          product_name: isLineMto(i) ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
           quantity: i.qty,
           unit_price: getEffectivePrice(i.product),
         })),
@@ -890,9 +896,16 @@ export default function Ecommerce() {
               ) : (
                 cart.map((item, idx) => {
                   const thumbUrl = getHeroImage(item.product);
+                  // Derived MTO state — true if the line was explicitly added
+                  // from a sold-out product OR the customer dialed the qty
+                  // past available stock. Used for badge, warning, thumb tone,
+                  // and the quote-save prefix in handleCreateQuote().
+                  const stock = item.product.total_quantity;
+                  const isMto = !!item.madeToOrder || item.qty > stock;
+                  const exceedsStock = !item.madeToOrder && item.qty > stock;
                   return (
                   <div key={`${item.product.id}-${item.madeToOrder ? 'mto' : 'std'}`} className="cart-line-item">
-                    <div className={`cart-line-thumb ${item.madeToOrder ? 'tone-amber' : 'tone-steel'}`}>
+                    <div className={`cart-line-thumb ${isMto ? 'tone-amber' : 'tone-steel'}`}>
                       {thumbUrl ? (
                         <img
                           src={thumbUrl}
@@ -915,10 +928,14 @@ export default function Ecommerce() {
                           <div className="cart-line-info">
                             <strong>
                               {item.product.name_th}
-                              {item.madeToOrder && (
+                              {isMto && (
                                 <span
                                   className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-orange-100 text-orange-700 border border-orange-200"
-                                  title="สินค้านี้ไม่มีในสต็อก จะสั่งผลิตให้"
+                                  title={
+                                    item.madeToOrder
+                                      ? 'สินค้านี้ไม่มีในสต็อก จะสั่งผลิตให้'
+                                      : `จำนวนที่สั่ง (${item.qty}) มากกว่าสต็อกคงเหลือ (${stock}) — เปลี่ยนเป็นสั่งผลิตอัตโนมัติ`
+                                  }
                                 >
                                   สั่งผลิต
                                 </span>
@@ -945,7 +962,23 @@ export default function Ecommerce() {
                               )}{' '}
                               / {item.product.unit}
                             </span>
-                            {item.madeToOrder && (
+                            <span
+                              className={`block mt-0.5 text-[11px] tabular-nums font-medium ${
+                                stock <= 0
+                                  ? 'text-orange-700'
+                                  : exceedsStock
+                                    ? 'text-rose-600'
+                                    : 'text-slate-500'
+                              }`}
+                            >
+                              คงเหลือในสต็อก: {formatNumber(stock)} {item.product.unit}
+                              {exceedsStock && (
+                                <span className="ml-1">
+                                  · ส่วนที่เกิน {formatNumber(item.qty - stock)} {item.product.unit} จะสั่งผลิต
+                                </span>
+                              )}
+                            </span>
+                            {isMto && (
                               <span className="block mt-0.5 text-[11px] text-orange-700 font-medium">
                                 ⚠️ สินค้าสั่งผลิต — ใช้เวลาเตรียมประมาณ 7-14 วันทำการ
                               </span>
