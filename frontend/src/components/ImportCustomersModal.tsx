@@ -287,6 +287,12 @@ function PickStage({
                     <li><code>customer_type</code>: <code>company</code> / <code>shop</code> / <code>individual</code> / <code>unspecified</code></li>
                     <li><code>tier</code>: <code>general</code> / <code>silver</code> / <code>gold</code> / <code>vip</code></li>
                     <li><code>tags</code> ใช้ <code>|</code> คั่นหลายค่า (เช่น <code>VIP|wholesale</code>)</li>
+                    <li>
+                        ที่อยู่บิล: <code>billing_line</code>, <code>billing_subdistrict</code>, <code>billing_district</code>, <code>billing_province</code>, <code>billing_postcode</code>
+                    </li>
+                    <li>
+                        ที่อยู่จัดส่ง: <code>shipping_line</code>, <code>shipping_subdistrict</code>, <code>shipping_district</code>, <code>shipping_province</code>, <code>shipping_postcode</code>
+                    </li>
                     <li>ถ้ามี <code>code</code> ตรงกับลูกค้าเดิม → จะปรับปรุง; ถ้าไม่มี → จะสร้างใหม่</li>
                 </ul>
                 <button

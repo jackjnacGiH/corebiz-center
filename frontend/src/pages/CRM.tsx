@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi } from '../lib/api';
-import type { Customer } from '../lib/database.types';
+import type { Customer, Json } from '../lib/database.types';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import CustomerModal, { type CustomerFormData } from '../components/CustomerModal';
@@ -88,6 +88,15 @@ export default function CRM() {
     useRealtimeTable('customers', () => void load());
 
     async function handleSave(data: CustomerFormData) {
+        // Empty address blocks → store NULL (not an empty object) so the
+        // jsonb column stays clean and `SELECT … WHERE billing_address IS NULL`
+        // keeps working.
+        const billing = isAddrEmpty(data.billing_address) ? null : data.billing_address;
+        const shipping = data.same_as_billing
+            ? billing
+            : isAddrEmpty(data.shipping_address)
+                ? null
+                : data.shipping_address;
         const payload = {
             code: data.code || null,
             name: data.name,
@@ -97,6 +106,10 @@ export default function CRM() {
             phone: data.phone || null,
             tax_id: data.tax_id || null,
             notes: data.notes || null,
+            // AddressData has a strict shape for the form; the DB column is `Json`
+            // which expects an index signature. Cast at the boundary.
+            billing_address: billing as Json | null,
+            shipping_address: shipping as Json | null,
         };
         if (editing) {
             await customersApi.update(editing.id, payload);
@@ -104,6 +117,10 @@ export default function CRM() {
             await customersApi.create(payload);
         }
         await load();
+    }
+
+    function isAddrEmpty(a: { line: string; subdistrict: string; district: string; province: string; postcode: string }): boolean {
+        return !a.line && !a.subdistrict && !a.district && !a.province && !a.postcode;
     }
 
     async function handleBulkDelete() {

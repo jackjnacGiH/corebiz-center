@@ -1,6 +1,19 @@
 import { useState, type FormEvent } from 'react';
-import { User, Mail, Phone, Briefcase, Hash, Award, Loader2 } from 'lucide-react';
+import {
+    User,
+    Mail,
+    Phone,
+    Briefcase,
+    Hash,
+    Award,
+    Loader2,
+    MapPin,
+    Truck,
+    Search,
+    Copy,
+} from 'lucide-react';
 import type { Customer } from '../lib/database.types';
+import { lookupZipcode, type ThaiAddressEntry } from '../lib/thaiAddress';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -14,6 +27,15 @@ import { Label } from '@/components/ui/label';
 
 export type CustomerType = 'company' | 'shop' | 'individual' | 'unspecified';
 
+export interface AddressData {
+    /** บ้านเลขที่ + อาคาร + ถนน (free-form first line) */
+    line: string;
+    subdistrict: string;
+    district: string;
+    province: string;
+    postcode: string;
+}
+
 export interface CustomerFormData {
     code: string;
     name: string;
@@ -23,6 +45,10 @@ export interface CustomerFormData {
     phone: string;
     tax_id: string;
     notes: string;
+    billing_address: AddressData;
+    /** When `same_as_billing` is true, this is ignored at save time. */
+    shipping_address: AddressData;
+    same_as_billing: boolean;
 }
 
 interface Props {
@@ -39,7 +65,47 @@ function normalizeType(v: string | null | undefined): CustomerType {
     return 'unspecified';
 }
 
+const EMPTY_ADDR: AddressData = {
+    line: '',
+    subdistrict: '',
+    district: '',
+    province: '',
+    postcode: '',
+};
+
+/** Coerce arbitrary JSON value coming from the DB into our `AddressData` shape. */
+function parseAddress(v: unknown): AddressData {
+    if (!v || typeof v !== 'object') return { ...EMPTY_ADDR };
+    const o = v as Record<string, unknown>;
+    return {
+        line: typeof o.line === 'string' ? o.line : '',
+        subdistrict: typeof o.subdistrict === 'string' ? o.subdistrict : '',
+        district: typeof o.district === 'string' ? o.district : '',
+        province: typeof o.province === 'string' ? o.province : '',
+        postcode: typeof o.postcode === 'string' ? o.postcode : '',
+    };
+}
+
+function isAddrEmpty(a: AddressData): boolean {
+    return !a.line && !a.subdistrict && !a.district && !a.province && !a.postcode;
+}
+
+/** Deep-ish equality for address blocks. */
+function addrEquals(a: AddressData, b: AddressData): boolean {
+    return (
+        a.line === b.line &&
+        a.subdistrict === b.subdistrict &&
+        a.district === b.district &&
+        a.province === b.province &&
+        a.postcode === b.postcode
+    );
+}
+
 function build(c: Customer | null | undefined): CustomerFormData {
+    const billing = parseAddress(c?.billing_address);
+    const shipping = parseAddress(c?.shipping_address);
+    const sameAsBilling =
+        !c || isAddrEmpty(shipping) || addrEquals(billing, shipping);
     return {
         code: c?.code ?? '',
         name: c?.name ?? '',
@@ -49,6 +115,9 @@ function build(c: Customer | null | undefined): CustomerFormData {
         phone: c?.phone ?? '',
         tax_id: c?.tax_id ?? '',
         notes: c?.notes ?? '',
+        billing_address: billing,
+        shipping_address: sameAsBilling ? { ...billing } : shipping,
+        same_as_billing: sameAsBilling,
     };
 }
 
@@ -71,7 +140,12 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
         setErr(null);
         setSaving(true);
         try {
-            await onSave(form);
+            // If same_as_billing is on, mirror billing into shipping right
+            // before save so the row written to DB is consistent.
+            const payload: CustomerFormData = form.same_as_billing
+                ? { ...form, shipping_address: { ...form.billing_address } }
+                : form;
+            await onSave(payload);
             onClose();
         } catch (e2) {
             setErr((e2 as Error).message);
@@ -82,7 +156,7 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
 
     return (
         <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
-            <DialogContent className="sm:max-w-xl p-0 gap-0 max-h-[90vh] flex flex-col">
+            <DialogContent className="sm:max-w-3xl p-0 gap-0 max-h-[92vh] flex flex-col">
                 {/* Header */}
                 <DialogHeader className="px-6 py-5 border-b border-neutral-200 bg-neutral-50">
                     <div className="flex items-center gap-4">
@@ -220,6 +294,49 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
                             />
                         </div>
 
+                        {/* ── Billing address ──────────────────────────── */}
+                        <AddressSection
+                            id="bill"
+                            icon={<MapPin size={14} className="text-indigo-600" />}
+                            title="ที่อยู่สำหรับใบกำกับภาษี"
+                            value={form.billing_address}
+                            onChange={(addr) => setForm({ ...form, billing_address: addr })}
+                        />
+
+                        {/* ── Shipping address ─────────────────────────── */}
+                        <div className="space-y-3">
+                            <label className="flex items-center gap-2 text-sm text-neutral-700 select-none cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="h-4 w-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+                                    checked={form.same_as_billing}
+                                    onChange={(e) =>
+                                        setForm({
+                                            ...form,
+                                            same_as_billing: e.target.checked,
+                                            // When toggled on, snapshot billing → shipping so the
+                                            // user immediately sees what will be saved.
+                                            shipping_address: e.target.checked
+                                                ? { ...form.billing_address }
+                                                : form.shipping_address,
+                                        })
+                                    }
+                                />
+                                <Copy size={13} className="text-neutral-400" />
+                                <span className="font-medium">ใช้ที่อยู่จัดส่งเดียวกับใบกำกับภาษี</span>
+                            </label>
+
+                            {!form.same_as_billing && (
+                                <AddressSection
+                                    id="ship"
+                                    icon={<Truck size={14} className="text-emerald-600" />}
+                                    title="ที่อยู่สำหรับจัดส่ง"
+                                    value={form.shipping_address}
+                                    onChange={(addr) => setForm({ ...form, shipping_address: addr })}
+                                />
+                            )}
+                        </div>
+
                         <div className="space-y-2">
                             <Label htmlFor="cust-notes" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
                                 หมายเหตุ
@@ -259,5 +376,195 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
                 </form>
             </DialogContent>
         </Dialog>
+    );
+}
+
+// ─── AddressSection ────────────────────────────────────────────────────────
+
+interface AddressSectionProps {
+    id: string;
+    icon: React.ReactNode;
+    title: string;
+    value: AddressData;
+    onChange: (v: AddressData) => void;
+}
+
+function AddressSection({ id, icon, title, value, onChange }: AddressSectionProps) {
+    const [options, setOptions] = useState<ThaiAddressEntry[]>([]);
+    const [searching, setSearching] = useState(false);
+    const [notFound, setNotFound] = useState(false);
+
+    async function runLookup(zip: string) {
+        const clean = zip.trim();
+        if (!/^\d{5}$/.test(clean)) {
+            setOptions([]);
+            setNotFound(false);
+            return;
+        }
+        setSearching(true);
+        setNotFound(false);
+        try {
+            const matches = await lookupZipcode(clean);
+            if (matches.length === 0) {
+                setOptions([]);
+                setNotFound(true);
+            } else if (matches.length === 1) {
+                const m = matches[0];
+                onChange({
+                    ...value,
+                    postcode: clean,
+                    subdistrict: m.subdistrict,
+                    district: m.district,
+                    province: m.province,
+                });
+                setOptions([]);
+            } else {
+                // Same zip → same district + province; user picks subdistrict.
+                const m = matches[0];
+                onChange({
+                    ...value,
+                    postcode: clean,
+                    subdistrict: '',
+                    district: m.district,
+                    province: m.province,
+                });
+                setOptions(matches);
+            }
+        } finally {
+            setSearching(false);
+        }
+    }
+
+    function pickSubdistrict(s: string) {
+        onChange({ ...value, subdistrict: s });
+        setOptions([]);
+    }
+
+    return (
+        <div className="rounded-lg border border-neutral-200 bg-neutral-50/50 p-4 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                {icon} {title}
+            </div>
+
+            {/* Address line — full width */}
+            <div className="space-y-1.5">
+                <Label htmlFor={`${id}-line`} className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                    บ้านเลขที่ / อาคาร / ถนน
+                </Label>
+                <Input
+                    id={`${id}-line`}
+                    type="text"
+                    placeholder="เช่น 123/45 อาคารเอบีซี ชั้น 5 ถนนสุขุมวิท"
+                    value={value.line}
+                    onChange={(e) => onChange({ ...value, line: e.target.value })}
+                />
+            </div>
+
+            {/* Postcode + lookup */}
+            <div className="grid grid-cols-12 gap-3">
+                <div className="col-span-5 sm:col-span-4 space-y-1.5">
+                    <Label htmlFor={`${id}-postcode`} className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                        รหัสไปรษณีย์
+                    </Label>
+                    <div className="flex gap-1.5">
+                        <Input
+                            id={`${id}-postcode`}
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={5}
+                            placeholder="10330"
+                            value={value.postcode}
+                            onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, '').slice(0, 5);
+                                onChange({ ...value, postcode: v });
+                                setNotFound(false);
+                                if (v.length === 5) void runLookup(v);
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    void runLookup(value.postcode);
+                                }
+                            }}
+                            onBlur={() => void runLookup(value.postcode)}
+                            className="flex-1"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => void runLookup(value.postcode)}
+                            disabled={searching}
+                            className="h-9 w-9 grid place-items-center rounded-md border border-neutral-200 bg-white hover:bg-neutral-50 disabled:opacity-50 flex-shrink-0"
+                            title="ค้นหารหัสไปรษณีย์"
+                        >
+                            {searching ? (
+                                <Loader2 size={14} className="animate-spin text-neutral-500" />
+                            ) : (
+                                <Search size={14} className="text-neutral-500" />
+                            )}
+                        </button>
+                    </div>
+                    {notFound && (
+                        <p className="text-[11px] text-amber-700">
+                            ไม่พบรหัสไปรษณีย์นี้ — กรอกที่อยู่ด้วยตนเอง
+                        </p>
+                    )}
+                </div>
+                <div className="col-span-7 sm:col-span-8 space-y-1.5">
+                    <Label htmlFor={`${id}-province`} className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                        จังหวัด
+                    </Label>
+                    <Input
+                        id={`${id}-province`}
+                        type="text"
+                        placeholder="กรุงเทพมหานคร"
+                        value={value.province}
+                        onChange={(e) => onChange({ ...value, province: e.target.value })}
+                    />
+                </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                    <Label htmlFor={`${id}-district`} className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                        อำเภอ / เขต
+                    </Label>
+                    <Input
+                        id={`${id}-district`}
+                        type="text"
+                        placeholder="ปทุมวัน"
+                        value={value.district}
+                        onChange={(e) => onChange({ ...value, district: e.target.value })}
+                    />
+                </div>
+                <div className="space-y-1.5">
+                    <Label htmlFor={`${id}-subdistrict`} className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
+                        ตำบล / แขวง
+                    </Label>
+                    {options.length > 1 ? (
+                        <select
+                            id={`${id}-subdistrict`}
+                            className={selectClass}
+                            value={value.subdistrict}
+                            onChange={(e) => pickSubdistrict(e.target.value)}
+                        >
+                            <option value="">— เลือกตำบล/แขวง —</option>
+                            {options.map((o) => (
+                                <option key={o.subdistrict} value={o.subdistrict}>
+                                    {o.subdistrict}
+                                </option>
+                            ))}
+                        </select>
+                    ) : (
+                        <Input
+                            id={`${id}-subdistrict`}
+                            type="text"
+                            placeholder="ลุมพินี"
+                            value={value.subdistrict}
+                            onChange={(e) => onChange({ ...value, subdistrict: e.target.value })}
+                        />
+                    )}
+                </div>
+            </div>
+        </div>
     );
 }
