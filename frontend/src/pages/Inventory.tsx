@@ -231,6 +231,36 @@ export default function Inventory() {
     catch (e) { setErr((e as Error).message); }
   }
 
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  async function handleBulkDelete() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const items = products.filter(p => selected.has(p.id));
+    const preview = items.slice(0, 3).map(p => p.sku).join(', ');
+    const more = items.length > 3 ? ` และอีก ${items.length - 3} รายการ` : '';
+    if (!window.confirm(
+      `ต้องการลบ ${ids.length} รายการที่เลือกใช่ไหม?\n\n${preview}${more}\n\nการลบนี้ไม่สามารถยกเลิกได้`,
+    )) return;
+
+    setBulkDeleting(true);
+    setErr(null);
+    // Run in parallel — Supabase handles concurrent DELETEs fine
+    const results = await Promise.allSettled(ids.map(id => productsApi.remove(id)));
+    const failed = results.filter(r => r.status === 'rejected').length;
+    setSelected(new Set());
+    await load();
+    setBulkDeleting(false);
+    if (failed > 0) {
+      const firstErr = results.find(r => r.status === 'rejected') as
+        | PromiseRejectedResult
+        | undefined;
+      setErr(
+        `ลบไม่สำเร็จ ${failed}/${ids.length} รายการ` +
+        (firstErr ? ` — ${(firstErr.reason as Error).message}` : ''),
+      );
+    }
+  }
+
   const rowPad = density === 'compact' ? 'py-2.5' : 'py-4';
 
   return (
@@ -345,9 +375,29 @@ export default function Inventory() {
             แสดง <span className="text-slate-900 font-medium">{filtered.length}</span> / {products.length} รายการ
           </span>
           {selected.size > 0 && (
-            <div className="flex items-center gap-2">
-              <span>เลือก {selected.size} รายการ</span>
-              <button onClick={() => setSelected(new Set())} className="text-blue-600 hover:text-blue-700 font-medium">
+            <div className="flex items-center gap-3">
+              <span className="font-medium text-slate-700">
+                เลือก <span className="text-blue-700">{selected.size}</span> รายการ
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleBulkDelete()}
+                disabled={bulkDeleting}
+                className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 hover:border-red-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {bulkDeleting ? (
+                  <RefreshCw size={12} className="animate-spin" />
+                ) : (
+                  <Trash2 size={12} />
+                )}
+                {bulkDeleting ? 'กำลังลบ...' : `ลบที่เลือก (${selected.size})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                disabled={bulkDeleting}
+                className="text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50"
+              >
                 ยกเลิก
               </button>
             </div>
