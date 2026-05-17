@@ -164,15 +164,17 @@ export type Database = {
       }
       customers: {
         Row: {
-          billing_address: Json | null; code: string | null; created_at: string; customer_type: string;
-          email: string | null; id: string; loyalty_points: number; name: string; notes: string | null;
+          billing_address: Json | null; code: string | null; contact_name: string | null;
+          created_at: string; customer_type: string; email: string | null; fax: string | null;
+          id: string; loyalty_points: number; mobile: string | null; name: string; notes: string | null;
           phone: string | null; shipping_address: Json | null; source_channel: string | null;
           tags: string[]; tax_id: string | null; tier: string; total_orders: number; total_spent: number;
           updated_at: string; user_id: string | null;
         }
         Insert: {
-          billing_address?: Json | null; code?: string | null; created_at?: string; customer_type?: string;
-          email?: string | null; id?: string; loyalty_points?: number; name: string; notes?: string | null;
+          billing_address?: Json | null; code?: string | null; contact_name?: string | null;
+          created_at?: string; customer_type?: string; email?: string | null; fax?: string | null;
+          id?: string; loyalty_points?: number; mobile?: string | null; name: string; notes?: string | null;
           phone?: string | null; shipping_address?: Json | null; source_channel?: string | null;
           tags?: string[]; tax_id?: string | null; tier?: string; total_orders?: number; total_spent?: number;
           updated_at?: string; user_id?: string | null;

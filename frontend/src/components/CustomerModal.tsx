@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import {
     User,
+    UserCircle,
     Mail,
     Phone,
+    Smartphone,
+    Printer,
     Briefcase,
     Hash,
     Award,
@@ -39,10 +42,16 @@ export interface AddressData {
 export interface CustomerFormData {
     code: string;
     name: string;
+    /** Human contact at the customer (relevant for company/shop). */
+    contact_name: string;
     customer_type: CustomerType;
     tier: 'general' | 'silver' | 'gold' | 'vip';
     email: string;
+    /** Office / general line. */
     phone: string;
+    /** Mobile / direct number. */
+    mobile: string;
+    fax: string;
     tax_id: string;
     notes: string;
     billing_address: AddressData;
@@ -109,10 +118,13 @@ function build(c: Customer | null | undefined): CustomerFormData {
     return {
         code: c?.code ?? '',
         name: c?.name ?? '',
+        contact_name: c?.contact_name ?? '',
         customer_type: normalizeType(c?.customer_type),
         tier: (c?.tier as CustomerFormData['tier']) ?? 'general',
         email: c?.email ?? '',
         phone: c?.phone ?? '',
+        mobile: c?.mobile ?? '',
+        fax: c?.fax ?? '',
         tax_id: c?.tax_id ?? '',
         notes: c?.notes ?? '',
         billing_address: billing,
@@ -243,18 +255,32 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label htmlFor="cust-name" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
-                                ชื่อลูกค้า *
-                            </Label>
-                            <Input
-                                id="cust-name"
-                                type="text"
-                                required
-                                placeholder="ชื่อบริษัท / ชื่อบุคคล"
-                                value={form.name}
-                                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                            />
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="cust-name" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                    ชื่อลูกค้า *
+                                </Label>
+                                <Input
+                                    id="cust-name"
+                                    type="text"
+                                    required
+                                    placeholder="ชื่อบริษัท / ชื่อบุคคล"
+                                    value={form.name}
+                                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="cust-contact" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                    <UserCircle size={12} /> ชื่อผู้ติดต่อ
+                                </Label>
+                                <Input
+                                    id="cust-contact"
+                                    type="text"
+                                    placeholder="คุณสมชาย ใจดี"
+                                    value={form.contact_name}
+                                    onChange={(e) => setForm({ ...form, contact_name: e.target.value })}
+                                />
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
@@ -276,8 +302,36 @@ function Form({ isOpen, onClose, onSave, editing }: Props) {
                                 <Input
                                     id="cust-phone"
                                     type="tel"
+                                    placeholder="02-123-4567"
                                     value={form.phone}
                                     onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="cust-mobile" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                    <Smartphone size={12} /> มือถือ
+                                </Label>
+                                <Input
+                                    id="cust-mobile"
+                                    type="tel"
+                                    placeholder="081-234-5678"
+                                    value={form.mobile}
+                                    onChange={(e) => setForm({ ...form, mobile: e.target.value })}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="cust-fax" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                    <Printer size={12} /> Fax
+                                </Label>
+                                <Input
+                                    id="cust-fax"
+                                    type="tel"
+                                    placeholder="02-123-4568"
+                                    value={form.fax}
+                                    onChange={(e) => setForm({ ...form, fax: e.target.value })}
                                 />
                             </div>
                         </div>

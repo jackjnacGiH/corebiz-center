@@ -3,6 +3,8 @@ import {
     Users,
     Mail,
     Phone,
+    Smartphone,
+    UserCircle,
     Search,
     UserPlus,
     Edit2,
@@ -100,10 +102,13 @@ export default function CRM() {
         const payload = {
             code: data.code || null,
             name: data.name,
+            contact_name: data.contact_name || null,
             customer_type: data.customer_type,
             tier: data.tier,
             email: data.email || null,
             phone: data.phone || null,
+            mobile: data.mobile || null,
+            fax: data.fax || null,
             tax_id: data.tax_id || null,
             notes: data.notes || null,
             // AddressData has a strict shape for the form; the DB column is `Json`
@@ -160,8 +165,10 @@ export default function CRM() {
         return customers.filter(
             (c) =>
                 c.name.toLowerCase().includes(s) ||
+                (c.contact_name?.toLowerCase().includes(s) ?? false) ||
                 (c.email?.toLowerCase().includes(s) ?? false) ||
                 (c.phone?.includes(s) ?? false) ||
+                (c.mobile?.includes(s) ?? false) ||
                 (c.code?.toLowerCase().includes(s) ?? false),
         );
     }, [customers, search]);
@@ -417,6 +424,12 @@ export default function CRM() {
                                             <div className="font-semibold text-neutral-900">
                                                 {c.name}
                                             </div>
+                                            {c.contact_name && (
+                                                <div className="flex items-center gap-1.5 mt-0.5 text-xs text-neutral-600">
+                                                    <UserCircle size={12} className="text-neutral-400" />
+                                                    {c.contact_name}
+                                                </div>
+                                            )}
                                             <div className="flex flex-col gap-1 mt-1 text-xs text-neutral-500">
                                                 {c.email && (
                                                     <span className="flex items-center gap-1.5">
@@ -434,6 +447,15 @@ export default function CRM() {
                                                             className="text-neutral-400"
                                                         />
                                                         {c.phone}
+                                                    </span>
+                                                )}
+                                                {c.mobile && (
+                                                    <span className="flex items-center gap-1.5 tabular-nums">
+                                                        <Smartphone
+                                                            size={12}
+                                                            className="text-neutral-400"
+                                                        />
+                                                        {c.mobile}
                                                     </span>
                                                 )}
                                             </div>
