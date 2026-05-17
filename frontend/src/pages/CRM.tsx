@@ -9,6 +9,7 @@ import {
     UserPlus,
     Edit2,
     Briefcase,
+    Building2,
     User,
     Store,
     HelpCircle,
@@ -19,7 +20,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
-import type { Customer, Json } from '../lib/database.types';
+import type { Customer, CustomerBranch, Json } from '../lib/database.types';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import CustomerModal, { type CustomerFormData } from '../components/CustomerModal';
@@ -63,6 +64,7 @@ function typeMeta(t: string | null | undefined) {
 export default function CRM() {
     const { t } = useLanguage();
     const [customers, setCustomers] = useState<Customer[]>([]);
+    const [branches, setBranches] = useState<CustomerBranch[]>([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [search, setSearch] = useState('');
@@ -76,7 +78,15 @@ export default function CRM() {
         setLoading(true);
         setErr(null);
         try {
-            setCustomers(await customersApi.list());
+            // Fetch customers + branches in parallel. The branch list is small
+            // (one row per branch, typically tens) so loading it eagerly is
+            // cheaper than per-row lookups in the table.
+            const [cs, bs] = await Promise.all([
+                customersApi.list(),
+                customerBranchesApi.listAll(),
+            ]);
+            setCustomers(cs);
+            setBranches(bs);
         } catch (e) {
             setErr((e as Error).message);
         } finally {
@@ -88,6 +98,18 @@ export default function CRM() {
         void load();
     }, []);
     useRealtimeTable('customers', () => void load());
+    useRealtimeTable('customer_branches', () => void load());
+
+    /** customer_id → its branches, already in display order. */
+    const branchesByCustomer = useMemo(() => {
+        const map = new Map<string, CustomerBranch[]>();
+        for (const b of branches) {
+            const list = map.get(b.customer_id);
+            if (list) list.push(b);
+            else map.set(b.customer_id, [b]);
+        }
+        return map;
+    }, [branches]);
 
     async function handleSave(data: CustomerFormData) {
         // Empty address blocks → store NULL (not an empty object) so the
@@ -439,7 +461,18 @@ export default function CRM() {
                                             />
                                         </TableCell>
                                         <TableCell className="px-5 font-mono text-sm text-indigo-600 align-top pt-4">
-                                            {c.code ?? '—'}
+                                            <div>{c.code ?? '—'}</div>
+                                            {(branchesByCustomer.get(c.id) ?? []).map((b) => (
+                                                <div
+                                                    key={b.id}
+                                                    className="flex items-center gap-1 text-[11px] text-emerald-700 mt-1 font-normal"
+                                                    title={b.branch_name}
+                                                >
+                                                    <Building2 size={10} className="text-emerald-600 flex-shrink-0" />
+                                                    <span className="tabular-nums">{b.branch_code}</span>
+                                                    <span className="text-neutral-500 truncate">— {b.branch_name}</span>
+                                                </div>
+                                            ))}
                                         </TableCell>
                                         <TableCell>
                                             <div className="font-semibold text-neutral-900">

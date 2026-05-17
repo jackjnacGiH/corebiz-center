@@ -12,6 +12,7 @@ export type RealtimeTable =
   | 'orders'
   | 'inventory'
   | 'customers'
+  | 'customer_branches'
   | 'products'
   | 'chat_conversations'
   | 'chat_messages';

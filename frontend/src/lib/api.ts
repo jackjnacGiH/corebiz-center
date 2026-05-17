@@ -211,6 +211,22 @@ export const customersApi = {
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {
+  /**
+   * Fetch every branch row, ordered so consumers can `groupBy(customer_id)`
+   * and get each customer's branches already in display order. Used by the
+   * CRM page to render the small "branches under code" hint.
+   */
+  async listAll(): Promise<CustomerBranch[]> {
+    const { data, error } = await supabase
+      .from('customer_branches')
+      .select('*')
+      .order('customer_id', { ascending: true })
+      .order('sort_order', { ascending: true })
+      .order('branch_code', { ascending: true });
+    if (error) throw error;
+    return data ?? [];
+  },
+
   /** Fetch all branches that belong to one customer, ordered for display. */
   async listForCustomer(customerId: string): Promise<CustomerBranch[]> {
     const { data, error } = await supabase
