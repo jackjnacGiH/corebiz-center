@@ -534,7 +534,7 @@ export default function Ecommerce() {
                       <button
                         type="button"
                         onClick={() => addToCart(p, { madeToOrder: true })}
-                        className="h-9 px-2.5 rounded-md bg-orange-500 text-white text-[11px] font-bold hover:bg-orange-600 inline-flex items-center gap-1 whitespace-nowrap"
+                        className="btn-mto"
                         title={`สั่งผลิต ${p.name_th} — เพิ่มในตะกร้าแบบสั่งผลิต`}
                       >
                         <Plus size={13} /> สั่งผลิต
@@ -888,10 +888,21 @@ export default function Ecommerce() {
                   <span>{ecom.emptyCartHint}</span>
                 </div>
               ) : (
-                cart.map((item, idx) => (
+                cart.map((item, idx) => {
+                  const thumbUrl = getHeroImage(item.product);
+                  return (
                   <div key={`${item.product.id}-${item.madeToOrder ? 'mto' : 'std'}`} className="cart-line-item">
                     <div className={`cart-line-thumb ${item.madeToOrder ? 'tone-amber' : 'tone-steel'}`}>
-                      <Package size={20} />
+                      {thumbUrl ? (
+                        <img
+                          src={thumbUrl}
+                          alt={item.product.name_th}
+                          className="w-full h-full object-contain rounded-md"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <Package size={20} />
+                      )}
                     </div>
 
                     {(() => {
@@ -941,13 +952,40 @@ export default function Ecommerce() {
                             )}
                             <div className="quantity-stepper">
                               <button
+                                type="button"
                                 onClick={() => updateQty(idx, item.qty - 1)}
                                 title={ecom.decreaseQuantity}
                               >
                                 <Minus size={14} />
                               </button>
-                              <span>{formatNumber(item.qty)}</span>
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min={1}
+                                max={999999}
+                                step={1}
+                                value={item.qty}
+                                onChange={(e) => {
+                                  // Allow empty string while typing — we don't
+                                  // collapse the row until they leave the input
+                                  // or hit the - button down to 0.
+                                  const raw = e.target.value.replace(/\D/g, '').slice(0, 6);
+                                  const n = raw === '' ? 0 : parseInt(raw, 10);
+                                  if (n === 0) return; // ignore empty mid-typing
+                                  updateQty(idx, Math.min(n, 999999));
+                                }}
+                                onBlur={(e) => {
+                                  // If they cleared the input, snap back to 1
+                                  // rather than removing the line silently.
+                                  if (e.target.value === '' || Number(e.target.value) < 1) {
+                                    updateQty(idx, 1);
+                                  }
+                                }}
+                                className="cart-qty-input"
+                                aria-label="จำนวน"
+                              />
                               <button
+                                type="button"
                                 onClick={() => updateQty(idx, item.qty + 1)}
                                 title={ecom.increaseQuantity}
                               >
@@ -976,7 +1014,8 @@ export default function Ecommerce() {
                       );
                     })()}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
