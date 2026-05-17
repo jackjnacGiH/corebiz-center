@@ -460,8 +460,18 @@ export default function CRM() {
                                                 className="w-3.5 h-3.5 rounded border-neutral-300 accent-indigo-600"
                                             />
                                         </TableCell>
-                                        <TableCell className="px-5 font-mono text-sm text-indigo-600 align-top pt-4">
-                                            <div>{c.code ?? '—'}</div>
+                                        <TableCell className="px-5 font-mono text-sm align-top pt-4">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setEditing(c);
+                                                    setIsModalOpen(true);
+                                                }}
+                                                className="text-indigo-600 hover:text-indigo-700 hover:underline focus:outline-none focus:underline cursor-pointer text-left"
+                                                title="คลิกเพื่อแก้ไขข้อมูลลูกค้า"
+                                            >
+                                                {c.code ?? '—'}
+                                            </button>
                                             {(branchesByCustomer.get(c.id) ?? []).map((b) => (
                                                 <div
                                                     key={b.id}
@@ -475,9 +485,17 @@ export default function CRM() {
                                             ))}
                                         </TableCell>
                                         <TableCell>
-                                            <div className="font-semibold text-neutral-900">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setEditing(c);
+                                                    setIsModalOpen(true);
+                                                }}
+                                                className="font-semibold text-neutral-900 hover:text-indigo-600 hover:underline focus:outline-none focus:text-indigo-600 cursor-pointer text-left"
+                                                title="คลิกเพื่อแก้ไขข้อมูลลูกค้า"
+                                            >
                                                 {c.name}
-                                            </div>
+                                            </button>
                                             {c.contact_name && (
                                                 <div className="flex items-center gap-1.5 mt-0.5 text-xs text-neutral-600">
                                                     <UserCircle size={12} className="text-neutral-400" />
