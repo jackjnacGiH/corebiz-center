@@ -37,6 +37,12 @@ type LeadTimeKey = 'ready' | 'twoThreeDays' | 'low';
 interface CartItem {
   product: ProductWithInventory;
   qty: number;
+  /**
+   * Made-to-order line: customer placed it knowing the SKU is out of stock
+   * (qty <= 0 at order time) and is OK with a longer lead time.
+   * Shows a clear badge in cart + carries through to the quote.
+   */
+  madeToOrder?: boolean;
 }
 
 function formatCurrency(value: number): string {
@@ -182,26 +188,38 @@ export default function Ecommerce() {
   const cartVat = Math.round(cartSubtotal * 0.07);
   const cartTotal = cartSubtotal + cartVat;
 
-  function addToCart(p: ProductWithInventory) {
+  function addToCart(p: ProductWithInventory, opts?: { madeToOrder?: boolean }) {
+    const mto = opts?.madeToOrder ?? false;
     setCart(prev => {
-      const existing = prev.find(i => i.product.id === p.id);
+      // Treat in-stock and made-to-order as separate cart lines so the
+      // badge + the note carried into the quote stay accurate.
+      const existing = prev.find(i => i.product.id === p.id && (i.madeToOrder ?? false) === mto);
       if (existing) {
-        return prev.map(i => i.product.id === p.id ? { ...i, qty: i.qty + 1 } : i);
+        return prev.map(i =>
+          i.product.id === p.id && (i.madeToOrder ?? false) === mto
+            ? { ...i, qty: i.qty + 1 }
+            : i,
+        );
       }
-      return [...prev, { product: p, qty: 1 }];
+      return [...prev, { product: p, qty: 1, madeToOrder: mto }];
     });
   }
 
-  function updateQty(id: string, qty: number) {
+  /**
+   * Cart line operations are now index-based instead of id-based: in-stock
+   * and made-to-order can co-exist as two separate lines for the same
+   * product id, so the id alone is no longer a unique key.
+   */
+  function updateQty(idx: number, qty: number) {
     if (qty <= 0) {
-      setCart(prev => prev.filter(i => i.product.id !== id));
+      setCart(prev => prev.filter((_, i) => i !== idx));
       return;
     }
-    setCart(prev => prev.map(i => i.product.id === id ? { ...i, qty } : i));
+    setCart(prev => prev.map((line, i) => i === idx ? { ...line, qty } : line));
   }
 
-  function removeFromCart(id: string) {
-    setCart(prev => prev.filter(i => i.product.id !== id));
+  function removeFromCart(idx: number) {
+    setCart(prev => prev.filter((_, i) => i !== idx));
   }
 
   async function handleCreateQuote() {
@@ -210,14 +228,23 @@ export default function Ecommerce() {
     setErr(null);
     setSavedCode(null);
     try {
+      // Made-to-order lines get a "[สั่งผลิต]" prefix on the product_name so
+      // the marker shows up everywhere the quote is later displayed/printed
+      // (admin Quotes page, generated PDFs, etc.) — no DB migration needed
+      // for this first cut. We also append an overall note to the quote so
+      // the producer-side team has the context.
+      const hasMto = cart.some((i) => i.madeToOrder);
       const result = await quotesApi.createWithItems({
         items: cart.map(i => ({
           product_id: i.product.id,
           sku: i.product.sku,
-          product_name: i.product.name_th,
+          product_name: i.madeToOrder ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
           quantity: i.qty,
           unit_price: getEffectivePrice(i.product),
         })),
+        notes: hasMto
+          ? 'มีรายการสินค้าสั่งผลิต (Made-to-Order) — โปรดยืนยันระยะเวลาผลิตและจัดส่งกับลูกค้าก่อนยืนยันใบเสนอราคา'
+          : undefined,
       });
       setSavedCode(result.code);
       setSavedQuoteId(result.id);
@@ -503,13 +530,23 @@ export default function Ecommerce() {
                         </>
                       )}
                     </div>
-                    <button
-                      onClick={() => addToCart(p)}
-                      disabled={p.total_quantity === 0}
-                      title={`${ecom.addToQuote}: ${p.name_th}`}
-                    >
-                      <Plus size={17} />
-                    </button>
+                    {p.total_quantity <= 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => addToCart(p, { madeToOrder: true })}
+                        className="h-9 px-2.5 rounded-md bg-orange-500 text-white text-[11px] font-bold hover:bg-orange-600 inline-flex items-center gap-1 whitespace-nowrap"
+                        title={`สั่งผลิต ${p.name_th} — เพิ่มในตะกร้าแบบสั่งผลิต`}
+                      >
+                        <Plus size={13} /> สั่งผลิต
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => addToCart(p)}
+                        title={`${ecom.addToQuote}: ${p.name_th}`}
+                      >
+                        <Plus size={17} />
+                      </button>
+                    )}
                   </div>
                 </div>
               </article>
@@ -579,15 +616,25 @@ export default function Ecommerce() {
                         </span>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => addToCart(p)}
-                      disabled={p.total_quantity === 0}
-                      className="w-7 h-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                      title={`${ecom.addToQuote}: ${p.name_th}`}
-                    >
-                      <Plus size={14} />
-                    </button>
+                    {p.total_quantity <= 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => addToCart(p, { madeToOrder: true })}
+                        className="h-7 px-2 rounded-md bg-orange-500 text-white hover:bg-orange-600 text-[10px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap"
+                        title={`สั่งผลิต ${p.name_th}`}
+                      >
+                        <Plus size={10} /> สั่งผลิต
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => addToCart(p)}
+                        className="w-7 h-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600"
+                        title={`${ecom.addToQuote}: ${p.name_th}`}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    )}
                   </div>
                 </div>
               </article>
@@ -674,16 +721,26 @@ export default function Ecommerce() {
                     </span>
                   </div>
                 </div>
-                <div className="flex flex-col justify-center">
-                  <button
-                    type="button"
-                    onClick={() => addToCart(p)}
-                    disabled={p.total_quantity === 0}
-                    className="h-9 px-4 rounded-md bg-indigo-500 text-white text-sm font-semibold hover:bg-indigo-600 disabled:opacity-40 inline-flex items-center gap-1.5"
-                    title={`${ecom.addToQuote}: ${p.name_th}`}
-                  >
-                    <Plus size={14} /> เพิ่ม
-                  </button>
+                <div className="flex flex-col justify-center gap-1.5">
+                  {p.total_quantity <= 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => addToCart(p, { madeToOrder: true })}
+                      className="h-9 px-4 rounded-md bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 inline-flex items-center gap-1.5 whitespace-nowrap"
+                      title={`สั่งผลิต ${p.name_th}`}
+                    >
+                      <Plus size={14} /> สั่งผลิต
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => addToCart(p)}
+                      className="h-9 px-4 rounded-md bg-indigo-500 text-white text-sm font-semibold hover:bg-indigo-600 inline-flex items-center gap-1.5"
+                      title={`${ecom.addToQuote}: ${p.name_th}`}
+                    >
+                      <Plus size={14} /> เพิ่ม
+                    </button>
+                  )}
                 </div>
               </article>
             );
@@ -766,15 +823,25 @@ export default function Ecommerce() {
                         {formatNumber(p.total_quantity)} {p.unit}
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => addToCart(p)}
-                          disabled={p.total_quantity === 0}
-                          className="h-7 w-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-40 ml-auto"
-                          title={`${ecom.addToQuote}: ${p.name_th}`}
-                        >
-                          <Plus size={14} />
-                        </button>
+                        {p.total_quantity <= 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => addToCart(p, { madeToOrder: true })}
+                            className="h-7 px-2 rounded-md bg-orange-500 text-white text-[11px] font-bold hover:bg-orange-600 inline-flex items-center gap-1 ml-auto whitespace-nowrap"
+                            title={`สั่งผลิต ${p.name_th}`}
+                          >
+                            <Plus size={11} /> สั่งผลิต
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => addToCart(p)}
+                            className="h-7 w-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600 ml-auto"
+                            title={`${ecom.addToQuote}: ${p.name_th}`}
+                          >
+                            <Plus size={14} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -821,9 +888,9 @@ export default function Ecommerce() {
                   <span>{ecom.emptyCartHint}</span>
                 </div>
               ) : (
-                cart.map(item => (
-                  <div key={item.product.id} className="cart-line-item">
-                    <div className="cart-line-thumb tone-steel">
+                cart.map((item, idx) => (
+                  <div key={`${item.product.id}-${item.madeToOrder ? 'mto' : 'std'}`} className="cart-line-item">
+                    <div className={`cart-line-thumb ${item.madeToOrder ? 'tone-amber' : 'tone-steel'}`}>
                       <Package size={20} />
                     </div>
 
@@ -835,7 +902,17 @@ export default function Ecommerce() {
                       return (
                         <>
                           <div className="cart-line-info">
-                            <strong>{item.product.name_th}</strong>
+                            <strong>
+                              {item.product.name_th}
+                              {item.madeToOrder && (
+                                <span
+                                  className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-orange-100 text-orange-700 border border-orange-200"
+                                  title="สินค้านี้ไม่มีในสต็อก จะสั่งผลิตให้"
+                                >
+                                  สั่งผลิต
+                                </span>
+                              )}
+                            </strong>
                             <span>
                               {item.product.sku} /{' '}
                               {lineHasDisc ? (
@@ -857,16 +934,21 @@ export default function Ecommerce() {
                               )}{' '}
                               / {item.product.unit}
                             </span>
+                            {item.madeToOrder && (
+                              <span className="block mt-0.5 text-[11px] text-orange-700 font-medium">
+                                ⚠️ สินค้าสั่งผลิต — ใช้เวลาเตรียมประมาณ 7-14 วันทำการ
+                              </span>
+                            )}
                             <div className="quantity-stepper">
                               <button
-                                onClick={() => updateQty(item.product.id, item.qty - 1)}
+                                onClick={() => updateQty(idx, item.qty - 1)}
                                 title={ecom.decreaseQuantity}
                               >
                                 <Minus size={14} />
                               </button>
                               <span>{formatNumber(item.qty)}</span>
                               <button
-                                onClick={() => updateQty(item.product.id, item.qty + 1)}
+                                onClick={() => updateQty(idx, item.qty + 1)}
                                 title={ecom.increaseQuantity}
                               >
                                 <Plus size={14} />
@@ -884,7 +966,7 @@ export default function Ecommerce() {
                               {formatCurrency(lineEff * item.qty)}
                             </strong>
                             <button
-                              onClick={() => removeFromCart(item.product.id)}
+                              onClick={() => removeFromCart(idx)}
                               title={ecom.removeItem}
                             >
                               <Trash2 size={15} />
