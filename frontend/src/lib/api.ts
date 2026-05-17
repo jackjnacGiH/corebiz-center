@@ -14,6 +14,7 @@ import type {
   Order, OrderInsert, OrderUpdate,
   OrderItem,
   Notification,
+  OrgSettings, OrgSettingsUpdate,
 } from './database.types';
 
 // =========================================================================
@@ -1016,5 +1017,33 @@ export const notificationsApi = {
       .update({ read_at: new Date().toISOString() })
       .is('read_at', null);
     if (error) throw error;
+  },
+};
+
+// =========================================================================
+// Org settings (singleton row in `org_settings`, id=true)
+// =========================================================================
+export const orgSettingsApi = {
+  /** Read the singleton org_settings row. */
+  async get(): Promise<OrgSettings | null> {
+    const { data, error } = await supabase
+      .from('org_settings')
+      .select('*')
+      .eq('id', true)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as OrgSettings | null) ?? null;
+  },
+
+  /** Update the singleton row. Only fields in the patch are touched. */
+  async update(patch: OrgSettingsUpdate): Promise<OrgSettings> {
+    const { data, error } = await supabase
+      .from('org_settings')
+      .update(patch)
+      .eq('id', true)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as OrgSettings;
   },
 };

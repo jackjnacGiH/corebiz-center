@@ -70,7 +70,9 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
     const { language, setLanguage, t } = useLanguage();
     const { profile } = useAuth();
     const navigate = useNavigate();
-    const { notifications, unreadCount, markRead, markAllRead } = useNotifications();
+    const { notifications, unreadCount, markRead, markAllRead } = useNotifications(
+        profile?.notification_prefs ?? null,
+    );
 
     const initials = profile?.full_name
         ? profile.full_name

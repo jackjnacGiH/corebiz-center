@@ -9,8 +9,20 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { notificationsApi } from '../lib/api';
-import { supabase } from '../lib/supabase';
+import { supabase, type NotificationPrefs } from '../lib/supabase';
 import type { Notification } from '../lib/database.types';
+
+/** Map a notification's `type` column to the matching pref key. */
+function isAllowedByPrefs(n: Notification, prefs: NotificationPrefs | null): boolean {
+    if (!prefs) return true; // no prefs loaded yet → show everything
+    switch (n.type) {
+        case 'order':     return prefs.new_order;
+        case 'inventory': return prefs.low_stock;
+        case 'customer':  return prefs.new_customer;
+        case 'system':    return prefs.weekly_report;
+        default: return true;
+    }
+}
 
 export interface UseNotificationsResult {
     notifications: Notification[];
@@ -22,17 +34,22 @@ export interface UseNotificationsResult {
     markAllRead: () => Promise<void>;
 }
 
-export function useNotifications(): UseNotificationsResult {
-    const [notifications, setNotifications] = useState<Notification[]>([]);
+export function useNotifications(prefs?: NotificationPrefs | null): UseNotificationsResult {
+    const [allNotifications, setAllNotifications] = useState<Notification[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const mountedRef = useRef(true);
+
+    // Filter feed by current prefs (memoised per render).
+    const notifications = prefs
+        ? allNotifications.filter((n) => isAllowedByPrefs(n, prefs))
+        : allNotifications;
 
     const refresh = useCallback(async () => {
         setError(null);
         try {
             const rows = await notificationsApi.list();
-            if (mountedRef.current) setNotifications(rows);
+            if (mountedRef.current) setAllNotifications(rows);
         } catch (e) {
             if (mountedRef.current) setError((e as Error).message);
         } finally {
@@ -57,7 +74,7 @@ export function useNotifications(): UseNotificationsResult {
                 { event: 'INSERT', schema: 'public', table: 'notifications' },
                 (payload) => {
                     const row = payload.new as Notification;
-                    setNotifications((prev) => {
+                    setAllNotifications((prev) => {
                         if (prev.some((n) => n.id === row.id)) return prev;
                         return [row, ...prev].slice(0, 50);
                     });
@@ -68,7 +85,7 @@ export function useNotifications(): UseNotificationsResult {
                 { event: 'UPDATE', schema: 'public', table: 'notifications' },
                 (payload) => {
                     const row = payload.new as Notification;
-                    setNotifications((prev) =>
+                    setAllNotifications((prev) =>
                         prev.map((n) => (n.id === row.id ? row : n)),
                     );
                 },
@@ -82,7 +99,7 @@ export function useNotifications(): UseNotificationsResult {
 
     const markRead = useCallback(async (id: string) => {
         // Optimistic
-        setNotifications((prev) =>
+        setAllNotifications((prev) =>
             prev.map((n) =>
                 n.id === id && !n.read_at
                     ? { ...n, read_at: new Date().toISOString() }
@@ -100,7 +117,7 @@ export function useNotifications(): UseNotificationsResult {
 
     const markAllRead = useCallback(async () => {
         const now = new Date().toISOString();
-        setNotifications((prev) =>
+        setAllNotifications((prev) =>
             prev.map((n) => (n.read_at ? n : { ...n, read_at: now })),
         );
         try {

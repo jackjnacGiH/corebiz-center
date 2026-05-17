@@ -14,7 +14,9 @@ import {
     Loader2,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthProvider';
-import { supabase } from '../lib/supabase';
+import { supabase, DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '../lib/supabase';
+import { orgSettingsApi } from '../lib/api';
+import type { OrgSettings } from '../lib/database.types';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -72,6 +74,171 @@ export default function Settings() {
     const profileDirty =
         (fullName.trim() || null) !== (profile?.full_name ?? null) ||
         (phone.trim() || null) !== (profile?.phone ?? null);
+
+    // ── Notification prefs ────────────────────────────────────────────
+    const [prefs, setPrefs] = useState<NotificationPrefs>(
+        profile?.notification_prefs ?? DEFAULT_NOTIFICATION_PREFS,
+    );
+    const [savingPrefs, setSavingPrefs] = useState(false);
+    const [prefsErr, setPrefsErr] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (profile?.notification_prefs) setPrefs(profile.notification_prefs);
+    }, [profile?.notification_prefs]);
+
+    async function togglePref(key: keyof NotificationPrefs) {
+        if (!profile?.id) return;
+        const previous = prefs;
+        const next: NotificationPrefs = { ...prefs, [key]: !prefs[key] };
+        setPrefs(next); // optimistic
+        setSavingPrefs(true);
+        setPrefsErr(null);
+        try {
+            const { error } = await supabase
+                .from('profiles')
+                .update({ notification_prefs: next as unknown as Record<string, boolean> })
+                .eq('id', profile.id);
+            if (error) throw error;
+            await refresh();
+        } catch (e) {
+            setPrefs(previous); // rollback
+            setPrefsErr((e as Error).message);
+        } finally {
+            setSavingPrefs(false);
+        }
+    }
+
+    // ── Change password ───────────────────────────────────────────────
+    const [curPwd, setCurPwd] = useState('');
+    const [newPwd, setNewPwd] = useState('');
+    const [confirmPwd, setConfirmPwd] = useState('');
+    const [savingPwd, setSavingPwd] = useState(false);
+    const [pwdErr, setPwdErr] = useState<string | null>(null);
+    const [pwdSavedAt, setPwdSavedAt] = useState<number | null>(null);
+
+    const isEmailProvider = profile?.provider === 'email';
+
+    async function handleChangePassword() {
+        setPwdErr(null);
+        setPwdSavedAt(null);
+        if (!isEmailProvider) {
+            setPwdErr(
+                `บัญชีนี้เข้าระบบด้วย ${profile?.provider ?? 'OAuth'} — เปลี่ยนรหัสจากผู้ให้บริการนั้นได้เลย`,
+            );
+            return;
+        }
+        if (newPwd.length < 6) {
+            setPwdErr('รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร');
+            return;
+        }
+        if (newPwd !== confirmPwd) {
+            setPwdErr('รหัสผ่านใหม่และยืนยันไม่ตรงกัน');
+            return;
+        }
+        if (!profile?.email) {
+            setPwdErr('ไม่พบ email — ลองรีโหลดหน้า');
+            return;
+        }
+        setSavingPwd(true);
+        try {
+            // 1. Verify current password by re-authing
+            const { error: verifyErr } = await supabase.auth.signInWithPassword({
+                email: profile.email,
+                password: curPwd,
+            });
+            if (verifyErr) {
+                throw new Error('รหัสผ่านปัจจุบันไม่ถูกต้อง');
+            }
+            // 2. Update to new password
+            const { error: updateErr } = await supabase.auth.updateUser({
+                password: newPwd,
+            });
+            if (updateErr) throw updateErr;
+            setCurPwd('');
+            setNewPwd('');
+            setConfirmPwd('');
+            setPwdSavedAt(Date.now());
+        } catch (e) {
+            setPwdErr((e as Error).message);
+        } finally {
+            setSavingPwd(false);
+        }
+    }
+
+    // ── Workspace / org_settings ──────────────────────────────────────
+    const [orgSettings, setOrgSettings] = useState<OrgSettings | null>(null);
+    const [orgForm, setOrgForm] = useState({
+        business_name: '',
+        tax_id: '',
+        address: '',
+        phone: '',
+        email: '',
+        website: '',
+    });
+    const [orgLoading, setOrgLoading] = useState(true);
+    const [savingOrg, setSavingOrg] = useState(false);
+    const [orgErr, setOrgErr] = useState<string | null>(null);
+    const [orgSavedAt, setOrgSavedAt] = useState<number | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        orgSettingsApi
+            .get()
+            .then((s) => {
+                if (cancelled) return;
+                setOrgSettings(s);
+                if (s) {
+                    setOrgForm({
+                        business_name: s.business_name ?? '',
+                        tax_id: s.tax_id ?? '',
+                        address: s.address ?? '',
+                        phone: s.phone ?? '',
+                        email: s.email ?? '',
+                        website: s.website ?? '',
+                    });
+                }
+            })
+            .catch((e) => {
+                if (!cancelled) setOrgErr((e as Error).message);
+            })
+            .finally(() => {
+                if (!cancelled) setOrgLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const orgDirty =
+        orgSettings != null &&
+        (orgForm.business_name.trim() !== (orgSettings.business_name ?? '') ||
+            orgForm.tax_id.trim() !== (orgSettings.tax_id ?? '') ||
+            orgForm.address.trim() !== (orgSettings.address ?? '') ||
+            orgForm.phone.trim() !== (orgSettings.phone ?? '') ||
+            orgForm.email.trim() !== (orgSettings.email ?? '') ||
+            orgForm.website.trim() !== (orgSettings.website ?? ''));
+
+    async function handleSaveOrg() {
+        setSavingOrg(true);
+        setOrgErr(null);
+        setOrgSavedAt(null);
+        try {
+            const updated = await orgSettingsApi.update({
+                business_name: orgForm.business_name.trim() || null,
+                tax_id: orgForm.tax_id.trim() || null,
+                address: orgForm.address.trim() || null,
+                phone: orgForm.phone.trim() || null,
+                email: orgForm.email.trim() || null,
+                website: orgForm.website.trim() || null,
+            });
+            setOrgSettings(updated);
+            setOrgSavedAt(Date.now());
+        } catch (e) {
+            setOrgErr((e as Error).message);
+        } finally {
+            setSavingOrg(false);
+        }
+    }
 
     return (
         <div className="animate-fade-in space-y-6">
@@ -261,39 +428,48 @@ export default function Settings() {
                                 การแจ้งเตือน
                             </CardTitle>
                             <p className="text-xs text-neutral-500 mt-1">
-                                เลือกประเภทการแจ้งเตือนที่ต้องการรับ
+                                เลือกประเภทการแจ้งเตือนที่ต้องการรับใน Notification panel
+                                (รูประฆังมุมขวาบน) — ปิดแล้วจะไม่แสดงในรายการ
                             </p>
                         </CardHeader>
                         <CardContent className="px-6 space-y-1">
-                            {[
+                            {([
                                 {
+                                    key: 'new_order' as const,
                                     title: 'คำสั่งซื้อใหม่',
                                     desc: 'แจ้งเตือนเมื่อมีออเดอร์เข้ามา',
-                                    enabled: true,
                                 },
                                 {
+                                    key: 'low_stock' as const,
                                     title: 'สต็อกต่ำ',
-                                    desc: 'แจ้งเตือนเมื่อสินค้าใกล้หมด',
-                                    enabled: true,
+                                    desc: 'แจ้งเตือนเมื่อสินค้าใกล้หมดหรือหมดสต๊อก',
                                 },
                                 {
+                                    key: 'new_customer' as const,
                                     title: 'ลูกค้าใหม่',
                                     desc: 'แจ้งเตือนเมื่อมีลูกค้าลงทะเบียน',
-                                    enabled: false,
                                 },
                                 {
+                                    key: 'weekly_report' as const,
                                     title: 'รายงานประจำสัปดาห์',
-                                    desc: 'สรุปผลการดำเนินงานทุกวันจันทร์',
-                                    enabled: true,
+                                    desc: 'สรุปผลการดำเนินงาน และ system notifications',
                                 },
-                            ].map((row, i) => (
-                                <ToggleRow
-                                    key={i}
+                            ]).map((row) => (
+                                <BoundToggleRow
+                                    key={row.key}
                                     title={row.title}
                                     desc={row.desc}
-                                    defaultEnabled={row.enabled}
+                                    enabled={prefs[row.key]}
+                                    onChange={() => void togglePref(row.key)}
+                                    disabled={savingPrefs}
                                 />
                             ))}
+                            {prefsErr && (
+                                <div className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                                    <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                                    <span>{prefsErr}</span>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>
@@ -306,24 +482,77 @@ export default function Settings() {
                                 เปลี่ยนรหัสผ่าน
                             </CardTitle>
                             <p className="text-xs text-neutral-500 mt-1">
-                                ใช้ได้เฉพาะบัญชีที่ลงทะเบียนด้วย email/password
+                                {isEmailProvider
+                                    ? 'ระบบจะตรวจสอบรหัสผ่านปัจจุบันก่อนเปลี่ยน'
+                                    : `บัญชีนี้เข้าระบบด้วย ${profile?.provider ?? 'OAuth'} — ไม่มีรหัสผ่านในระบบ เปลี่ยนผ่านผู้ให้บริการแทน`}
                             </p>
                         </CardHeader>
                         <CardContent className="px-6 space-y-4 max-w-md">
                             <div className="space-y-2">
                                 <Label htmlFor="cur-pwd">รหัสผ่านปัจจุบัน</Label>
-                                <Input id="cur-pwd" type="password" />
+                                <Input
+                                    id="cur-pwd"
+                                    type="password"
+                                    value={curPwd}
+                                    onChange={(e) => setCurPwd(e.target.value)}
+                                    disabled={!isEmailProvider || savingPwd}
+                                    autoComplete="current-password"
+                                />
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="new-pwd">รหัสผ่านใหม่</Label>
-                                <Input id="new-pwd" type="password" />
+                                <Input
+                                    id="new-pwd"
+                                    type="password"
+                                    value={newPwd}
+                                    onChange={(e) => setNewPwd(e.target.value)}
+                                    disabled={!isEmailProvider || savingPwd}
+                                    autoComplete="new-password"
+                                />
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="confirm-pwd">ยืนยันรหัสผ่านใหม่</Label>
-                                <Input id="confirm-pwd" type="password" />
+                                <Input
+                                    id="confirm-pwd"
+                                    type="password"
+                                    value={confirmPwd}
+                                    onChange={(e) => setConfirmPwd(e.target.value)}
+                                    disabled={!isEmailProvider || savingPwd}
+                                    autoComplete="new-password"
+                                />
                             </div>
-                            <Button className="gap-2 bg-indigo-500 hover:bg-indigo-600">
-                                <Save size={14} /> อัปเดตรหัสผ่าน
+
+                            {pwdErr && (
+                                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                                    <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                                    <span>{pwdErr}</span>
+                                </div>
+                            )}
+                            {pwdSavedAt && (
+                                <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                                    <CheckCircle size={14} className="mt-0.5 flex-shrink-0" />
+                                    <span>เปลี่ยนรหัสผ่านเรียบร้อย</span>
+                                </div>
+                            )}
+
+                            <Button
+                                type="button"
+                                onClick={() => void handleChangePassword()}
+                                disabled={
+                                    savingPwd ||
+                                    !isEmailProvider ||
+                                    !curPwd ||
+                                    !newPwd ||
+                                    !confirmPwd
+                                }
+                                className="gap-2 bg-indigo-500 hover:bg-indigo-600"
+                            >
+                                {savingPwd ? (
+                                    <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                    <Save size={14} />
+                                )}
+                                {savingPwd ? 'กำลังอัปเดต...' : 'อัปเดตรหัสผ่าน'}
                             </Button>
                         </CardContent>
                     </Card>
@@ -334,7 +563,7 @@ export default function Settings() {
                                 Two-Factor Authentication
                             </CardTitle>
                             <p className="text-xs text-neutral-500 mt-1">
-                                เพิ่มความปลอดภัยอีกขั้นด้วย authenticator app
+                                เพิ่มความปลอดภัยอีกขั้นด้วย authenticator app (Google Authenticator, Authy)
                             </p>
                         </CardHeader>
                         <CardContent className="px-6 flex items-center justify-between">
@@ -343,10 +572,12 @@ export default function Settings() {
                                     ยังไม่ได้เปิดใช้งาน
                                 </div>
                                 <div className="text-xs text-neutral-500 mt-0.5">
-                                    แนะนำสำหรับบัญชี admin
+                                    Coming soon — ต้องใช้ Supabase MFA TOTP flow
                                 </div>
                             </div>
-                            <Button variant="outline">เปิดใช้งาน 2FA</Button>
+                            <Button variant="outline" disabled>
+                                เปิดใช้งาน 2FA
+                            </Button>
                         </CardContent>
                     </Card>
                 </TabsContent>
@@ -358,44 +589,144 @@ export default function Settings() {
                             <CardTitle className="text-base font-semibold text-neutral-900">
                                 ข้อมูลธุรกิจ
                             </CardTitle>
+                            <p className="text-xs text-neutral-500 mt-1">
+                                ใช้ในใบเสนอราคา / ใบกำกับภาษี / footer
+                            </p>
                         </CardHeader>
                         <CardContent className="px-6 space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                    <Label htmlFor="biz-name">ชื่อธุรกิจ</Label>
-                                    <Input
-                                        id="biz-name"
-                                        defaultValue="J NAC Thailand"
-                                    />
+                            {orgLoading ? (
+                                <div className="text-sm text-neutral-500 py-4 flex items-center gap-2">
+                                    <Loader2 size={14} className="animate-spin" /> กำลังโหลด...
                                 </div>
-                                <div className="space-y-2">
-                                    <Label htmlFor="biz-tax">เลขประจำตัวผู้เสียภาษี</Label>
-                                    <Input id="biz-tax" />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label htmlFor="biz-tz">Timezone</Label>
-                                    <Input
-                                        id="biz-tz"
-                                        defaultValue="Asia/Bangkok (GMT+7)"
-                                        disabled
-                                        className="bg-neutral-50"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label htmlFor="biz-currency">สกุลเงิน</Label>
-                                    <Input
-                                        id="biz-currency"
-                                        defaultValue="THB (฿)"
-                                        disabled
-                                        className="bg-neutral-50"
-                                    />
-                                </div>
-                            </div>
-                            <div className="flex justify-end pt-2">
-                                <Button className="gap-2 bg-indigo-500 hover:bg-indigo-600">
-                                    <Save size={14} /> บันทึก
-                                </Button>
-                            </div>
+                            ) : (
+                                <>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="biz-name">ชื่อธุรกิจ</Label>
+                                            <Input
+                                                id="biz-name"
+                                                value={orgForm.business_name}
+                                                onChange={(e) =>
+                                                    setOrgForm({
+                                                        ...orgForm,
+                                                        business_name: e.target.value,
+                                                    })
+                                                }
+                                                disabled={savingOrg}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="biz-tax">เลขประจำตัวผู้เสียภาษี</Label>
+                                            <Input
+                                                id="biz-tax"
+                                                value={orgForm.tax_id}
+                                                onChange={(e) =>
+                                                    setOrgForm({ ...orgForm, tax_id: e.target.value })
+                                                }
+                                                placeholder="0-0000-00000-00-0"
+                                                disabled={savingOrg}
+                                            />
+                                        </div>
+                                        <div className="space-y-2 md:col-span-2">
+                                            <Label htmlFor="biz-address">ที่อยู่</Label>
+                                            <textarea
+                                                id="biz-address"
+                                                rows={2}
+                                                value={orgForm.address}
+                                                onChange={(e) =>
+                                                    setOrgForm({ ...orgForm, address: e.target.value })
+                                                }
+                                                disabled={savingOrg}
+                                                className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-y"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="biz-phone">เบอร์โทรธุรกิจ</Label>
+                                            <Input
+                                                id="biz-phone"
+                                                type="tel"
+                                                value={orgForm.phone}
+                                                onChange={(e) =>
+                                                    setOrgForm({ ...orgForm, phone: e.target.value })
+                                                }
+                                                disabled={savingOrg}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="biz-email">Email ติดต่อ</Label>
+                                            <Input
+                                                id="biz-email"
+                                                type="email"
+                                                value={orgForm.email}
+                                                onChange={(e) =>
+                                                    setOrgForm({ ...orgForm, email: e.target.value })
+                                                }
+                                                disabled={savingOrg}
+                                            />
+                                        </div>
+                                        <div className="space-y-2 md:col-span-2">
+                                            <Label htmlFor="biz-website">เว็บไซต์</Label>
+                                            <Input
+                                                id="biz-website"
+                                                type="url"
+                                                value={orgForm.website}
+                                                onChange={(e) =>
+                                                    setOrgForm({ ...orgForm, website: e.target.value })
+                                                }
+                                                placeholder="https://www.corebiz.online"
+                                                disabled={savingOrg}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="biz-tz">Timezone</Label>
+                                            <Input
+                                                id="biz-tz"
+                                                value={`${orgSettings?.timezone ?? 'Asia/Bangkok'} (GMT+7)`}
+                                                disabled
+                                                className="bg-neutral-50"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="biz-currency">สกุลเงิน</Label>
+                                            <Input
+                                                id="biz-currency"
+                                                value={`${orgSettings?.currency ?? 'THB'} (฿)`}
+                                                disabled
+                                                className="bg-neutral-50"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {orgErr && (
+                                        <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                                            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                                            <span>{orgErr}</span>
+                                        </div>
+                                    )}
+
+                                    <div className="flex items-center justify-end gap-3 pt-2">
+                                        {orgSavedAt && !orgDirty && (
+                                            <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                                                <CheckCircle size={12} />
+                                                บันทึกเรียบร้อย
+                                            </span>
+                                        )}
+                                        <Button
+                                            type="button"
+                                            onClick={() => void handleSaveOrg()}
+                                            disabled={savingOrg || !orgDirty}
+                                            className="gap-2 bg-indigo-500 hover:bg-indigo-600"
+                                        >
+                                            {savingOrg ? (
+                                                <Loader2 size={14} className="animate-spin" />
+                                            ) : (
+                                                <Save size={14} />
+                                            )}
+                                            {savingOrg ? 'กำลังบันทึก...' : 'บันทึก'}
+                                        </Button>
+                                    </div>
+                                </>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>
@@ -406,27 +737,35 @@ export default function Settings() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ToggleRow({
+/**
+ * Controlled toggle row — parent owns the state. Used by the Notifications
+ * tab so the toggle reflects the saved DB value and persists on flip.
+ */
+function BoundToggleRow({
     title,
     desc,
-    defaultEnabled,
+    enabled,
+    onChange,
+    disabled = false,
 }: {
     title: string;
     desc: string;
-    defaultEnabled: boolean;
+    enabled: boolean;
+    onChange: () => void;
+    disabled?: boolean;
 }) {
-    const [enabled, setEnabled] = useState(defaultEnabled);
     return (
         <div className="flex items-center justify-between py-3 border-b border-neutral-100 last:border-0">
-            <div className="min-w-0">
+            <div className="min-w-0 pr-4">
                 <div className="text-sm font-medium text-neutral-900">{title}</div>
                 <div className="text-xs text-neutral-500 mt-0.5">{desc}</div>
             </div>
             <button
                 type="button"
-                onClick={() => setEnabled((e) => !e)}
+                onClick={onChange}
+                disabled={disabled}
                 className={cn(
-                    'relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0',
+                    'relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 disabled:opacity-60 disabled:cursor-not-allowed',
                     enabled ? 'bg-indigo-500' : 'bg-neutral-300',
                 )}
                 role="switch"

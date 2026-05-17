@@ -338,14 +338,46 @@ export type Database = {
         Row: {
           avatar_url: string | null; created_at: string; email: string; full_name: string | null;
           id: string; is_active: boolean; language: string; line_user_id: string | null;
+          notification_prefs: Json;
           phone: string | null; provider: string | null; role: string; updated_at: string;
         }
         Insert: {
           avatar_url?: string | null; created_at?: string; email: string; full_name?: string | null;
           id: string; is_active?: boolean; language?: string; line_user_id?: string | null;
+          notification_prefs?: Json;
           phone?: string | null; provider?: string | null; role?: string; updated_at?: string;
         }
         Update: Partial<Database['public']['Tables']['profiles']['Insert']>
+        Relationships: []
+      }
+      org_settings: {
+        Row: {
+          id: boolean;
+          business_name: string | null;
+          tax_id: string | null;
+          timezone: string;
+          currency: string;
+          address: string | null;
+          phone: string | null;
+          email: string | null;
+          website: string | null;
+          updated_at: string;
+          updated_by: string | null;
+        }
+        Insert: {
+          id?: boolean;
+          business_name?: string | null;
+          tax_id?: string | null;
+          timezone?: string;
+          currency?: string;
+          address?: string | null;
+          phone?: string | null;
+          email?: string | null;
+          website?: string | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        }
+        Update: Partial<Database['public']['Tables']['org_settings']['Insert']>
         Relationships: []
       }
       quote_items: {
@@ -417,6 +449,8 @@ export type Product   = Database['public']['Tables']['products']['Row']
 export type ProductInsert = Database['public']['Tables']['products']['Insert']
 export type ProductUpdate = Database['public']['Tables']['products']['Update']
 export type Notification = Database['public']['Tables']['notifications']['Row']
+export type OrgSettings = Database['public']['Tables']['org_settings']['Row']
+export type OrgSettingsUpdate = Database['public']['Tables']['org_settings']['Update']
 
 export type Category  = Database['public']['Tables']['categories']['Row']
 export type Warehouse = Database['public']['Tables']['warehouses']['Row']
