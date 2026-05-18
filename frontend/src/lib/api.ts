@@ -696,11 +696,14 @@ export interface QuoteListItem {
   valid_until: string | null;
   notes: string | null;
   created_at: string;
+  converted_to_order_id: string | null;
   customer: { id: string; name: string; tax_id: string | null; billing_address: unknown } | null;
 }
 
 export interface QuoteItem {
   id: string;
+  product_id: string;
+  variant_id: string | null;
   sku: string;
   product_name: string;
   quantity: number;
@@ -715,6 +718,7 @@ export const quoteRecordApi = {
       .from('quotes')
       .select(`
         id,code,status,subtotal,discount,vat,total,valid_until,notes,created_at,
+        converted_to_order_id,
         customer:customers(id,name,tax_id,billing_address)
       `)
       .order('created_at', { ascending: false });
@@ -726,15 +730,123 @@ export const quoteRecordApi = {
     const [{ data: quote, error: qErr }, { data: items, error: iErr }] = await Promise.all([
       supabase.from('quotes')
         .select(`id,code,status,subtotal,discount,vat,total,valid_until,notes,created_at,
+          converted_to_order_id,
           customer:customers(id,name,tax_id,billing_address)`)
         .eq('id', id).single(),
       supabase.from('quote_items')
-        .select('id,sku,product_name,quantity,unit_price,discount,total')
+        .select('id,product_id,variant_id,sku,product_name,quantity,unit_price,discount,total')
         .eq('quote_id', id),
     ]);
     if (qErr) throw qErr;
     if (iErr) throw iErr;
     return { quote: quote as unknown as QuoteListItem, items: (items ?? []) as QuoteItem[] };
+  },
+
+  /** Update a quote's lifecycle status — draft → sent → accepted/rejected/expired. */
+  async updateStatus(id: string, status: string): Promise<void> {
+    const { error } = await supabase
+      .from('quotes')
+      .update({ status } as never)
+      .eq('id', id);
+    if (error) throw error;
+  },
+
+  /** Permanently remove a quote (cascades to quote_items). */
+  async remove(id: string): Promise<void> {
+    const { error } = await supabase.from('quotes').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  /**
+   * Approve a quote → create an Order with status='pending' that copies all
+   * its line items. The quote's status flips to 'accepted' and its
+   * `converted_to_order_id` points at the new order. Returns the new order's
+   * id + code.
+   *
+   * Done client-side as a sequence of supabase calls (no RPC) — three writes,
+   * each fast. If the order insert succeeds but the link-back update fails,
+   * we don't roll back the order; the operator can re-run approve and the
+   * idempotency check (already-accepted? has converted_to_order_id?) keeps
+   * it safe.
+   */
+  async approveAsOrder(quoteId: string): Promise<{ id: string; code: string }> {
+    // 1. Idempotency: if already accepted + linked, return the existing order.
+    const { data: existing, error: exErr } = await supabase
+      .from('quotes')
+      .select('id, status, converted_to_order_id, customer_id, subtotal, discount, vat, total, notes')
+      .eq('id', quoteId)
+      .single();
+    if (exErr) throw exErr;
+    if (existing.status === 'accepted' && existing.converted_to_order_id) {
+      const { data: alreadyOrder } = await supabase
+        .from('orders')
+        .select('id, code')
+        .eq('id', existing.converted_to_order_id)
+        .maybeSingle();
+      if (alreadyOrder) return alreadyOrder as { id: string; code: string };
+    }
+
+    // 2. Load the quote's items (we need them to mirror as order_items).
+    const { data: qItems, error: qiErr } = await supabase
+      .from('quote_items')
+      .select('product_id,variant_id,sku,product_name,quantity,unit_price,discount,total')
+      .eq('quote_id', quoteId);
+    if (qiErr) throw qiErr;
+    if (!qItems || qItems.length === 0) {
+      throw new Error('ใบเสนอราคานี้ไม่มีรายการสินค้า ไม่สามารถสร้างคำสั่งซื้อได้');
+    }
+
+    // 3. Create the order. Code: ORD-YYYYMMDD-XXXX
+    const code = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${
+      String(Math.floor(Math.random() * 9000) + 1000)
+    }`;
+    const { data: order, error: oErr } = await supabase
+      .from('orders')
+      .insert({
+        code,
+        customer_id: existing.customer_id ?? null,
+        status: 'pending',
+        payment_status: 'pending',
+        subtotal: existing.subtotal,
+        discount: existing.discount,
+        vat: existing.vat,
+        total: existing.total,
+        notes: existing.notes,
+      } as never)
+      .select('id, code')
+      .single();
+    if (oErr) throw oErr;
+
+    // 4. Mirror items into order_items.
+    const itemsForOrder = (qItems as Array<{
+      product_id: string; variant_id: string | null; sku: string;
+      product_name: string; quantity: number; unit_price: number;
+      discount: number; total: number;
+    }>).map((it) => ({
+      order_id: order.id,
+      product_id: it.product_id,
+      variant_id: it.variant_id,
+      sku: it.sku,
+      product_name: it.product_name,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+      discount: it.discount,
+      total: it.total,
+    }));
+    const { error: oiErr } = await supabase.from('order_items').insert(itemsForOrder);
+    if (oiErr) throw oiErr;
+
+    // 5. Flip the quote and link it to the order.
+    const { error: linkErr } = await supabase
+      .from('quotes')
+      .update({
+        status: 'accepted',
+        converted_to_order_id: order.id,
+      } as never)
+      .eq('id', quoteId);
+    if (linkErr) throw linkErr;
+
+    return order as { id: string; code: string };
   },
 };
 

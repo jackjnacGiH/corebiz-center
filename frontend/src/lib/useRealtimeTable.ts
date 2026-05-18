@@ -15,6 +15,7 @@ export type RealtimeTable =
   | 'customers'
   | 'customer_branches'
   | 'products'
+  | 'quotes'
   | 'chat_conversations'
   | 'chat_messages';
 
