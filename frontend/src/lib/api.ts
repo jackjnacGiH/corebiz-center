@@ -215,6 +215,17 @@ export const inventorySyncApi = {
     if (error) throw error;
     return data ?? null;
   },
+
+  /** Recent sync runs, newest first. Default cap: 50 — plenty for a UI list. */
+  async listLogs(limit = 50): Promise<InventorySyncLog[]> {
+    const { data, error } = await supabase
+      .from('inventory_sync_logs')
+      .select('id, started_at, finished_at, source, sheet_rows, matched, updated, skipped, status, error')
+      .order('started_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data ?? [];
+  },
 };
 
 // =========================================================================

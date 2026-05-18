@@ -11,6 +11,7 @@ import { supabase } from './supabase';
 export type RealtimeTable =
   | 'orders'
   | 'inventory'
+  | 'inventory_sync_logs'
   | 'customers'
   | 'customer_branches'
   | 'products'

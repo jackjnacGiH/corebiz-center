@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Package, Plus, Search, Edit2, Trash2, Copy, AlertTriangle, RefreshCw,
   ArrowUpDown, ArrowUp, ArrowDown, MapPin, Box, Tag, ChevronDown,
-  ChevronRight, Upload, FileDown, Filter,
+  ChevronRight, Upload, FileDown, Filter, History,
 } from 'lucide-react';
 import ProductModal, { type ProductFormData } from '../components/ProductModal';
 import {
@@ -20,6 +20,7 @@ import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import ProductImagePreview from '../components/ProductImagePreview';
 import ImportInventoryModal from '../components/ImportInventoryModal';
+import SyncLogDrawer from '../components/SyncLogDrawer';
 import { buildInventoryCsv, downloadCsv } from '../lib/inventoryCsv';
 
 // ─── types & helpers ─────────────────────────────────────────────────────
@@ -105,6 +106,7 @@ export default function Inventory() {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<InventorySyncLog | null>(null);
+  const [isSyncLogOpen, setIsSyncLogOpen] = useState(false);
 
   async function load() {
     setLoading(true); setErr(null);
@@ -343,6 +345,12 @@ export default function Inventory() {
               {syncing ? 'กำลัง Sync…' : 'Sync Sheet'}
             </span>
           </button>
+          <IconBtn
+            onClick={() => setIsSyncLogOpen(true)}
+            title="ประวัติ Sync สต็อก"
+          >
+            <History size={15} />
+          </IconBtn>
           <IconBtn
             onClick={() => setIsImportOpen(true)}
             title="นำเข้าจาก CSV"
@@ -752,6 +760,11 @@ export default function Inventory() {
         onImported={() => void load()}
         existingProducts={products}
         categories={categories}
+      />
+
+      <SyncLogDrawer
+        open={isSyncLogOpen}
+        onClose={() => setIsSyncLogOpen(false)}
       />
     </div>
   );
