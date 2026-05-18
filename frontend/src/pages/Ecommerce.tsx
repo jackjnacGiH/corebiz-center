@@ -1060,7 +1060,7 @@ export default function Ecommerce() {
                             </span>
                             {isMto && (
                               <span className="block mt-0.5 text-[11px] text-orange-700 font-medium">
-                                ⚠️ สินค้าสั่งผลิตใช้เวลา 15-20 วัน
+                                ⚠️ สินค้าสั่งผลิตใช้เวลา 7-10 วัน
                               </span>
                             )}
                             <div className="quantity-stepper">
