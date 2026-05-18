@@ -112,6 +112,10 @@ function readSavedViewMode(): ViewMode {
   } catch {
     /* localStorage unavailable */
   }
+  // On a phone-sized screen, default to Grid (large thumbs, 2-col) so the
+  // first impression isn't a wall of tiny tiles. Desktop keeps the previous
+  // default. Width threshold matches Tailwind's `md` breakpoint.
+  if (typeof window !== 'undefined' && window.innerWidth < 768) return 'grid';
   return 'grid';
 }
 

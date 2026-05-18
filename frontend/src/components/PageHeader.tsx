@@ -56,7 +56,14 @@ export default function PageHeader({
                     )}
                 </div>
             </div>
-            {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
+            {actions && (
+                /* On mobile the actions row wraps below the title and takes
+                   full width so search inputs / buttons don't get truncated.
+                   From md up it pins right of the title like before. */
+                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:flex-nowrap md:flex-shrink-0">
+                    {actions}
+                </div>
+            )}
         </header>
     );
 }

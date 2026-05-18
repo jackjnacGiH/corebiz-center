@@ -326,7 +326,7 @@ export default function Inventory() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <IconBtn onClick={() => load()} disabled={loading} title="Reload">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </IconBtn>
