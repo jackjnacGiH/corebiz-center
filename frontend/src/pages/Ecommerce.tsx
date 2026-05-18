@@ -377,10 +377,10 @@ export default function Ecommerce() {
       </section>
 
       {savedCode && (
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200 flex items-center justify-between">
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex items-center justify-between">
           <span>
-            <CheckCircle2 size={16} className="inline mr-2" />
-            สร้างใบเสนอราคา <strong>{savedCode}</strong> สำเร็จ
+            <CheckCircle2 size={16} className="inline mr-2 text-emerald-600" />
+            สร้างใบเสนอราคา <strong className="text-emerald-900">{savedCode}</strong> สำเร็จ
           </span>
           <div className="flex items-center gap-2">
             {savedQuoteId && (
