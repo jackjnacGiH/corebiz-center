@@ -12,10 +12,15 @@ import {
     CheckCircle,
     AlertTriangle,
     Loader2,
+    Key,
+    Trash2,
+    Eye,
+    EyeOff,
+    ExternalLink,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthProvider';
 import { supabase, DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '../lib/supabase';
-import { orgSettingsApi } from '../lib/api';
+import { orgSettingsApi, apiSecretsApi } from '../lib/api';
 import type { OrgSettings } from '../lib/database.types';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
@@ -30,9 +35,9 @@ import { cn } from '@/lib/utils';
 export default function Settings() {
     const { profile, refresh } = useAuth();
     const { language, setLanguage, t } = useLanguage();
-    const [tab, setTab] = useState<'profile' | 'notifications' | 'security' | 'workspace'>(
-        'profile',
-    );
+    const [tab, setTab] = useState<
+        'profile' | 'notifications' | 'security' | 'workspace' | 'integrations'
+    >('profile');
 
     // ── Profile form state ────────────────────────────────────────────
     const [fullName, setFullName] = useState(profile?.full_name ?? '');
@@ -261,6 +266,9 @@ export default function Settings() {
                     </TabsTrigger>
                     <TabsTrigger value="workspace" className="gap-2">
                         <Building2 size={14} /> Workspace
+                    </TabsTrigger>
+                    <TabsTrigger value="integrations" className="gap-2">
+                        <Key size={14} /> Integrations
                     </TabsTrigger>
                 </TabsList>
 
@@ -730,7 +738,281 @@ export default function Settings() {
                         </CardContent>
                     </Card>
                 </TabsContent>
+
+                {/* ── Integrations tab — API keys ─────────────────────── */}
+                <TabsContent value="integrations" className="space-y-4 mt-0">
+                    <IntegrationsTab />
+                </TabsContent>
             </Tabs>
+        </div>
+    );
+}
+
+// ─── Integrations tab ─────────────────────────────────────────────────────────
+// API keys live in vault.secrets, written through the `set_api_secret` RPC.
+// Values never come back to the browser in plain text — `previewSecret`
+// returns a masked "AIza••••••••XYZW" string that's safe to display.
+
+interface SecretSpec {
+    /** Name as stored in vault.secrets — must match what the Edge Function reads. */
+    name: string;
+    /** Thai label shown in the UI. */
+    label: string;
+    /** One-line description of what the key is for. */
+    desc: string;
+    /** Where to get the key (link shown next to the field). */
+    docs?: { url: string; label: string };
+    /** Placeholder text inside the input. */
+    placeholder?: string;
+}
+
+const SECRETS: SecretSpec[] = [
+    {
+        name: 'GEMINI_API_KEY',
+        label: 'Google Gemini API Key',
+        desc: 'LLM ที่ใช้ตอบลูกค้าใน Openclaw RAG (free tier 1,500 req/วัน)',
+        docs: { url: 'https://aistudio.google.com/app/apikey', label: 'รับ Gemini key' },
+        placeholder: 'AIza...',
+    },
+    {
+        name: 'PHAYA_API_KEY',
+        label: 'Phaya.io API Key (Embedding หลัก)',
+        desc: 'Embedding ภาษาไทย — ใช้สำหรับ search ใน knowledge base',
+        docs: { url: 'https://phaya.io', label: 'รับ Phaya key' },
+        placeholder: 'phaya_...',
+    },
+    {
+        name: 'OPENAI_API_KEY',
+        label: 'OpenAI API Key (Embedding fallback)',
+        desc: 'ใช้สำรองตอน Phaya หมด credit (text-embedding-3-small)',
+        docs: { url: 'https://platform.openai.com/api-keys', label: 'รับ OpenAI key' },
+        placeholder: 'sk-...',
+    },
+];
+
+function IntegrationsTab() {
+    return (
+        <Card className="gap-5 py-6">
+            <CardHeader className="px-6">
+                <CardTitle className="text-base font-semibold text-neutral-900">
+                    API Keys
+                </CardTitle>
+                <p className="text-xs text-neutral-500 mt-1">
+                    Key ทั้งหมดเก็บใน Supabase Vault (เข้ารหัส) — แสดงเป็นรูป
+                    <code className="mx-1 px-1.5 py-0.5 bg-neutral-100 rounded text-[10px]">AIza••••••••XYZW</code>
+                    เพื่อความปลอดภัย ไม่ส่งค่าเต็มกลับมาให้ฝั่ง browser
+                </p>
+            </CardHeader>
+            <CardContent className="px-6 space-y-4">
+                {SECRETS.map((s) => (
+                    <SecretRow key={s.name} spec={s} />
+                ))}
+            </CardContent>
+        </Card>
+    );
+}
+
+function SecretRow({ spec }: { spec: SecretSpec }) {
+    const [preview, setPreview] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState('');
+    const [showDraft, setShowDraft] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [removing, setRemoving] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+    const [savedAt, setSavedAt] = useState<number | null>(null);
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            setPreview(await apiSecretsApi.previewSecret(spec.name));
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        void load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    async function handleSave() {
+        if (!draft.trim()) {
+            setErr('ต้องใส่ค่า key');
+            return;
+        }
+        setSaving(true);
+        setErr(null);
+        try {
+            await apiSecretsApi.setSecret(spec.name, draft.trim());
+            setDraft('');
+            setShowDraft(false);
+            setEditing(false);
+            setSavedAt(Date.now());
+            await load();
+            // Hide the saved indicator after a few seconds
+            window.setTimeout(() => setSavedAt(null), 3000);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function handleRemove() {
+        if (!window.confirm(`ลบ ${spec.label} ออกจาก vault ใช่ไหม?`)) return;
+        setRemoving(true);
+        setErr(null);
+        try {
+            await apiSecretsApi.removeSecret(spec.name);
+            await load();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setRemoving(false);
+        }
+    }
+
+    const hasValue = preview !== null;
+
+    return (
+        <div className="rounded-lg border border-neutral-200 bg-white p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <Label className="text-sm font-semibold text-neutral-900">
+                            {spec.label}
+                        </Label>
+                        {hasValue ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                <CheckCircle size={9} /> Active
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-neutral-100 text-neutral-600 border border-neutral-200">
+                                Not set
+                            </span>
+                        )}
+                    </div>
+                    <p className="text-xs text-neutral-500 mt-1">{spec.desc}</p>
+                </div>
+                {spec.docs && (
+                    <a
+                        href={spec.docs.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-indigo-600 hover:underline inline-flex items-center gap-1 flex-shrink-0 mt-0.5"
+                    >
+                        {spec.docs.label}
+                        <ExternalLink size={11} />
+                    </a>
+                )}
+            </div>
+
+            {/* Display */}
+            {!editing && (
+                <div className="flex items-center gap-2">
+                    <code className="flex-1 bg-neutral-50 border border-neutral-200 rounded px-3 py-2 text-sm font-mono text-neutral-700 tabular-nums">
+                        {loading ? '...' : (preview ?? '— ยังไม่ได้ตั้งค่า —')}
+                    </code>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                            setEditing(true);
+                            setDraft('');
+                            setShowDraft(false);
+                        }}
+                    >
+                        {hasValue ? 'แก้ไข' : 'ตั้งค่า'}
+                    </Button>
+                    {hasValue && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleRemove()}
+                            disabled={removing}
+                            className="border-red-200 text-red-700 hover:bg-red-50"
+                            title="ลบ key ออกจาก vault"
+                        >
+                            {removing ? (
+                                <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                                <Trash2 size={13} />
+                            )}
+                        </Button>
+                    )}
+                </div>
+            )}
+
+            {/* Edit */}
+            {editing && (
+                <div className="space-y-2">
+                    <div className="relative">
+                        <Input
+                            type={showDraft ? 'text' : 'password'}
+                            placeholder={spec.placeholder ?? 'paste API key ที่นี่...'}
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            autoFocus
+                            className="pr-10 font-mono"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowDraft((v) => !v)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                            title={showDraft ? 'ซ่อน key' : 'แสดง key'}
+                        >
+                            {showDraft ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleSave()}
+                            disabled={saving || !draft.trim()}
+                            className="gap-1.5 bg-indigo-500 hover:bg-indigo-600"
+                        >
+                            {saving ? (
+                                <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                                <Save size={13} />
+                            )}
+                            บันทึก
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                                setEditing(false);
+                                setDraft('');
+                                setErr(null);
+                            }}
+                            disabled={saving}
+                        >
+                            ยกเลิก
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            {err && (
+                <p className="text-xs text-red-700 flex items-center gap-1">
+                    <AlertTriangle size={11} /> {err}
+                </p>
+            )}
+            {savedAt && (
+                <p className="text-xs text-emerald-700 flex items-center gap-1">
+                    <CheckCircle size={11} /> บันทึกแล้ว
+                </p>
+            )}
         </div>
     );
 }

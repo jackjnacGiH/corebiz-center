@@ -1342,3 +1342,40 @@ export const orgSettingsApi = {
     return data as OrgSettings;
   },
 };
+
+// =========================================================================
+// API secrets (vault-backed)
+// =========================================================================
+/**
+ * Wraps the three SECURITY DEFINER RPCs that gate vault.secrets access:
+ *   - set      → owner only
+ *   - preview  → staff/owner, returns masked "AIza••••••••XYZW"
+ *   - remove   → owner only
+ *
+ * The plain values are never returned to the browser. Edge Functions read
+ * the unmasked secret server-side via `get_api_secret_internal` (service
+ * role only — not exposed here).
+ */
+export const apiSecretsApi = {
+  async setSecret(name: string, value: string): Promise<void> {
+    const { error } = await supabase.rpc('set_api_secret', {
+      p_name: name,
+      p_value: value,
+    });
+    if (error) throw error;
+  },
+
+  /** Returns null when no value is stored yet; a masked string otherwise. */
+  async previewSecret(name: string): Promise<string | null> {
+    const { data, error } = await supabase.rpc('get_api_secret_preview', {
+      p_name: name,
+    });
+    if (error) throw error;
+    return (data as string | null) ?? null;
+  },
+
+  async removeSecret(name: string): Promise<void> {
+    const { error } = await supabase.rpc('delete_api_secret', { p_name: name });
+    if (error) throw error;
+  },
+};

@@ -471,6 +471,9 @@ export type Database = {
       }
       recalculate_customer_totals: { Args: { p_customer_id: string }; Returns: undefined }
       trigger_inventory_sync: { Args: Record<string, never>; Returns: number }
+      set_api_secret: { Args: { p_name: string; p_value: string }; Returns: undefined }
+      get_api_secret_preview: { Args: { p_name: string }; Returns: string | null }
+      delete_api_secret: { Args: { p_name: string }; Returns: undefined }
     }
     Enums: {}
     CompositeTypes: {}
