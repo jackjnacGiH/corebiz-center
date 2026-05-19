@@ -196,6 +196,18 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['customer_branches']['Insert']>
         Relationships: []
       }
+      knowledge_categories: {
+        Row: {
+          id: string; value: string; label: string; sort_order: number;
+          created_at: string; updated_at: string;
+        }
+        Insert: {
+          id?: string; value: string; label: string; sort_order?: number;
+          created_at?: string; updated_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['knowledge_categories']['Insert']>
+        Relationships: []
+      }
       inventory: {
         Row: {
           id: string; product_id: string; quantity: number; reorder_level: number; reserved: number;

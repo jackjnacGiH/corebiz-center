@@ -21,12 +21,16 @@ import {
 import {
     knowledgeAdminApi,
     knowledgeApi,
+    knowledgeCategoriesApi,
     type KnowledgeSource,
     type KnowledgeChunkRow,
     type KnowledgeMatch,
+    type KnowledgeCategory,
 } from '../lib/api';
+import { useRealtimeTable } from '../lib/useRealtimeTable';
 import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
+import CategoryManagerModal from '../components/CategoryManagerModal';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -34,13 +38,13 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
-const CATEGORIES = [
-    { value: 'products',   label: 'สินค้า' },
-    { value: 'policies',   label: 'นโยบาย' },
-    { value: 'faq',        label: 'คำถามที่พบบ่อย' },
-    { value: 'procedures', label: 'ขั้นตอนปฏิบัติงาน' },
-    { value: 'categories', label: 'หมวดหมู่' },
-    { value: 'manual',     label: 'อื่นๆ' },
+/**
+ * Fallback categories shown only when the categories table is empty / the
+ * DB query fails. The real source of truth is `knowledge_categories` —
+ * staff can manage it via the CategoryManagerModal.
+ */
+const FALLBACK_CATEGORIES: KnowledgeCategory[] = [
+    { id: 'fallback-faq', value: 'faq', label: 'คำถามที่พบบ่อย', sort_order: 0, created_at: '', updated_at: '' },
 ];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -64,11 +68,13 @@ export interface EditingSource {
 export default function OpenclawRAG() {
     const [tab, setTab] = useState<'add' | 'browse' | 'test'>('add');
     const [sources, setSources] = useState<KnowledgeSource[]>([]);
+    const [categories, setCategories] = useState<KnowledgeCategory[]>(FALLBACK_CATEGORIES);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [search, setSearch] = useState('');
     /** Non-null when the form should run in "edit mode" instead of "add mode". */
     const [editing, setEditing] = useState<EditingSource | null>(null);
+    const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
 
     async function loadSources() {
         setLoading(true);
@@ -82,9 +88,22 @@ export default function OpenclawRAG() {
         }
     }
 
+    async function loadCategories() {
+        try {
+            const list = await knowledgeCategoriesApi.list();
+            if (list.length > 0) setCategories(list);
+            // If empty, keep the FALLBACK so the form is at least usable.
+        } catch (e) {
+            console.warn('loadCategories failed, using fallback:', e);
+        }
+    }
+
     useEffect(() => {
         void loadSources();
+        void loadCategories();
     }, []);
+    // When another tab/user edits categories, refresh ours so the dropdown stays in sync.
+    useRealtimeTable('knowledge_categories', () => void loadCategories());
 
     const stats = useMemo(() => {
         const chunks = sources.reduce((acc, s) => acc + s.chunks_count, 0);
@@ -169,6 +188,8 @@ export default function OpenclawRAG() {
                 <TabsContent value="add">
                     <AddKnowledgeTab
                         editing={editing}
+                        categories={categories}
+                        onManageCategories={() => setIsCategoryManagerOpen(true)}
                         onDone={() => {
                             setEditing(null);
                             void loadSources();
@@ -193,6 +214,12 @@ export default function OpenclawRAG() {
                     <TestRAGTab />
                 </TabsContent>
             </Tabs>
+
+            <CategoryManagerModal
+                isOpen={isCategoryManagerOpen}
+                onClose={() => setIsCategoryManagerOpen(false)}
+                onChanged={() => void loadCategories()}
+            />
         </div>
     );
 }
@@ -201,15 +228,21 @@ export default function OpenclawRAG() {
 
 function AddKnowledgeTab({
     editing,
+    categories,
+    onManageCategories,
     onDone,
     onCancelEdit,
 }: {
     editing: EditingSource | null;
+    categories: KnowledgeCategory[];
+    onManageCategories: () => void;
     onDone: () => void;
     onCancelEdit: () => void;
 }) {
     const [title, setTitle] = useState('');
-    const [category, setCategory] = useState('faq');
+    // Default to the first available category — keeps the dropdown valid even
+    // if 'faq' was deleted by the operator.
+    const [category, setCategory] = useState(categories[0]?.value ?? 'manual');
     const [tagsInput, setTagsInput] = useState('');
     const [content, setContent] = useState('');
     const [language, setLanguage] = useState<'th' | 'en' | 'mixed'>('th');
@@ -234,6 +267,16 @@ function AddKnowledgeTab({
             setSuccess(null);
         }
     }, [editing]);
+
+    // If the currently-selected category gets deleted (live via realtime),
+    // fall back to the first available one so the dropdown never points at
+    // an invalid value.
+    useEffect(() => {
+        if (categories.length === 0) return;
+        if (!categories.some((c) => c.value === category)) {
+            setCategory(categories[0].value);
+        }
+    }, [categories, category]);
 
     function resetForm() {
         setTitle('');
@@ -320,20 +363,38 @@ function AddKnowledgeTab({
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="category" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider flex items-center gap-1">
-                                <FolderOpen size={11} /> หมวด
-                            </Label>
+                            <div className="flex items-center justify-between">
+                                <Label htmlFor="category" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider flex items-center gap-1">
+                                    <FolderOpen size={11} /> หมวด
+                                </Label>
+                                <button
+                                    type="button"
+                                    onClick={onManageCategories}
+                                    className="text-[10px] font-semibold text-indigo-600 hover:underline inline-flex items-center gap-0.5"
+                                    title="เพิ่ม / แก้ไข / ลบ หมวด"
+                                >
+                                    <FileEdit size={9} /> จัดการ
+                                </button>
+                            </div>
                             <select
                                 id="category"
                                 value={category}
                                 onChange={(e) => setCategory(e.target.value)}
                                 className={selectClass}
                             >
-                                {CATEGORIES.map((c) => (
-                                    <option key={c.value} value={c.value}>
+                                {categories.map((c) => (
+                                    <option key={c.id} value={c.value}>
                                         {c.label}
                                     </option>
                                 ))}
+                                {/* Preserve the editing source's category even if it was
+                                    deleted from the categories table — show it as a
+                                    disabled hint so the user knows what's selected. */}
+                                {editing && !categories.some((c) => c.value === category) && (
+                                    <option key="orphan" value={category} disabled>
+                                        {category} (หมวดถูกลบไปแล้ว)
+                                    </option>
+                                )}
                             </select>
                         </div>
                     </div>

@@ -1259,6 +1259,65 @@ export const knowledgeAdminApi = {
   },
 };
 
+// =========================================================================
+// Knowledge categories (the "หมวด" dropdown in OpenclawRAG)
+// =========================================================================
+export interface KnowledgeCategory {
+  id: string;
+  value: string;
+  label: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const knowledgeCategoriesApi = {
+  /** Ordered list — lower sort_order first, then alphabetical by label. */
+  async list(): Promise<KnowledgeCategory[]> {
+    const { data, error } = await supabase
+      .from('knowledge_categories')
+      .select('id, value, label, sort_order, created_at, updated_at')
+      .order('sort_order', { ascending: true })
+      .order('label', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as KnowledgeCategory[];
+  },
+
+  async create(input: { value: string; label: string; sort_order?: number }): Promise<KnowledgeCategory> {
+    const { data, error } = await supabase
+      .from('knowledge_categories')
+      .insert({
+        value: input.value.trim().toLowerCase(),
+        label: input.label.trim(),
+        sort_order: input.sort_order ?? 100,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data as KnowledgeCategory;
+  },
+
+  async update(id: string, patch: { value?: string; label?: string; sort_order?: number }): Promise<KnowledgeCategory> {
+    const cleaned: { value?: string; label?: string; sort_order?: number } = {};
+    if (patch.value !== undefined) cleaned.value = patch.value.trim().toLowerCase();
+    if (patch.label !== undefined) cleaned.label = patch.label.trim();
+    if (patch.sort_order !== undefined) cleaned.sort_order = patch.sort_order;
+    const { data, error } = await supabase
+      .from('knowledge_categories')
+      .update(cleaned)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as KnowledgeCategory;
+  },
+
+  async remove(id: string): Promise<void> {
+    const { error } = await supabase.from('knowledge_categories').delete().eq('id', id);
+    if (error) throw error;
+  },
+};
+
 export const knowledgeApi = {
   /**
    * Call edge function `rag-search` — handles Phaya embedding + match_knowledge() internally.
