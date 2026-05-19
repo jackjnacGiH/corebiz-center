@@ -125,7 +125,7 @@ export default function OpenclawRAG() {
     return (
         <div className="animate-fade-in space-y-6">
             <PageHeader
-                title="Openclaw RAG — Knowledge Base"
+                title="RAG — Knowledge Base"
                 subtitle={
                     'ใส่/จัดการเอกสาร ความรู้ — ข้อมูลจะถูก embed + เก็บใน vector store เพื่อใช้ใน AI Admin Chat'
                 }
