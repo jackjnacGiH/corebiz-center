@@ -1236,6 +1236,27 @@ export const knowledgeAdminApi = {
     if (error) throw error;
     return data as { source_path: string; chunks_count: number };
   },
+
+  /**
+   * Edit an existing knowledge source in place. The source_path stays
+   * stable — old chunks are deleted, new chunks are written with the same
+   * path so links / cited answers don't drift.
+   */
+  async replaceManual(input: {
+    source_path: string;
+    title: string;
+    content: string;
+    category?: string;
+    tags?: string[];
+    language?: 'th' | 'en' | 'mixed';
+    visibility?: 'public' | 'internal';
+  }): Promise<{ source_path: string; chunks_count: number; total_tokens: number }> {
+    const { data, error } = await supabase.functions.invoke('replace-knowledge', {
+      body: input,
+    });
+    if (error) throw error;
+    return data as { source_path: string; chunks_count: number; total_tokens: number };
+  },
 };
 
 export const knowledgeApi = {

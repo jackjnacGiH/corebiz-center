@@ -45,12 +45,30 @@ const CATEGORIES = [
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Editing payload handed from BrowseTab → AddKnowledgeTab when the user
+ * clicks "แก้ไข" on an existing source. The form pre-fills with these
+ * values; on save we call `replaceManual` (delete-then-insert) instead of
+ * the regular `addManual` so the source_path stays stable.
+ */
+export interface EditingSource {
+    source_path: string;
+    title: string;
+    category: string;
+    tags: string[];
+    language: 'th' | 'en' | 'mixed';
+    visibility: 'public' | 'internal';
+    content: string; // reconstructed by joining chunks in order
+}
+
 export default function OpenclawRAG() {
     const [tab, setTab] = useState<'add' | 'browse' | 'test'>('add');
     const [sources, setSources] = useState<KnowledgeSource[]>([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [search, setSearch] = useState('');
+    /** Non-null when the form should run in "edit mode" instead of "add mode". */
+    const [editing, setEditing] = useState<EditingSource | null>(null);
 
     async function loadSources() {
         setLoading(true);
@@ -149,7 +167,14 @@ export default function OpenclawRAG() {
                 </TabsList>
 
                 <TabsContent value="add">
-                    <AddKnowledgeTab onAdded={() => void loadSources()} />
+                    <AddKnowledgeTab
+                        editing={editing}
+                        onDone={() => {
+                            setEditing(null);
+                            void loadSources();
+                        }}
+                        onCancelEdit={() => setEditing(null)}
+                    />
                 </TabsContent>
                 <TabsContent value="browse">
                     <BrowseTab
@@ -158,6 +183,10 @@ export default function OpenclawRAG() {
                         setSearch={setSearch}
                         loading={loading}
                         onReload={loadSources}
+                        onEditRequest={(e) => {
+                            setEditing(e);
+                            setTab('add');
+                        }}
                     />
                 </TabsContent>
                 <TabsContent value="test">
@@ -170,7 +199,15 @@ export default function OpenclawRAG() {
 
 // ─── Add Knowledge Tab ────────────────────────────────────────────────────────
 
-function AddKnowledgeTab({ onAdded }: { onAdded: () => void }) {
+function AddKnowledgeTab({
+    editing,
+    onDone,
+    onCancelEdit,
+}: {
+    editing: EditingSource | null;
+    onDone: () => void;
+    onCancelEdit: () => void;
+}) {
     const [title, setTitle] = useState('');
     const [category, setCategory] = useState('faq');
     const [tagsInput, setTagsInput] = useState('');
@@ -180,6 +217,32 @@ function AddKnowledgeTab({ onAdded }: { onAdded: () => void }) {
     const [saving, setSaving] = useState(false);
     const [success, setSuccess] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
+
+    const isEditMode = editing !== null;
+
+    // When BrowseTab signals an edit, copy the source into the form. Reset
+    // when the parent clears `editing` (after a successful save or cancel).
+    useEffect(() => {
+        if (editing) {
+            setTitle(editing.title);
+            setCategory(editing.category);
+            setTagsInput(editing.tags.join(', '));
+            setContent(editing.content);
+            setLanguage(editing.language);
+            setVisibility(editing.visibility);
+            setErr(null);
+            setSuccess(null);
+        }
+    }, [editing]);
+
+    function resetForm() {
+        setTitle('');
+        setCategory('faq');
+        setTagsInput('');
+        setContent('');
+        setLanguage('th');
+        setVisibility('public');
+    }
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -192,19 +255,20 @@ function AddKnowledgeTab({ onAdded }: { onAdded: () => void }) {
                 .split(',')
                 .map((t) => t.trim())
                 .filter(Boolean);
-            const result = await knowledgeAdminApi.addManual({
-                title,
-                content,
-                category,
-                tags,
-                language,
-                visibility,
-            });
-            setSuccess(`บันทึก ${result.chunks_count} chunks ที่ ${result.source_path}`);
-            setTitle('');
-            setContent('');
-            setTagsInput('');
-            onAdded();
+            const payload = { title, content, category, tags, language, visibility };
+            const result = isEditMode
+                ? await knowledgeAdminApi.replaceManual({
+                      ...payload,
+                      source_path: editing!.source_path,
+                  })
+                : await knowledgeAdminApi.addManual(payload);
+            setSuccess(
+                isEditMode
+                    ? `อัปเดต ${result.chunks_count} chunks ที่ ${result.source_path}`
+                    : `บันทึก ${result.chunks_count} chunks ที่ ${result.source_path}`,
+            );
+            if (!isEditMode) resetForm();
+            onDone();
         } catch (e) {
             setErr((e as Error).message);
         } finally {
@@ -219,6 +283,29 @@ function AddKnowledgeTab({ onAdded }: { onAdded: () => void }) {
         <Card className="max-w-3xl gap-5 py-6">
             <CardContent className="px-6">
                 <form onSubmit={handleSubmit} className="space-y-5">
+                    {isEditMode && (
+                        <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                            <FileEdit size={16} className="mt-0.5 flex-shrink-0 text-amber-700" />
+                            <div className="flex-1">
+                                <div className="font-semibold">โหมดแก้ไข</div>
+                                <div className="text-xs text-amber-700 mt-0.5">
+                                    กำลังแก้ไข{' '}
+                                    <code className="bg-white border border-amber-200 px-1 py-0.5 rounded font-mono">
+                                        {editing!.source_path}
+                                    </code>
+                                    {' '}— บันทึกแล้วระบบจะลบ chunks เดิมและสร้างใหม่ทั้งหมด
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={onCancelEdit}
+                                className="text-xs font-semibold text-amber-700 hover:underline flex-shrink-0"
+                            >
+                                ยกเลิกการแก้ไข
+                            </button>
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="md:col-span-2 space-y-2">
                             <Label htmlFor="title" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
@@ -331,15 +418,36 @@ function AddKnowledgeTab({ onAdded }: { onAdded: () => void }) {
                         <Button
                             type="submit"
                             disabled={saving || !title.trim() || !content.trim()}
-                            className="gap-2 bg-indigo-500 hover:bg-indigo-600"
+                            className={cn(
+                                'gap-2',
+                                isEditMode
+                                    ? 'bg-amber-600 hover:bg-amber-700'
+                                    : 'bg-indigo-500 hover:bg-indigo-600',
+                            )}
                         >
                             {saving ? (
                                 <Loader2 size={14} className="animate-spin" />
                             ) : (
                                 <Save size={14} />
                             )}
-                            {saving ? 'กำลัง embed + บันทึก...' : 'บันทึก + Embed'}
+                            {saving
+                                ? isEditMode
+                                    ? 'กำลังอัปเดต + re-embed...'
+                                    : 'กำลัง embed + บันทึก...'
+                                : isEditMode
+                                  ? 'บันทึกการแก้ไข'
+                                  : 'บันทึก + Embed'}
                         </Button>
+                        {isEditMode && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={onCancelEdit}
+                                disabled={saving}
+                            >
+                                ยกเลิก
+                            </Button>
+                        )}
                         <span className="text-xs text-neutral-500">
                             ระบบใช้ OpenAI text-embedding-3-small (1536 dim) สร้าง embedding อัตโนมัติ
                         </span>
@@ -358,12 +466,14 @@ function BrowseTab({
     setSearch,
     loading,
     onReload,
+    onEditRequest,
 }: {
     sources: KnowledgeSource[];
     search: string;
     setSearch: (s: string) => void;
     loading: boolean;
     onReload: () => void;
+    onEditRequest: (e: EditingSource) => void;
 }) {
     const [selectedSource, setSelectedSource] = useState<string | null>(null);
     const [chunks, setChunks] = useState<KnowledgeChunkRow[]>([]);
@@ -385,6 +495,36 @@ function BrowseTab({
             setSelectedSource(null);
             setChunks([]);
             onReload();
+        } catch (e) {
+            alert((e as Error).message);
+        }
+    }
+
+    /**
+     * Reconstruct the markdown content from the source's chunks so the user
+     * can edit it. We join the chunks in `chunk_index` order; each chunk
+     * already includes its `## heading` (added by the chunker), so the
+     * concatenation is a faithful round-trip of the original markdown body.
+     */
+    async function handleEdit(source_path: string) {
+        try {
+            const all = await knowledgeAdminApi.listChunksForSource(source_path);
+            if (all.length === 0) {
+                alert('ไม่พบ chunks ของแหล่งนี้ — อาจถูกลบไปแล้ว');
+                return;
+            }
+            const sorted = [...all].sort((a, b) => a.chunk_index - b.chunk_index);
+            const reconstructed = sorted.map((c) => c.content).join('\n\n');
+            const first = sorted[0];
+            onEditRequest({
+                source_path,
+                title: first.title ?? '',
+                category: first.source_type,
+                tags: first.tags ?? [],
+                language: (first.language as 'th' | 'en' | 'mixed') ?? 'th',
+                visibility: (first.visibility as 'public' | 'internal') ?? 'public',
+                content: reconstructed,
+            });
         } catch (e) {
             alert((e as Error).message);
         }
@@ -485,14 +625,25 @@ function BrowseTab({
                             <code className="text-xs text-indigo-600 truncate">
                                 {selectedSource}
                             </code>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleDelete(selectedSource)}
-                                className="h-8 gap-1 border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800"
-                            >
-                                <Trash2 size={12} /> ลบทั้งหมด
-                            </Button>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => void handleEdit(selectedSource)}
+                                    className="h-8 gap-1 border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
+                                    title="แก้ไขเอกสารนี้ — ระบบจะ delete + re-embed"
+                                >
+                                    <FileEdit size={12} /> แก้ไข
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleDelete(selectedSource)}
+                                    className="h-8 gap-1 border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800"
+                                >
+                                    <Trash2 size={12} /> ลบทั้งหมด
+                                </Button>
+                            </div>
                         </div>
                         <div
                             className="overflow-y-auto p-4 space-y-3"
