@@ -797,6 +797,16 @@ export const quoteRecordApi = {
     }
 
     // 3. Create the order. Code: ORD-YYYYMMDD-XXXX
+    //
+    // Status notes:
+    //   - `status: 'processing'`  — Boss Jack's flow says approving a
+    //     quote means "ok, start preparing this order", which maps to
+    //     the existing "กำลังเตรียม" tab. We deliberately skip 'pending'
+    //     because the quote itself was already sitting in รอดำเนินการ
+    //     waiting for this exact decision.
+    //   - `payment_status: 'unpaid'` — the orders_payment_status_check
+    //     constraint only accepts ['unpaid','partial','paid','refunded'].
+    //     'pending' would violate it.
     const code = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${
       String(Math.floor(Math.random() * 9000) + 1000)
     }`;
@@ -805,8 +815,8 @@ export const quoteRecordApi = {
       .insert({
         code,
         customer_id: existing.customer_id ?? null,
-        status: 'pending',
-        payment_status: 'pending',
+        status: 'processing',
+        payment_status: 'unpaid',
         subtotal: existing.subtotal,
         discount: existing.discount,
         vat: existing.vat,
