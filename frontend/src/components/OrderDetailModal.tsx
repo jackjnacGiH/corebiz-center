@@ -23,7 +23,7 @@ const STATUS_LABELS: Record<OrderStatus, string> = {
     pending:    'รอดำเนินการ',
     processing: 'กำลังเตรียม',
     shipped:    'จัดส่งแล้ว',
-    delivered:  'ส่งถึงปลายทาง',
+    delivered:  'รับสินค้าแล้ว',
     cancelled:  'ยกเลิก',
     returned:   'คืนสินค้า',
 };
