@@ -90,16 +90,12 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
             .finally(() => setLoading(false));
     }, [isOpen, quoteId]);
 
+    // No second confirm dialog — opening this modal + reading the line items
+    // + clicking the big green/red action button is already the deliberate
+    // step. Browser-native window.confirm() on top of that felt like a
+    // redundant extra click.
     async function handleApprove() {
         if (!quote) return;
-        if (
-            !window.confirm(
-                `อนุมัติใบเสนอราคา ${quote.code} ใช่ไหม?\n\n` +
-                    `ระบบจะสร้าง "คำสั่งซื้อ" ใหม่ในสถานะ "กำลังเตรียม" พร้อมรายการสินค้าทุกบรรทัด ` +
-                    `แล้วเปลี่ยนสถานะใบเสนอราคาเป็น "อนุมัติแล้ว"`,
-            )
-        )
-            return;
         setApproving(true);
         setErr(null);
         try {
@@ -119,7 +115,6 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
 
     async function handleReject() {
         if (!quote) return;
-        if (!window.confirm(`ปฏิเสธใบเสนอราคา ${quote.code} ใช่ไหม?`)) return;
         setRejecting(true);
         setErr(null);
         try {
