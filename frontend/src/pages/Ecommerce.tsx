@@ -716,38 +716,44 @@ export default function Ecommerce() {
           );
         }
 
-        // Default → mix group cards + ungrouped cards in one grid; any
-        // expanded groups render their members in a panel below the grid.
+        // Default → one big grid that mixes group cards + ungrouped cards.
+        // When a group is open, its expansion is inserted as a col-span-full
+        // tile right after its card so the SKU children land inline (Boss
+        // Jack's spec: "expand inline" + members wrap to 2-3 rows if needed).
+        // grid-auto-flow:dense lets sibling cards backfill the row that the
+        // open group card was on, so we don't end up with a half-empty row.
         return (
-          <div className="space-y-4">
-            <section className={gridSectionCls}>
-              {groupedDisplay.groups.map(({ group, members }) => (
+          <section className={`${gridSectionCls} grid-flow-row-dense`}>
+            {groupedDisplay.groups.flatMap(({ group, members }) => {
+              const isOpen = expandedGroups.has(group.id);
+              const out: ReactNode[] = [
                 <GroupGridCard
                   key={group.id}
                   group={group}
                   count={members.length}
-                  isOpen={expandedGroups.has(group.id)}
+                  isOpen={isOpen}
                   onToggle={() => toggleGroup(group.id)}
-                />
-              ))}
-              {groupedDisplay.ungrouped.map(renderGridCard)}
-            </section>
-
-            {groupedDisplay.groups
-              .filter(({ group }) => expandedGroups.has(group.id))
-              .map(({ group, members }) => (
-                <ExpandedGroupPanel
-                  key={`exp-${group.id}`}
-                  group={group}
-                  members={members}
-                  onClose={() => toggleGroup(group.id)}
-                >
-                  <section className={gridSectionCls}>
-                    {members.map(renderGridCard)}
-                  </section>
-                </ExpandedGroupPanel>
-              ))}
-          </div>
+                />,
+              ];
+              if (isOpen) {
+                out.push(
+                  <div key={`exp-${group.id}`} className="col-span-full">
+                    <ExpandedGroupPanel
+                      group={group}
+                      members={members}
+                      onClose={() => toggleGroup(group.id)}
+                    >
+                      <section className={gridSectionCls}>
+                        {members.map(renderGridCard)}
+                      </section>
+                    </ExpandedGroupPanel>
+                  </div>,
+                );
+              }
+              return out;
+            })}
+            {groupedDisplay.ungrouped.map(renderGridCard)}
+          </section>
         );
       })()}
 
@@ -842,36 +848,41 @@ export default function Ecommerce() {
         if (groupedDisplay.mode === 'flat') {
           return <section className={compactSectionCls}>{filteredProducts.map(renderCompactCard)}</section>;
         }
+        // Same inline-expansion pattern as Grid: open groups get a
+        // col-span-full tile injected after their card, dense flow keeps
+        // the cards rows packed.
         return (
-          <div className="space-y-4">
-            <section className={compactSectionCls}>
-              {groupedDisplay.groups.map(({ group, members }) => (
+          <section className={`${compactSectionCls} grid-flow-row-dense`}>
+            {groupedDisplay.groups.flatMap(({ group, members }) => {
+              const isOpen = expandedGroups.has(group.id);
+              const out: ReactNode[] = [
                 <GroupCompactCard
                   key={group.id}
                   group={group}
                   count={members.length}
-                  isOpen={expandedGroups.has(group.id)}
+                  isOpen={isOpen}
                   onToggle={() => toggleGroup(group.id)}
-                />
-              ))}
-              {groupedDisplay.ungrouped.map(renderCompactCard)}
-            </section>
-
-            {groupedDisplay.groups
-              .filter(({ group }) => expandedGroups.has(group.id))
-              .map(({ group, members }) => (
-                <ExpandedGroupPanel
-                  key={`exp-${group.id}`}
-                  group={group}
-                  members={members}
-                  onClose={() => toggleGroup(group.id)}
-                >
-                  <section className={compactSectionCls}>
-                    {members.map(renderCompactCard)}
-                  </section>
-                </ExpandedGroupPanel>
-              ))}
-          </div>
+                />,
+              ];
+              if (isOpen) {
+                out.push(
+                  <div key={`exp-${group.id}`} className="col-span-full">
+                    <ExpandedGroupPanel
+                      group={group}
+                      members={members}
+                      onClose={() => toggleGroup(group.id)}
+                    >
+                      <section className={compactSectionCls}>
+                        {members.map(renderCompactCard)}
+                      </section>
+                    </ExpandedGroupPanel>
+                  </div>,
+                );
+              }
+              return out;
+            })}
+            {groupedDisplay.ungrouped.map(renderCompactCard)}
+          </section>
         );
       })()}
 
