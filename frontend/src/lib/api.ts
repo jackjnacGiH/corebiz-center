@@ -8,6 +8,7 @@
 import { supabase } from './supabase';
 import type {
   Product, ProductInsert, ProductUpdate,
+  ProductGroup, ProductGroupInsert, ProductGroupUpdate,
   Category, Warehouse,
   Inventory, InventoryInsert, InventoryUpdate,
   Customer, CustomerInsert, CustomerUpdate,
@@ -23,6 +24,8 @@ import type {
 // =========================================================================
 export interface ProductWithInventory extends Product {
   category: Pick<Category, 'id' | 'slug' | 'name_th' | 'name_en'> | null;
+  /** Embedded group info, if the product was assigned to one. */
+  group: Pick<ProductGroup, 'id' | 'name'> | null;
   inventory: Array<Pick<Inventory, 'id' | 'warehouse_id' | 'quantity' | 'reserved' | 'reorder_level' | 'shelf' | 'row_no' | 'last_synced_at'>>;
   /** Sum of quantity across all warehouses */
   total_quantity: number;
@@ -59,12 +62,14 @@ export const productsApi = {
       .select(`
         *,
         category:categories(id,slug,name_th,name_en),
+        group:product_groups(id,name),
         inventory(id,warehouse_id,quantity,reserved,reorder_level,shelf,row_no,last_synced_at)
       `)
       .order('created_at', { ascending: false });
     if (error) throw error;
     const rows = (data ?? []) as unknown as Array<Product & {
       category: ProductWithInventory['category'];
+      group: ProductWithInventory['group'];
       inventory: ProductWithInventory['inventory'];
     }>;
     return rows.map(p => {
@@ -174,6 +179,129 @@ export const warehousesApi = {
       .single();
     if (error) throw error;
     return data;
+  },
+};
+
+// =========================================================================
+// Product Groups — folders that bundle variant SKUs (e.g. all grit numbers
+// of the same MIRKA GOLD line). Distinct from `categories` (งานขัด/etc).
+// =========================================================================
+export type { ProductGroup, ProductGroupInsert, ProductGroupUpdate };
+
+export interface ProductGroupWithStats extends ProductGroup {
+  member_count: number;
+  /** Aggregate stock across all member products (sum of inventory.quantity). */
+  total_stock: number;
+}
+
+export const productGroupsApi = {
+  /** All groups ordered by sort_order. Includes a quick member count. */
+  async list(): Promise<ProductGroupWithStats[]> {
+    const { data, error } = await supabase
+      .from('product_groups')
+      .select(`
+        id, name, description, cover_image, sort_order, is_active,
+        created_at, updated_at,
+        products(id)
+      `)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true });
+    if (error) throw error;
+    // PostgREST resolves the implicit FK relationship via products.group_id.
+    // TS doesn't know the relation yet (generated types haven't been pulled),
+    // so we cast through unknown.
+    const rows = (data ?? []) as unknown as Array<
+      ProductGroup & { products: Array<{ id: string }> }
+    >;
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      cover_image: r.cover_image,
+      sort_order: r.sort_order,
+      is_active: r.is_active,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      member_count: (r.products ?? []).length,
+      total_stock: 0, // populated on detail view, not on list
+    }));
+  },
+
+  /** Single group + the SKUs assigned to it. */
+  async getWithMembers(id: string): Promise<{ group: ProductGroup; members: Product[] }> {
+    const [{ data: g, error: gErr }, { data: m, error: mErr }] = await Promise.all([
+      supabase.from('product_groups').select('*').eq('id', id).single(),
+      supabase.from('products').select('*').eq('group_id', id).order('name_th', { ascending: true }),
+    ]);
+    if (gErr) throw gErr;
+    if (mErr) throw mErr;
+    return {
+      group: g as ProductGroup,
+      members: (m ?? []) as Product[],
+    };
+  },
+
+  async create(input: { name: string; description?: string; cover_image?: string; sort_order?: number }): Promise<ProductGroup> {
+    const payload: ProductGroupInsert = {
+      name: input.name.trim(),
+      description: input.description?.trim() || null,
+      cover_image: input.cover_image?.trim() || null,
+      sort_order: input.sort_order ?? 0,
+    };
+    const { data, error } = await supabase
+      .from('product_groups')
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as ProductGroup;
+  },
+
+  async update(id: string, patch: ProductGroupUpdate): Promise<ProductGroup> {
+    const { data, error } = await supabase
+      .from('product_groups')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as ProductGroup;
+  },
+
+  /** Hard-delete the group; products in it have their group_id reset to NULL (ON DELETE SET NULL). */
+  async remove(id: string): Promise<void> {
+    const { error } = await supabase.from('product_groups').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  /**
+   * Bulk-assign a set of product ids into the given group. Pass group_id=null
+   * to remove the assignment (unassign back to "ungrouped").
+   */
+  async assignProducts(group_id: string | null, product_ids: string[]): Promise<number> {
+    if (product_ids.length === 0) return 0;
+    const { error, count } = await supabase
+      .from('products')
+      .update({ group_id } as never, { count: 'exact' })
+      .in('id', product_ids);
+    if (error) throw error;
+    return count ?? product_ids.length;
+  },
+
+  /**
+   * Upload a cover image into the `product-groups` storage bucket and return
+   * its public URL. File is renamed to `<groupId>-<timestamp>.<ext>` so
+   * re-uploads don't collide and old images can be safely cleaned up later.
+   */
+  async uploadCover(groupId: string, file: File): Promise<string> {
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? 'png';
+    const path = `${groupId}-${Date.now()}.${ext}`;
+    const { error } = await supabase.storage
+      .from('product-groups')
+      .upload(path, file, { upsert: true, cacheControl: '3600' });
+    if (error) throw error;
+    const { data } = supabase.storage.from('product-groups').getPublicUrl(path);
+    return data.publicUrl;
   },
 };
 

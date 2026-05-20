@@ -361,7 +361,7 @@ export type Database = {
           barcode: string | null; brand: string | null; category_id: string | null;
           cost: number | null; created_at: string; description_en: string | null;
           description_th: string | null; discount_type: string; discount_value: number;
-          feature_tags: string[]; id: string;
+          feature_tags: string[]; group_id: string | null; id: string;
           images: Json; is_featured: boolean;
           name_en: string | null; name_th: string; price: number; sku: string; spec: Json;
           status: string; tags: string[]; unit: string; updated_at: string; weight_kg: number | null;
@@ -370,12 +370,24 @@ export type Database = {
           barcode?: string | null; brand?: string | null; category_id?: string | null;
           cost?: number | null; created_at?: string; description_en?: string | null;
           description_th?: string | null; discount_type?: string; discount_value?: number;
-          feature_tags?: string[]; id?: string;
+          feature_tags?: string[]; group_id?: string | null; id?: string;
           images?: Json; is_featured?: boolean;
           name_en?: string | null; name_th: string; price?: number; sku: string; spec?: Json;
           status?: string; tags?: string[]; unit?: string; updated_at?: string; weight_kg?: number | null;
         }
         Update: Partial<Database['public']['Tables']['products']['Insert']>
+        Relationships: []
+      }
+      product_groups: {
+        Row: {
+          id: string; name: string; description: string | null; cover_image: string | null;
+          sort_order: number; is_active: boolean; created_at: string; updated_at: string;
+        }
+        Insert: {
+          id?: string; name: string; description?: string | null; cover_image?: string | null;
+          sort_order?: number; is_active?: boolean; created_at?: string; updated_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['product_groups']['Insert']>
         Relationships: []
       }
       profiles: {
@@ -496,6 +508,10 @@ export type Database = {
 export type Product   = Database['public']['Tables']['products']['Row']
 export type ProductInsert = Database['public']['Tables']['products']['Insert']
 export type ProductUpdate = Database['public']['Tables']['products']['Update']
+
+export type ProductGroup       = Database['public']['Tables']['product_groups']['Row']
+export type ProductGroupInsert = Database['public']['Tables']['product_groups']['Insert']
+export type ProductGroupUpdate = Database['public']['Tables']['product_groups']['Update']
 export type Notification = Database['public']['Tables']['notifications']['Row']
 export type OrgSettings = Database['public']['Tables']['org_settings']['Row']
 export type OrgSettingsUpdate = Database['public']['Tables']['org_settings']['Update']

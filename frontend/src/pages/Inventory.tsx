@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Package, Plus, Search, Edit2, Trash2, Copy, AlertTriangle, RefreshCw,
   ArrowUpDown, ArrowUp, ArrowDown, MapPin, Box, Tag, ChevronDown,
-  ChevronRight, Upload, FileDown, Filter, History,
+  ChevronRight, Upload, FileDown, Filter, History, Boxes,
 } from 'lucide-react';
 import ProductModal, { type ProductFormData } from '../components/ProductModal';
 import {
@@ -21,6 +21,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/h
 import ProductImagePreview from '../components/ProductImagePreview';
 import ImportInventoryModal from '../components/ImportInventoryModal';
 import SyncLogDrawer from '../components/SyncLogDrawer';
+import ProductGroupManagerModal from '../components/ProductGroupManagerModal';
 import { buildInventoryCsv, downloadCsv } from '../lib/inventoryCsv';
 
 // ─── types & helpers ─────────────────────────────────────────────────────
@@ -107,6 +108,7 @@ export default function Inventory() {
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<InventorySyncLog | null>(null);
   const [isSyncLogOpen, setIsSyncLogOpen] = useState(false);
+  const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
 
   async function load() {
     setLoading(true); setErr(null);
@@ -162,6 +164,7 @@ export default function Inventory() {
   useEffect(() => { void load(); }, []);
   useRealtimeTable('products', () => void load());
   useRealtimeTable('inventory', () => void load());
+  useRealtimeTable('product_groups', () => void load());
 
   // Filter + sort
   const filtered = useMemo(() => {
@@ -351,6 +354,14 @@ export default function Inventory() {
           >
             <History size={15} />
           </IconBtn>
+          <button
+            onClick={() => setIsGroupManagerOpen(true)}
+            title="จัดการกลุ่มสินค้า — Folder ที่รวม SKU ชื่อเดียวกัน ต่างเบอร์/สี"
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition"
+          >
+            <Boxes size={14} />
+            <span className="hidden sm:inline">กลุ่มสินค้า</span>
+          </button>
           <IconBtn
             onClick={() => setIsImportOpen(true)}
             title="นำเข้าจาก CSV"
@@ -623,6 +634,15 @@ export default function Inventory() {
                           {p.brand && p.name_en && <span className="mx-1.5 text-slate-300">·</span>}
                           {p.name_en && <span className="italic">{p.name_en}</span>}
                         </div>
+                        {p.group && (
+                          <div
+                            className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 max-w-full"
+                            title={`อยู่ในกลุ่ม: ${p.group.name}`}
+                          >
+                            <Boxes size={9} className="flex-shrink-0" />
+                            <span className="truncate">{p.group.name}</span>
+                          </div>
+                        )}
                       </td>
 
                       <td className={`${rowPad} px-4 text-slate-700 text-sm`}>
@@ -765,6 +785,12 @@ export default function Inventory() {
       <SyncLogDrawer
         open={isSyncLogOpen}
         onClose={() => setIsSyncLogOpen(false)}
+      />
+
+      <ProductGroupManagerModal
+        isOpen={isGroupManagerOpen}
+        onClose={() => setIsGroupManagerOpen(false)}
+        onChanged={() => void load()}
       />
     </div>
   );
