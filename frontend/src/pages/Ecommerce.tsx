@@ -205,18 +205,20 @@ export default function Ecommerce() {
    * Group filteredProducts by group_id for the customer-facing display.
    *
    * Display contract:
-   *   - No search active → render groups as parent banners + ungrouped SKUs
-   *     as their own cards. Groups stay collapsed by default; user opens
-   *     them via the [+] toggle.
-   *   - Search active   → bypass grouping entirely and show every matching
-   *     SKU as a flat card list. (Boss Jack: "ค้นด้วย MIRKA #80 ควรเจอเป็น
-   *     SKU แบบ flat ข้ามกลุ่ม")
-   *   - Category filter is treated like search — narrows the result set
-   *     enough that the group structure starts to feel noisy, so flatten.
+   *   - Default (no search)            → render groups as parent cards +
+   *     ungrouped SKUs as their own cards. Groups stay collapsed by
+   *     default; the user opens them via the [+] toggle.
+   *   - Category filter active         → STILL group. Boss Jack's spec:
+   *     "นำหลักการแสดง View ไปใช้กับ ทุกหมวดหมู่สินค้า". Members of a
+   *     group that don't match the category get filtered out at the
+   *     `filteredProducts` step above, so the group only shows the
+   *     subset that fits the chosen category.
+   *   - Search active                  → bypass grouping entirely; show
+   *     every matching SKU as a flat card list. (Boss Jack: "ค้นด้วย
+   *     MIRKA #80 ควรเจอเป็น SKU แบบ flat ข้ามกลุ่ม")
    */
   const groupedDisplay = useMemo(() => {
-    const isFiltering = !!search.trim() || selectedCategoryId !== 'all';
-    if (isFiltering) {
+    if (search.trim()) {
       return { mode: 'flat' as const, products: filteredProducts };
     }
     const groupsMap = new Map<string, {
