@@ -717,32 +717,37 @@ export default function Ecommerce() {
           );
         }
 
-        // Default → groups as parent banners + ungrouped SKUs in their own grid
+        // Default → mix group cards + ungrouped cards in one grid; any
+        // expanded groups render their members in a panel below the grid.
         return (
           <div className="space-y-4">
-            {groupedDisplay.groups.map(({ group, members }) => {
-              const isOpen = expandedGroups.has(group.id);
-              return (
-                <div key={group.id}>
-                  <GroupBanner
-                    group={group}
-                    count={members.length}
-                    isOpen={isOpen}
-                    onToggle={() => toggleGroup(group.id)}
-                  />
-                  {isOpen && (
-                    <section className={`${gridSectionCls} mt-3`}>
-                      {members.map(renderGridCard)}
-                    </section>
-                  )}
-                </div>
-              );
-            })}
-            {groupedDisplay.ungrouped.length > 0 && (
-              <section className={gridSectionCls}>
-                {groupedDisplay.ungrouped.map(renderGridCard)}
-              </section>
-            )}
+            <section className={gridSectionCls}>
+              {groupedDisplay.groups.map(({ group, members }) => (
+                <GroupGridCard
+                  key={group.id}
+                  group={group}
+                  count={members.length}
+                  isOpen={expandedGroups.has(group.id)}
+                  onToggle={() => toggleGroup(group.id)}
+                />
+              ))}
+              {groupedDisplay.ungrouped.map(renderGridCard)}
+            </section>
+
+            {groupedDisplay.groups
+              .filter(({ group }) => expandedGroups.has(group.id))
+              .map(({ group, members }) => (
+                <ExpandedGroupPanel
+                  key={`exp-${group.id}`}
+                  group={group}
+                  members={members}
+                  onClose={() => toggleGroup(group.id)}
+                >
+                  <section className={gridSectionCls}>
+                    {members.map(renderGridCard)}
+                  </section>
+                </ExpandedGroupPanel>
+              ))}
           </div>
         );
       })()}
@@ -840,24 +845,33 @@ export default function Ecommerce() {
         }
         return (
           <div className="space-y-4">
-            {groupedDisplay.groups.map(({ group, members }) => {
-              const isOpen = expandedGroups.has(group.id);
-              return (
-                <div key={group.id}>
-                  <GroupBanner group={group} count={members.length} isOpen={isOpen} onToggle={() => toggleGroup(group.id)} />
-                  {isOpen && (
-                    <section className={`${compactSectionCls} mt-3`}>
-                      {members.map(renderCompactCard)}
-                    </section>
-                  )}
-                </div>
-              );
-            })}
-            {groupedDisplay.ungrouped.length > 0 && (
-              <section className={compactSectionCls}>
-                {groupedDisplay.ungrouped.map(renderCompactCard)}
-              </section>
-            )}
+            <section className={compactSectionCls}>
+              {groupedDisplay.groups.map(({ group, members }) => (
+                <GroupCompactCard
+                  key={group.id}
+                  group={group}
+                  count={members.length}
+                  isOpen={expandedGroups.has(group.id)}
+                  onToggle={() => toggleGroup(group.id)}
+                />
+              ))}
+              {groupedDisplay.ungrouped.map(renderCompactCard)}
+            </section>
+
+            {groupedDisplay.groups
+              .filter(({ group }) => expandedGroups.has(group.id))
+              .map(({ group, members }) => (
+                <ExpandedGroupPanel
+                  key={`exp-${group.id}`}
+                  group={group}
+                  members={members}
+                  onClose={() => toggleGroup(group.id)}
+                >
+                  <section className={compactSectionCls}>
+                    {members.map(renderCompactCard)}
+                  </section>
+                </ExpandedGroupPanel>
+              ))}
           </div>
         );
       })()}
@@ -1341,14 +1355,267 @@ export default function Ecommerce() {
   );
 }
 
-// ─── GroupBanner ──────────────────────────────────────────────────────────
+interface GroupCardData {
+  id: string;
+  name: string;
+  cover_image: string | null;
+  description: string | null;
+}
+
+// ─── GroupGridCard ────────────────────────────────────────────────────────
 /**
- * The "parent card" for a product group on the Ecommerce shelf. Spans the
- * full row width, shows cover/name/member count + a [+]/[-] toggle that
- * expands inline to reveal the member SKU cards below it.
+ * Group displayed as a product-card-sized tile in the Grid view (5-6 cols).
+ * Visually matches the existing `.commerce-product-card` so groups + SKUs
+ * mix cleanly in the same grid. Differences from a real product card:
+ *   - Indigo accent border when expanded
+ *   - Cover image OR Boxes icon placeholder
+ *   - No price + no SKU; shows "X รายการ" instead
+ *   - The action button toggles expansion, not add-to-cart
  *
- * NOT clickable to add to cart — groups themselves don't have SKUs / price,
- * they're display headers only (Boss Jack's spec).
+ * Boss Jack: "เอา รูป และ ชื่อสินค้า ของกลุ่ม มาแสดงแทน" + "[➕] expand inline"
+ */
+function GroupGridCard({
+  group,
+  count,
+  isOpen,
+  onToggle,
+}: {
+  group: GroupCardData;
+  count: number;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <article
+      className={cn(
+        'commerce-product-card relative cursor-pointer transition',
+        isOpen
+          ? 'ring-2 ring-indigo-500 border-indigo-400'
+          : 'hover:ring-1 hover:ring-indigo-300',
+      )}
+      onClick={onToggle}
+      aria-expanded={isOpen}
+    >
+      <span
+        className={cn(
+          'absolute top-2 left-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-sm',
+          isOpen ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700 border border-indigo-200',
+        )}
+      >
+        <Boxes size={10} /> กลุ่ม
+      </span>
+
+      {group.cover_image ? (
+        <div
+          className="product-visual"
+          style={{
+            padding: '0.5rem',
+            background: '#ffffff',
+            height: 'auto',
+            aspectRatio: '1 / 1',
+          }}
+        >
+          <img
+            src={group.cover_image}
+            alt={group.name}
+            loading="lazy"
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          />
+        </div>
+      ) : (
+        <div className="product-visual" style={{ background: '#EEF2FF' }}>
+          <Boxes size={40} className="text-indigo-400" />
+          <span className="text-indigo-500 mt-1">รวมหลาย SKU</span>
+        </div>
+      )}
+
+      <div className="product-card-body">
+        <div className="product-card-meta">
+          <span className="text-indigo-700 font-semibold">กลุ่มสินค้า</span>
+          <span className="tabular-nums">{count} รายการ</span>
+        </div>
+
+        <h3>{group.name}</h3>
+
+        <div className="product-card-details">
+          <span className="text-indigo-600 inline-flex items-center gap-1 font-semibold text-xs">
+            <Boxes size={13} />
+            กลุ่มสินค้า · ดูสินค้าทั้งหมด
+          </span>
+        </div>
+
+        <div className="product-card-footer">
+          <div>
+            <strong className="text-indigo-700 font-bold">
+              {count} <span className="text-sm font-normal text-slate-500">รายการ</span>
+            </strong>
+            <span className="text-slate-500">คลิกเพื่อดูสินค้าในกลุ่ม</span>
+          </div>
+          <button
+            type="button"
+            className="btn-mto"
+            style={{
+              background: isOpen ? '#4F46E5' : '#6366F1',
+              borderColor: isOpen ? '#3730A3' : '#4F46E5',
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+            title={isOpen ? 'ปิดรายการสินค้า' : 'แสดงสินค้าในกลุ่ม'}
+          >
+            {isOpen ? <ChevronDown size={13} /> : <Plus size={13} />}
+            {isOpen ? 'ปิด' : 'ดู'}
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+// ─── GroupCompactCard ─────────────────────────────────────────────────────
+/**
+ * Compact version of the group card — sized to match the Compact product
+ * tiles (7-8 cols, smaller thumb, line-clamped name).
+ */
+function GroupCompactCard({
+  group,
+  count,
+  isOpen,
+  onToggle,
+}: {
+  group: GroupCardData;
+  count: number;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <article
+      className={cn(
+        'rounded-lg border bg-white overflow-hidden flex flex-col transition relative cursor-pointer',
+        isOpen
+          ? 'border-indigo-500 ring-2 ring-indigo-200'
+          : 'border-slate-200 hover:border-indigo-300 hover:shadow-sm',
+      )}
+      onClick={onToggle}
+      aria-expanded={isOpen}
+    >
+      <span
+        className={cn(
+          'absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold shadow-sm',
+          isOpen ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700 border border-indigo-200',
+        )}
+      >
+        <Boxes size={9} /> กลุ่ม
+      </span>
+
+      <div className="aspect-square bg-white p-1.5 border-b border-slate-100">
+        {group.cover_image ? (
+          <img
+            src={group.cover_image}
+            alt={group.name}
+            loading="lazy"
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <div className="w-full h-full grid place-items-center bg-indigo-50 rounded">
+            <Boxes size={28} className="text-indigo-400" />
+          </div>
+        )}
+      </div>
+      <div className="p-2.5 flex flex-col gap-1 flex-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">
+          กลุ่มสินค้า
+        </div>
+        <h3 className="text-[12px] font-semibold text-slate-900 leading-tight line-clamp-2 min-h-[2.2em]">
+          {group.name}
+        </h3>
+        <div className="mt-auto flex items-center justify-between pt-1 border-t border-slate-100">
+          <span className="text-[11px] font-bold text-indigo-700 tabular-nums">
+            {count} รายการ
+          </span>
+          <button
+            type="button"
+            className={cn(
+              'h-7 px-2 rounded-md text-white text-[10px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap',
+              isOpen ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-indigo-500 hover:bg-indigo-600',
+            )}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+            title={isOpen ? 'ปิดรายการสินค้า' : 'แสดงสินค้าในกลุ่ม'}
+          >
+            {isOpen ? <ChevronDown size={10} /> : <Plus size={10} />}
+            {isOpen ? 'ปิด' : 'ดู'}
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+// ─── ExpandedGroupPanel ───────────────────────────────────────────────────
+/**
+ * Container that appears below the main grid when one or more groups are
+ * expanded. Shows the group header (cover, name, count, close button) +
+ * lets the caller drop in whatever grid layout the current view mode uses.
+ *
+ * Slot pattern via `children` keeps the panel agnostic of view mode
+ * (Grid + Compact both render their own sub-grid of member cards inside).
+ */
+function ExpandedGroupPanel({
+  group,
+  members,
+  onClose,
+  children,
+}: {
+  group: GroupCardData;
+  members: ProductWithInventory[];
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-indigo-300 bg-indigo-50/30 p-3 sm:p-4 space-y-3">
+      <header className="flex items-center gap-3">
+        {group.cover_image ? (
+          <img
+            src={group.cover_image}
+            alt=""
+            className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg object-cover border border-indigo-200"
+          />
+        ) : (
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg grid place-items-center bg-indigo-100 text-indigo-500 border border-indigo-200">
+            <Boxes size={20} />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm sm:text-base font-bold text-indigo-900 truncate">
+            {group.name}
+          </h3>
+          <p className="text-xs text-indigo-700 tabular-nums">
+            {members.length} รายการในกลุ่มนี้
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex-shrink-0 h-8 px-2.5 rounded-md bg-white hover:bg-indigo-100 text-indigo-700 text-xs font-semibold inline-flex items-center gap-1 border border-indigo-300"
+          title="ปิดรายการสินค้าในกลุ่ม"
+        >
+          <X size={12} /> ปิด
+        </button>
+      </header>
+      {children}
+    </section>
+  );
+}
+
+// ─── GroupBanner (List view) ──────────────────────────────────────────────
+/**
+ * Full-width row banner — kept for the List view mode which Boss Jack
+ * confirmed is correct as-is. Grid + Compact use card-shaped variants
+ * (GroupGridCard / GroupCompactCard) instead.
  */
 function GroupBanner({
   group,
