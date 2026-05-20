@@ -486,7 +486,11 @@ export default function Ecommerce() {
           <span className="text-[8px] font-mono text-slate-400 truncate leading-tight">
             {p.sku}
           </span>
-          <h3 className="text-[10px] font-semibold text-slate-900 leading-tight line-clamp-2 min-h-[2em]">
+          {/* Full product name — no truncation. Wraps to as many lines as
+              needed. CSS grid auto-sizes each row to the tallest card so
+              short / long names sit nicely side-by-side. Boss Jack's spec:
+              "ห้ามตัดคำ ถ้าชื่อยาว ให้เพิ่มบรรทัดได้". */}
+          <h3 className="text-[10px] font-semibold text-slate-900 leading-tight break-words">
             {p.name_th}
           </h3>
           <span
