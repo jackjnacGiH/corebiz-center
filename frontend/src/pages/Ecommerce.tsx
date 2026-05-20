@@ -349,6 +349,95 @@ export default function Ecommerce() {
   }
 
   /**
+   * Compact-style product tile. Defined at component scope (not inside the
+   * Compact view's IIFE) so the Grid view's expansion panel can reuse it
+   * to render the SKU children at a smaller size than the outer Grid cards.
+   * Boss Jack's spec: "รูปสินค้า expand inline ขนาดให้เล็กลง"
+   */
+  const renderCompactCard = (p: ProductWithInventory) => {
+    const stockTone = deriveStockTone(p.total_quantity);
+    const hero = getHeroImage(p);
+    const effective = getEffectivePrice(p);
+    const hasDiscount = effective < Number(p.price);
+    const badge = discountBadge(p);
+    return (
+      <article
+        key={p.id}
+        className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-slate-300 hover:shadow-sm transition relative"
+      >
+        {badge && (
+          <span className="absolute top-1.5 right-1.5 z-10 inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[9px] font-bold shadow-sm">
+            {badge}
+          </span>
+        )}
+        <div className="aspect-square bg-white p-1.5 border-b border-slate-100">
+          {hero ? (
+            <img
+              src={hero}
+              alt={p.name_th}
+              loading="lazy"
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <div className="w-full h-full grid place-items-center text-slate-300">
+              <Package size={28} />
+            </div>
+          )}
+        </div>
+        <div className="p-2.5 flex flex-col gap-1 flex-1">
+          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            <span className="truncate">{p.brand ?? '—'}</span>
+            <span className="font-mono">{p.sku}</span>
+          </div>
+          <h3 className="text-[12px] font-semibold text-slate-900 leading-tight line-clamp-2 min-h-[2.2em]">
+            {p.name_th}
+          </h3>
+          <div className="mt-auto flex flex-col gap-0.5">
+            <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold', stockTone.className)}>
+              <CheckCircle2 size={10} />
+              {ecom.stock[stockTone.labelKey]}
+            </span>
+            <span className="text-[10px] text-slate-500 tabular-nums">
+              {formatNumber(p.total_quantity)} {p.unit} {ecom.available}
+            </span>
+          </div>
+          <div className="flex items-center justify-between pt-1 border-t border-slate-100 mt-1">
+            <div className="flex flex-col leading-tight">
+              <strong className={cn('text-base font-bold tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
+                {formatCurrency(effective)}
+              </strong>
+              {hasDiscount && (
+                <span className="text-xs line-through text-slate-400 tabular-nums leading-tight">
+                  {formatCurrency(Number(p.price))}
+                </span>
+              )}
+            </div>
+            {p.total_quantity <= 0 ? (
+              <button
+                type="button"
+                onClick={(e) => handleAddClick(e, p, true)}
+                className="h-7 px-2 rounded-md bg-orange-500 text-white hover:bg-orange-600 text-[10px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap"
+                title={`สั่งผลิต ${p.name_th}`}
+              >
+                <Plus size={10} /> สั่งผลิต
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => handleAddClick(e, p, false)}
+                className="w-7 h-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600"
+                title={`${ecom.addToQuote}: ${p.name_th}`}
+              >
+                <Plus size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  };
+
+  /**
    * Cart line operations are now index-based instead of id-based: in-stock
    * and made-to-order can co-exist as two separate lines for the same
    * product id, so the id alone is no longer a unique key.
@@ -716,41 +805,45 @@ export default function Ecommerce() {
           );
         }
 
-        // Default → one big grid that mixes group cards + ungrouped cards.
-        // When a group is open, its expansion is inserted as a col-span-full
-        // tile right after its card so the SKU children land inline (Boss
-        // Jack's spec: "expand inline" + members wrap to 2-3 rows if needed).
-        // grid-auto-flow:dense lets sibling cards backfill the row that the
-        // open group card was on, so we don't end up with a half-empty row.
+        // Default → group cards + ungrouped cards share one grid. When a
+        // group is open we DON'T render its closed card; instead we render
+        // a col-span-full row that puts the group identity on the LEFT and
+        // member SKUs on the RIGHT (Boss Jack's spec: "ไปทางขวามือ").
+        //
+        // The right-side member grid uses Compact-style tiles so the SKUs
+        // come out noticeably smaller than the outer Grid cards (Boss
+        // Jack: "รูปสินค้า expand inline ขนาดให้เล็กลง"). Many SKUs in one
+        // group wrap to multiple rows naturally.
+        //
+        // grid-flow-row-dense lets ungrouped + closed-group cards backfill
+        // the row that the open group started on.
         return (
           <section className={`${gridSectionCls} grid-flow-row-dense`}>
             {groupedDisplay.groups.flatMap(({ group, members }) => {
               const isOpen = expandedGroups.has(group.id);
-              const out: ReactNode[] = [
+              if (isOpen) {
+                return [
+                  <div key={`exp-${group.id}`} className="col-span-full">
+                    <SideBySideGroupExpansion
+                      group={group}
+                      members={members}
+                      onClose={() => toggleGroup(group.id)}
+                      // 4-6 cols of compact tiles depending on viewport
+                      memberGridCls="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2"
+                      renderMember={renderCompactCard}
+                    />
+                  </div>,
+                ];
+              }
+              return [
                 <GroupGridCard
                   key={group.id}
                   group={group}
                   count={members.length}
-                  isOpen={isOpen}
+                  isOpen={false}
                   onToggle={() => toggleGroup(group.id)}
                 />,
               ];
-              if (isOpen) {
-                out.push(
-                  <div key={`exp-${group.id}`} className="col-span-full">
-                    <ExpandedGroupPanel
-                      group={group}
-                      members={members}
-                      onClose={() => toggleGroup(group.id)}
-                    >
-                      <section className={gridSectionCls}>
-                        {members.map(renderGridCard)}
-                      </section>
-                    </ExpandedGroupPanel>
-                  </div>,
-                );
-              }
-              return out;
             })}
             {groupedDisplay.ungrouped.map(renderGridCard)}
           </section>
@@ -759,88 +852,8 @@ export default function Ecommerce() {
 
       {/* ── Compact: dense grid, smaller thumbs, 7-8 cols ─────────── */}
       {!loading && viewMode === 'compact' && (() => {
-        const renderCompactCard = (p: ProductWithInventory) => {
-            const stockTone = deriveStockTone(p.total_quantity);
-            const hero = getHeroImage(p);
-            const effective = getEffectivePrice(p);
-            const hasDiscount = effective < Number(p.price);
-            const badge = discountBadge(p);
-            return (
-              <article
-                key={p.id}
-                className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-slate-300 hover:shadow-sm transition relative"
-              >
-                {badge && (
-                  <span className="absolute top-1.5 right-1.5 z-10 inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[9px] font-bold shadow-sm">
-                    {badge}
-                  </span>
-                )}
-                <div className="aspect-square bg-white p-1.5 border-b border-slate-100">
-                  {hero ? (
-                    <img
-                      src={hero}
-                      alt={p.name_th}
-                      loading="lazy"
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <div className="w-full h-full grid place-items-center text-slate-300">
-                      <Package size={28} />
-                    </div>
-                  )}
-                </div>
-                <div className="p-2.5 flex flex-col gap-1 flex-1">
-                  <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                    <span className="truncate">{p.brand ?? '—'}</span>
-                    <span className="font-mono">{p.sku}</span>
-                  </div>
-                  <h3 className="text-[12px] font-semibold text-slate-900 leading-tight line-clamp-2 min-h-[2.2em]">
-                    {p.name_th}
-                  </h3>
-                  <div className="mt-auto flex flex-col gap-0.5">
-                    <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold', stockTone.className)}>
-                      <CheckCircle2 size={10} />
-                      {ecom.stock[stockTone.labelKey]}
-                    </span>
-                    <span className="text-[10px] text-slate-500 tabular-nums">
-                      {formatNumber(p.total_quantity)} {p.unit} {ecom.available}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 mt-1">
-                    <div className="flex flex-col leading-tight">
-                      <strong className={cn('text-base font-bold tabular-nums', hasDiscount ? 'text-rose-600' : 'text-slate-900')}>
-                        {formatCurrency(effective)}
-                      </strong>
-                      {hasDiscount && (
-                        <span className="text-xs line-through text-slate-400 tabular-nums leading-tight">
-                          {formatCurrency(Number(p.price))}
-                        </span>
-                      )}
-                    </div>
-                    {p.total_quantity <= 0 ? (
-                      <button
-                        type="button"
-                        onClick={(e) => handleAddClick(e, p, true)}
-                        className="h-7 px-2 rounded-md bg-orange-500 text-white hover:bg-orange-600 text-[10px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap"
-                        title={`สั่งผลิต ${p.name_th}`}
-                      >
-                        <Plus size={10} /> สั่งผลิต
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => handleAddClick(e, p, false)}
-                        className="w-7 h-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600"
-                        title={`${ecom.addToQuote}: ${p.name_th}`}
-                      >
-                        <Plus size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </article>
-            );
-          };
+        // renderCompactCard is defined at component scope (above) so the
+        // Grid view's expansion can reuse it for smaller member tiles.
 
         const compactSectionCls =
           'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-2';
@@ -848,38 +861,35 @@ export default function Ecommerce() {
         if (groupedDisplay.mode === 'flat') {
           return <section className={compactSectionCls}>{filteredProducts.map(renderCompactCard)}</section>;
         }
-        // Same inline-expansion pattern as Grid: open groups get a
-        // col-span-full tile injected after their card, dense flow keeps
-        // the cards rows packed.
+        // Same side-by-side pattern as Grid: open group's row puts the
+        // group identity on the LEFT, member SKUs (also compact tiles)
+        // on the RIGHT — more columns since cards are already small.
         return (
           <section className={`${compactSectionCls} grid-flow-row-dense`}>
             {groupedDisplay.groups.flatMap(({ group, members }) => {
               const isOpen = expandedGroups.has(group.id);
-              const out: ReactNode[] = [
+              if (isOpen) {
+                return [
+                  <div key={`exp-${group.id}`} className="col-span-full">
+                    <SideBySideGroupExpansion
+                      group={group}
+                      members={members}
+                      onClose={() => toggleGroup(group.id)}
+                      memberGridCls="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-2"
+                      renderMember={renderCompactCard}
+                    />
+                  </div>,
+                ];
+              }
+              return [
                 <GroupCompactCard
                   key={group.id}
                   group={group}
                   count={members.length}
-                  isOpen={isOpen}
+                  isOpen={false}
                   onToggle={() => toggleGroup(group.id)}
                 />,
               ];
-              if (isOpen) {
-                out.push(
-                  <div key={`exp-${group.id}`} className="col-span-full">
-                    <ExpandedGroupPanel
-                      group={group}
-                      members={members}
-                      onClose={() => toggleGroup(group.id)}
-                    >
-                      <section className={compactSectionCls}>
-                        {members.map(renderCompactCard)}
-                      </section>
-                    </ExpandedGroupPanel>
-                  </div>,
-                );
-              }
-              return out;
             })}
             {groupedDisplay.ungrouped.map(renderCompactCard)}
           </section>
@@ -1580,59 +1590,82 @@ function GroupCompactCard({
   );
 }
 
-// ─── ExpandedGroupPanel ───────────────────────────────────────────────────
+// ─── SideBySideGroupExpansion ─────────────────────────────────────────────
 /**
- * Container that appears below the main grid when one or more groups are
- * expanded. Shows the group header (cover, name, count, close button) +
- * lets the caller drop in whatever grid layout the current view mode uses.
+ * Horizontal expansion used by Grid + Compact views: the GROUP identity
+ * (cover image, name, member count, close button) sits on the LEFT, and the
+ * member SKU tiles render in a sub-grid on the RIGHT.
  *
- * Slot pattern via `children` keeps the panel agnostic of view mode
- * (Grid + Compact both render their own sub-grid of member cards inside).
+ * Boss Jack's spec:
+ *   - "ต้องการให้ไปทางขวามือ เมื่อหันหน้าเข้าหาจอ" → members on the right
+ *   - "ขนาดรูปยังเท่าเดิม ที่ต้องการให้เล็กลง" → caller passes renderCompactCard
+ *
+ * The left "group panel" stays roughly the same width as 1 grid column at
+ * each breakpoint — group + members feel anchored to the same row context.
  */
-function ExpandedGroupPanel({
+function SideBySideGroupExpansion({
   group,
   members,
   onClose,
-  children,
+  memberGridCls,
+  renderMember,
 }: {
   group: GroupCardData;
   members: ProductWithInventory[];
   onClose: () => void;
-  children: ReactNode;
+  memberGridCls: string;
+  renderMember: (p: ProductWithInventory) => ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-indigo-300 bg-indigo-50/30 p-3 sm:p-4 space-y-3">
-      <header className="flex items-center gap-3">
-        {group.cover_image ? (
-          <img
-            src={group.cover_image}
-            alt=""
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg object-cover border border-indigo-200"
-          />
-        ) : (
-          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg grid place-items-center bg-indigo-100 text-indigo-500 border border-indigo-200">
-            <Boxes size={20} />
+    <div className="rounded-xl border-2 border-indigo-300 bg-indigo-50/30 p-3 sm:p-4">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+        {/* LEFT: group identity card */}
+        <aside className="sm:w-48 lg:w-56 xl:w-64 flex-shrink-0">
+          <div className="rounded-lg border border-indigo-200 bg-white p-3 h-full flex flex-col">
+            {group.cover_image ? (
+              <img
+                src={group.cover_image}
+                alt=""
+                className="w-full aspect-square rounded-md object-contain border border-slate-200 bg-white p-1"
+              />
+            ) : (
+              <div className="w-full aspect-square rounded-md grid place-items-center bg-indigo-50 text-indigo-500 border border-indigo-200">
+                <Boxes size={36} />
+              </div>
+            )}
+            <div className="mt-2.5 flex-1 flex flex-col gap-1.5">
+              <span className="inline-flex items-center gap-1 self-start text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
+                <Boxes size={10} /> กลุ่มสินค้า
+              </span>
+              <h3 className="text-sm font-bold text-indigo-900 leading-snug line-clamp-3">
+                {group.name}
+              </h3>
+              <span className="text-[11px] font-bold text-indigo-700 tabular-nums">
+                {members.length} รายการ
+              </span>
+              {group.description && (
+                <p className="text-[11px] text-slate-600 line-clamp-3 leading-relaxed">
+                  {group.description}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-2 h-8 w-full rounded-md bg-white hover:bg-indigo-100 text-indigo-700 text-xs font-semibold inline-flex items-center justify-center gap-1 border border-indigo-300 transition"
+              title="ปิดรายการสินค้าในกลุ่ม"
+            >
+              <X size={12} /> ปิด
+            </button>
           </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm sm:text-base font-bold text-indigo-900 truncate">
-            {group.name}
-          </h3>
-          <p className="text-xs text-indigo-700 tabular-nums">
-            {members.length} รายการในกลุ่มนี้
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex-shrink-0 h-8 px-2.5 rounded-md bg-white hover:bg-indigo-100 text-indigo-700 text-xs font-semibold inline-flex items-center gap-1 border border-indigo-300"
-          title="ปิดรายการสินค้าในกลุ่ม"
-        >
-          <X size={12} /> ปิด
-        </button>
-      </header>
-      {children}
-    </section>
+        </aside>
+
+        {/* RIGHT: smaller member tiles, wrap to multi-row if many */}
+        <section className={`${memberGridCls} flex-1 min-w-0 self-start`}>
+          {members.map(renderMember)}
+        </section>
+      </div>
+    </div>
   );
 }
 
