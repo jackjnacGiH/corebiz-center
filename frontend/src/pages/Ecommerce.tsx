@@ -18,7 +18,6 @@ import {
   List,
   Table2,
   ChevronDown,
-  ChevronRight,
   Boxes,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -878,7 +877,11 @@ export default function Ecommerce() {
 
       {/* ── List: 1 col rows, image-left + full details right ──────── */}
       {!loading && viewMode === 'list' && (() => {
-        const renderListCard = (p: ProductWithInventory) => {
+        // The `compact` flag swaps to a smaller thumb + tighter padding —
+        // used inside expanded group panels so the parent GroupBanner
+        // stays the visually-dominant tile and the SKU children read as
+        // sub-rows. (Boss Jack's request: สลับขนาดรูปกลุ่ม↔SKU)
+        const renderListCard = (p: ProductWithInventory, compact = false) => {
             const stockTone = deriveStockTone(p.total_quantity);
             const leadTime = deriveLeadTime(p.total_quantity);
             const hero = getHeroImage(p);
@@ -888,9 +891,17 @@ export default function Ecommerce() {
             return (
               <article
                 key={p.id}
-                className="flex gap-4 rounded-lg border border-slate-200 bg-white p-3 hover:border-slate-300 hover:shadow-sm transition"
+                className={cn(
+                  'flex rounded-lg border border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm transition',
+                  compact ? 'gap-3 p-2' : 'gap-4 p-3',
+                )}
               >
-                <div className="w-28 h-28 flex-shrink-0 rounded-md border border-slate-200 bg-white p-1 grid place-items-center overflow-hidden">
+                <div
+                  className={cn(
+                    'flex-shrink-0 rounded-md border border-slate-200 bg-white p-1 grid place-items-center overflow-hidden',
+                    compact ? 'w-16 h-16' : 'w-28 h-28',
+                  )}
+                >
                   {hero ? (
                     <img
                       src={hero}
@@ -899,7 +910,7 @@ export default function Ecommerce() {
                       className="w-full h-full object-contain"
                     />
                   ) : (
-                    <Package size={32} className="text-slate-300" />
+                    <Package size={compact ? 20 : 32} className="text-slate-300" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col gap-1.5">
@@ -979,9 +990,10 @@ export default function Ecommerce() {
           };
 
         const listSectionCls = 'flex flex-col gap-2';
+        const listCompactSectionCls = 'flex flex-col gap-1.5';
 
         if (groupedDisplay.mode === 'flat') {
-          return <section className={listSectionCls}>{filteredProducts.map(renderListCard)}</section>;
+          return <section className={listSectionCls}>{filteredProducts.map((p) => renderListCard(p, false))}</section>;
         }
         return (
           <div className="space-y-4">
@@ -991,8 +1003,10 @@ export default function Ecommerce() {
                 <div key={group.id}>
                   <GroupBanner group={group} count={members.length} isOpen={isOpen} onToggle={() => toggleGroup(group.id)} />
                   {isOpen && (
-                    <section className={`${listSectionCls} mt-3`}>
-                      {members.map(renderListCard)}
+                    // Children render in compact mode so the parent banner
+                    // stays the dominant tile and SKUs read as sub-rows.
+                    <section className={`${listCompactSectionCls} mt-3 ml-4 pl-3 border-l-2 border-indigo-100`}>
+                      {members.map((p) => renderListCard(p, true))}
                     </section>
                   )}
                 </div>
@@ -1000,7 +1014,7 @@ export default function Ecommerce() {
             })}
             {groupedDisplay.ungrouped.length > 0 && (
               <section className={listSectionCls}>
-                {groupedDisplay.ungrouped.map(renderListCard)}
+                {groupedDisplay.ungrouped.map((p) => renderListCard(p, false))}
               </section>
             )}
           </div>
@@ -1633,54 +1647,63 @@ function GroupBanner({
       type="button"
       onClick={onToggle}
       className={cn(
-        'w-full text-left flex items-center gap-3 rounded-xl border p-3 transition',
+        'w-full text-left flex items-center gap-4 rounded-lg border p-3 transition',
         isOpen
-          ? 'border-indigo-300 bg-indigo-50/50 hover:bg-indigo-50'
+          ? 'border-indigo-300 bg-indigo-50/50 hover:bg-indigo-50 shadow-sm'
           : 'border-slate-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/30',
       )}
       aria-expanded={isOpen}
     >
-      {/* Cover */}
+      {/* Cover — same dimensions as the List product-card thumb (w-28 h-28)
+          so the parent group banner reads as the dominant tile in the row.
+          Boss Jack's request: สลับ ขนาดรูปที่แสดง ของกลุ่ม กับ expand inline. */}
       <div className="flex-shrink-0">
         {group.cover_image ? (
           <img
             src={group.cover_image}
             alt=""
-            className="w-14 h-14 sm:w-16 sm:h-16 rounded-lg object-cover border border-slate-200"
+            className="w-28 h-28 rounded-md object-contain border border-slate-200 bg-white p-1"
           />
         ) : (
-          <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-lg grid place-items-center bg-indigo-100 text-indigo-500 border border-indigo-200">
-            <Boxes size={22} />
+          <div className="w-28 h-28 rounded-md grid place-items-center bg-indigo-50 text-indigo-500 border border-indigo-200">
+            <Boxes size={38} />
           </div>
         )}
       </div>
 
       {/* Name + meta */}
-      <div className="flex-1 min-w-0">
-        <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">
+      <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
+            <Boxes size={10} /> กลุ่มสินค้า
+          </span>
+          <span className="text-[10px] font-bold text-indigo-700 tabular-nums">
+            {count} รายการ
+          </span>
+        </div>
+        <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
           {group.name}
         </h3>
-        <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
-          <span className="tabular-nums">{count} รายการ</span>
-          {group.description && (
-            <>
-              <span className="text-slate-300">·</span>
-              <span className="truncate">{group.description}</span>
-            </>
-          )}
-        </div>
+        {group.description && (
+          <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+            {group.description}
+          </p>
+        )}
+        <span className="text-[11px] text-indigo-600 font-medium mt-auto">
+          {isOpen ? 'คลิกเพื่อปิดรายการ' : 'คลิกเพื่อดูสินค้าในกลุ่ม'}
+        </span>
       </div>
 
       {/* Expand chevron */}
       <div
         className={cn(
-          'flex-shrink-0 w-9 h-9 rounded-lg grid place-items-center transition',
+          'flex-shrink-0 w-10 h-10 rounded-lg grid place-items-center transition',
           isOpen
             ? 'bg-indigo-500 text-white'
-            : 'bg-slate-100 text-slate-600 group-hover:bg-indigo-100',
+            : 'bg-indigo-50 text-indigo-600 border border-indigo-200',
         )}
       >
-        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        {isOpen ? <ChevronDown size={18} /> : <Plus size={18} />}
       </div>
     </button>
   );
