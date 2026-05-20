@@ -438,6 +438,105 @@ export default function Ecommerce() {
   };
 
   /**
+   * Mini tile — roughly half the size of `renderCompactCard`. Used inside
+   * the expanded group panel in Grid + Compact views so a group with many
+   * SKU children fits more per row without horizontal scrolling.
+   * Boss Jack's spec: "ปรับ sub-grid Cards เล็กลง อีก 50%".
+   *
+   * What's dropped vs renderCompactCard to make room:
+   *   - "Brand" header dropped (rarely useful when SKUs share a brand
+   *     within a group anyway)
+   *   - Stock label dropped, only the count + unit remains
+   *   - Footer is a single row: price + tiny [+] / สั่งผลิต button
+   *   - Discount line-through becomes a small badge under the price
+   */
+  const renderMiniCard = (p: ProductWithInventory) => {
+    const stockTone = deriveStockTone(p.total_quantity);
+    const hero = getHeroImage(p);
+    const effective = getEffectivePrice(p);
+    const hasDiscount = effective < Number(p.price);
+    const badge = discountBadge(p);
+    return (
+      <article
+        key={p.id}
+        className="rounded-md border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-indigo-300 hover:shadow-sm transition relative text-[10px]"
+      >
+        {badge && (
+          <span className="absolute top-0.5 right-0.5 z-10 inline-flex items-center px-1 py-px rounded-full bg-rose-500 text-white text-[8px] font-bold shadow-sm">
+            {badge}
+          </span>
+        )}
+        <div className="aspect-square bg-white p-1 border-b border-slate-100">
+          {hero ? (
+            <img
+              src={hero}
+              alt={p.name_th}
+              loading="lazy"
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <div className="w-full h-full grid place-items-center text-slate-300">
+              <Package size={18} />
+            </div>
+          )}
+        </div>
+        <div className="p-1 flex flex-col gap-0.5 flex-1">
+          <span className="text-[8px] font-mono text-slate-400 truncate leading-tight">
+            {p.sku}
+          </span>
+          <h3 className="text-[10px] font-semibold text-slate-900 leading-tight line-clamp-2 min-h-[2em]">
+            {p.name_th}
+          </h3>
+          <span
+            className={cn(
+              'text-[8px] tabular-nums leading-tight truncate',
+              stockTone.className,
+            )}
+          >
+            {formatNumber(p.total_quantity)} {p.unit}
+          </span>
+          <div className="mt-auto flex items-center justify-between gap-1 pt-0.5">
+            <div className="flex flex-col leading-none">
+              <strong
+                className={cn(
+                  'text-[11px] font-bold tabular-nums',
+                  hasDiscount ? 'text-rose-600' : 'text-slate-900',
+                )}
+              >
+                {formatCurrency(effective)}
+              </strong>
+              {hasDiscount && (
+                <span className="text-[8px] line-through text-slate-400 tabular-nums leading-tight">
+                  {formatCurrency(Number(p.price))}
+                </span>
+              )}
+            </div>
+            {p.total_quantity <= 0 ? (
+              <button
+                type="button"
+                onClick={(e) => handleAddClick(e, p, true)}
+                className="h-5 px-1 rounded bg-orange-500 text-white text-[8px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap"
+                title={`สั่งผลิต ${p.name_th}`}
+              >
+                <Plus size={8} /> สั่งผลิต
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => handleAddClick(e, p, false)}
+                className="w-5 h-5 grid place-items-center rounded bg-indigo-500 text-white hover:bg-indigo-600 flex-shrink-0"
+                title={`${ecom.addToQuote}: ${p.name_th}`}
+              >
+                <Plus size={11} />
+              </button>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  };
+
+  /**
    * Cart line operations are now index-based instead of id-based: in-stock
    * and made-to-order can co-exist as two separate lines for the same
    * product id, so the id alone is no longer a unique key.
@@ -828,9 +927,9 @@ export default function Ecommerce() {
                       group={group}
                       members={members}
                       onClose={() => toggleGroup(group.id)}
-                      // 4-6 cols of compact tiles depending on viewport
-                      memberGridCls="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2"
-                      renderMember={renderCompactCard}
+                      // Mini-tile sub-grid: ~half size of compact, more cols
+                      memberGridCls="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12 gap-1.5"
+                      renderMember={renderMiniCard}
                     />
                   </div>,
                 ];
@@ -875,8 +974,8 @@ export default function Ecommerce() {
                       group={group}
                       members={members}
                       onClose={() => toggleGroup(group.id)}
-                      memberGridCls="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-2"
-                      renderMember={renderCompactCard}
+                      memberGridCls="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 2xl:grid-cols-12 gap-1.5"
+                      renderMember={renderMiniCard}
                     />
                   </div>,
                 ];
