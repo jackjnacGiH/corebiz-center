@@ -25,7 +25,7 @@ import type {
 export interface ProductWithInventory extends Product {
   category: Pick<Category, 'id' | 'slug' | 'name_th' | 'name_en'> | null;
   /** Embedded group info, if the product was assigned to one. */
-  group: Pick<ProductGroup, 'id' | 'name'> | null;
+  group: Pick<ProductGroup, 'id' | 'name' | 'cover_image' | 'description'> | null;
   inventory: Array<Pick<Inventory, 'id' | 'warehouse_id' | 'quantity' | 'reserved' | 'reorder_level' | 'shelf' | 'row_no' | 'last_synced_at'>>;
   /** Sum of quantity across all warehouses */
   total_quantity: number;
@@ -62,7 +62,7 @@ export const productsApi = {
       .select(`
         *,
         category:categories(id,slug,name_th,name_en),
-        group:product_groups(id,name),
+        group:product_groups(id,name,cover_image,description),
         inventory(id,warehouse_id,quantity,reserved,reorder_level,shelf,row_no,last_synced_at)
       `)
       .order('created_at', { ascending: false });

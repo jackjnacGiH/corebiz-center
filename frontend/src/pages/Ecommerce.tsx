@@ -17,6 +17,9 @@ import {
   LayoutList,
   List,
   Table2,
+  ChevronDown,
+  ChevronRight,
+  Boxes,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '../i18n';
@@ -169,6 +172,23 @@ export default function Ecommerce() {
   // Realtime — refresh when products/inventory change
   useRealtimeTable('products', () => void load());
   useRealtimeTable('inventory', () => void load());
+  useRealtimeTable('product_groups', () => void load());
+
+  /**
+   * Set of group ids that are currently expanded. Persisted in memory only
+   * — refreshing the page collapses everything back to the parent-card view
+   * (Boss Jack's design: default state shows only group cards, customer
+   * clicks [+] to drill in).
+   */
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  function toggleGroup(id: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -181,6 +201,47 @@ export default function Ecommerce() {
         || (p.brand?.toLowerCase().includes(s) ?? false);
     });
   }, [products, search, selectedCategoryId]);
+
+  /**
+   * Group filteredProducts by group_id for the customer-facing display.
+   *
+   * Display contract:
+   *   - No search active → render groups as parent banners + ungrouped SKUs
+   *     as their own cards. Groups stay collapsed by default; user opens
+   *     them via the [+] toggle.
+   *   - Search active   → bypass grouping entirely and show every matching
+   *     SKU as a flat card list. (Boss Jack: "ค้นด้วย MIRKA #80 ควรเจอเป็น
+   *     SKU แบบ flat ข้ามกลุ่ม")
+   *   - Category filter is treated like search — narrows the result set
+   *     enough that the group structure starts to feel noisy, so flatten.
+   */
+  const groupedDisplay = useMemo(() => {
+    const isFiltering = !!search.trim() || selectedCategoryId !== 'all';
+    if (isFiltering) {
+      return { mode: 'flat' as const, products: filteredProducts };
+    }
+    const groupsMap = new Map<string, {
+      group: NonNullable<ProductWithInventory['group']>;
+      members: ProductWithInventory[];
+    }>();
+    const ungrouped: ProductWithInventory[] = [];
+    for (const p of filteredProducts) {
+      if (p.group) {
+        const existing = groupsMap.get(p.group.id);
+        if (existing) existing.members.push(p);
+        else groupsMap.set(p.group.id, { group: p.group, members: [p] });
+      } else {
+        ungrouped.push(p);
+      }
+    }
+    return {
+      mode: 'grouped' as const,
+      groups: Array.from(groupsMap.values()).sort((a, b) =>
+        a.group.name.localeCompare(b.group.name, 'th'),
+      ),
+      ungrouped,
+    };
+  }, [filteredProducts, search, selectedCategoryId]);
 
   const stats = useMemo(() => {
     const inventoryValue = products.reduce((acc, p) => acc + Number(p.price) * p.total_quantity, 0);
@@ -538,9 +599,10 @@ export default function Ecommerce() {
         </div>
       )}
 
-      {!loading && viewMode === 'grid' && (
-        <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6 gap-3">
-          {filteredProducts.map(p => {
+      {!loading && viewMode === 'grid' && (() => {
+        // Render a single product card — closure over the page's
+        // handleAddClick + i18n. Used in both flat + grouped sections.
+        const renderGridCard = (p: ProductWithInventory) => {
             const stockTone = deriveStockTone(p.total_quantity);
             const leadTime = deriveLeadTime(p.total_quantity);
             const hero = getHeroImage(p);
@@ -641,14 +703,53 @@ export default function Ecommerce() {
                 </div>
               </article>
             );
-          })}
-        </section>
-      )}
+          };
+
+        const gridSectionCls =
+          'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6 gap-3';
+
+        // Search / category filter → flat list (skip grouping)
+        if (groupedDisplay.mode === 'flat') {
+          return (
+            <section className={gridSectionCls}>
+              {filteredProducts.map(renderGridCard)}
+            </section>
+          );
+        }
+
+        // Default → groups as parent banners + ungrouped SKUs in their own grid
+        return (
+          <div className="space-y-4">
+            {groupedDisplay.groups.map(({ group, members }) => {
+              const isOpen = expandedGroups.has(group.id);
+              return (
+                <div key={group.id}>
+                  <GroupBanner
+                    group={group}
+                    count={members.length}
+                    isOpen={isOpen}
+                    onToggle={() => toggleGroup(group.id)}
+                  />
+                  {isOpen && (
+                    <section className={`${gridSectionCls} mt-3`}>
+                      {members.map(renderGridCard)}
+                    </section>
+                  )}
+                </div>
+              );
+            })}
+            {groupedDisplay.ungrouped.length > 0 && (
+              <section className={gridSectionCls}>
+                {groupedDisplay.ungrouped.map(renderGridCard)}
+              </section>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Compact: dense grid, smaller thumbs, 7-8 cols ─────────── */}
-      {!loading && viewMode === 'compact' && (
-        <section className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-2">
-          {filteredProducts.map((p) => {
+      {!loading && viewMode === 'compact' && (() => {
+        const renderCompactCard = (p: ProductWithInventory) => {
             const stockTone = deriveStockTone(p.total_quantity);
             const hero = getHeroImage(p);
             const effective = getEffectivePrice(p);
@@ -729,14 +830,41 @@ export default function Ecommerce() {
                 </div>
               </article>
             );
-          })}
-        </section>
-      )}
+          };
+
+        const compactSectionCls =
+          'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-2';
+
+        if (groupedDisplay.mode === 'flat') {
+          return <section className={compactSectionCls}>{filteredProducts.map(renderCompactCard)}</section>;
+        }
+        return (
+          <div className="space-y-4">
+            {groupedDisplay.groups.map(({ group, members }) => {
+              const isOpen = expandedGroups.has(group.id);
+              return (
+                <div key={group.id}>
+                  <GroupBanner group={group} count={members.length} isOpen={isOpen} onToggle={() => toggleGroup(group.id)} />
+                  {isOpen && (
+                    <section className={`${compactSectionCls} mt-3`}>
+                      {members.map(renderCompactCard)}
+                    </section>
+                  )}
+                </div>
+              );
+            })}
+            {groupedDisplay.ungrouped.length > 0 && (
+              <section className={compactSectionCls}>
+                {groupedDisplay.ungrouped.map(renderCompactCard)}
+              </section>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── List: 1 col rows, image-left + full details right ──────── */}
-      {!loading && viewMode === 'list' && (
-        <section className="flex flex-col gap-2">
-          {filteredProducts.map((p) => {
+      {!loading && viewMode === 'list' && (() => {
+        const renderListCard = (p: ProductWithInventory) => {
             const stockTone = deriveStockTone(p.total_quantity);
             const leadTime = deriveLeadTime(p.total_quantity);
             const hero = getHeroImage(p);
@@ -834,9 +962,36 @@ export default function Ecommerce() {
                 </div>
               </article>
             );
-          })}
-        </section>
-      )}
+          };
+
+        const listSectionCls = 'flex flex-col gap-2';
+
+        if (groupedDisplay.mode === 'flat') {
+          return <section className={listSectionCls}>{filteredProducts.map(renderListCard)}</section>;
+        }
+        return (
+          <div className="space-y-4">
+            {groupedDisplay.groups.map(({ group, members }) => {
+              const isOpen = expandedGroups.has(group.id);
+              return (
+                <div key={group.id}>
+                  <GroupBanner group={group} count={members.length} isOpen={isOpen} onToggle={() => toggleGroup(group.id)} />
+                  {isOpen && (
+                    <section className={`${listSectionCls} mt-3`}>
+                      {members.map(renderListCard)}
+                    </section>
+                  )}
+                </div>
+              );
+            })}
+            {groupedDisplay.ungrouped.length > 0 && (
+              <section className={listSectionCls}>
+                {groupedDisplay.ungrouped.map(renderListCard)}
+              </section>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Table: compact rows for scanning ─────────────────────── */}
       {!loading && viewMode === 'table' && (
@@ -1183,5 +1338,83 @@ export default function Ecommerce() {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── GroupBanner ──────────────────────────────────────────────────────────
+/**
+ * The "parent card" for a product group on the Ecommerce shelf. Spans the
+ * full row width, shows cover/name/member count + a [+]/[-] toggle that
+ * expands inline to reveal the member SKU cards below it.
+ *
+ * NOT clickable to add to cart — groups themselves don't have SKUs / price,
+ * they're display headers only (Boss Jack's spec).
+ */
+function GroupBanner({
+  group,
+  count,
+  isOpen,
+  onToggle,
+}: {
+  group: { id: string; name: string; cover_image: string | null; description: string | null };
+  count: number;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        'w-full text-left flex items-center gap-3 rounded-xl border p-3 transition',
+        isOpen
+          ? 'border-indigo-300 bg-indigo-50/50 hover:bg-indigo-50'
+          : 'border-slate-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/30',
+      )}
+      aria-expanded={isOpen}
+    >
+      {/* Cover */}
+      <div className="flex-shrink-0">
+        {group.cover_image ? (
+          <img
+            src={group.cover_image}
+            alt=""
+            className="w-14 h-14 sm:w-16 sm:h-16 rounded-lg object-cover border border-slate-200"
+          />
+        ) : (
+          <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-lg grid place-items-center bg-indigo-100 text-indigo-500 border border-indigo-200">
+            <Boxes size={22} />
+          </div>
+        )}
+      </div>
+
+      {/* Name + meta */}
+      <div className="flex-1 min-w-0">
+        <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">
+          {group.name}
+        </h3>
+        <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
+          <span className="tabular-nums">{count} รายการ</span>
+          {group.description && (
+            <>
+              <span className="text-slate-300">·</span>
+              <span className="truncate">{group.description}</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Expand chevron */}
+      <div
+        className={cn(
+          'flex-shrink-0 w-9 h-9 rounded-lg grid place-items-center transition',
+          isOpen
+            ? 'bg-indigo-500 text-white'
+            : 'bg-slate-100 text-slate-600 group-hover:bg-indigo-100',
+        )}
+      >
+        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+      </div>
+    </button>
   );
 }
