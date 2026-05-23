@@ -1271,9 +1271,35 @@ export interface RagChatResponse {
   tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   elapsed_ms: { embed: number; search: number; llm: number };
   model: string;
+  tool_calls?: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }>;
+  blocked?: 'cost_query';
 }
 
+/**
+ * Server-Sent Event types emitted by rag-chat (streaming mode).
+ * Frontend appends `text` chunks live, surfaces `tool_call` / `status` as
+ * inline badges, and finalises on `done`.
+ */
+export type RagChatEvent =
+  | { type: 'status'; message: string }
+  | { type: 'tool_call'; name: string; args: Record<string, unknown> }
+  | { type: 'text'; chunk: string }
+  | { type: 'blocked'; reason: string; answer: string }
+  | {
+      type: 'done';
+      sources?: RagChatSource[];
+      tokens?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+      elapsed_ms?: { embed: number; search: number; llm: number };
+      model?: string;
+      tool_calls?: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }>;
+    }
+  | { type: 'error'; message: string };
+
 export const knowledgeChatApi = {
+  /**
+   * Legacy one-shot (non-streaming) — kept for callers that don't need
+   * progressive UI. Returns the final answer after Gemini finishes.
+   */
   async ask(input: {
     query: string;
     history?: ChatHistoryItem[];
@@ -1286,14 +1312,141 @@ export const knowledgeChatApi = {
       body: {
         query: input.query,
         history: input.history ?? [],
-        match_count: input.matchCount ?? 5,
+        match_count: input.matchCount ?? 3,
         match_threshold: input.threshold ?? 0.4,
         model: input.model,
         language: input.language ?? null,
+        stream: false,
       },
     });
     if (error) throw error;
     return data as RagChatResponse;
+  },
+
+  /**
+   * Streaming — opens the SSE stream and calls `onEvent` for every event.
+   * Returns the final summary (sources, tokens, model, etc.) once `done`
+   * arrives. Throws if the server emits an `error` event or the HTTP
+   * request itself fails.
+   *
+   * The frontend should typically:
+   *   - append `text.chunk` to the current turn's content as they arrive
+   *   - show a small badge on `tool_call`
+   *   - replace content on `blocked` (guardrail refusal)
+   */
+  async askStream(
+    input: {
+      query: string;
+      history?: ChatHistoryItem[];
+      matchCount?: number;
+      threshold?: number;
+      language?: 'th' | 'en' | 'mixed' | null;
+    },
+    onEvent: (event: RagChatEvent) => void,
+  ): Promise<RagChatResponse> {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+    if (!supabaseUrl || !anonKey) {
+      throw new Error('VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY missing in .env.local');
+    }
+
+    // Use user JWT if logged in, otherwise fall back to anon (rag-chat verifies JWT)
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token ?? anonKey;
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/rag-chat`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'apikey': anonKey,
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify({
+        query: input.query,
+        history: input.history ?? [],
+        match_count: input.matchCount ?? 3,
+        match_threshold: input.threshold ?? 0.4,
+        language: input.language ?? null,
+        stream: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      throw new Error(`rag-chat ${res.status}: ${errBody.slice(0, 400)}`);
+    }
+    if (!res.body) throw new Error('rag-chat: empty response body');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+    let final: RagChatResponse | null = null;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events delimited by blank line (\n\n or \r\n\r\n)
+        for (;;) {
+          const i1 = buffer.indexOf('\n\n');
+          const i2 = buffer.indexOf('\r\n\r\n');
+          let idx = -1;
+          let sep = 0;
+          if (i1 !== -1 && (i2 === -1 || i1 < i2)) { idx = i1; sep = 2; }
+          else if (i2 !== -1) { idx = i2; sep = 4; }
+          if (idx === -1) break;
+
+          const eventBlock = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + sep);
+
+          for (const line of eventBlock.split(/\r?\n/)) {
+            if (!line.startsWith('data:')) continue;
+            const dataStr = line.slice(line[5] === ' ' ? 6 : 5).trim();
+            if (!dataStr) continue;
+            let evt: RagChatEvent;
+            try {
+              evt = JSON.parse(dataStr) as RagChatEvent;
+            } catch (e) {
+              console.warn('[askStream] SSE parse error', e, dataStr);
+              continue;
+            }
+            onEvent(evt);
+            if (evt.type === 'text') {
+              fullText += evt.chunk;
+            } else if (evt.type === 'blocked') {
+              fullText = evt.answer;
+            } else if (evt.type === 'done') {
+              final = {
+                answer: fullText,
+                sources: evt.sources ?? [],
+                tokens: evt.tokens ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+                elapsed_ms: evt.elapsed_ms ?? { embed: 0, search: 0, llm: 0 },
+                model: evt.model ?? 'unknown',
+                tool_calls: evt.tool_calls ?? [],
+              };
+            } else if (evt.type === 'error') {
+              throw new Error(evt.message);
+            }
+          }
+        }
+      }
+    } finally {
+      try { reader.releaseLock(); } catch { /* noop */ }
+    }
+
+    if (final) return final;
+    // Stream ended without a 'done' event — return what we have
+    return {
+      answer: fullText,
+      sources: [],
+      tokens: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      elapsed_ms: { embed: 0, search: 0, llm: 0 },
+      model: 'unknown',
+    };
   },
 };
 

@@ -11,6 +11,7 @@ import {
     ChevronUp,
     Lightbulb,
     ExternalLink,
+    Wrench,
 } from 'lucide-react';
 import {
     knowledgeChatApi,
@@ -31,15 +32,28 @@ interface ChatTurn {
     elapsed?: { embed: number; search: number; llm: number };
     showSources?: boolean;
     error?: boolean;
+    streaming?: boolean;
+    tools?: Array<{ name: string; args: Record<string, unknown> }>;
+    model?: string;
+    blocked?: boolean;
 }
 
 const SAMPLE_QUESTIONS = [
+    'MIRKA #80 ราคาเท่าไหร่ มีของไหม',
+    'กระดาษทราย MIRKA GOLD 5 มีเบอร์อะไรบ้าง',
     'คืนสินค้าได้กี่วัน',
     'มีใบกำกับภาษีไหม',
     'ส่งของไปต่างจังหวัดกี่วัน',
-    'รับบัตรเครดิตไหม',
     'สมัครเป็นตัวแทนได้ไหม',
 ];
+
+const TOOL_LABEL: Record<string, string> = {
+    find_products: 'ค้นสินค้า',
+    get_product_detail: 'ดูรายละเอียดสินค้า',
+    list_product_groups: 'ดูกลุ่มสินค้า',
+    get_group_members: 'ดูสมาชิกในกลุ่ม',
+    list_categories: 'ดูหมวดสินค้า',
+};
 
 function relativeTime(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
@@ -92,35 +106,91 @@ export default function KnowledgeChat() {
                 content: t.content,
             }));
 
-        try {
-            const result = await knowledgeChatApi.ask({
-                query: question,
-                history,
-                matchCount: 5,
-                threshold: 0.4,
-            });
+        // Create the assistant turn upfront so we can stream into it
+        const assistantId = `a-${Date.now()}`;
+        const placeholderTurn: ChatTurn = {
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            streaming: true,
+            tools: [],
+        };
+        setTurns((prev) => [...prev, placeholderTurn]);
 
-            const assistantTurn: ChatTurn = {
-                id: `a-${Date.now()}`,
-                role: 'assistant',
-                content: result.answer,
-                sources: result.sources,
-                tokens: {
-                    prompt: result.tokens.prompt_tokens,
-                    completion: result.tokens.completion_tokens,
+        try {
+            const result = await knowledgeChatApi.askStream(
+                {
+                    query: question,
+                    history,
+                    matchCount: 3,
+                    threshold: 0.4,
                 },
-                elapsed: result.elapsed_ms,
-            };
-            setTurns((prev) => [...prev, assistantTurn]);
+                (event) => {
+                    setTurns((prev) =>
+                        prev.map((t) => {
+                            if (t.id !== assistantId) return t;
+                            switch (event.type) {
+                                case 'tool_call':
+                                    return {
+                                        ...t,
+                                        tools: [
+                                            ...(t.tools ?? []),
+                                            { name: event.name, args: event.args },
+                                        ],
+                                    };
+                                case 'text':
+                                    return { ...t, content: t.content + event.chunk };
+                                case 'blocked':
+                                    return {
+                                        ...t,
+                                        content: event.answer,
+                                        blocked: true,
+                                    };
+                                default:
+                                    return t;
+                            }
+                        }),
+                    );
+                },
+            );
+
+            // Finalize turn with sources/tokens/elapsed
+            setTurns((prev) =>
+                prev.map((t) =>
+                    t.id !== assistantId
+                        ? t
+                        : {
+                              ...t,
+                              streaming: false,
+                              sources: result.sources,
+                              tokens: {
+                                  prompt: result.tokens.prompt_tokens,
+                                  completion: result.tokens.completion_tokens,
+                              },
+                              elapsed: result.elapsed_ms,
+                              model: result.model,
+                          },
+                ),
+            );
         } catch (e) {
-            const errTurn: ChatTurn = {
-                id: `e-${Date.now()}`,
-                role: 'assistant',
-                content: `ขออภัย เกิดข้อผิดพลาด: ${(e as Error).message}`,
-                error: true,
-            };
-            setTurns((prev) => [...prev, errTurn]);
-            setErr((e as Error).message);
+            // Mark turn as errored; preserve any text already streamed
+            const errMsg = (e as Error).message;
+            setTurns((prev) =>
+                prev.map((t) =>
+                    t.id !== assistantId
+                        ? t
+                        : {
+                              ...t,
+                              streaming: false,
+                              error: true,
+                              content:
+                                  t.content && t.content.length > 0
+                                      ? t.content
+                                      : `ขออภัย เกิดข้อผิดพลาด: ${errMsg}`,
+                          },
+                ),
+            );
+            setErr(errMsg);
         } finally {
             setLoading(false);
         }
@@ -157,7 +227,7 @@ export default function KnowledgeChat() {
                         <h1 className="text-2xl font-bold tracking-tight text-neutral-900 flex items-center gap-2 flex-wrap">
                             AI Admin Chat
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 uppercase tracking-wider">
-                                <Sparkles size={10} /> RAG + GPT-4o-mini
+                                <Sparkles size={10} /> Gemini 2.5 Flash + Tools
                             </span>
                         </h1>
                         <p className="text-sm text-neutral-500 mt-1">
@@ -201,10 +271,10 @@ export default function KnowledgeChat() {
                     </div>
                     <div className="mt-auto pt-3 border-t border-neutral-200 text-[10px] text-neutral-500 leading-relaxed space-y-0.5">
                         <div className="font-semibold text-neutral-700 mb-1">⚙️ Pipeline</div>
-                        <div>① OpenAI embedding (1536)</div>
-                        <div>② pgvector top-5 search</div>
-                        <div>③ GPT-4o-mini answer</div>
-                        <div>④ Cite sources by [#N]</div>
+                        <div>① RAG skip ถ้าเป็นคำถามสินค้า</div>
+                        <div>② OpenAI embed → pgvector (ถ้าใช้ RAG)</div>
+                        <div>③ Gemini 2.5 Flash + function calling</div>
+                        <div>④ Stream คำตอบทันที (SSE)</div>
                     </div>
                 </Card>
 
@@ -264,8 +334,52 @@ export default function KnowledgeChat() {
                                                 'bg-red-50 border border-red-200 text-red-700 rounded-tl-sm',
                                         )}
                                     >
+                                        {/* Tool-call badges (streaming pipeline visibility) */}
+                                        {t.role === 'assistant' && t.tools && t.tools.length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 mb-2">
+                                                {t.tools.map((tool, idx) => (
+                                                    <span
+                                                        key={idx}
+                                                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700"
+                                                    >
+                                                        <Wrench size={9} />
+                                                        {TOOL_LABEL[tool.name] ?? tool.name}
+                                                        {typeof tool.args.query === 'string' && (
+                                                            <span className="font-mono text-indigo-500">
+                                                                : {String(tool.args.query)}
+                                                            </span>
+                                                        )}
+                                                        {typeof tool.args.sku === 'string' && (
+                                                            <span className="font-mono text-indigo-500">
+                                                                : {String(tool.args.sku)}
+                                                            </span>
+                                                        )}
+                                                        {typeof tool.args.group_name === 'string' && (
+                                                            <span className="font-mono text-indigo-500">
+                                                                : {String(tool.args.group_name)}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+
                                         <div className="text-sm whitespace-pre-wrap leading-relaxed">
                                             {t.content}
+                                            {/* Inline placeholder while waiting for first text */}
+                                            {t.streaming && t.content.length === 0 && (
+                                                <span className="inline-flex items-center gap-1.5 text-neutral-500">
+                                                    <Loader2
+                                                        size={12}
+                                                        className="animate-spin"
+                                                    />
+                                                    กำลังคิด...
+                                                </span>
+                                            )}
+                                            {/* Blinking caret while streaming text */}
+                                            {t.streaming && t.content.length > 0 && (
+                                                <span className="inline-block w-2 h-4 ml-0.5 align-middle bg-indigo-500 animate-pulse rounded-sm" />
+                                            )}
                                         </div>
                                     </div>
 
@@ -318,12 +432,21 @@ export default function KnowledgeChat() {
                                     {/* Stats */}
                                     {t.elapsed && (
                                         <div className="mt-1.5 text-[10px] text-neutral-500 flex gap-3 flex-wrap tabular-nums">
-                                            <span>⚡ embed: {relativeTime(t.elapsed.embed)}</span>
-                                            <span>🔍 search: {relativeTime(t.elapsed.search)}</span>
+                                            {t.elapsed.embed > 0 && (
+                                                <span>⚡ embed: {relativeTime(t.elapsed.embed)}</span>
+                                            )}
+                                            {t.elapsed.search > 0 && (
+                                                <span>🔍 search: {relativeTime(t.elapsed.search)}</span>
+                                            )}
                                             <span>🤖 llm: {relativeTime(t.elapsed.llm)}</span>
-                                            {t.tokens && (
+                                            {t.tokens && t.tokens.prompt + t.tokens.completion > 0 && (
                                                 <span>
                                                     🪙 {t.tokens.prompt + t.tokens.completion} tok
+                                                </span>
+                                            )}
+                                            {t.model && t.model !== 'unknown' && (
+                                                <span className="text-indigo-600 font-medium">
+                                                    {t.model === 'guardrail' ? '🛡 guardrail' : `· ${t.model}`}
                                                 </span>
                                             )}
                                         </div>
@@ -331,17 +454,8 @@ export default function KnowledgeChat() {
                                 </div>
                             </div>
                         ))}
-                        {loading && (
-                            <div className="flex gap-3">
-                                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center flex-shrink-0">
-                                    <Bot size={18} className="text-white" />
-                                </div>
-                                <div className="bg-neutral-50 border border-neutral-200 rounded-2xl rounded-tl-sm px-4 py-3 text-neutral-700 text-sm">
-                                    <Loader2 size={14} className="inline animate-spin mr-2" />
-                                    กำลังค้นหาและเรียบเรียงคำตอบ...
-                                </div>
-                            </div>
-                        )}
+                        {/* Streaming placeholder is rendered inline in the assistant turn above —
+                            no separate spinner bubble needed */}
                     </div>
 
                     {/* Error banner */}
