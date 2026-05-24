@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
     Bot,
     Send,
@@ -70,6 +70,46 @@ function detectLang(s: string): 'th' | 'en' {
 function relativeTime(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Render assistant message content with inline markdown image support.
+ * Splits on `![alt](url)` syntax — matches become <img> tags, the rest
+ * remains plain text. Used so the AI can send product images by emitting
+ * markdown like ![กระดาษทราย MIRKA #80](https://.../image.jpg).
+ *
+ * Only http(s) URLs are honored. Streaming-safe: partial markdown like
+ * `![alt](htt` shows as plain text until the closing paren arrives in a
+ * later chunk, at which point it re-renders as an image.
+ */
+const IMG_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+function renderMessageContent(content: string): ReactNode[] {
+    if (!content) return [];
+    const out: ReactNode[] = [];
+    let lastIndex = 0;
+    let m: RegExpExecArray | null;
+    IMG_MD_RE.lastIndex = 0;
+    while ((m = IMG_MD_RE.exec(content)) !== null) {
+        if (m.index > lastIndex) {
+            out.push(content.slice(lastIndex, m.index));
+        }
+        const alt = m[1] || 'product image';
+        const src = m[2];
+        out.push(
+            <img
+                key={`img-${m.index}`}
+                src={src}
+                alt={alt}
+                loading="lazy"
+                className="my-2 max-w-[280px] max-h-[280px] rounded-lg border border-neutral-200 object-cover shadow-sm"
+            />,
+        );
+        lastIndex = IMG_MD_RE.lastIndex;
+    }
+    if (lastIndex < content.length) {
+        out.push(content.slice(lastIndex));
+    }
+    return out;
 }
 
 export default function KnowledgeChat() {
@@ -394,7 +434,9 @@ export default function KnowledgeChat() {
                                         })()}
 
                                         <div className="text-sm whitespace-pre-wrap leading-relaxed">
-                                            {t.content}
+                                            {t.role === 'assistant'
+                                                ? renderMessageContent(t.content)
+                                                : t.content}
                                             {/* Inline placeholder while waiting for first text —
                                                 language matches the latest user question */}
                                             {t.streaming && t.content.length === 0 && (() => {
