@@ -1,0 +1,355 @@
+/**
+ * CustomerChat — public customer-facing AI chat widget
+ *
+ * Designed to be iframed onto jnac.co.th (or any external page). Renders
+ * as a floating chat bubble bottom-right; clicking the bubble expands a
+ * chat panel above it. No login required.
+ *
+ * Conversation history is persisted in localStorage so a customer can
+ * refresh the page without losing context (up to 30 turns kept).
+ *
+ * Uses the same rag-chat Edge Function as the admin KnowledgeChat — which
+ * means same anti-hallucination guardrails, source grouping, image
+ * preservation, language matching, and cost-query refusal apply.
+ *
+ * Body background is transparent so when iframed, only the bubble and
+ * chat panel are visible — the host page's content shows through.
+ */
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+    Bot,
+    Send,
+    Loader2,
+    X,
+    RefreshCw,
+    MessageCircle,
+} from 'lucide-react';
+import {
+    knowledgeChatApi,
+    type ChatHistoryItem,
+} from '../lib/api';
+
+interface ChatTurn {
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    streaming?: boolean;
+    error?: boolean;
+}
+
+const STORAGE_KEY = 'jnac_customer_chat_v1';
+const MAX_PERSISTED_TURNS = 30;
+
+function loadHistory(): ChatTurn[] {
+    if (typeof window === 'undefined') return [];
+    try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        // Drop any partial streaming turns from a prior crashed session
+        return parsed.filter((t) => t && typeof t.content === 'string' && !t.streaming);
+    } catch {
+        return [];
+    }
+}
+
+function saveHistory(turns: ChatTurn[]) {
+    if (typeof window === 'undefined') return;
+    try {
+        const safe = turns
+            .filter((t) => !t.streaming && typeof t.content === 'string')
+            .slice(-MAX_PERSISTED_TURNS);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+    } catch {
+        /* quota exceeded or storage disabled — silent fail */
+    }
+}
+
+function detectLang(s: string): 'th' | 'en' {
+    return /[฀-๿]/.test(s) ? 'th' : 'en';
+}
+
+/**
+ * Parse `![alt](url)` in assistant text and render matched URLs as <img>.
+ * Streaming-safe: partial markdown stays as plain text until the closing
+ * paren arrives in a later SSE chunk.
+ */
+const IMG_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+function renderMessageContent(content: string): ReactNode[] {
+    if (!content) return [];
+    const out: ReactNode[] = [];
+    let lastIndex = 0;
+    let m: RegExpExecArray | null;
+    IMG_MD_RE.lastIndex = 0;
+    while ((m = IMG_MD_RE.exec(content)) !== null) {
+        if (m.index > lastIndex) {
+            out.push(content.slice(lastIndex, m.index));
+        }
+        out.push(
+            <img
+                key={`img-${m.index}`}
+                src={m[2]}
+                alt={m[1] || 'image'}
+                loading="lazy"
+                className="my-1 max-w-[240px] max-h-[240px] rounded-lg border border-neutral-200 object-cover shadow-sm"
+            />,
+        );
+        lastIndex = IMG_MD_RE.lastIndex;
+    }
+    if (lastIndex < content.length) {
+        out.push(content.slice(lastIndex));
+    }
+    return out;
+}
+
+const WELCOME_MESSAGE = `สวัสดีค่ะ ยินดีต้อนรับสู่ J NAC Thailand 🛠️\n\nสอบถามเรื่องสินค้า ราคา สต็อก หรือบริการได้เลยค่ะ — พิมพ์ได้ทั้งภาษาไทยและอังกฤษ`;
+
+export default function CustomerChat() {
+    const [open, setOpen] = useState(false);
+    const [turns, setTurns] = useState<ChatTurn[]>(() => {
+        const persisted = loadHistory();
+        return persisted.length > 0
+            ? persisted
+            : [{ id: 'welcome', role: 'assistant', content: WELCOME_MESSAGE }];
+    });
+    const [input, setInput] = useState('');
+    const [loading, setLoading] = useState(false);
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    // Make body transparent so the host page (jnac.co.th) shows through
+    // when this widget is embedded via iframe. Restored on unmount.
+    useEffect(() => {
+        const prevBg = document.body.style.background;
+        const prevHtmlBg = document.documentElement.style.background;
+        document.body.style.background = 'transparent';
+        document.documentElement.style.background = 'transparent';
+        return () => {
+            document.body.style.background = prevBg;
+            document.documentElement.style.background = prevHtmlBg;
+        };
+    }, []);
+
+    // Persist on every change
+    useEffect(() => {
+        saveHistory(turns);
+    }, [turns]);
+
+    // Auto-scroll on new content
+    useEffect(() => {
+        if (!open) return;
+        scrollRef.current?.scrollTo({
+            top: scrollRef.current.scrollHeight,
+            behavior: 'smooth',
+        });
+    }, [turns, open, loading]);
+
+    async function ask(question: string) {
+        if (!question.trim() || loading) return;
+
+        const userTurn: ChatTurn = {
+            id: `u-${Date.now()}`,
+            role: 'user',
+            content: question,
+        };
+        const assistantId = `a-${Date.now()}`;
+        const placeholderTurn: ChatTurn = {
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            streaming: true,
+        };
+        setTurns((prev) => [...prev, userTurn, placeholderTurn]);
+        setInput('');
+        setLoading(true);
+
+        // Last 20 turns for context (skip welcome + errors + the user turn we just added)
+        const history: ChatHistoryItem[] = turns
+            .filter(
+                (t) =>
+                    t.role === 'user' ||
+                    (t.role === 'assistant' && t.id !== 'welcome' && !t.error),
+            )
+            .slice(-20)
+            .map((t) => ({
+                role: t.role as 'user' | 'assistant',
+                content: t.content,
+            }));
+
+        const lang = detectLang(question);
+
+        try {
+            await knowledgeChatApi.askStream(
+                { query: question, history, matchCount: 5, threshold: 0.3 },
+                (event) => {
+                    setTurns((prev) =>
+                        prev.map((t) => {
+                            if (t.id !== assistantId) return t;
+                            switch (event.type) {
+                                case 'text':
+                                    return { ...t, content: t.content + event.chunk };
+                                case 'blocked':
+                                    return { ...t, content: event.answer };
+                                default:
+                                    return t;
+                            }
+                        }),
+                    );
+                },
+            );
+            setTurns((prev) =>
+                prev.map((t) => (t.id !== assistantId ? t : { ...t, streaming: false })),
+            );
+        } catch (e) {
+            const errMsg = (e as Error).message;
+            const wrapper =
+                lang === 'th'
+                    ? `ขออภัยค่ะ ระบบมีปัญหาชั่วคราว: ${errMsg}\n\nรบกวนติดต่อทีมงานโดยตรงที่ LINE @jnac`
+                    : `Sorry, there was a temporary error: ${errMsg}\n\nPlease contact our team via LINE @jnac`;
+            setTurns((prev) =>
+                prev.map((t) =>
+                    t.id !== assistantId
+                        ? t
+                        : {
+                              ...t,
+                              streaming: false,
+                              error: true,
+                              content: t.content && t.content.length > 0 ? t.content : wrapper,
+                          },
+                ),
+            );
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function handleSubmit(e: FormEvent) {
+        e.preventDefault();
+        void ask(input.trim());
+    }
+
+    function resetChat() {
+        const fresh: ChatTurn = { id: 'welcome', role: 'assistant', content: WELCOME_MESSAGE };
+        setTurns([fresh]);
+        try {
+            window.localStorage.removeItem(STORAGE_KEY);
+        } catch { /* noop */ }
+    }
+
+    return (
+        <div className="fixed bottom-0 right-0 z-[2147483646] pointer-events-none">
+            {/* Chat panel */}
+            {open && (
+                <div
+                    className="pointer-events-auto bg-white rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden flex flex-col absolute bottom-20 right-4 animate-in fade-in slide-in-from-bottom-4 duration-200"
+                    style={{ width: 'min(380px, calc(100vw - 32px))', height: 'min(560px, calc(100vh - 120px))' }}
+                >
+                    {/* Header */}
+                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-3 flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-white/20 grid place-items-center">
+                            <Bot size={20} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-sm">J NAC Thailand</div>
+                            <div className="text-xs text-white/80 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                                AI พร้อมให้บริการ
+                            </div>
+                        </div>
+                        <button
+                            onClick={resetChat}
+                            title="เริ่มแชทใหม่"
+                            className="w-7 h-7 rounded-md hover:bg-white/15 grid place-items-center transition"
+                        >
+                            <RefreshCw size={14} />
+                        </button>
+                        <button
+                            onClick={() => setOpen(false)}
+                            title="ย่อแชท"
+                            className="w-7 h-7 rounded-md hover:bg-white/15 grid place-items-center transition"
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+
+                    {/* Messages */}
+                    <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-neutral-50">
+                        {turns.map((t) => (
+                            <div
+                                key={t.id}
+                                className={`flex gap-2 ${t.role === 'user' ? 'flex-row-reverse' : ''}`}
+                            >
+                                {t.role === 'assistant' && (
+                                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center flex-shrink-0 mt-0.5">
+                                        <Bot size={14} className="text-white" />
+                                    </div>
+                                )}
+                                <div
+                                    className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
+                                        t.role === 'user'
+                                            ? 'bg-indigo-600 text-white rounded-tr-sm'
+                                            : t.error
+                                                ? 'bg-red-50 text-red-700 border border-red-200 rounded-tl-sm'
+                                                : 'bg-white text-neutral-900 border border-neutral-200 rounded-tl-sm'
+                                    }`}
+                                >
+                                    {renderMessageContent(t.content)}
+                                    {t.streaming && t.content.length === 0 && (
+                                        <span className="inline-flex items-center gap-1.5 text-neutral-500">
+                                            <Loader2 size={12} className="animate-spin" />
+                                            กำลังคิด...
+                                        </span>
+                                    )}
+                                    {t.streaming && t.content.length > 0 && (
+                                        <span className="inline-block w-2 h-3.5 ml-0.5 align-middle bg-indigo-500 animate-pulse rounded-sm" />
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Input */}
+                    <form onSubmit={handleSubmit} className="border-t border-neutral-200 p-3 flex gap-2 bg-white">
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="พิมพ์คำถาม..."
+                            disabled={loading}
+                            className="flex-1 h-9 rounded-lg border border-neutral-200 bg-neutral-50 px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
+                            autoFocus
+                        />
+                        <button
+                            type="submit"
+                            disabled={loading || !input.trim()}
+                            className="h-9 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 flex items-center justify-center transition"
+                        >
+                            {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        </button>
+                    </form>
+                </div>
+            )}
+
+            {/* Floating bubble */}
+            <button
+                onClick={() => setOpen((o) => !o)}
+                className="pointer-events-auto absolute bottom-4 right-4 w-14 h-14 rounded-full bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition grid place-items-center"
+                title={open ? 'ย่อแชท' : 'สอบถามข้อมูล'}
+            >
+                {open ? <X size={22} /> : <MessageCircle size={22} />}
+                {/* Unread badge (placeholder for future) */}
+                {!open && turns.some((t) => t.id !== 'welcome' && t.role === 'assistant') && (
+                    <span className="absolute top-0 right-0 w-3 h-3 rounded-full bg-green-400 ring-2 ring-white" />
+                )}
+            </button>
+
+            {/* Helpful empty-state cue when widget loaded but never opened */}
+            {!open && turns.length <= 1 && (
+                <div className="pointer-events-none absolute bottom-20 right-4 max-w-[200px] bg-neutral-900 text-white text-xs px-3 py-2 rounded-lg shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-500">
+                    มีคำถาม? คลิกที่นี่
+                    <div className="absolute -bottom-1 right-6 w-2 h-2 bg-neutral-900 rotate-45" />
+                </div>
+            )}
+        </div>
+    );
+}

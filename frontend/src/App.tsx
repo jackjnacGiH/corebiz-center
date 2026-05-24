@@ -9,6 +9,7 @@ import Chat from './pages/Chat';
 import Marketing from './pages/Marketing';
 import OpenclawRAG from './pages/OpenclawRAG';
 import KnowledgeChat from './pages/KnowledgeChat';
+import CustomerChat from './pages/CustomerChat';
 import Affiliate from './pages/Affiliate';
 import Settings from './pages/Settings';
 import Login from './pages/auth/Login';
@@ -27,6 +28,9 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/auth/line-callback" element={<LineCallback />} />
+            {/* Public customer-facing AI chat widget — designed to be
+                iframed onto jnac.co.th. No auth required. */}
+            <Route path="/widget" element={<CustomerChat />} />
             <Route
               path="/"
               element={
