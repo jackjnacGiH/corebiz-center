@@ -105,7 +105,43 @@ function renderMessageContent(content: string): ReactNode[] {
 
 const WELCOME_MESSAGE = `สวัสดีค่ะ ยินดีต้อนรับสู่ J NAC Thailand 🛠️\n\nสอบถามเรื่องสินค้า ราคา สต็อก หรือบริการได้เลยค่ะ — พิมพ์ได้ทั้งภาษาไทยและอังกฤษ`;
 
+/**
+ * Position the widget at a corner of the iframe. Configurable via URL:
+ *   /widget?pos=bl  (bottom-left)
+ *   /widget?pos=br  (bottom-right, default)
+ *   /widget?pos=tl  (top-left)
+ *   /widget?pos=tr  (top-right)
+ * Useful when the host page already has a chat/contact widget at the
+ * default corner (e.g. jnac.co.th has Readyplanet on bottom-right →
+ * use pos=bl to avoid overlap).
+ */
+type Pos = 'br' | 'bl' | 'tr' | 'tl';
+function readPos(): Pos {
+    if (typeof window === 'undefined') return 'br';
+    const p = new URLSearchParams(window.location.search).get('pos');
+    return p === 'bl' || p === 'tr' || p === 'tl' ? p : 'br';
+}
+
+/**
+ * Tell the host page (parent of the iframe) the widget's collapsed/open
+ * state so it can resize the iframe — small around the bubble when
+ * collapsed (so it doesn't block host page clicks), full size when open.
+ */
+function postSize(open: boolean) {
+    if (typeof window === 'undefined' || window.parent === window) return;
+    try {
+        window.parent.postMessage(
+            { type: 'corebiz-widget', open },
+            '*',
+        );
+    } catch { /* postMessage rejected by parent, ignore */ }
+}
+
 export default function CustomerChat() {
+    const pos = readPos();
+    const isLeft = pos === 'bl' || pos === 'tl';
+    const isTop = pos === 'tr' || pos === 'tl';
+
     const [open, setOpen] = useState(false);
     const [turns, setTurns] = useState<ChatTurn[]>(() => {
         const persisted = loadHistory();
@@ -129,6 +165,11 @@ export default function CustomerChat() {
             document.documentElement.style.background = prevHtmlBg;
         };
     }, []);
+
+    // Send size hint to parent whenever open state changes
+    useEffect(() => {
+        postSize(open);
+    }, [open]);
 
     // Persist on every change
     useEffect(() => {
@@ -236,12 +277,17 @@ export default function CustomerChat() {
         } catch { /* noop */ }
     }
 
+    const rootCornerClass = `${isTop ? 'top-0' : 'bottom-0'} ${isLeft ? 'left-0' : 'right-0'}`;
+    const bubbleCornerClass = `${isTop ? 'top-4' : 'bottom-4'} ${isLeft ? 'left-4' : 'right-4'}`;
+    const panelCornerClass = `${isTop ? 'top-20' : 'bottom-20'} ${isLeft ? 'left-4' : 'right-4'}`;
+    const slideInClass = isTop ? 'slide-in-from-top-4' : 'slide-in-from-bottom-4';
+
     return (
-        <div className="fixed bottom-0 right-0 z-[2147483646] pointer-events-none">
+        <div className={`fixed ${rootCornerClass} z-[2147483646] pointer-events-none`}>
             {/* Chat panel */}
             {open && (
                 <div
-                    className="pointer-events-auto bg-white rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden flex flex-col absolute bottom-20 right-4 animate-in fade-in slide-in-from-bottom-4 duration-200"
+                    className={`pointer-events-auto bg-white rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden flex flex-col absolute ${panelCornerClass} animate-in fade-in ${slideInClass} duration-200`}
                     style={{ width: 'min(380px, calc(100vw - 32px))', height: 'min(560px, calc(100vh - 120px))' }}
                 >
                     {/* Header */}
@@ -333,7 +379,7 @@ export default function CustomerChat() {
             {/* Floating bubble */}
             <button
                 onClick={() => setOpen((o) => !o)}
-                className="pointer-events-auto absolute bottom-4 right-4 w-14 h-14 rounded-full bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition grid place-items-center"
+                className={`pointer-events-auto absolute ${bubbleCornerClass} w-14 h-14 rounded-full bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition grid place-items-center`}
                 title={open ? 'ย่อแชท' : 'สอบถามข้อมูล'}
             >
                 {open ? <X size={22} /> : <MessageCircle size={22} />}
@@ -345,9 +391,9 @@ export default function CustomerChat() {
 
             {/* Helpful empty-state cue when widget loaded but never opened */}
             {!open && turns.length <= 1 && (
-                <div className="pointer-events-none absolute bottom-20 right-4 max-w-[200px] bg-neutral-900 text-white text-xs px-3 py-2 rounded-lg shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <div className={`pointer-events-none absolute ${panelCornerClass} max-w-[200px] bg-neutral-900 text-white text-xs px-3 py-2 rounded-lg shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-500`}>
                     มีคำถาม? คลิกที่นี่
-                    <div className="absolute -bottom-1 right-6 w-2 h-2 bg-neutral-900 rotate-45" />
+                    <div className={`absolute -bottom-1 ${isLeft ? 'left-6' : 'right-6'} w-2 h-2 bg-neutral-900 rotate-45`} />
                 </div>
             )}
         </div>
