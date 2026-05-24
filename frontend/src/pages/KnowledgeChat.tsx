@@ -47,13 +47,25 @@ const SAMPLE_QUESTIONS = [
     'สมัครเป็นตัวแทนได้ไหม',
 ];
 
-const TOOL_LABEL: Record<string, string> = {
+const TOOL_LABEL_TH: Record<string, string> = {
     find_products: 'ค้นสินค้า',
     get_product_detail: 'ดูรายละเอียดสินค้า',
     list_product_groups: 'ดูกลุ่มสินค้า',
     get_group_members: 'ดูสมาชิกในกลุ่ม',
     list_categories: 'ดูหมวดสินค้า',
 };
+const TOOL_LABEL_EN: Record<string, string> = {
+    find_products: 'Find products',
+    get_product_detail: 'Get product detail',
+    list_product_groups: 'List product groups',
+    get_group_members: 'Group members',
+    list_categories: 'List categories',
+};
+
+/** Detect language of a user query (Thai vs English) from script presence. */
+function detectLang(s: string): 'th' | 'en' {
+    return /[฀-๿]/.test(s) ? 'th' : 'en';
+}
 
 function relativeTime(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
@@ -66,7 +78,7 @@ export default function KnowledgeChat() {
         {
             id: 'welcome',
             role: 'assistant',
-            content: `สวัสดีครับ${profile?.full_name ? ' ' + profile.full_name : ''}! ผมเป็น AI ผู้ช่วยของ CoreBiz Center 🤖\n\nถามอะไรเกี่ยวกับนโยบาย/สินค้า/วิธีการได้เลย — ผมจะค้นหาจาก knowledge base แล้วตอบเป็นภาษาไทยให้`,
+            content: `สวัสดีครับ${profile?.full_name ? ' ' + profile.full_name : ''}! ผมเป็น AI ผู้ช่วยของ CoreBiz Center 🤖\n\nถามอะไรเกี่ยวกับนโยบาย/สินค้า/ราคา/สต็อกได้เลย — ผมจำการสนทนาก่อนหน้าได้ และจะตอบเป็นภาษาเดียวกับที่ถาม (ไทย/English)`,
         },
     ]);
     const [input, setInput] = useState('');
@@ -94,17 +106,21 @@ export default function KnowledgeChat() {
         setLoading(true);
         setErr(null);
 
+        // Send last 20 turns as conversation history so AI remembers context
+        // across the whole chat (product mentioned earlier, customer details, etc.)
         const history: ChatHistoryItem[] = turns
             .filter(
                 (t) =>
                     t.role === 'user' ||
                     (t.role === 'assistant' && t.id !== 'welcome' && !t.error),
             )
-            .slice(-8)
+            .slice(-20)
             .map((t) => ({
                 role: t.role as 'user' | 'assistant',
                 content: t.content,
             }));
+
+        const lang = detectLang(question);
 
         // Create the assistant turn upfront so we can stream into it
         const assistantId = `a-${Date.now()}`;
@@ -173,8 +189,13 @@ export default function KnowledgeChat() {
                 ),
             );
         } catch (e) {
-            // Mark turn as errored; preserve any text already streamed
+            // Mark turn as errored; preserve any text already streamed.
+            // Error wrapper matches the user's language (Thai or English).
             const errMsg = (e as Error).message;
+            const wrapper =
+                lang === 'th'
+                    ? `ขออภัย เกิดข้อผิดพลาด: ${errMsg}`
+                    : `Sorry, an error occurred: ${errMsg}`;
             setTurns((prev) =>
                 prev.map((t) =>
                     t.id !== assistantId
@@ -186,7 +207,7 @@ export default function KnowledgeChat() {
                               content:
                                   t.content && t.content.length > 0
                                       ? t.content
-                                      : `ขออภัย เกิดข้อผิดพลาด: ${errMsg}`,
+                                      : wrapper,
                           },
                 ),
             );
@@ -335,47 +356,68 @@ export default function KnowledgeChat() {
                                         )}
                                     >
                                         {/* Tool-call badges (streaming pipeline visibility) */}
-                                        {t.role === 'assistant' && t.tools && t.tools.length > 0 && (
-                                            <div className="flex flex-wrap gap-1.5 mb-2">
-                                                {t.tools.map((tool, idx) => (
-                                                    <span
-                                                        key={idx}
-                                                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700"
-                                                    >
-                                                        <Wrench size={9} />
-                                                        {TOOL_LABEL[tool.name] ?? tool.name}
-                                                        {typeof tool.args.query === 'string' && (
-                                                            <span className="font-mono text-indigo-500">
-                                                                : {String(tool.args.query)}
-                                                            </span>
-                                                        )}
-                                                        {typeof tool.args.sku === 'string' && (
-                                                            <span className="font-mono text-indigo-500">
-                                                                : {String(tool.args.sku)}
-                                                            </span>
-                                                        )}
-                                                        {typeof tool.args.group_name === 'string' && (
-                                                            <span className="font-mono text-indigo-500">
-                                                                : {String(tool.args.group_name)}
-                                                            </span>
-                                                        )}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
+                                        {t.role === 'assistant' && t.tools && t.tools.length > 0 && (() => {
+                                            // Pick badge language from the assistant's reply text
+                                            // (which matches user's language). Falls back to Thai.
+                                            const labelMap =
+                                                detectLang(t.content || '') === 'en'
+                                                    ? TOOL_LABEL_EN
+                                                    : TOOL_LABEL_TH;
+                                            return (
+                                                <div className="flex flex-wrap gap-1.5 mb-2">
+                                                    {t.tools.map((tool, idx) => (
+                                                        <span
+                                                            key={idx}
+                                                            className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700"
+                                                        >
+                                                            <Wrench size={9} />
+                                                            {labelMap[tool.name] ?? tool.name}
+                                                            {typeof tool.args.query === 'string' && (
+                                                                <span className="font-mono text-indigo-500">
+                                                                    : {String(tool.args.query)}
+                                                                </span>
+                                                            )}
+                                                            {typeof tool.args.sku === 'string' && (
+                                                                <span className="font-mono text-indigo-500">
+                                                                    : {String(tool.args.sku)}
+                                                                </span>
+                                                            )}
+                                                            {typeof tool.args.group_name === 'string' && (
+                                                                <span className="font-mono text-indigo-500">
+                                                                    : {String(tool.args.group_name)}
+                                                                </span>
+                                                            )}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            );
+                                        })()}
 
                                         <div className="text-sm whitespace-pre-wrap leading-relaxed">
                                             {t.content}
-                                            {/* Inline placeholder while waiting for first text */}
-                                            {t.streaming && t.content.length === 0 && (
-                                                <span className="inline-flex items-center gap-1.5 text-neutral-500">
-                                                    <Loader2
-                                                        size={12}
-                                                        className="animate-spin"
-                                                    />
-                                                    กำลังคิด...
-                                                </span>
-                                            )}
+                                            {/* Inline placeholder while waiting for first text —
+                                                language matches the latest user question */}
+                                            {t.streaming && t.content.length === 0 && (() => {
+                                                const myIdx = turns.findIndex(
+                                                    (x) => x.id === t.id,
+                                                );
+                                                const prevUser = turns
+                                                    .slice(0, myIdx)
+                                                    .reverse()
+                                                    .find((x) => x.role === 'user');
+                                                const isEn =
+                                                    prevUser != null &&
+                                                    detectLang(prevUser.content) === 'en';
+                                                return (
+                                                    <span className="inline-flex items-center gap-1.5 text-neutral-500">
+                                                        <Loader2
+                                                            size={12}
+                                                            className="animate-spin"
+                                                        />
+                                                        {isEn ? 'Thinking...' : 'กำลังคิด...'}
+                                                    </span>
+                                                );
+                                            })()}
                                             {/* Blinking caret while streaming text */}
                                             {t.streaming && t.content.length > 0 && (
                                                 <span className="inline-block w-2 h-4 ml-0.5 align-middle bg-indigo-500 animate-pulse rounded-sm" />
