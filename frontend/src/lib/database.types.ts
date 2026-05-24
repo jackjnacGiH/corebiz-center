@@ -254,13 +254,13 @@ export type Database = {
       }
       knowledge_chunks: {
         Row: {
-          chunk_index: number; content: string; content_hash: string; created_at: string;
+          category: string; chunk_index: number; content: string; content_hash: string; created_at: string;
           embedding: string | null; id: string; language: string; metadata: Json;
           source_path: string; source_type: string; tags: string[]; title: string | null;
           token_count: number | null; updated_at: string; visibility: string;
         }
         Insert: {
-          chunk_index?: number; content: string; content_hash: string; created_at?: string;
+          category?: string; chunk_index?: number; content: string; content_hash: string; created_at?: string;
           embedding?: string | null; id?: string; language?: string; metadata?: Json;
           source_path: string; source_type?: string; tags?: string[]; title?: string | null;
           token_count?: number | null; updated_at?: string; visibility?: string;

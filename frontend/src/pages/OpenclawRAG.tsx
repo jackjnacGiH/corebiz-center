@@ -580,7 +580,7 @@ function BrowseTab({
             onEditRequest({
                 source_path,
                 title: first.title ?? '',
-                category: first.source_type,
+                category: first.category ?? 'manual',
                 tags: first.tags ?? [],
                 language: (first.language as 'th' | 'en' | 'mixed') ?? 'th',
                 visibility: (first.visibility as 'public' | 'internal') ?? 'public',
@@ -644,8 +644,8 @@ function BrowseTab({
                                 <span className="font-mono text-xs text-indigo-600 truncate">
                                     {src.source_path}
                                 </span>
-                                <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600 tracking-wider">
-                                    {src.source_type}
+                                <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 tracking-wider">
+                                    {src.category}
                                 </span>
                             </div>
                             {src.title && (

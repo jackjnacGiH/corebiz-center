@@ -1224,6 +1224,10 @@ export interface KnowledgeChunkRow {
   id: string;
   source_path: string;
   source_type: 'obsidian'|'manual'|'upload'|'crawl';
+  /** User-facing topic (products | policies | faq | ...) — separate from
+   *  source_type (which tracks ingestion mechanism). Added in migration
+   *  knowledge_chunks_add_category_column. */
+  category: string;
   title: string | null;
   content: string;
   language: string;
@@ -1239,6 +1243,8 @@ export interface KnowledgeChunkRow {
 export interface KnowledgeSource {
   source_path: string;
   source_type: string;
+  /** User-facing topic; what the admin list and edit form display. */
+  category: string;
   title: string | null;
   chunks_count: number;
   total_tokens: number;
@@ -1455,11 +1461,11 @@ export const knowledgeAdminApi = {
   async listSources(): Promise<KnowledgeSource[]> {
     const { data, error } = await supabase
       .from('knowledge_chunks')
-      .select('source_path,source_type,title,language,visibility,tags,token_count,updated_at')
+      .select('source_path,source_type,category,title,language,visibility,tags,token_count,updated_at')
       .order('updated_at', { ascending: false });
     if (error) throw error;
 
-    const rows = (data ?? []) as Array<Pick<KnowledgeChunkRow, 'source_path'|'source_type'|'title'|'language'|'visibility'|'tags'|'token_count'|'updated_at'>>;
+    const rows = (data ?? []) as Array<Pick<KnowledgeChunkRow, 'source_path'|'source_type'|'category'|'title'|'language'|'visibility'|'tags'|'token_count'|'updated_at'>>;
     const grouped = new Map<string, KnowledgeSource>();
     for (const r of rows) {
       const existing = grouped.get(r.source_path);
@@ -1471,6 +1477,7 @@ export const knowledgeAdminApi = {
         grouped.set(r.source_path, {
           source_path: r.source_path,
           source_type: r.source_type,
+          category: r.category ?? 'manual',
           title: r.title,
           chunks_count: 1,
           total_tokens: r.token_count ?? 0,
@@ -1487,7 +1494,7 @@ export const knowledgeAdminApi = {
   async listChunksForSource(source_path: string): Promise<KnowledgeChunkRow[]> {
     const { data, error } = await supabase
       .from('knowledge_chunks')
-      .select('id,source_path,source_type,title,content,language,chunk_index,visibility,tags,token_count,metadata,created_at,updated_at')
+      .select('id,source_path,source_type,category,title,content,language,chunk_index,visibility,tags,token_count,metadata,created_at,updated_at')
       .eq('source_path', source_path)
       .order('chunk_index', { ascending: true });
     if (error) throw error;
