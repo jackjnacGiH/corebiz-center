@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ChangeEvent } from 'react';
 import {
     BrainCircuit,
     RefreshCw,
@@ -17,6 +17,7 @@ import {
     Plus,
     FileEdit,
     FlaskConical,
+    ImagePlus,
 } from 'lucide-react';
 import {
     knowledgeAdminApi,
@@ -27,6 +28,7 @@ import {
     type KnowledgeMatch,
     type KnowledgeCategory,
 } from '../lib/api';
+import { supabase } from '../lib/supabase';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
@@ -250,8 +252,74 @@ function AddKnowledgeTab({
     const [saving, setSaving] = useState(false);
     const [success, setSuccess] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
+    const [uploading, setUploading] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const contentRef = useRef<HTMLTextAreaElement>(null);
 
     const isEditMode = editing !== null;
+
+    /**
+     * Upload an image to knowledge-assets bucket and insert markdown image
+     * syntax at the textarea's cursor position. The QR/diagram/screenshot
+     * becomes part of the chunk's content — when AI retrieves this chunk
+     * from RAG, it includes the image markdown verbatim and the chat
+     * frontend renders it as <img> automatically.
+     */
+    async function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) {
+            setErr('ไฟล์ใหญ่เกิน 5MB');
+            return;
+        }
+        if (!file.type.startsWith('image/')) {
+            setErr('รองรับเฉพาะไฟล์รูปภาพ (PNG, JPG, WEBP, GIF, SVG)');
+            return;
+        }
+        setUploading(true);
+        setErr(null);
+        try {
+            const ext = file.name.split('.').pop() || 'png';
+            const stamp = Date.now();
+            const rand = Math.random().toString(36).slice(2, 8);
+            const path = `${stamp}-${rand}.${ext}`;
+            const { error: upErr } = await supabase.storage
+                .from('knowledge-assets')
+                .upload(path, file, { cacheControl: '3600', upsert: false });
+            if (upErr) throw upErr;
+            const { data } = supabase.storage
+                .from('knowledge-assets')
+                .getPublicUrl(path);
+            const url = data.publicUrl;
+            const alt = file.name.replace(/\.[^.]+$/, '');
+            const markdown = `![${alt}](${url})`;
+
+            const ta = contentRef.current;
+            if (ta) {
+                const start = ta.selectionStart ?? content.length;
+                const end = ta.selectionEnd ?? content.length;
+                const newContent =
+                    content.slice(0, start) + markdown + content.slice(end);
+                setContent(newContent);
+                // restore cursor right after the inserted markdown
+                requestAnimationFrame(() => {
+                    ta.focus();
+                    ta.setSelectionRange(
+                        start + markdown.length,
+                        start + markdown.length,
+                    );
+                });
+            } else {
+                setContent(content + '\n\n' + markdown);
+            }
+            setSuccess(`อัปโหลดรูป ${file.name} สำเร็จ`);
+        } catch (uploadErr) {
+            setErr(`อัปโหลดล้มเหลว: ${(uploadErr as Error).message}`);
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    }
 
     // When BrowseTab signals an edit, copy the source into the form. Reset
     // when the parent clears `editing` (after a successful save or cancel).
@@ -442,15 +510,41 @@ function AddKnowledgeTab({
                     </div>
 
                     <div className="space-y-2">
-                        <Label htmlFor="content" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
-                            เนื้อหา * (Markdown ก็ได้ — ระบบจะแตก chunks ตาม heading `##` อัตโนมัติ)
-                        </Label>
+                        <div className="flex items-center justify-between gap-2">
+                            <Label htmlFor="content" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
+                                เนื้อหา * (Markdown ก็ได้ — ระบบจะแตก chunks ตาม heading `##` อัตโนมัติ)
+                            </Label>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                                className="hidden"
+                                onChange={handleImageUpload}
+                            />
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={uploading}
+                                onClick={() => fileInputRef.current?.click()}
+                                className="gap-1.5 text-xs h-7"
+                                title="อัปโหลดรูป (QR Code, รูปสินค้า, แผนภาพ) — AI จะส่งให้ลูกค้าอัตโนมัติ"
+                            >
+                                {uploading ? (
+                                    <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                    <ImagePlus size={12} />
+                                )}
+                                {uploading ? 'กำลังอัปโหลด...' : 'แทรกรูป'}
+                            </Button>
+                        </div>
                         <textarea
+                            ref={contentRef}
                             id="content"
                             required
                             rows={14}
                             placeholder={
-                                '# หัวข้อหลัก\n\n## หัวข้อย่อยที่ 1\n\nเนื้อหา...\n\n## หัวข้อย่อยที่ 2\n\nเนื้อหาเพิ่ม...'
+                                '# หัวข้อหลัก\n\n## หัวข้อย่อยที่ 1\n\nเนื้อหา...\n\n## หัวข้อย่อยที่ 2\n\nเนื้อหาเพิ่ม...\n\n(กดปุ่ม "แทรกรูป" เพื่อแนบ QR Code / รูปสินค้า — AI จะส่งให้ลูกค้าอัตโนมัติ)'
                             }
                             value={content}
                             onChange={(e) => setContent(e.target.value)}
