@@ -1,9 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Tell Google Translate / browser auto-translate NOT to translate this app.
+         Auto-translation breaks React's virtual-DOM diffing and crashes the app
+         with NotFoundError on insertBefore (known React + GT conflict). -->
+    <meta name="google" content="notranslate" />
     <title>CoreBiz Center - Unified Commerce Platform</title>
   </head>
   <body>
