@@ -15,7 +15,7 @@
  * Body background is transparent so when iframed, only the bubble and
  * chat panel are visible — the host page's content shows through.
  */
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import {
     Bot,
     Send,
@@ -116,10 +116,24 @@ const WELCOME_MESSAGE = `สวัสดีค่ะ ยินดีต้อน
  * use pos=bl to avoid overlap).
  */
 type Pos = 'br' | 'bl' | 'tr' | 'tl';
-function readPos(): Pos {
-    if (typeof window === 'undefined') return 'br';
-    const p = new URLSearchParams(window.location.search).get('pos');
-    return p === 'bl' || p === 'tr' || p === 'tl' ? p : 'br';
+interface WidgetConfig {
+    pos: Pos;
+    /** Pixel offset from the chosen corner (vertical). Default 16. Useful
+     *  to slot above/below an existing widget stack (e.g. Readyplanet). */
+    offset: number;
+    /** Optional label rendered as a pill on the side of the bubble.
+     *  Matches the visual style of Readyplanet's contact buttons. */
+    label: string | null;
+}
+function readConfig(): WidgetConfig {
+    if (typeof window === 'undefined') return { pos: 'br', offset: 16, label: null };
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get('pos');
+    const pos: Pos = p === 'bl' || p === 'tr' || p === 'tl' ? p : 'br';
+    const offsetRaw = Number(params.get('offset'));
+    const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 16;
+    const label = params.get('label');
+    return { pos, offset, label: label && label.trim() ? label.trim() : null };
 }
 
 /**
@@ -138,7 +152,8 @@ function postSize(open: boolean) {
 }
 
 export default function CustomerChat() {
-    const pos = readPos();
+    const cfg = readConfig();
+    const { pos, offset, label } = cfg;
     const isLeft = pos === 'bl' || pos === 'tl';
     const isTop = pos === 'tr' || pos === 'tl';
 
@@ -278,17 +293,28 @@ export default function CustomerChat() {
     }
 
     const rootCornerClass = `${isTop ? 'top-0' : 'bottom-0'} ${isLeft ? 'left-0' : 'right-0'}`;
-    const bubbleCornerClass = `${isTop ? 'top-4' : 'bottom-4'} ${isLeft ? 'left-4' : 'right-4'}`;
-    const panelCornerClass = `${isTop ? 'top-20' : 'bottom-20'} ${isLeft ? 'left-4' : 'right-4'}`;
     const slideInClass = isTop ? 'slide-in-from-top-4' : 'slide-in-from-bottom-4';
+
+    // Inline styles for precise pixel positioning (offset from corner)
+    const bubbleStyle: CSSProperties = {
+        [isTop ? 'top' : 'bottom']: `${offset}px`,
+        [isLeft ? 'left' : 'right']: '16px',
+    };
+    // Panel sits 72px away from the corner (above bubble for bottom, below for top)
+    const panelStyle: CSSProperties = {
+        [isTop ? 'top' : 'bottom']: `${offset + 72}px`,
+        [isLeft ? 'left' : 'right']: '16px',
+        width: 'min(380px, calc(100vw - 32px))',
+        height: 'min(560px, calc(100vh - 120px))',
+    };
 
     return (
         <div className={`fixed ${rootCornerClass} z-[2147483646] pointer-events-none`}>
             {/* Chat panel */}
             {open && (
                 <div
-                    className={`pointer-events-auto bg-white rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden flex flex-col absolute ${panelCornerClass} animate-in fade-in ${slideInClass} duration-200`}
-                    style={{ width: 'min(380px, calc(100vw - 32px))', height: 'min(560px, calc(100vh - 120px))' }}
+                    className={`pointer-events-auto bg-white rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden flex flex-col absolute animate-in fade-in ${slideInClass} duration-200`}
+                    style={panelStyle}
                 >
                     {/* Header */}
                     <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-3 flex items-center gap-3">
@@ -376,26 +402,30 @@ export default function CustomerChat() {
                 </div>
             )}
 
-            {/* Floating bubble */}
-            <button
-                onClick={() => setOpen((o) => !o)}
-                className={`pointer-events-auto absolute ${bubbleCornerClass} w-14 h-14 rounded-full bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition grid place-items-center`}
-                title={open ? 'ย่อแชท' : 'สอบถามข้อมูล'}
+            {/* Floating bubble + optional label pill (Readyplanet-style) */}
+            <div
+                className={`pointer-events-auto absolute flex items-center gap-2 ${isLeft ? 'flex-row' : 'flex-row-reverse'}`}
+                style={bubbleStyle}
             >
-                {open ? <X size={22} /> : <MessageCircle size={22} />}
-                {/* Unread badge (placeholder for future) */}
-                {!open && turns.some((t) => t.id !== 'welcome' && t.role === 'assistant') && (
-                    <span className="absolute top-0 right-0 w-3 h-3 rounded-full bg-green-400 ring-2 ring-white" />
+                <button
+                    onClick={() => setOpen((o) => !o)}
+                    className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition grid place-items-center relative"
+                    title={open ? 'ย่อแชท' : label ?? 'สอบถามข้อมูล'}
+                >
+                    {open ? <X size={20} /> : <MessageCircle size={20} />}
+                    {!open && turns.some((t) => t.id !== 'welcome' && t.role === 'assistant') && (
+                        <span className="absolute top-0 right-0 w-3 h-3 rounded-full bg-green-400 ring-2 ring-white" />
+                    )}
+                </button>
+                {label && !open && (
+                    <button
+                        onClick={() => setOpen(true)}
+                        className="bg-white hover:bg-neutral-50 text-neutral-800 text-xs font-medium px-3 py-1.5 rounded-full shadow border border-neutral-200 whitespace-nowrap transition"
+                    >
+                        {label}
+                    </button>
                 )}
-            </button>
-
-            {/* Helpful empty-state cue when widget loaded but never opened */}
-            {!open && turns.length <= 1 && (
-                <div className={`pointer-events-none absolute ${panelCornerClass} max-w-[200px] bg-neutral-900 text-white text-xs px-3 py-2 rounded-lg shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-500`}>
-                    มีคำถาม? คลิกที่นี่
-                    <div className={`absolute -bottom-1 ${isLeft ? 'left-6' : 'right-6'} w-2 h-2 bg-neutral-900 rotate-45`} />
-                </div>
-            )}
+            </div>
         </div>
     );
 }
