@@ -28,6 +28,7 @@ import {
     knowledgeChatApi,
     type ChatHistoryItem,
 } from '../lib/api';
+import { supabase } from '../lib/supabase';
 
 interface ChatTurn {
     id: string;
@@ -38,7 +39,29 @@ interface ChatTurn {
 }
 
 const STORAGE_KEY = 'jnac_customer_chat_v1';
+const SESSION_KEY = 'jnac_customer_session_id_v1';
 const MAX_PERSISTED_TURNS = 30;
+
+/**
+ * Get-or-create a per-visitor session ID stored in localStorage. The
+ * Edge Function uses this as the external_id of a chat_conversations
+ * row (channel='livechat') so admin staff can see and reply to the chat
+ * from the inbox. The ID survives page refresh and revisits, but is
+ * scoped to one browser profile (clearing site data starts fresh).
+ */
+function getOrCreateSessionId(): string {
+    if (typeof window === 'undefined') return '';
+    try {
+        const existing = window.localStorage.getItem(SESSION_KEY);
+        if (existing && existing.length >= 8) return existing;
+        const fresh = (crypto.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        window.localStorage.setItem(SESSION_KEY, fresh);
+        return fresh;
+    } catch {
+        // localStorage disabled — fall back to in-memory id for this session only
+        return `s-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+}
 
 function loadHistory(): ChatTurn[] {
     if (typeof window === 'undefined') return [];
@@ -166,6 +189,11 @@ export default function CustomerChat() {
     });
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    /** DB id of the persisted chat_conversations row (received from the
+     *  Edge Function after the first message). Used to scope the
+     *  realtime subscription to messages from THIS chat only. */
+    const [conversationId, setConversationId] = useState<string | null>(null);
+    const sessionIdRef = useRef<string>(getOrCreateSessionId());
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // Make body transparent so the host page (jnac.co.th) shows through
@@ -190,6 +218,52 @@ export default function CustomerChat() {
     useEffect(() => {
         saveHistory(turns);
     }, [turns]);
+
+    // Realtime: subscribe to new agent/admin messages on our conversation
+    // so admin's replies from the inbox appear live in the customer's chat.
+    // We only subscribe AFTER the first askStream returns our conversation_id.
+    useEffect(() => {
+        if (!conversationId) return;
+        const channel = supabase
+            .channel(`chat_msg:${conversationId}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'chat_messages',
+                    filter: `conversation_id=eq.${conversationId}`,
+                },
+                (payload) => {
+                    const row = payload.new as {
+                        id: string;
+                        sender_type: 'customer' | 'agent' | 'bot' | 'system';
+                        content: string;
+                        created_at: string;
+                    };
+                    // Only react to AGENT (human admin) messages here —
+                    // 'customer' and 'bot' messages were inserted by us
+                    // (or our own askStream) so they're already in state.
+                    if (row.sender_type !== 'agent') return;
+                    setTurns((prev) => {
+                        // de-dupe by id
+                        if (prev.some((t) => t.id === `db-${row.id}`)) return prev;
+                        return [
+                            ...prev,
+                            {
+                                id: `db-${row.id}`,
+                                role: 'assistant',
+                                content: row.content,
+                            },
+                        ];
+                    });
+                },
+            )
+            .subscribe();
+        return () => {
+            void supabase.removeChannel(channel);
+        };
+    }, [conversationId]);
 
     // Auto-scroll on new content
     useEffect(() => {
@@ -235,8 +309,17 @@ export default function CustomerChat() {
         const lang = detectLang(question);
 
         try {
-            await knowledgeChatApi.askStream(
-                { query: question, history, matchCount: 5, threshold: 0.3 },
+            const result = await knowledgeChatApi.askStream(
+                {
+                    query: question,
+                    history,
+                    matchCount: 5,
+                    threshold: 0.3,
+                    // Persist this conversation to chat_conversations + chat_messages
+                    // so the admin inbox can see it and reply live via Realtime.
+                    sessionId: sessionIdRef.current,
+                    displayName: `Visitor #${sessionIdRef.current.slice(0, 6)}`,
+                },
                 (event) => {
                     setTurns((prev) =>
                         prev.map((t) => {
@@ -256,6 +339,11 @@ export default function CustomerChat() {
             setTurns((prev) =>
                 prev.map((t) => (t.id !== assistantId ? t : { ...t, streaming: false })),
             );
+            // Capture conversation id once known — enables realtime
+            // subscription to admin replies
+            if (result.conversation_id && result.conversation_id !== conversationId) {
+                setConversationId(result.conversation_id);
+            }
         } catch (e) {
             const errMsg = (e as Error).message;
             const wrapper =

@@ -1279,6 +1279,9 @@ export interface RagChatResponse {
   model: string;
   tool_calls?: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }>;
   blocked?: 'cost_query';
+  /** Set when the caller passed `sessionId` — DB row id for the persisted
+   *  livechat conversation, useful for setting up a realtime subscription. */
+  conversation_id?: string | null;
 }
 
 /**
@@ -1298,6 +1301,7 @@ export type RagChatEvent =
       elapsed_ms?: { embed: number; search: number; llm: number };
       model?: string;
       tool_calls?: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }>;
+      conversation_id?: string | null;
     }
   | { type: 'error'; message: string };
 
@@ -1347,6 +1351,13 @@ export const knowledgeChatApi = {
       matchCount?: number;
       threshold?: number;
       language?: 'th' | 'en' | 'mixed' | null;
+      /** Persisting livechat conversations: pass a stable per-visitor UUID
+       *  (kept in localStorage). The Edge Function upserts a row in
+       *  chat_conversations with channel='livechat' so the admin inbox
+       *  sees the chat. Omit for admin chats that shouldn't persist. */
+      sessionId?: string | null;
+      /** Optional display name shown in the admin inbox. */
+      displayName?: string | null;
     },
     onEvent: (event: RagChatEvent) => void,
   ): Promise<RagChatResponse> {
@@ -1375,6 +1386,8 @@ export const knowledgeChatApi = {
         match_threshold: input.threshold ?? 0.4,
         language: input.language ?? null,
         stream: true,
+        session_id: input.sessionId ?? null,
+        display_name: input.displayName ?? null,
       }),
     });
 
@@ -1433,6 +1446,7 @@ export const knowledgeChatApi = {
                 elapsed_ms: evt.elapsed_ms ?? { embed: 0, search: 0, llm: 0 },
                 model: evt.model ?? 'unknown',
                 tool_calls: evt.tool_calls ?? [],
+                conversation_id: evt.conversation_id ?? null,
               };
             } else if (evt.type === 'error') {
               throw new Error(evt.message);
