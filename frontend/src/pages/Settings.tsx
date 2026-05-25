@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     Settings as SettingsIcon,
     User,
@@ -883,27 +883,9 @@ function LineChannelsCard() {
             </CardHeader>
             <CardContent className="px-6 space-y-4">
                 {/* Webhook URL — paste into LINE Developers Console */}
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs space-y-2">
-                    <div className="font-semibold text-amber-900 flex items-center gap-1.5">
-                        <ExternalLink size={12} /> Webhook URL — ใส่ใน LINE Developers Console
-                    </div>
-                    <div className="flex gap-2 items-center">
-                        <code className="flex-1 text-[11px] bg-white border border-amber-200 rounded px-2 py-1.5 break-all">
-                            {webhookUrl}
-                        </code>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => { void navigator.clipboard.writeText(webhookUrl); }}
-                            className="text-xs h-7"
-                        >
-                            คัดลอก
-                        </Button>
-                    </div>
-                    <div className="text-amber-800">
-                        ขั้นตอน: LINE Developers Console → Channel → Messaging API → Webhook URL → paste แล้วเปิด <b>Use webhook</b>
-                    </div>
+                <WebhookUrlBox url={webhookUrl} />
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+                    ขั้นตอน: LINE Developers Console → Channel → Messaging API → Webhook URL → paste แล้วเปิด <b>Use webhook</b>
                 </div>
 
                 {err && (
@@ -957,6 +939,73 @@ function LineChannelsCard() {
                 )}
             </CardContent>
         </Card>
+    );
+}
+
+/**
+ * Webhook URL display with a reliable copy button:
+ *   - Read-only input so a tap selects all text (mobile-friendly)
+ *   - Copy button uses navigator.clipboard with a document.execCommand
+ *     fallback for browsers/contexts where the async API is blocked
+ *     (older iOS Safari, http-only embeds, etc.)
+ *   - Visual feedback: button label flips to "คัดลอกแล้ว ✓" for 1.5s
+ */
+function WebhookUrlBox({ url }: { url: string }) {
+    const [copied, setCopied] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    async function handleCopy() {
+        let ok = false;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(url);
+                ok = true;
+            }
+        } catch {
+            // fall through to legacy fallback
+        }
+        if (!ok && inputRef.current) {
+            // Fallback for older browsers / non-secure contexts
+            inputRef.current.focus();
+            inputRef.current.select();
+            try { ok = document.execCommand('copy'); } catch { ok = false; }
+        }
+        if (ok) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        } else {
+            alert('คัดลอกอัตโนมัติไม่สำเร็จ — กรุณาเลือก URL ในช่องแล้วกด Ctrl+C');
+        }
+    }
+
+    return (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs space-y-2">
+            <div className="font-semibold text-amber-900 flex items-center gap-1.5">
+                <ExternalLink size={12} /> Webhook URL — ใส่ใน LINE Developers Console
+            </div>
+            <div className="flex gap-2 items-center">
+                <input
+                    ref={inputRef}
+                    readOnly
+                    value={url}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onClick={(e) => e.currentTarget.select()}
+                    className="flex-1 text-[11px] font-mono bg-white border border-amber-200 rounded px-2 py-1.5 break-all outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-200 cursor-text"
+                />
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopy}
+                    className={cn(
+                        'text-xs h-7 min-w-[90px] transition',
+                        copied && 'bg-emerald-50 border-emerald-300 text-emerald-700',
+                    )}
+                >
+                    {copied ? '✓ คัดลอกแล้ว' : 'คัดลอก'}
+                </Button>
+            </div>
+        </div>
     );
 }
 
