@@ -17,10 +17,23 @@ import {
     Eye,
     EyeOff,
     ExternalLink,
+    Bot,
+    Lock,
+    RotateCcw,
+    Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthProvider';
 import { supabase, DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '../lib/supabase';
-import { orgSettingsApi, apiSecretsApi, lineChannelsApi, type LineChannel } from '../lib/api';
+import {
+    orgSettingsApi,
+    apiSecretsApi,
+    lineChannelsApi,
+    aiPersonaApi,
+    PERSONA_DEFAULTS,
+    type LineChannel,
+    type AiPersona,
+    type PersonaChannel,
+} from '../lib/api';
 import type { OrgSettings } from '../lib/database.types';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
@@ -811,8 +824,255 @@ function IntegrationsTab() {
                 </CardContent>
             </Card>
 
+            <AiPersonaCard />
             <LineChannelsCard />
         </div>
+    );
+}
+
+// ─── AI Persona card ─────────────────────────────────────────────────────────
+// Per-channel editable system prompts. Safety rules (no cost, no fabrication,
+// language matching) are hardcoded in rag-chat Edge Function and CANNOT be
+// overridden from here — only the persona/flow/tone is editable.
+
+const PERSONA_CHANNELS: Array<{ key: PersonaChannel; label: string; icon: string }> = [
+    { key: 'default', label: 'ค่าเริ่มต้น (Default)', icon: '⭐' },
+    { key: 'line', label: 'LINE OA', icon: '💬' },
+    { key: 'web', label: 'เว็บไซต์ (jnac.co.th)', icon: '🌐' },
+];
+
+function AiPersonaCard() {
+    const [activeChannel, setActiveChannel] = useState<PersonaChannel>('default');
+    const [personas, setPersonas] = useState<Record<PersonaChannel, AiPersona | null>>({
+        default: null, line: null, web: null,
+    });
+    const [displayName, setDisplayName] = useState('');
+    const [prompt, setPrompt] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+    const [savedAt, setSavedAt] = useState<number | null>(null);
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            const all = await aiPersonaApi.list();
+            const map: Record<PersonaChannel, AiPersona | null> = { default: null, line: null, web: null };
+            for (const p of all) {
+                if (p.channel === 'default' || p.channel === 'line' || p.channel === 'web') {
+                    map[p.channel] = p;
+                }
+            }
+            setPersonas(map);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => { void load(); }, []);
+
+    // Sync form fields when channel changes or personas reload
+    useEffect(() => {
+        const p = personas[activeChannel];
+        if (p) {
+            setDisplayName(p.display_name);
+            setPrompt(p.prompt);
+        } else {
+            // No row yet for this channel — pre-fill with default template
+            const def = PERSONA_DEFAULTS[activeChannel];
+            setDisplayName(def.display_name);
+            setPrompt(def.prompt);
+        }
+    }, [activeChannel, personas]);
+
+    async function handleSave() {
+        if (!displayName.trim() || !prompt.trim()) {
+            setErr('กรุณากรอกชื่อและ Prompt ให้ครบ');
+            return;
+        }
+        setSaving(true);
+        setErr(null);
+        try {
+            await aiPersonaApi.upsert({
+                channel: activeChannel,
+                display_name: displayName.trim(),
+                prompt: prompt.trim(),
+            });
+            setSavedAt(Date.now());
+            await load();
+            // Auto-hide "saved" badge after 3s
+            setTimeout(() => setSavedAt(null), 3000);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function handleReset() {
+        if (!confirm(`ยืนยันการรีเซ็ต persona "${activeChannel}" กลับเป็นค่าเริ่มต้น?`)) return;
+        setSaving(true);
+        setErr(null);
+        try {
+            await aiPersonaApi.resetToDefault(activeChannel);
+            await load();
+            setSavedAt(Date.now());
+            setTimeout(() => setSavedAt(null), 3000);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    const charCount = prompt.length;
+    const lastUpdated = personas[activeChannel]?.updated_at;
+    const isDirty = personas[activeChannel]
+        ? (displayName !== personas[activeChannel]!.display_name || prompt !== personas[activeChannel]!.prompt)
+        : true;
+
+    return (
+        <Card>
+            <CardHeader className="px-6">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                    <Bot size={18} className="text-violet-600" />
+                    AI Persona — ตั้งค่าบุคลิก Bot แยกตามช่องทาง
+                </CardTitle>
+                <p className="text-xs text-neutral-500 mt-1">
+                    แก้ persona prompt ของ Bot เอย (Aoei) ได้แบบ live — บันทึกแล้วมีผลภายใน 60 วินาที (cache)
+                    <br />
+                    🔒 <strong>กฎความปลอดภัย</strong> (cost / fabrication / language) ถูก hardcoded ไว้ — ไม่สามารถแก้จากที่นี่ได้
+                </p>
+            </CardHeader>
+            <CardContent className="px-6 space-y-4">
+                {/* Channel tabs */}
+                <div className="flex gap-2 flex-wrap">
+                    {PERSONA_CHANNELS.map((ch) => (
+                        <button
+                            key={ch.key}
+                            type="button"
+                            onClick={() => setActiveChannel(ch.key)}
+                            className={cn(
+                                'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                                activeChannel === ch.key
+                                    ? 'bg-violet-600 text-white border-violet-600'
+                                    : 'bg-white text-neutral-700 border-neutral-300 hover:bg-neutral-50',
+                            )}
+                        >
+                            <span className="mr-1">{ch.icon}</span>
+                            {ch.label}
+                        </button>
+                    ))}
+                </div>
+
+                {loading ? (
+                    <div className="flex items-center gap-2 text-sm text-neutral-500 py-8 justify-center">
+                        <Loader2 size={16} className="animate-spin" />
+                        กำลังโหลด...
+                    </div>
+                ) : (
+                    <>
+                        {/* Display Name */}
+                        <div>
+                            <Label htmlFor="persona-name" className="text-sm font-medium">
+                                ชื่อ Persona
+                            </Label>
+                            <Input
+                                id="persona-name"
+                                value={displayName}
+                                onChange={(e) => setDisplayName(e.target.value)}
+                                placeholder="เช่น เอย (Aoei)"
+                                className="mt-1"
+                                maxLength={80}
+                            />
+                        </div>
+
+                        {/* Prompt textarea */}
+                        <div>
+                            <div className="flex items-center justify-between mb-1">
+                                <Label htmlFor="persona-prompt" className="text-sm font-medium">
+                                    System Prompt (Persona)
+                                </Label>
+                                <span className={cn('text-[11px] font-mono', charCount > 4500 ? 'text-orange-600' : 'text-neutral-400')}>
+                                    {charCount.toLocaleString()} chars
+                                </span>
+                            </div>
+                            <textarea
+                                id="persona-prompt"
+                                value={prompt}
+                                onChange={(e) => setPrompt(e.target.value)}
+                                rows={20}
+                                className="w-full px-3 py-2 border border-neutral-300 rounded-md font-mono text-[13px] leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                                placeholder={PERSONA_DEFAULTS[activeChannel].prompt}
+                                spellCheck={false}
+                            />
+                        </div>
+
+                        {/* Locked safety rules display */}
+                        <div className="border border-amber-200 bg-amber-50 rounded-md px-4 py-3">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 mb-2">
+                                <Lock size={14} />
+                                Safety Rules (Hardcoded — ไม่สามารถแก้ได้)
+                            </div>
+                            <ul className="text-xs text-amber-800 space-y-1 ml-5 list-disc">
+                                <li>ห้ามเปิดเผยข้อมูล cost / ราคาทุน / margin โดยเด็ดขาด</li>
+                                <li>ห้าม fabricate ข้อมูล (ที่อยู่ / เบอร์โทร / email / เลขบัญชี / แผนที่ / ราคา)</li>
+                                <li>ต้องตอบในภาษาเดียวกับที่ลูกค้าพิมพ์ (ไทย ↔ ไทย, English ↔ English)</li>
+                                <li>ถ้าไม่พบข้อมูล → ส่งให้คุณเชอร์รี่ตรวจสอบ ห้ามตอบ "ไม่มีข้อมูล" ลอยๆ</li>
+                            </ul>
+                        </div>
+
+                        {err && (
+                            <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                                <span>{err}</span>
+                            </div>
+                        )}
+
+                        {/* Actions */}
+                        <div className="flex items-center justify-between pt-2 border-t border-neutral-200">
+                            <div className="text-xs text-neutral-500">
+                                {lastUpdated ? (
+                                    <>อัปเดตล่าสุด: {new Date(lastUpdated).toLocaleString('th-TH')}</>
+                                ) : (
+                                    <>ยังไม่เคยบันทึก channel นี้ — จะใช้ค่าเริ่มต้น</>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {savedAt && (
+                                    <span className="flex items-center gap-1 text-xs text-green-700">
+                                        <CheckCircle size={14} /> บันทึกแล้ว
+                                    </span>
+                                )}
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleReset}
+                                    disabled={saving}
+                                    className="gap-1.5"
+                                >
+                                    <RotateCcw size={14} />
+                                    Reset to Default
+                                </Button>
+                                <Button
+                                    type="button"
+                                    onClick={handleSave}
+                                    disabled={saving || !isDirty}
+                                    className="gap-1.5 bg-violet-600 hover:bg-violet-700"
+                                >
+                                    {saving ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                                    {saving ? 'กำลังบันทึก...' : 'บันทึก Persona'}
+                                </Button>
+                            </div>
+                        </div>
+                    </>
+                )}
+            </CardContent>
+        </Card>
     );
 }
 

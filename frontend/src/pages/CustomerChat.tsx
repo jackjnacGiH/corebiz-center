@@ -319,6 +319,8 @@ export default function CustomerChat() {
                     // so the admin inbox can see it and reply live via Realtime.
                     sessionId: sessionIdRef.current,
                     displayName: `Visitor #${sessionIdRef.current.slice(0, 6)}`,
+                    // Use the 'web' persona (Settings → AI Persona → Web Widget)
+                    channel: 'web',
                 },
                 (event) => {
                     setTurns((prev) =>

@@ -1301,6 +1301,12 @@ export const knowledgeChatApi = {
       sessionId?: string | null;
       /** Optional display name shown in the admin inbox. */
       displayName?: string | null;
+      /** Which persona to use. rag-chat looks up `ai_personas` by this
+       *  key (falls back to 'default'). Set to:
+       *    - 'web'     → web widget on jnac.co.th (CustomerChat)
+       *    - 'line'    → LINE webhook auto-reply
+       *    - 'default' → admin testing in KnowledgeChat (or omit) */
+      channel?: 'default' | 'line' | 'web' | null;
     },
     onEvent: (event: RagChatEvent) => void,
   ): Promise<RagChatResponse> {
@@ -1331,6 +1337,7 @@ export const knowledgeChatApi = {
         stream: true,
         session_id: input.sessionId ?? null,
         display_name: input.displayName ?? null,
+        channel: input.channel ?? 'default',
       }),
     });
 
@@ -1989,6 +1996,138 @@ export const lineChannelsApi = {
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// AI Personas — per-channel editable system prompts (Settings → AI Persona)
+// ────────────────────────────────────────────────────────────────────────────
+
+export type PersonaChannel = 'default' | 'line' | 'web';
+
+export interface AiPersona {
+  id: string;
+  channel: PersonaChannel;
+  display_name: string;
+  prompt: string;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+/** Built-in factory defaults for "Reset to Default" — must match what was
+ *  seeded by the create_ai_personas_table + seed_ai_personas_aoei migrations.
+ *  Kept short here; if user resets, the row is just deleted-and-reinserted
+ *  with these values so the rag-chat fallback path picks up the next call. */
+// NOTE: Kept short on purpose. Long persona prompts with copy-paste-able
+// example phrases caused Gemini to over-fixate on templates and ignore
+// user queries. The hard rules (when to call tools, don't greet twice,
+// escalation policy) live in rag-chat's TOOLING_GUIDE — not here.
+// This persona is purely about HOW เอย *sounds* when she replies.
+const _AOEI_BASE = `🎭 บุคลิก
+เอยเป็นพนักงานออฟฟิศที่คุยเป็นกันเอง อบอุ่น สุภาพ
+ตอบเหมือนคนจริงคุยแชท — ไม่ใช่ AI ที่อ่าน template
+ใช้คำว่า "เอย" แทนตัวเองเหมือนพนักงานคุยกับลูกค้า
+
+🗣️ สไตล์การคุย
+• สั้น กระชับ — แชท LINE ไม่ใช่อีเมล อย่ายาว
+• ไม่ขึ้นต้นด้วย "สวัสดี" ทุก reply — ทักครั้งเดียวพอ
+• ใส่ "ค่ะ/นะคะ" ตามจังหวะธรรมชาติ ไม่ทุกประโยค
+• ใช้คำของลูกค้าซ้ำเพื่อแสดงว่าเข้าใจ
+• Emoji ได้บ้าง 😊 ✨ 🔧 — ไม่มากเกิน
+
+🚫 ห้ามทำ
+• อย่าแนะนำตัวเองว่า "ฉันเป็น AI / ผู้ช่วยอัตโนมัติ" โดยไม่มีคนถาม
+• อย่าใช้คำทางการเกิน: "กรุณา", "ขอความอนุเคราะห์", "ทางบริษัท"
+• อย่าตอบเป็น bullet list ทุก reply — ใช้เฉพาะ list สินค้า
+• อย่าใช้ markdown table
+
+🤝 เมื่อต้องส่งต่อคุณเชอร์รี่
+• ลูกค้าจะสรุปยอด/สั่งซื้อ → "ขอให้คุณเชอร์รี่ช่วยสรุปยอดให้นะคะ"
+• ไม่มีข้อมูลที่ลูกค้าถาม → "เดี๋ยวเอยส่งให้คุณเชอร์รี่เช็คให้นะคะ"
+
+💰 รูปแบบราคา (เคร่งครัด — บรรทัดต่อบรรทัด ห้ามตาราง):
+ราคา: [ราคา] บาท/Pcs. (ยังไม่รวมภาษีมูลค่าเพิ่ม 7%)
+จำนวนขั้นต่ำในการสั่งซื้อ: [จำนวน] [หน่วย]
+
+📋 อื่นๆ
+• ลูกค้าให้ข้อมูลส่วนตัวมาเอง → ขอบคุณ ไม่ถามเอง
+• ตอบภาษาเดียวกับลูกค้า`;
+
+export const PERSONA_DEFAULTS: Record<PersonaChannel, { display_name: string; prompt: string }> = {
+  default: {
+    display_name: 'เอย (Aoei)',
+    prompt: `คุณคือ "เอย" — พนักงานของ J NAC Thailand ที่ตอบแชทลูกค้า
+หัวหน้าของคุณคือ "คุณเชอร์รี่" (มนุษย์)
+
+${_AOEI_BASE}`,
+  },
+  line: {
+    display_name: 'เอย — LINE OA',
+    prompt: `คุณคือ "เอย" — พนักงานของ J NAC Thailand ที่ตอบ LINE OA
+หัวหน้าของคุณคือ "คุณเชอร์รี่" (มนุษย์)
+
+${_AOEI_BASE}`,
+  },
+  web: {
+    display_name: 'เอย — Web Widget (jnac.co.th)',
+    prompt: `คุณคือ "เอย" — พนักงานของ J NAC Thailand ที่ตอบลูกค้าบนเว็บไซต์ jnac.co.th
+หัวหน้าของคุณคือ "คุณเชอร์รี่" (มนุษย์)
+
+${_AOEI_BASE}`,
+  },
+};
+
+export const aiPersonaApi = {
+  async list(): Promise<AiPersona[]> {
+    const { data, error } = await supabase
+      .from('ai_personas')
+      .select('*')
+      .order('channel', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as AiPersona[];
+  },
+
+  async get(channel: PersonaChannel): Promise<AiPersona | null> {
+    const { data, error } = await supabase
+      .from('ai_personas')
+      .select('*')
+      .eq('channel', channel)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as AiPersona | null) ?? null;
+  },
+
+  /** Upsert — creates the row if missing, updates if present. updated_by is
+   *  filled with the current auth user. The DB trigger handles updated_at. */
+  async upsert(input: {
+    channel: PersonaChannel;
+    display_name: string;
+    prompt: string;
+  }): Promise<AiPersona> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id ?? null;
+    const { data, error } = await supabase
+      .from('ai_personas')
+      .upsert({
+        channel: input.channel,
+        display_name: input.display_name,
+        prompt: input.prompt,
+        updated_by: userId,
+      }, { onConflict: 'channel' })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as AiPersona;
+  },
+
+  /** Reset a channel to the built-in factory default. */
+  async resetToDefault(channel: PersonaChannel): Promise<AiPersona> {
+    const def = PERSONA_DEFAULTS[channel];
+    return aiPersonaApi.upsert({
+      channel,
+      display_name: def.display_name,
+      prompt: def.prompt,
+    });
   },
 };
 
