@@ -1761,3 +1761,139 @@ export const apiSecretsApi = {
     if (error) throw error;
   },
 };
+
+// =========================================================================
+// Omni-Channel Chat Inbox
+// Reads from chat_conversations + chat_messages (any channel: livechat,
+// line, messenger, email, whatsapp, instagram). For Phase 1 only livechat
+// is populated; webhook handlers for LINE/FB land in Phase 2-3.
+// =========================================================================
+export type ChatChannel = 'line' | 'messenger' | 'instagram' | 'whatsapp' | 'livechat' | 'email';
+export type ChatStatus = 'open' | 'assigned' | 'resolved' | 'archived';
+export type ChatSenderType = 'customer' | 'agent' | 'bot' | 'system';
+
+export interface ChatConversation {
+  id: string;
+  channel: ChatChannel;
+  external_id: string | null;
+  customer_id: string | null;
+  display_name: string;
+  avatar_url: string | null;
+  status: ChatStatus;
+  assigned_to: string | null;
+  tags: string[];
+  sentiment: 'positive' | 'neutral' | 'negative' | null;
+  unread_count: number;
+  last_message_preview: string | null;
+  last_message_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  sender_type: ChatSenderType;
+  sender_name: string | null;
+  sender_id: string | null;
+  content: string;
+  content_type: 'text' | 'image' | 'sticker' | 'file' | 'quick_reply' | 'template';
+  attachments: unknown[];
+  metadata: Record<string, unknown>;
+  read_at: string | null;
+  external_msg_id: string | null;
+  created_at: string;
+}
+
+export const chatInboxApi = {
+  /** List conversations, newest-first. Filters are AND-combined. */
+  async listConversations(opts: {
+    channel?: ChatChannel | null;
+    status?: ChatStatus | null;
+    search?: string;
+    limit?: number;
+  } = {}): Promise<ChatConversation[]> {
+    let q = supabase
+      .from('chat_conversations')
+      .select('*')
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(opts.limit ?? 100);
+    if (opts.channel) q = q.eq('channel', opts.channel);
+    if (opts.status) q = q.eq('status', opts.status);
+    if (opts.search && opts.search.trim()) {
+      const pat = `%${opts.search.trim().replace(/[%_]/g, (m) => `\\${m}`)}%`;
+      q = q.or(`display_name.ilike.${pat},last_message_preview.ilike.${pat}`);
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []) as ChatConversation[];
+  },
+
+  /** Full message history for one conversation, oldest first. */
+  async listMessages(conversationId: string): Promise<ChatMessage[]> {
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as ChatMessage[];
+  },
+
+  /** Admin sends a reply. For Phase 1 this just writes to DB — for LINE/FB
+   *  (Phase 2-3) the same call will also hit the channel's send API. */
+  async sendMessage(input: {
+    conversationId: string;
+    content: string;
+    senderName?: string;
+  }): Promise<ChatMessage> {
+    const { data: userData } = await supabase.auth.getUser();
+    const senderId = userData.user?.id ?? null;
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert({
+        conversation_id: input.conversationId,
+        sender_type: 'agent',
+        sender_id: senderId,
+        sender_name: input.senderName ?? userData.user?.email ?? 'Staff',
+        content: input.content,
+        content_type: 'text',
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    // Also bump conversation summary so the inbox list re-orders
+    await supabase
+      .from('chat_conversations')
+      .update({
+        last_message_at: new Date().toISOString(),
+        last_message_preview: input.content.slice(0, 140),
+        unread_count: 0, // admin replied — clear customer-side unread
+      })
+      .eq('id', input.conversationId);
+
+    return data as ChatMessage;
+  },
+
+  async setStatus(conversationId: string, status: ChatStatus): Promise<void> {
+    const { error } = await supabase
+      .from('chat_conversations')
+      .update({ status })
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+
+  async assign(conversationId: string, userId: string | null): Promise<void> {
+    const { error } = await supabase
+      .from('chat_conversations')
+      .update({
+        assigned_to: userId,
+        status: userId ? 'assigned' : 'open',
+      })
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+};

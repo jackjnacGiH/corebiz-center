@@ -10,6 +10,7 @@ import Marketing from './pages/Marketing';
 import OpenclawRAG from './pages/OpenclawRAG';
 import KnowledgeChat from './pages/KnowledgeChat';
 import CustomerChat from './pages/CustomerChat';
+import Inbox from './pages/Inbox';
 import Affiliate from './pages/Affiliate';
 import Settings from './pages/Settings';
 import Login from './pages/auth/Login';
@@ -49,6 +50,7 @@ function App() {
               <Route path="affiliate" element={<Affiliate />} />
               <Route path="rag" element={<OpenclawRAG />} />
               <Route path="ask" element={<KnowledgeChat />} />
+              <Route path="inbox" element={<Inbox />} />
               <Route path="settings" element={<Settings />} />
             </Route>
           </Routes>
