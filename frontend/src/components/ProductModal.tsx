@@ -70,6 +70,9 @@ export interface ProductFormData {
     /** Used only when creating a new product — initial qty in default warehouse */
     initial_quantity: number;
     reorder_level: number;
+    /** Minimum order quantity. AI quotes this after the price as
+     *  "จำนวนขั้นต่ำในการสั่งซื้อ: N [unit]" to customers. Defaults to 1. */
+    min_order_qty: number;
 }
 
 interface ProductModalProps {
@@ -111,6 +114,7 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
             status: 'active',
             initial_quantity: 0,
             reorder_level: 10,
+            min_order_qty: 1,
         };
     }
     const inv0 = p.inventory[0];
@@ -137,6 +141,7 @@ function buildInitialForm(p: ProductWithInventory | null | undefined): ProductFo
         status: p.status as ProductFormData['status'],
         initial_quantity: inv0?.quantity ?? 0,
         reorder_level: inv0?.reorder_level ?? 10,
+        min_order_qty: Number((p as { min_order_qty?: number }).min_order_qty ?? 1),
     };
 }
 
@@ -662,7 +667,7 @@ function ProductModalForm({
                         </div>
 
                         {/* ── Stock ───────────────────────────────────── */}
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-3 gap-3">
                             <div className="space-y-2">
                                 <Label htmlFor="prod-qty" className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 uppercase tracking-wider">
                                     <Hash size={12} /> {isNew ? 'จำนวนเริ่มต้น' : 'จำนวนคงเหลือ'}
@@ -684,7 +689,7 @@ function ProductModalForm({
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="prod-reorder" className="text-xs font-semibold text-neutral-700 uppercase tracking-wider">
-                                    จุดสั่งซื้อใหม่ (Reorder)
+                                    จุดสั่งซื้อใหม่
                                 </Label>
                                 <Input
                                     id="prod-reorder"
@@ -696,6 +701,29 @@ function ProductModalForm({
                                         setForm({
                                             ...form,
                                             reorder_level: Number(e.target.value),
+                                        })
+                                    }
+                                    className="tabular-nums"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label
+                                    htmlFor="prod-moq"
+                                    className="text-xs font-semibold text-neutral-700 uppercase tracking-wider"
+                                    title="AI จะแจ้งให้ลูกค้าว่าสั่งขั้นต่ำกี่ชิ้น หลังบอกราคา"
+                                >
+                                    ขั้นต่ำ/ออเดอร์
+                                </Label>
+                                <Input
+                                    id="prod-moq"
+                                    type="number"
+                                    required
+                                    min="1"
+                                    value={form.min_order_qty}
+                                    onChange={(e) =>
+                                        setForm({
+                                            ...form,
+                                            min_order_qty: Math.max(1, Number(e.target.value)),
                                         })
                                     }
                                     className="tabular-nums"

@@ -241,6 +241,7 @@ export default function Inventory() {
       // Keep boolean flag in sync (back-compat for any reader of is_featured)
       is_featured: form.feature_tags.length > 0,
       status: form.status,
+      min_order_qty: Math.max(1, Number(form.min_order_qty || 1)),
     };
 
     if (editingProduct) {

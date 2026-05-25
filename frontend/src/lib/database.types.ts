@@ -363,6 +363,7 @@ export type Database = {
           description_th: string | null; discount_type: string; discount_value: number;
           feature_tags: string[]; group_id: string | null; id: string;
           images: Json; is_featured: boolean;
+          min_order_qty: number;
           name_en: string | null; name_th: string; price: number; sku: string; spec: Json;
           status: string; tags: string[]; unit: string; updated_at: string; weight_kg: number | null;
         }
@@ -372,6 +373,7 @@ export type Database = {
           description_th?: string | null; discount_type?: string; discount_value?: number;
           feature_tags?: string[]; group_id?: string | null; id?: string;
           images?: Json; is_featured?: boolean;
+          min_order_qty?: number;
           name_en?: string | null; name_th: string; price?: number; sku: string; spec?: Json;
           status?: string; tags?: string[]; unit?: string; updated_at?: string; weight_kg?: number | null;
         }
