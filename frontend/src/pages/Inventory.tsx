@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Package, Plus, Search, Edit2, Trash2, Copy, AlertTriangle, RefreshCw,
   ArrowUpDown, ArrowUp, ArrowDown, MapPin, Box, Tag, ChevronDown,
-  ChevronRight, Upload, FileDown, Filter, History, Boxes,
+  ChevronRight, Upload, FileDown, Filter, History, Boxes, Sparkles,
 } from 'lucide-react';
 import ProductModal, { type ProductFormData } from '../components/ProductModal';
+import BulkEditProductsModal from '../components/BulkEditProductsModal';
 import {
   productsApi,
   inventoryApi,
@@ -309,6 +310,21 @@ export default function Inventory() {
     }
   }
 
+  // ─── Bulk edit ─────────────────────────────────────────────────────────
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const selectedProducts = useMemo(
+    () => products.filter((p) => selected.has(p.id)),
+    [products, selected],
+  );
+  async function handleBulkEditSave(patch: import('./../lib/database.types').ProductUpdate) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return 0;
+    const count = await productsApi.bulkUpdate(ids, patch);
+    setSelected(new Set());
+    await load();
+    return count;
+  }
+
   const rowPad = density === 'compact' ? 'py-2.5' : 'py-4';
 
   return (
@@ -456,6 +472,15 @@ export default function Inventory() {
               <span className="font-medium text-slate-700">
                 เลือก <span className="text-blue-700">{selected.size}</span> รายการ
               </span>
+              <button
+                type="button"
+                onClick={() => setBulkEditOpen(true)}
+                disabled={bulkDeleting}
+                className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 hover:border-violet-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Sparkles size={12} />
+                แก้ไขที่เลือก ({selected.size})
+              </button>
               <button
                 type="button"
                 onClick={() => void handleBulkDelete()}
@@ -773,6 +798,13 @@ export default function Inventory() {
         editingProduct={editingProduct}
         copyFromProduct={copyFromProduct}
         categories={categories}
+      />
+
+      <BulkEditProductsModal
+        isOpen={bulkEditOpen}
+        selectedProducts={selectedProducts}
+        onClose={() => setBulkEditOpen(false)}
+        onSave={handleBulkEditSave}
       />
 
       <ImportInventoryModal

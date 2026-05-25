@@ -113,6 +113,28 @@ export const productsApi = {
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) throw error;
   },
+
+  /** Apply the same `patch` to many products in a single round trip. Used by
+   *  the Inventory bulk-edit modal — admin picks which fields to overwrite,
+   *  enters new values, and they're set identically on every selected SKU.
+   *
+   *  Caller MUST NOT include `sku` or `id` in the patch — both are unique
+   *  per row and bulk-overwriting them would produce duplicate-key errors. */
+  async bulkUpdate(ids: string[], patch: ProductUpdate): Promise<number> {
+    if (ids.length === 0) return 0;
+    if ('sku' in patch || 'id' in patch) {
+      throw new Error('bulkUpdate: sku and id cannot be bulk-edited (must be unique per product)');
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new Error('bulkUpdate: no fields to update');
+    }
+    const { error, count } = await supabase
+      .from('products')
+      .update(patch, { count: 'exact' })
+      .in('id', ids);
+    if (error) throw error;
+    return count ?? 0;
+  },
 };
 
 // =========================================================================
