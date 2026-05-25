@@ -494,6 +494,18 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['line_channels']['Insert']>
         Relationships: []
       }
+      ai_personas: {
+        Row: {
+          id: string; channel: string; display_name: string; prompt: string;
+          updated_at: string; updated_by: string | null;
+        }
+        Insert: {
+          id?: string; channel: string; display_name: string; prompt: string;
+          updated_at?: string; updated_by?: string | null;
+        }
+        Update: Partial<Database['public']['Tables']['ai_personas']['Insert']>
+        Relationships: []
+      }
     }
     Views: {}
     Functions: {
@@ -531,6 +543,10 @@ export type ProductGroupUpdate = Database['public']['Tables']['product_groups'][
 export type Notification = Database['public']['Tables']['notifications']['Row']
 export type OrgSettings = Database['public']['Tables']['org_settings']['Row']
 export type OrgSettingsUpdate = Database['public']['Tables']['org_settings']['Update']
+
+export type AiPersonaRow    = Database['public']['Tables']['ai_personas']['Row']
+export type AiPersonaInsert = Database['public']['Tables']['ai_personas']['Insert']
+export type AiPersonaUpdate = Database['public']['Tables']['ai_personas']['Update']
 
 export type Category  = Database['public']['Tables']['categories']['Row']
 export type Warehouse = Database['public']['Tables']['warehouses']['Row']
