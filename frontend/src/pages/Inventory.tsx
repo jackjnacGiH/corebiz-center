@@ -969,6 +969,15 @@ function ExpandedRow({ p, warehouses }: { p: ProductWithInventory; warehouses: W
           )}
           <DetailRow label="Weight"   value={p.weight_kg ? `${p.weight_kg} kg` : '—'} />
           <DetailRow
+            label="ขั้นต่ำสั่งซื้อ"
+            value={
+              <span className="font-mono text-slate-900 font-medium">
+                {formatNumber(Number((p as { min_order_qty?: number }).min_order_qty ?? 1))}{' '}
+                <span className="text-slate-400 font-normal">{p.unit}</span>
+              </span>
+            }
+          />
+          <DetailRow
             label="Feature"
             value={
               p.feature_tags && p.feature_tags.length > 0 ? (
