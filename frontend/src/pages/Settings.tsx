@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthProvider';
 import { supabase, DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '../lib/supabase';
-import { orgSettingsApi, apiSecretsApi } from '../lib/api';
+import { orgSettingsApi, apiSecretsApi, lineChannelsApi, type LineChannel } from '../lib/api';
 import type { OrgSettings } from '../lib/database.types';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
@@ -792,23 +792,425 @@ const SECRETS: SecretSpec[] = [
 
 function IntegrationsTab() {
     return (
+        <div className="space-y-4">
+            <Card className="gap-5 py-6">
+                <CardHeader className="px-6">
+                    <CardTitle className="text-base font-semibold text-neutral-900">
+                        API Keys
+                    </CardTitle>
+                    <p className="text-xs text-neutral-500 mt-1">
+                        Key ทั้งหมดเก็บใน Supabase Vault (เข้ารหัส) — แสดงเป็นรูป
+                        <code className="mx-1 px-1.5 py-0.5 bg-neutral-100 rounded text-[10px]">AIza••••••••XYZW</code>
+                        เพื่อความปลอดภัย ไม่ส่งค่าเต็มกลับมาให้ฝั่ง browser
+                    </p>
+                </CardHeader>
+                <CardContent className="px-6 space-y-4">
+                    {SECRETS.map((s) => (
+                        <SecretRow key={s.name} spec={s} />
+                    ))}
+                </CardContent>
+            </Card>
+
+            <LineChannelsCard />
+        </div>
+    );
+}
+
+// ─── LINE Channels card ──────────────────────────────────────────────────────
+// Lets the admin add multiple LINE OA credentials (test + production) and
+// toggle which one is active. The line-webhook Edge Function reads the
+// active channel; admins can swap accounts without redeploying code.
+
+function LineChannelsCard() {
+    const [channels, setChannels] = useState<LineChannel[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+    const [showForm, setShowForm] = useState(false);
+    const [editingId, setEditingId] = useState<string | null>(null);
+
+    const webhookUrl = `${(import.meta.env.VITE_SUPABASE_URL as string) ?? ''}/functions/v1/line-webhook`;
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            setChannels(await lineChannelsApi.list());
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => { void load(); }, []);
+
+    async function handleActivate(id: string) {
+        try { await lineChannelsApi.activate(id); await load(); }
+        catch (e) { alert((e as Error).message); }
+    }
+    async function handleDeactivateAll() {
+        if (!confirm('ปิดทุกช่อง LINE? Webhook จะหยุดทำงาน')) return;
+        try { await lineChannelsApi.deactivateAll(); await load(); }
+        catch (e) { alert((e as Error).message); }
+    }
+    async function handleDelete(id: string) {
+        if (!confirm('ลบช่อง LINE นี้?')) return;
+        try { await lineChannelsApi.remove(id); await load(); }
+        catch (e) { alert((e as Error).message); }
+    }
+
+    return (
         <Card className="gap-5 py-6">
             <CardHeader className="px-6">
-                <CardTitle className="text-base font-semibold text-neutral-900">
-                    API Keys
-                </CardTitle>
-                <p className="text-xs text-neutral-500 mt-1">
-                    Key ทั้งหมดเก็บใน Supabase Vault (เข้ารหัส) — แสดงเป็นรูป
-                    <code className="mx-1 px-1.5 py-0.5 bg-neutral-100 rounded text-[10px]">AIza••••••••XYZW</code>
-                    เพื่อความปลอดภัย ไม่ส่งค่าเต็มกลับมาให้ฝั่ง browser
-                </p>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                        <CardTitle className="text-base font-semibold text-neutral-900">
+                            LINE Channels
+                        </CardTitle>
+                        <p className="text-xs text-neutral-500 mt-1">
+                            ตั้งค่า LINE Official Account สำหรับรับ-ส่งข้อความผ่าน Inbox
+                            (เปิดได้ทีละ 1 ช่อง — สลับระหว่าง test และ production ได้ทันที)
+                        </p>
+                    </div>
+                    <Button
+                        size="sm"
+                        onClick={() => { setEditingId(null); setShowForm(true); }}
+                        className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+                    >
+                        <Key size={13} /> เพิ่ม Channel
+                    </Button>
+                </div>
             </CardHeader>
             <CardContent className="px-6 space-y-4">
-                {SECRETS.map((s) => (
-                    <SecretRow key={s.name} spec={s} />
+                {/* Webhook URL — paste into LINE Developers Console */}
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs space-y-2">
+                    <div className="font-semibold text-amber-900 flex items-center gap-1.5">
+                        <ExternalLink size={12} /> Webhook URL — ใส่ใน LINE Developers Console
+                    </div>
+                    <div className="flex gap-2 items-center">
+                        <code className="flex-1 text-[11px] bg-white border border-amber-200 rounded px-2 py-1.5 break-all">
+                            {webhookUrl}
+                        </code>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => { void navigator.clipboard.writeText(webhookUrl); }}
+                            className="text-xs h-7"
+                        >
+                            คัดลอก
+                        </Button>
+                    </div>
+                    <div className="text-amber-800">
+                        ขั้นตอน: LINE Developers Console → Channel → Messaging API → Webhook URL → paste แล้วเปิด <b>Use webhook</b>
+                    </div>
+                </div>
+
+                {err && (
+                    <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                        <AlertTriangle size={12} className="inline mr-1" /> {err}
+                    </div>
+                )}
+                {loading && (
+                    <div className="text-xs text-neutral-500 text-center py-4">
+                        <Loader2 size={14} className="inline animate-spin mr-1" /> โหลด...
+                    </div>
+                )}
+                {!loading && channels.length === 0 && !showForm && (
+                    <div className="text-xs text-neutral-400 text-center py-8 border border-dashed border-neutral-200 rounded-lg">
+                        ยังไม่มี LINE Channel — คลิก "เพิ่ม Channel" ด้านบนเพื่อเริ่มต้น
+                    </div>
+                )}
+
+                {channels.map((c) => (
+                    <LineChannelRow
+                        key={c.id}
+                        channel={c}
+                        editing={editingId === c.id}
+                        onStartEdit={() => { setEditingId(c.id); setShowForm(false); }}
+                        onCancelEdit={() => setEditingId(null)}
+                        onSaved={async () => { setEditingId(null); await load(); }}
+                        onActivate={() => handleActivate(c.id)}
+                        onDelete={() => handleDelete(c.id)}
+                    />
                 ))}
+
+                {showForm && (
+                    <LineChannelForm
+                        onSaved={async () => { setShowForm(false); await load(); }}
+                        onCancel={() => setShowForm(false)}
+                    />
+                )}
+
+                {channels.some((c) => c.is_active) && (
+                    <div className="pt-2 text-right">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleDeactivateAll}
+                            className="text-xs h-7 text-neutral-500"
+                        >
+                            ปิดทุกช่อง (หยุด webhook ทั้งหมด)
+                        </Button>
+                    </div>
+                )}
             </CardContent>
         </Card>
+    );
+}
+
+function LineChannelRow({
+    channel, editing, onStartEdit, onCancelEdit, onSaved, onActivate, onDelete,
+}: {
+    channel: LineChannel;
+    editing: boolean;
+    onStartEdit: () => void;
+    onCancelEdit: () => void;
+    onSaved: () => Promise<void> | void;
+    onActivate: () => void;
+    onDelete: () => void;
+}) {
+    if (editing) {
+        return (
+            <LineChannelForm
+                channel={channel}
+                onSaved={onSaved}
+                onCancel={onCancelEdit}
+            />
+        );
+    }
+    return (
+        <div className={cn(
+            'rounded-lg border p-4 flex items-start gap-3',
+            channel.is_active
+                ? 'border-emerald-300 bg-emerald-50/50'
+                : 'border-neutral-200 bg-white',
+        )}>
+            <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <div className="font-semibold text-neutral-900 text-sm">{channel.name}</div>
+                    {channel.is_active && (
+                        <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-500 text-white">
+                            <CheckCircle size={9} /> ACTIVE
+                        </span>
+                    )}
+                    {channel.channel_id && (
+                        <span className="text-[10px] font-mono text-neutral-500">
+                            ID: {channel.channel_id}
+                        </span>
+                    )}
+                </div>
+                <div className="text-[11px] text-neutral-500 font-mono">
+                    Token: {channel.channel_access_token.slice(0, 8)}••••{channel.channel_access_token.slice(-4)}
+                </div>
+                {channel.notes && (
+                    <div className="text-xs text-neutral-600 mt-1">{channel.notes}</div>
+                )}
+            </div>
+            <div className="flex gap-1 flex-shrink-0">
+                {!channel.is_active && (
+                    <Button size="sm" onClick={onActivate} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs">
+                        ใช้ channel นี้
+                    </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={onStartEdit} className="h-8 text-xs">แก้</Button>
+                <Button size="sm" variant="outline" onClick={onDelete} className="h-8 text-xs text-red-600 hover:bg-red-50">
+                    <Trash2 size={12} />
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+function LineChannelForm({
+    channel, onSaved, onCancel,
+}: {
+    channel?: LineChannel;
+    onSaved: () => Promise<void> | void;
+    onCancel: () => void;
+}) {
+    const isEdit = !!channel;
+    const [name, setName] = useState(channel?.name ?? '');
+    const [channelId, setChannelId] = useState(channel?.channel_id ?? '');
+    const [accessToken, setAccessToken] = useState(channel?.channel_access_token ?? '');
+    const [secret, setSecret] = useState(channel?.channel_secret ?? '');
+    const [notes, setNotes] = useState(channel?.notes ?? '');
+    const [showSecrets, setShowSecrets] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+
+    async function handleTest() {
+        if (!accessToken.trim()) {
+            setTestResult({ ok: false, msg: 'กรุณาใส่ Channel Access Token ก่อน' });
+            return;
+        }
+        setTesting(true);
+        setTestResult(null);
+        try {
+            const r = await lineChannelsApi.testConnection(accessToken.trim());
+            if (r.ok) {
+                const info = r.info ?? {};
+                setTestResult({
+                    ok: true,
+                    msg: `เชื่อมต่อสำเร็จ — ${(info.displayName as string) ?? '?'}${info.userId ? ` (${(info.userId as string).slice(0, 12)}...)` : ''}`,
+                });
+            } else {
+                setTestResult({ ok: false, msg: r.error ?? 'ไม่ทราบสาเหตุ' });
+            }
+        } finally {
+            setTesting(false);
+        }
+    }
+
+    async function handleSave() {
+        if (!name.trim() || !accessToken.trim() || !secret.trim()) {
+            setErr('กรุณากรอกชื่อ + Channel Access Token + Channel Secret');
+            return;
+        }
+        setSaving(true);
+        setErr(null);
+        try {
+            if (isEdit && channel) {
+                await lineChannelsApi.update(channel.id, {
+                    name: name.trim(),
+                    channel_id: channelId.trim() || null,
+                    channel_access_token: accessToken.trim(),
+                    channel_secret: secret.trim(),
+                    notes: notes.trim() || null,
+                });
+            } else {
+                await lineChannelsApi.create({
+                    name: name.trim(),
+                    channel_id: channelId.trim() || undefined,
+                    channel_access_token: accessToken.trim(),
+                    channel_secret: secret.trim(),
+                    notes: notes.trim() || undefined,
+                });
+            }
+            await onSaved();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="rounded-lg border-2 border-indigo-300 bg-indigo-50/30 p-4 space-y-3">
+            <div className="text-xs font-semibold text-indigo-900">
+                {isEdit ? 'แก้ไข Channel' : 'เพิ่ม LINE Channel ใหม่'}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                    <Label className="text-[10px] font-semibold uppercase text-neutral-700">ชื่อ Channel *</Label>
+                    <Input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="เช่น JNAC Test, JNAC Official"
+                        className="h-8 text-sm"
+                    />
+                </div>
+                <div>
+                    <Label className="text-[10px] font-semibold uppercase text-neutral-700">Channel ID (ไม่บังคับ)</Label>
+                    <Input
+                        value={channelId}
+                        onChange={(e) => setChannelId(e.target.value)}
+                        placeholder="2007xxxxx"
+                        className="h-8 text-sm font-mono"
+                    />
+                </div>
+            </div>
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <Label className="text-[10px] font-semibold uppercase text-neutral-700">Channel Access Token (long-lived) *</Label>
+                    <button
+                        type="button"
+                        onClick={() => setShowSecrets(!showSecrets)}
+                        className="text-[10px] text-neutral-500 hover:text-neutral-900 flex items-center gap-1"
+                    >
+                        {showSecrets ? <EyeOff size={11} /> : <Eye size={11} />}
+                        {showSecrets ? 'ซ่อน' : 'แสดง'}
+                    </button>
+                </div>
+                <Input
+                    type={showSecrets ? 'text' : 'password'}
+                    value={accessToken}
+                    onChange={(e) => setAccessToken(e.target.value)}
+                    placeholder="เริ่มต้นด้วย Bearer token ยาว ๆ"
+                    className="h-8 text-sm font-mono"
+                />
+            </div>
+            <div>
+                <Label className="text-[10px] font-semibold uppercase text-neutral-700">Channel Secret *</Label>
+                <Input
+                    type={showSecrets ? 'text' : 'password'}
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    placeholder="32 ตัวอักษร hex"
+                    className="h-8 text-sm font-mono"
+                />
+            </div>
+            <div>
+                <Label className="text-[10px] font-semibold uppercase text-neutral-700">โน้ต (ไม่บังคับ)</Label>
+                <Input
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="เช่น สำหรับทดสอบ — ลบหลังเปลี่ยนเป็น production"
+                    className="h-8 text-sm"
+                />
+            </div>
+
+            {testResult && (
+                <div className={cn(
+                    'text-xs rounded p-2 border flex items-start gap-2',
+                    testResult.ok
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-red-50 border-red-200 text-red-700',
+                )}>
+                    {testResult.ok
+                        ? <CheckCircle size={12} className="mt-0.5 flex-shrink-0" />
+                        : <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+                    }
+                    {testResult.msg}
+                </div>
+            )}
+            {err && (
+                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                    <AlertTriangle size={12} className="inline mr-1" /> {err}
+                </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTest}
+                    disabled={testing}
+                    className="h-8 text-xs gap-1.5"
+                >
+                    {testing ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
+                    ทดสอบเชื่อมต่อ
+                </Button>
+                <div className="flex-1" />
+                <Button type="button" variant="outline" size="sm" onClick={onCancel} className="h-8 text-xs">
+                    ยกเลิก
+                </Button>
+                <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="h-8 text-xs gap-1.5 bg-indigo-600 hover:bg-indigo-700"
+                >
+                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                    {isEdit ? 'บันทึก' : 'เพิ่ม'}
+                </Button>
+            </div>
+        </div>
     );
 }
 

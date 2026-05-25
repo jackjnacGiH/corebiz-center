@@ -478,6 +478,22 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['warehouses']['Insert']>
         Relationships: []
       }
+      line_channels: {
+        Row: {
+          id: string; name: string; channel_id: string | null;
+          channel_access_token: string; channel_secret: string;
+          is_active: boolean; notes: string | null;
+          created_at: string; updated_at: string;
+        }
+        Insert: {
+          id?: string; name: string; channel_id?: string | null;
+          channel_access_token: string; channel_secret: string;
+          is_active?: boolean; notes?: string | null;
+          created_at?: string; updated_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['line_channels']['Insert']>
+        Relationships: []
+      }
     }
     Views: {}
     Functions: {

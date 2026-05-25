@@ -1842,8 +1842,13 @@ export const chatInboxApi = {
     return (data ?? []) as ChatMessage[];
   },
 
-  /** Admin sends a reply. For Phase 1 this just writes to DB — for LINE/FB
-   *  (Phase 2-3) the same call will also hit the channel's send API. */
+  /** Admin sends a reply. Inserts the chat_messages row, bumps the
+   *  conversation summary, then — if conversation.channel is on an
+   *  external platform (line / messenger / email) — also forwards the
+   *  message via the platform's send API through the matching Edge
+   *  Function (line-push for now; messenger-push etc. in future). The
+   *  external push is best-effort: if it fails we still return the
+   *  DB row so the admin sees their message saved. */
   async sendMessage(input: {
     conversationId: string;
     content: string;
@@ -1851,6 +1856,14 @@ export const chatInboxApi = {
   }): Promise<ChatMessage> {
     const { data: userData } = await supabase.auth.getUser();
     const senderId = userData.user?.id ?? null;
+
+    // Look up conversation channel up-front so we know if external push is needed
+    const { data: conv } = await supabase
+      .from('chat_conversations')
+      .select('channel, external_id')
+      .eq('id', input.conversationId)
+      .maybeSingle();
+
     const { data, error } = await supabase
       .from('chat_messages')
       .insert({
@@ -1865,15 +1878,33 @@ export const chatInboxApi = {
       .single();
     if (error) throw error;
 
-    // Also bump conversation summary so the inbox list re-orders
+    // Bump summary so the inbox list re-orders
     await supabase
       .from('chat_conversations')
       .update({
         last_message_at: new Date().toISOString(),
         last_message_preview: input.content.slice(0, 140),
-        unread_count: 0, // admin replied — clear customer-side unread
+        unread_count: 0,
       })
       .eq('id', input.conversationId);
+
+    // Forward to the external channel (best-effort)
+    if (conv?.channel === 'line' && conv.external_id) {
+      try {
+        const { error: pushErr } = await supabase.functions.invoke('line-push', {
+          body: {
+            conversation_id: input.conversationId,
+            text: input.content,
+          },
+        });
+        if (pushErr) {
+          console.warn('[chatInboxApi] line-push failed (saved locally only):', pushErr);
+        }
+      } catch (pushErr) {
+        console.warn('[chatInboxApi] line-push threw:', pushErr);
+      }
+    }
+    // TODO Phase 3: messenger-push, email-push
 
     return data as ChatMessage;
   },
@@ -1897,3 +1928,117 @@ export const chatInboxApi = {
     if (error) throw error;
   },
 };
+
+// =========================================================================
+// LINE Channels — admin-managed swappable LINE OA credentials
+// =========================================================================
+export interface LineChannel {
+  id: string;
+  name: string;
+  channel_id: string | null;
+  channel_access_token: string;
+  channel_secret: string;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const lineChannelsApi = {
+  async list(): Promise<LineChannel[]> {
+    const { data, error } = await supabase
+      .from('line_channels')
+      .select('*')
+      .order('is_active', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as LineChannel[];
+  },
+
+  async create(input: {
+    name: string;
+    channel_id?: string;
+    channel_access_token: string;
+    channel_secret: string;
+    notes?: string;
+  }): Promise<LineChannel> {
+    const { data, error } = await supabase
+      .from('line_channels')
+      .insert({
+        name: input.name,
+        channel_id: input.channel_id ?? null,
+        channel_access_token: input.channel_access_token,
+        channel_secret: input.channel_secret,
+        notes: input.notes ?? null,
+        is_active: false,
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as LineChannel;
+  },
+
+  async update(id: string, patch: Partial<{
+    name: string;
+    channel_id: string | null;
+    channel_access_token: string;
+    channel_secret: string;
+    notes: string | null;
+  }>): Promise<LineChannel> {
+    const { data, error } = await supabase
+      .from('line_channels')
+      .update(patch)
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as LineChannel;
+  },
+
+  async remove(id: string): Promise<void> {
+    const { error } = await supabase.from('line_channels').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  /** Mark one channel active. Deactivates all others first (transactional
+   *  via two writes; partial unique index will reject overlapping actives). */
+  async activate(id: string): Promise<void> {
+    const { error: e1 } = await supabase
+      .from('line_channels')
+      .update({ is_active: false })
+      .neq('id', id);
+    if (e1) throw e1;
+    const { error: e2 } = await supabase
+      .from('line_channels')
+      .update({ is_active: true })
+      .eq('id', id);
+    if (e2) throw e2;
+  },
+
+  async deactivateAll(): Promise<void> {
+    const { error } = await supabase
+      .from('line_channels')
+      .update({ is_active: false })
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+    if (error) throw error;
+  },
+
+  /** Call LINE /v2/bot/info to verify the access token works. Returns the
+   *  bot's basic info (displayName, userId, etc.) so admin can confirm
+   *  they entered credentials for the right OA. */
+  async testConnection(accessToken: string): Promise<{ ok: boolean; info?: Record<string, unknown>; error?: string }> {
+    try {
+      const res = await fetch('https://api.line.me/v2/bot/info', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { ok: false, error: body?.message ?? `LINE API ${res.status}` };
+      }
+      return { ok: true, info: body };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  },
+};
+
