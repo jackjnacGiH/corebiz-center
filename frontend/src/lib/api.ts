@@ -1063,69 +1063,12 @@ export const couponsApi = {
 // =========================================================================
 // Omni-chat
 // =========================================================================
-export interface ChatConversation {
-  id: string;
-  channel: 'line'|'messenger'|'instagram'|'whatsapp'|'livechat'|'email';
-  display_name: string;
-  avatar_url: string | null;
-  status: 'open'|'assigned'|'resolved'|'archived';
-  tags: string[];
-  sentiment: 'positive'|'neutral'|'negative' | null;
-  unread_count: number;
-  last_message_preview: string | null;
-  last_message_at: string | null;
-  created_at: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  conversation_id: string;
-  sender_type: 'customer'|'agent'|'bot'|'system';
-  sender_name: string | null;
-  content: string;
-  content_type: 'text'|'image'|'sticker'|'file'|'quick_reply'|'template';
-  created_at: string;
-}
-
-export const chatApi = {
-  async listConversations(): Promise<ChatConversation[]> {
-    const { data, error } = await supabase
-      .from('chat_conversations')
-      .select('id,channel,display_name,avatar_url,status,tags,sentiment,unread_count,last_message_preview,last_message_at,created_at')
-      .order('last_message_at', { ascending: false, nullsFirst: false });
-    if (error) throw error;
-    return (data ?? []) as unknown as ChatConversation[];
-  },
-
-  async listMessages(conversationId: string): Promise<ChatMessage[]> {
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .select('id,conversation_id,sender_type,sender_name,content,content_type,created_at')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
-    if (error) throw error;
-    return (data ?? []) as unknown as ChatMessage[];
-  },
-
-  async sendMessage(conversationId: string, content: string, senderName: string): Promise<void> {
-    const { error } = await supabase.from('chat_messages').insert({
-      conversation_id: conversationId,
-      sender_type: 'agent',
-      sender_name: senderName,
-      content,
-      content_type: 'text',
-    } as never);
-    if (error) throw error;
-  },
-
-  async markRead(conversationId: string): Promise<void> {
-    const { error } = await supabase
-      .from('chat_conversations')
-      .update({ unread_count: 0 } as never)
-      .eq('id', conversationId);
-    if (error) throw error;
-  },
-};
+// =========================================================================
+// Chat conversation/message types live with chatInboxApi further down the
+// file — the old chatApi declared here used to duplicate them with a
+// slightly different shape. Consolidated 2026-05 so the omni-channel
+// inbox has one source of truth.
+// =========================================================================
 
 // =========================================================================
 // Affiliate / Agents
@@ -1924,6 +1867,14 @@ export const chatInboxApi = {
         assigned_to: userId,
         status: userId ? 'assigned' : 'open',
       })
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+
+  async markRead(conversationId: string): Promise<void> {
+    const { error } = await supabase
+      .from('chat_conversations')
+      .update({ unread_count: 0 })
       .eq('id', conversationId);
     if (error) throw error;
   },
