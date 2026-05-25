@@ -1974,19 +1974,18 @@ export const lineChannelsApi = {
     if (error) throw error;
   },
 
-  /** Call LINE /v2/bot/info to verify the access token works. Returns the
-   *  bot's basic info (displayName, userId, etc.) so admin can confirm
-   *  they entered credentials for the right OA. */
+  /** Verify a Channel Access Token by proxying through the line-test-token
+   *  Edge Function (browser can't call api.line.me directly — CORS). The
+   *  Edge Function hits LINE /v2/bot/info and returns the bot's basic
+   *  info so admin can confirm the right OA. */
   async testConnection(accessToken: string): Promise<{ ok: boolean; info?: Record<string, unknown>; error?: string }> {
     try {
-      const res = await fetch('https://api.line.me/v2/bot/info', {
-        headers: { Authorization: `Bearer ${accessToken}` },
+      const { data, error } = await supabase.functions.invoke('line-test-token', {
+        body: { access_token: accessToken },
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { ok: false, error: body?.message ?? `LINE API ${res.status}` };
-      }
-      return { ok: true, info: body };
+      if (error) return { ok: false, error: error.message };
+      const r = data as { ok: boolean; info?: Record<string, unknown>; error?: string };
+      return r;
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
