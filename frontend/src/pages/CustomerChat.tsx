@@ -126,7 +126,23 @@ function renderMessageContent(content: string): ReactNode[] {
     return out;
 }
 
-const WELCOME_MESSAGE = `สวัสดีค่ะ ยินดีต้อนรับสู่ J NAC Thailand 🛠️\n\nสอบถามเรื่องสินค้า ราคา สต็อก หรือบริการได้เลยค่ะ — พิมพ์ได้ทั้งภาษาไทยและอังกฤษ`;
+// Bot persona is "เอย" — the same Aoey persona configured in ai_personas
+// table. Welcome message is dynamic: if the host page passes ?name=
+// in the iframe URL (jnac.co.th can do this when the visitor is logged in
+// to their account), we address them by name; otherwise we fall back to
+// a warm but neutral greeting.
+function readVisitorName(): string | null {
+    if (typeof window === 'undefined') return null;
+    const name = new URLSearchParams(window.location.search).get('name');
+    return name && name.trim() ? name.trim() : null;
+}
+
+function buildWelcomeMessage(name: string | null): string {
+    const opener = name
+        ? `สวัสดีค่ะ เอยเป็นผู้ช่วยส่วนตัวของคุณ ${name} มาแล้วค่ะ! ✨🛠️`
+        : `สวัสดีค่ะ เอยมาแล้วค่ะ! ✨🛠️`;
+    return `${opener}\n\nวันนี้อยากให้เอยช่วยดูสินค้า เช็กราคา เช็กสต็อก สอบถามข้อมูลสินค้า หรือบริการด้านไหน ถามเอยได้เลย เดี๋ยวเอยจัดการให้ค่ะ!`;
+}
 
 /**
  * Position the widget at a corner of the iframe. Configurable via URL:
@@ -183,9 +199,9 @@ export default function CustomerChat() {
     const [open, setOpen] = useState(false);
     const [turns, setTurns] = useState<ChatTurn[]>(() => {
         const persisted = loadHistory();
-        return persisted.length > 0
-            ? persisted
-            : [{ id: 'welcome', role: 'assistant', content: WELCOME_MESSAGE }];
+        if (persisted.length > 0) return persisted;
+        const welcome = buildWelcomeMessage(readVisitorName());
+        return [{ id: 'welcome', role: 'assistant', content: welcome }];
     });
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -375,7 +391,11 @@ export default function CustomerChat() {
     }
 
     function resetChat() {
-        const fresh: ChatTurn = { id: 'welcome', role: 'assistant', content: WELCOME_MESSAGE };
+        const fresh: ChatTurn = {
+            id: 'welcome',
+            role: 'assistant',
+            content: buildWelcomeMessage(readVisitorName()),
+        };
         setTurns([fresh]);
         try {
             window.localStorage.removeItem(STORAGE_KEY);
