@@ -187,7 +187,6 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
   };
 
   const handleDeleteNote = async (n: ChatContactNote) => {
-    if (!confirm('ลบโน้ตนี้?')) return;
     try {
       await chatNotesApi.delete(n.id);
       void reloadNotes();
