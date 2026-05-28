@@ -60,10 +60,14 @@ create table if not exists public.chat_contact_notes (
   metadata         jsonb not null default '{}'::jsonb,
   tags             text[] not null default '{}',
   is_pinned        boolean not null default false,
+  sort_order       int not null default 0,
   created_by       uuid references auth.users on delete set null,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
+
+create index if not exists chat_notes_sort_idx
+  on public.chat_contact_notes(conversation_id, sort_order asc, created_at desc);
 
 create index if not exists chat_notes_conv_idx
   on public.chat_contact_notes(conversation_id, created_at desc);

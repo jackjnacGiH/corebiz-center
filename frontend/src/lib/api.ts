@@ -2215,6 +2215,7 @@ export interface ChatContactNote {
   metadata: Record<string, unknown>;
   tags: string[];
   is_pinned: boolean;
+  sort_order: number;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -2302,14 +2303,23 @@ export const chatNotesApi = {
     const { data, error } = await notesTable()
       .select('*')
       .eq('conversation_id', conversationId)
-      .order('is_pinned', { ascending: false })
-      .order('updated_at', { ascending: false });
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: false });
     if (error) throw error;
     return (data ?? []) as ChatContactNote[];
   },
 
+  /** Persist a new top-to-bottom order. Updates sort_order in parallel. */
+  async reorder(orderedIds: string[]): Promise<void> {
+    await Promise.all(
+      orderedIds.map((id, i) =>
+        notesTable().update({ sort_order: i }).eq('id', id),
+      ),
+    );
+  },
+
   async create(
-    input: Omit<ChatContactNote, 'id' | 'created_at' | 'updated_at' | 'created_by'>,
+    input: Omit<ChatContactNote, 'id' | 'created_at' | 'updated_at' | 'created_by' | 'sort_order'>,
   ): Promise<ChatContactNote> {
     const { data: userData } = await supabase.auth.getUser();
     const { data, error } = await notesTable()

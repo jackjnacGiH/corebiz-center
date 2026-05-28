@@ -55,6 +55,8 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<ChatContactNote | undefined>();
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   useEffect(() => {
     setAliasDraft(conversation.alias_name ?? '');
@@ -173,7 +175,12 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
     }
   };
 
-  const handleSubmitNote = async (payload: Omit<ChatContactNote, 'id' | 'conversation_id' | 'created_at' | 'updated_at' | 'created_by'>) => {
+  const handleSubmitNote = async (
+    payload: Omit<
+      ChatContactNote,
+      'id' | 'conversation_id' | 'created_at' | 'updated_at' | 'created_by' | 'sort_order'
+    >,
+  ) => {
     try {
       if (editingNote) {
         await chatNotesApi.update(editingNote.id, payload);
@@ -202,6 +209,42 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
     } catch (e) {
       alert((e as Error).message);
     }
+  };
+
+  // Drag-and-drop reorder. Optimistically updates local state, persists
+  // new sort_order values to DB in parallel; on failure, reloads from DB.
+  const handleDragStart = (id: string) => (e: React.DragEvent) => {
+    setDragId(id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (id: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (id !== dragOverId) setDragOverId(id);
+  };
+
+  const handleDragLeave = () => setDragOverId(null);
+
+  const handleDrop = (targetId: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    const source = dragId;
+    setDragId(null);
+    setDragOverId(null);
+    if (!source || source === targetId) return;
+    const oldIdx = notes.findIndex((n) => n.id === source);
+    const newIdx = notes.findIndex((n) => n.id === targetId);
+    if (oldIdx === -1 || newIdx === -1) return;
+    const reordered = [...notes];
+    const [moved] = reordered.splice(oldIdx, 1);
+    reordered.splice(newIdx, 0, moved);
+    setNotes(reordered);
+    chatNotesApi.reorder(reordered.map((n) => n.id)).catch(() => void reloadNotes());
+  };
+
+  const handleDragEnd = () => {
+    setDragId(null);
+    setDragOverId(null);
   };
 
   return (
@@ -257,7 +300,7 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
               className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-md text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100"
               title="แก้ไขชื่อเล่น"
             >
-              ชื่อเล่น: {conversation.alias_name}
+              {conversation.alias_name}
               <Pencil size={9} className="opacity-60" />
             </button>
           ) : (
@@ -377,6 +420,14 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
             <NoteCard
               key={n.id}
               note={n}
+              draggable
+              isDragging={dragId === n.id}
+              isDragOver={dragOverId === n.id && dragId !== n.id}
+              onDragStart={handleDragStart(n.id)}
+              onDragOver={handleDragOver(n.id)}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop(n.id)}
+              onDragEnd={handleDragEnd}
               onEdit={() => {
                 setEditingNote(n);
                 setModalOpen(true);

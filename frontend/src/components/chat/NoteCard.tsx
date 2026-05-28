@@ -1,4 +1,4 @@
-import { Pin, Pencil, Trash2 } from 'lucide-react';
+import { GripVertical, Pin, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ChatContactNote } from '../../lib/api';
 
@@ -41,21 +41,58 @@ interface Props {
   onEdit: () => void;
   onDelete: () => void;
   onTogglePin: () => void;
+  draggable?: boolean;
+  isDragging?: boolean;
+  isDragOver?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragLeave?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
 }
 
-export default function NoteCard({ note, onEdit, onDelete, onTogglePin }: Props) {
+export default function NoteCard({
+  note,
+  onEdit,
+  onDelete,
+  onTogglePin,
+  draggable,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
+}: Props) {
   const a = (note.address ?? null) as AddressLike | null;
 
   return (
     <div
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       className={cn(
         'rounded-lg border p-3 mb-2 transition',
         note.is_pinned
           ? 'bg-indigo-50/40 border-indigo-200'
           : 'bg-neutral-50/40 border-neutral-200',
+        isDragging && 'opacity-40',
+        isDragOver && 'ring-2 ring-indigo-400 ring-offset-1',
       )}
     >
       <div className="flex items-start gap-2 mb-1.5">
+        {draggable && (
+          <span
+            className="text-neutral-400 hover:text-neutral-600 cursor-grab active:cursor-grabbing self-stretch flex items-center -ml-1"
+            title="ลากเพื่อจัดลำดับ"
+          >
+            <GripVertical size={14} />
+          </span>
+        )}
         <span className="text-sm">{NOTE_TYPE_ICON[note.note_type]}</span>
         <div className="flex-1 min-w-0">
           <div className="text-[9px] uppercase tracking-wide font-bold text-neutral-500">
