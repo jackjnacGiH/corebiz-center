@@ -251,24 +251,39 @@ export default function Chat() {
         [conversations, selectedId],
     );
 
-    // Auto-transition: when admin opens a "ยังไม่อ่าน" (open) thread, flip
-    // it to "กำลังดำเนินการ" (assigned) automatically. The chip count + list
-    // reflects that admin is now actively handling it, without needing them
-    // to click the status toggle by hand. Silent failure — admin can still
-    // move it manually if the request fails.
+    // Deferred auto-transition: when admin opens an "ยังไม่อ่าน" (open)
+    // thread, we DON'T flip it to "กำลังดำเนินการ" immediately, because
+    // Boss Jack wants the conversation to stay visible in the ยังไม่อ่าน
+    // tab while he's still replying. Instead we stash the conversation id
+    // in a ref, and only flush the queued transitions when the admin
+    // switches to a different status filter (or to อินบ็อกซ์ / เสร็จสิ้น).
+    const pendingAssignRef = useRef<Set<string>>(new Set());
+
+    // Stash: any time the selected conv is 'open', queue it.
     useEffect(() => {
         if (!selectedId || selectedConv?.status !== 'open') return;
-        let cancelled = false;
+        pendingAssignRef.current.add(selectedId);
+    }, [selectedId, selectedConv?.status]);
+
+    // Flush: when the status FILTER itself changes (admin clicked a tab),
+    // promote every queued conversation to 'assigned' in one go, then
+    // refresh the list. Excluded from deps intentionally — we want this
+    // to fire *only* when the user picks a different tab, not when
+    // loadConvs is recreated.
+    useEffect(() => {
+        if (pendingAssignRef.current.size === 0) return;
+        const ids = Array.from(pendingAssignRef.current);
+        pendingAssignRef.current = new Set();
         void (async () => {
             try {
-                await chatInboxApi.setStatus(selectedId, 'assigned');
-                if (!cancelled) void loadConvs();
+                await Promise.all(ids.map((id) => chatInboxApi.setStatus(id, 'assigned')));
+                void loadConvs();
             } catch {
-                // no-op
+                // no-op — admin can still move the status manually
             }
         })();
-        return () => { cancelled = true; };
-    }, [selectedId, selectedConv?.status, loadConvs]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [status]);
 
     async function handleSend(e: FormEvent) {
         e.preventDefault();
@@ -291,6 +306,10 @@ export default function Chat() {
 
     async function handleSetStatus(s: ChatStatus) {
         if (!selectedId) return;
+        // Manual override wins — drop this id from the deferred queue so
+        // we don't redundantly setStatus('assigned') after the admin just
+        // picked a different status from the thread toggle.
+        pendingAssignRef.current.delete(selectedId);
         try {
             await chatInboxApi.setStatus(selectedId, s);
             void loadConvs();
