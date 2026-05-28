@@ -51,6 +51,7 @@ import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import ContactPanel from '../components/chat/ContactPanel';
 
 const CHANNEL_LABEL: Record<ChatChannel, string> = {
     livechat: 'Web Chat',
@@ -521,6 +522,14 @@ export default function Chat() {
                         </>
                     )}
                 </Card>
+
+                {/* Contact panel (right side) — only when a conversation is selected */}
+                {selectedConv && (
+                    <ContactPanel
+                        conversation={selectedConv}
+                        onConversationChanged={() => void loadConvs()}
+                    />
+                )}
             </div>
         </div>
     );

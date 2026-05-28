@@ -1761,6 +1761,12 @@ export interface ChatConversation {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  // Contact-panel fields (migration 0011)
+  alias_name?: string | null;
+  auto_tags?: string[];
+  billing_address?: Record<string, unknown> | null;
+  shipping_address?: Record<string, unknown> | null;
+  last_customer_message_at?: string | null;
 }
 
 export interface ChatMessage {
@@ -2182,6 +2188,161 @@ export const aiPersonaApi = {
       display_name: def.display_name,
       prompt: def.prompt,
     });
+  },
+};
+
+// =========================================================================
+// Contact Panel — alias, tags, packer, notes, customer snapshot
+// =========================================================================
+// Backs the right-side LINE-OA-style panel in /chat. Reuses chat_conversations
+// (alias_name, tags, auto_tags, billing/shipping, assigned_to=packer) plus the
+// chat_contact_notes table for unlimited typed notes per conversation.
+
+export interface ChatContactNote {
+  id: string;
+  conversation_id: string;
+  note_type:
+    | 'general'
+    | 'tax_invoice'
+    | 'shipping'
+    | 'reminder'
+    | 'bank_account'
+    | 'special_terms'
+    | 'other';
+  title: string | null;
+  content: string | null;
+  address: Record<string, unknown> | null;
+  due_date: string | null;
+  metadata: Record<string, unknown>;
+  tags: string[];
+  is_pinned: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StaffProfile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  role: 'owner' | 'admin' | 'staff';
+}
+
+export interface CustomerSnapshot {
+  id: string;
+  name: string;
+  tier: 'general' | 'silver' | 'gold' | 'vip';
+  total_orders: number;
+  total_spent: number;
+}
+
+/** Update the editable profile fields on a conversation (alias, tags, addresses). */
+export const chatProfileApi = {
+  async updateProfile(
+    conversationId: string,
+    patch: {
+      alias_name?: string | null;
+      tags?: string[];
+      billing_address?: Record<string, unknown> | null;
+      shipping_address?: Record<string, unknown> | null;
+    },
+  ): Promise<void> {
+    // alias_name + billing_address + shipping_address ship with migration 0011
+    // and are not yet in database.types.ts — cast through unknown.
+    const { error } = await (supabase.from('chat_conversations') as unknown as {
+      update: (p: typeof patch) => { eq: (col: string, v: string) => Promise<{ error: Error | null }> };
+    })
+      .update(patch)
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+
+  /** Packer = chat_conversations.assigned_to. Setting null clears it. */
+  async setPacker(conversationId: string, userId: string | null): Promise<void> {
+    const { error } = await supabase
+      .from('chat_conversations')
+      .update({ assigned_to: userId })
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+
+  /** Trigger server-side recompute of auto_tags (RPC introduced in 0011). */
+  async recalcAutoTags(conversationId: string): Promise<void> {
+    const { error } = await (
+      supabase.rpc as unknown as (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => Promise<{ error: Error | null }>
+    )('recalc_chat_auto_tags', { p_conv_id: conversationId });
+    if (error) throw error;
+  },
+
+  /** Customer snapshot used by the contact panel header (orders / spend / tier). */
+  async getCustomerSnapshot(customerId: string): Promise<CustomerSnapshot | null> {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('id, name, tier, total_orders, total_spent')
+      .eq('id', customerId)
+      .maybeSingle();
+    if (error) throw error;
+    return data as CustomerSnapshot | null;
+  },
+};
+
+// chat_contact_notes is introduced by migration 0011; until that migration
+// is applied to the live DB the generated database.types.ts will not include
+// it, so we cast to a loose client when accessing the table.
+const notesTable = () =>
+  (supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> }).from(
+    'chat_contact_notes',
+  );
+
+export const chatNotesApi = {
+  async list(conversationId: string): Promise<ChatContactNote[]> {
+    const { data, error } = await notesTable()
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('is_pinned', { ascending: false })
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as ChatContactNote[];
+  },
+
+  async create(
+    input: Omit<ChatContactNote, 'id' | 'created_at' | 'updated_at' | 'created_by'>,
+  ): Promise<ChatContactNote> {
+    const { data: userData } = await supabase.auth.getUser();
+    const { data, error } = await notesTable()
+      .insert({ ...input, created_by: userData.user?.id ?? null })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as ChatContactNote;
+  },
+
+  async update(noteId: string, patch: Partial<ChatContactNote>): Promise<void> {
+    const { error } = await notesTable().update(patch).eq('id', noteId);
+    if (error) throw error;
+  },
+
+  async delete(noteId: string): Promise<void> {
+    const { error } = await notesTable().delete().eq('id', noteId);
+    if (error) throw error;
+  },
+};
+
+/** Staff list for the Packer dropdown — owners + admins + staff. */
+export const profilesApi = {
+  async listStaff(): Promise<StaffProfile[]> {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, email, full_name, avatar_url, role')
+      .in('role', ['owner', 'admin', 'staff'])
+      .eq('is_active', true)
+      .order('full_name', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as StaffProfile[];
   },
 };
 
