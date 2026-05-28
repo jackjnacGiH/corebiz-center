@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ChangeEvent, type KeyboardEvent } from 'react';
 import {
     BrainCircuit,
     RefreshCw,
@@ -18,15 +18,20 @@ import {
     FileEdit,
     FlaskConical,
     ImagePlus,
+    Repeat,
+    X,
+    Pencil,
 } from 'lucide-react';
 import {
     knowledgeAdminApi,
     knowledgeApi,
     knowledgeCategoriesApi,
+    keywordSynonymsApi,
     type KnowledgeSource,
     type KnowledgeChunkRow,
     type KnowledgeMatch,
     type KnowledgeCategory,
+    type KeywordSynonym,
 } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
@@ -68,7 +73,7 @@ export interface EditingSource {
 }
 
 export default function OpenclawRAG() {
-    const [tab, setTab] = useState<'add' | 'browse' | 'test'>('add');
+    const [tab, setTab] = useState<'add' | 'browse' | 'test' | 'synonyms'>('add');
     const [sources, setSources] = useState<KnowledgeSource[]>([]);
     const [categories, setCategories] = useState<KnowledgeCategory[]>(FALLBACK_CATEGORIES);
     const [loading, setLoading] = useState(true);
@@ -182,6 +187,9 @@ export default function OpenclawRAG() {
                     <TabsTrigger value="browse" className="gap-2">
                         <FileEdit size={14} /> จัดการเอกสาร
                     </TabsTrigger>
+                    <TabsTrigger value="synonyms" className="gap-2">
+                        <Repeat size={14} /> คำพ้องความหมาย
+                    </TabsTrigger>
                     <TabsTrigger value="test" className="gap-2">
                         <FlaskConical size={14} /> ทดสอบ RAG
                     </TabsTrigger>
@@ -211,6 +219,9 @@ export default function OpenclawRAG() {
                             setTab('add');
                         }}
                     />
+                </TabsContent>
+                <TabsContent value="synonyms">
+                    <SynonymsTab />
                 </TabsContent>
                 <TabsContent value="test">
                     <TestRAGTab />
@@ -955,5 +966,407 @@ function TestRAGTab() {
                 </div>
             </CardContent>
         </Card>
+    );
+}
+
+// ─── Synonyms Tab ─────────────────────────────────────────────────────────────
+// Admin-managed canonical → aliases mapping. rag-chat rewrites any customer
+// query containing an alias to the canonical word before the product search.
+
+function SynonymsTab() {
+    const [rows, setRows] = useState<KeywordSynonym[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+    const [modalOpen, setModalOpen] = useState(false);
+    const [editing, setEditing] = useState<KeywordSynonym | null>(null);
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            setRows(await keywordSynonymsApi.list());
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        void load();
+    }, []);
+
+    async function handleDelete(row: KeywordSynonym) {
+        if (!confirm(`ลบ "${row.canonical}" และ alias ${row.aliases.length} คำ?`)) return;
+        try {
+            await keywordSynonymsApi.remove(row.id);
+            void load();
+        } catch (e) {
+            alert((e as Error).message);
+        }
+    }
+
+    async function handleToggleActive(row: KeywordSynonym) {
+        try {
+            await keywordSynonymsApi.update(row.id, { is_active: !row.is_active });
+            void load();
+        } catch (e) {
+            alert((e as Error).message);
+        }
+    }
+
+    return (
+        <Card>
+            <CardContent className="p-6 space-y-4">
+                <div className="flex items-start gap-2.5 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                    <Repeat size={16} className="mt-0.5 flex-shrink-0" />
+                    <div>
+                        Map "คำที่ลูกค้าใช้เรียก" → "คำหลักที่ระบบใช้ค้นหา" — เช่น{' '}
+                        <code className="px-1.5 py-0.5 rounded bg-white text-indigo-700 font-mono text-[11px]">
+                            จานทราย
+                        </code>{' '}
+                        มี alias{' '}
+                        <code className="px-1.5 py-0.5 rounded bg-white text-indigo-700 font-mono text-[11px]">
+                            จานทรายซ้อน, จานทรายเรียงซ้อน, ใบทรายซ้อน
+                        </code>{' '}
+                        เมื่อลูกค้าทักด้วยคำพวกนี้ AI จะค้นด้วย "จานทราย" แทน
+                    </div>
+                </div>
+
+                <div className="flex items-center justify-between">
+                    <div className="text-sm text-neutral-600">
+                        {loading ? '...' : `${rows.length} กลุ่ม • ${rows.filter((r) => r.is_active).length} เปิดใช้งาน`}
+                    </div>
+                    <Button
+                        size="sm"
+                        onClick={() => {
+                            setEditing(null);
+                            setModalOpen(true);
+                        }}
+                        className="gap-2 bg-indigo-500 hover:bg-indigo-600"
+                    >
+                        <Plus size={14} /> เพิ่มกลุ่มคำ
+                    </Button>
+                </div>
+
+                {err && (
+                    <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                        <span>{err}</span>
+                    </div>
+                )}
+
+                {loading && (
+                    <div className="text-center text-sm text-neutral-400 py-8">
+                        <Loader2 size={16} className="inline animate-spin mr-2" />
+                        กำลังโหลด...
+                    </div>
+                )}
+
+                {!loading && rows.length === 0 && (
+                    <div className="text-center text-sm text-neutral-400 py-12 border border-dashed border-neutral-200 rounded-lg bg-neutral-50/50">
+                        ยังไม่มีกลุ่มคำพ้องความหมาย — กด "+ เพิ่มกลุ่มคำ" เพื่อสร้างกลุ่มแรก
+                    </div>
+                )}
+
+                <div className="space-y-2">
+                    {rows.map((row) => (
+                        <div
+                            key={row.id}
+                            className={cn(
+                                'rounded-lg border p-4 transition',
+                                row.is_active
+                                    ? 'border-neutral-200 bg-white hover:border-indigo-300'
+                                    : 'border-neutral-200 bg-neutral-50 opacity-60',
+                            )}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                        <span className="text-sm font-semibold text-neutral-900">
+                                            📦 {row.canonical}
+                                        </span>
+                                        {!row.is_active && (
+                                            <span className="text-[10px] uppercase font-bold text-neutral-500 bg-neutral-200 px-1.5 py-0.5 rounded">
+                                                ปิด
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-xs text-neutral-600 mb-1">
+                                        ลูกค้าเรียก:{' '}
+                                        {row.aliases.length === 0 ? (
+                                            <span className="text-neutral-400 italic">ยังไม่มี alias</span>
+                                        ) : (
+                                            <span className="font-medium text-neutral-800">
+                                                {row.aliases.join(' · ')}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {row.notes && (
+                                        <div className="text-[11px] text-neutral-500 italic mt-1.5">
+                                            💬 {row.notes}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                    <button
+                                        onClick={() => void handleToggleActive(row)}
+                                        title={row.is_active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
+                                        className="h-8 w-8 grid place-items-center rounded-md hover:bg-neutral-100 text-neutral-600 transition"
+                                    >
+                                        {row.is_active ? <CheckCircle size={14} /> : <X size={14} />}
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setEditing(row);
+                                            setModalOpen(true);
+                                        }}
+                                        title="แก้ไข"
+                                        className="h-8 w-8 grid place-items-center rounded-md hover:bg-indigo-50 text-indigo-600 transition"
+                                    >
+                                        <Pencil size={14} />
+                                    </button>
+                                    <button
+                                        onClick={() => void handleDelete(row)}
+                                        title="ลบ"
+                                        className="h-8 w-8 grid place-items-center rounded-md hover:bg-red-50 text-red-600 transition"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <SynonymModal
+                    open={modalOpen}
+                    initial={editing}
+                    onClose={() => setModalOpen(false)}
+                    onSaved={() => {
+                        setModalOpen(false);
+                        void load();
+                    }}
+                />
+            </CardContent>
+        </Card>
+    );
+}
+
+function SynonymModal({
+    open,
+    initial,
+    onClose,
+    onSaved,
+}: {
+    open: boolean;
+    initial: KeywordSynonym | null;
+    onClose: () => void;
+    onSaved: () => void;
+}) {
+    const [canonical, setCanonical] = useState('');
+    const [aliases, setAliases] = useState<string[]>([]);
+    const [aliasInput, setAliasInput] = useState('');
+    const [notes, setNotes] = useState('');
+    const [isActive, setIsActive] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        setCanonical(initial?.canonical ?? '');
+        setAliases(initial?.aliases ?? []);
+        setAliasInput('');
+        setNotes(initial?.notes ?? '');
+        setIsActive(initial?.is_active ?? true);
+        setErr(null);
+    }, [open, initial]);
+
+    if (!open) return null;
+
+    function addAlias(raw: string) {
+        const v = raw.trim();
+        if (!v) return;
+        if (aliases.some((a) => a.toLowerCase() === v.toLowerCase())) return;
+        setAliases([...aliases, v]);
+        setAliasInput('');
+    }
+
+    function handleAliasKey(e: KeyboardEvent<HTMLInputElement>) {
+        if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            addAlias(aliasInput);
+        } else if (e.key === 'Backspace' && aliasInput === '' && aliases.length > 0) {
+            setAliases(aliases.slice(0, -1));
+        }
+    }
+
+    async function handleSave(e: FormEvent) {
+        e.preventDefault();
+        setErr(null);
+        if (!canonical.trim()) {
+            setErr('กรุณาใส่คำหลัก');
+            return;
+        }
+        // Capture any unsubmitted alias still in the input
+        const finalAliases = aliasInput.trim()
+            ? [...aliases, aliasInput.trim()].filter(
+                  (a, i, arr) => arr.findIndex((x) => x.toLowerCase() === a.toLowerCase()) === i,
+              )
+            : aliases;
+        if (finalAliases.length === 0) {
+            setErr('ใส่ alias อย่างน้อย 1 คำ (กด Enter หลังพิมพ์)');
+            return;
+        }
+        setSaving(true);
+        try {
+            if (initial) {
+                await keywordSynonymsApi.update(initial.id, {
+                    canonical,
+                    aliases: finalAliases,
+                    notes,
+                    is_active: isActive,
+                });
+            } else {
+                await keywordSynonymsApi.create({
+                    canonical,
+                    aliases: finalAliases,
+                    notes,
+                    is_active: isActive,
+                });
+            }
+            onSaved();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div
+            className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4"
+            onClick={onClose}
+        >
+            <div
+                className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="px-5 py-4 border-b border-neutral-200 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50">
+                    <div className="font-semibold text-neutral-900 flex items-center gap-2">
+                        <Repeat size={16} className="text-indigo-600" />
+                        {initial ? 'แก้ไขกลุ่มคำ' : 'เพิ่มกลุ่มคำพ้องความหมาย'}
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="h-7 w-7 grid place-items-center rounded-md hover:bg-white/60 text-neutral-600"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+
+                <form onSubmit={handleSave} className="p-5 space-y-4 overflow-y-auto">
+                    <div>
+                        <Label className="text-xs font-semibold mb-1.5 block">
+                            คำหลัก (ใช้ค้นจริงในระบบ) <span className="text-red-500">*</span>
+                        </Label>
+                        <Input
+                            value={canonical}
+                            onChange={(e) => setCanonical(e.target.value)}
+                            placeholder="เช่น จานทราย"
+                            autoFocus
+                        />
+                        <div className="text-[11px] text-neutral-500 mt-1">
+                            ต้องเป็นคำที่มีอยู่จริงในชื่อสินค้า (ระบบจะค้น ilike เทียบกับ name_th)
+                        </div>
+                    </div>
+
+                    <div>
+                        <Label className="text-xs font-semibold mb-1.5 block">
+                            คำที่ลูกค้าใช้เรียก (Aliases) <span className="text-red-500">*</span>
+                        </Label>
+                        <div className="rounded-md border border-neutral-200 bg-white px-2 py-1.5 flex flex-wrap items-center gap-1.5 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition">
+                            {aliases.map((a, i) => (
+                                <span
+                                    key={`${a}-${i}`}
+                                    className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-800 text-xs font-medium px-2 py-0.5 rounded-full"
+                                >
+                                    {a}
+                                    <button
+                                        type="button"
+                                        onClick={() => setAliases(aliases.filter((_, idx) => idx !== i))}
+                                        className="hover:text-indigo-600"
+                                    >
+                                        <X size={11} />
+                                    </button>
+                                </span>
+                            ))}
+                            <input
+                                type="text"
+                                value={aliasInput}
+                                onChange={(e) => setAliasInput(e.target.value)}
+                                onKeyDown={handleAliasKey}
+                                onBlur={() => addAlias(aliasInput)}
+                                placeholder={aliases.length === 0 ? 'พิมพ์แล้วกด Enter เพื่อเพิ่ม' : ''}
+                                className="flex-1 min-w-[120px] text-sm bg-transparent outline-none px-1 py-1"
+                            />
+                        </div>
+                        <div className="text-[11px] text-neutral-500 mt-1">
+                            กด Enter หรือ comma เพื่อเพิ่ม • Backspace ลบคำท้าย
+                        </div>
+                    </div>
+
+                    <div>
+                        <Label className="text-xs font-semibold mb-1.5 block">
+                            หมายเหตุ (ไม่บังคับ)
+                        </Label>
+                        <textarea
+                            value={notes}
+                            onChange={(e) => setNotes(e.target.value)}
+                            rows={2}
+                            placeholder="เช่น ใช้เรียกในตลาดสด, มาจากภาษาช่าง..."
+                            className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 resize-none"
+                        />
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer text-sm">
+                        <input
+                            type="checkbox"
+                            checked={isActive}
+                            onChange={(e) => setIsActive(e.target.checked)}
+                            className="rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-neutral-700">เปิดใช้งานกลุ่มนี้</span>
+                    </label>
+
+                    {err && (
+                        <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                            <AlertCircle size={13} className="mt-0.5 flex-shrink-0" />
+                            <span>{err}</span>
+                        </div>
+                    )}
+
+                    <div className="flex gap-2 pt-2 border-t border-neutral-100">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={onClose}
+                            disabled={saving}
+                            className="flex-1"
+                        >
+                            ยกเลิก
+                        </Button>
+                        <Button
+                            type="submit"
+                            disabled={saving}
+                            className="flex-1 gap-2 bg-indigo-500 hover:bg-indigo-600"
+                        >
+                            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                            {initial ? 'บันทึก' : 'เพิ่ม'}
+                        </Button>
+                    </div>
+                </form>
+            </div>
+        </div>
     );
 }

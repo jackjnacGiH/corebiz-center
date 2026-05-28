@@ -2355,3 +2355,82 @@ export const profilesApi = {
   },
 };
 
+// =========================================================================
+// Keyword synonyms — admin-managed canonical→aliases mapping
+// =========================================================================
+// rag-chat rewrites customer queries that mention any alias to the
+// canonical word before running the product search. Managed via the
+// "คำพ้องความหมาย" tab on the RAG Knowledge Base page.
+export interface KeywordSynonym {
+  id: string;
+  canonical: string;
+  aliases: string[];
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// keyword_synonyms is introduced by migration 0013; until database.types.ts
+// is regenerated we access it via a loose client.
+const keywordSynonymsTable = () =>
+  (supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> }).from(
+    'keyword_synonyms',
+  );
+
+export const keywordSynonymsApi = {
+  async list(): Promise<KeywordSynonym[]> {
+    const { data, error } = await keywordSynonymsTable()
+      .select('id, canonical, aliases, notes, is_active, created_at, updated_at')
+      .order('canonical', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as KeywordSynonym[];
+  },
+
+  async create(input: {
+    canonical: string;
+    aliases: string[];
+    notes?: string | null;
+    is_active?: boolean;
+  }): Promise<KeywordSynonym> {
+    const { data: userData } = await supabase.auth.getUser();
+    const payload = {
+      canonical: input.canonical.trim(),
+      aliases: input.aliases.map((a) => a.trim()).filter((a) => a.length > 0),
+      notes: input.notes?.trim() || null,
+      is_active: input.is_active ?? true,
+      created_by: userData.user?.id ?? null,
+    };
+    const { data, error } = await keywordSynonymsTable()
+      .insert(payload)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as KeywordSynonym;
+  },
+
+  async update(
+    id: string,
+    patch: Partial<{ canonical: string; aliases: string[]; notes: string | null; is_active: boolean }>,
+  ): Promise<KeywordSynonym> {
+    const cleaned: Record<string, unknown> = {};
+    if (patch.canonical !== undefined) cleaned.canonical = patch.canonical.trim();
+    if (patch.aliases !== undefined)
+      cleaned.aliases = patch.aliases.map((a) => a.trim()).filter((a) => a.length > 0);
+    if (patch.notes !== undefined) cleaned.notes = patch.notes?.trim() || null;
+    if (patch.is_active !== undefined) cleaned.is_active = patch.is_active;
+    const { data, error } = await keywordSynonymsTable()
+      .update(cleaned)
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as KeywordSynonym;
+  },
+
+  async remove(id: string): Promise<void> {
+    const { error } = await keywordSynonymsTable().delete().eq('id', id);
+    if (error) throw error;
+  },
+};
+
