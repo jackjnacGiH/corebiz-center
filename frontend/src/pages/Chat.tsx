@@ -251,6 +251,25 @@ export default function Chat() {
         [conversations, selectedId],
     );
 
+    // Auto-transition: when admin opens a "ยังไม่อ่าน" (open) thread, flip
+    // it to "กำลังดำเนินการ" (assigned) automatically. The chip count + list
+    // reflects that admin is now actively handling it, without needing them
+    // to click the status toggle by hand. Silent failure — admin can still
+    // move it manually if the request fails.
+    useEffect(() => {
+        if (!selectedId || selectedConv?.status !== 'open') return;
+        let cancelled = false;
+        void (async () => {
+            try {
+                await chatInboxApi.setStatus(selectedId, 'assigned');
+                if (!cancelled) void loadConvs();
+            } catch {
+                // no-op
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [selectedId, selectedConv?.status, loadConvs]);
+
     async function handleSend(e: FormEvent) {
         e.preventDefault();
         if (!selectedId || !reply.trim() || sending) return;
