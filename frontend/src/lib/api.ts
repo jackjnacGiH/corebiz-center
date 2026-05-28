@@ -2207,8 +2207,7 @@ export interface ChatContactNote {
     | 'shipping'
     | 'reminder'
     | 'bank_account'
-    | 'special_terms'
-    | 'other';
+    | 'special_terms';
   title: string | null;
   content: string | null;
   address: Record<string, unknown> | null;

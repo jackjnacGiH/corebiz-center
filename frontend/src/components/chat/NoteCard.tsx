@@ -9,7 +9,6 @@ const NOTE_TYPE_LABEL: Record<ChatContactNote['note_type'], string> = {
   reminder: 'เตือนความจำ',
   bank_account: 'บัญชีธนาคาร',
   special_terms: 'สิทธิพิเศษ/ส่วนลด',
-  other: 'อื่นๆ',
 };
 
 const NOTE_TYPE_ICON: Record<ChatContactNote['note_type'], string> = {
@@ -19,7 +18,6 @@ const NOTE_TYPE_ICON: Record<ChatContactNote['note_type'], string> = {
   reminder: '⏰',
   bank_account: '🏦',
   special_terms: '⭐',
-  other: '📌',
 };
 
 const fmtDate = (iso: string) =>

@@ -20,7 +20,6 @@ const TYPES: ChatContactNote['note_type'][] = [
   'reminder',
   'bank_account',
   'special_terms',
-  'other',
 ];
 
 const LABELS: Record<ChatContactNote['note_type'], string> = {
@@ -30,7 +29,6 @@ const LABELS: Record<ChatContactNote['note_type'], string> = {
   reminder: 'เตือนความจำ',
   bank_account: 'บัญชีธนาคาร',
   special_terms: 'สิทธิพิเศษ/ส่วนลด',
-  other: 'อื่นๆ',
 };
 
 const ICONS: Record<ChatContactNote['note_type'], string> = {
@@ -40,7 +38,6 @@ const ICONS: Record<ChatContactNote['note_type'], string> = {
   reminder: '⏰',
   bank_account: '🏦',
   special_terms: '⭐',
-  other: '📌',
 };
 
 interface AddressDraft {

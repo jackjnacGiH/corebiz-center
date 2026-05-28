@@ -46,13 +46,12 @@ create table if not exists public.chat_contact_notes (
   conversation_id  uuid not null references public.chat_conversations on delete cascade,
   note_type        text not null default 'general'
                      check (note_type in (
-                       'general',        -- ทั่วไป
+                       'general',        -- ทั่วไป (free-form)
                        'tax_invoice',    -- ใบกำกับภาษี
                        'shipping',       -- ที่อยู่ส่งของ
                        'reminder',       -- เตือนความจำ
                        'bank_account',   -- บัญชีธนาคาร
-                       'special_terms',  -- สิทธิพิเศษ/ส่วนลด
-                       'other'           -- อื่นๆ
+                       'special_terms'   -- สิทธิพิเศษ/ส่วนลด
                      )),
   title            text,
   content          text,
