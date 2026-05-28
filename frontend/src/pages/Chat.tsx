@@ -156,7 +156,12 @@ export default function Chat() {
         return () => clearTimeout(t);
     }, [search]);
 
-    // Load the conversation list whenever filters change
+    // Load the conversation list whenever filters change.
+    // NOTE: we deliberately do NOT auto-select the first row. Boss Jack
+    // hit a bug where the top conversation was getting auto-queued for the
+    // 'open' → 'assigned' deferred transition while he was actually reading
+    // a different chat further down the list — when he then switched tabs,
+    // the chat he never opened got promoted. Admin must click explicitly.
     const loadConvs = useCallback(async () => {
         setLoadingList(true);
         setListErr(null);
@@ -167,8 +172,6 @@ export default function Chat() {
                 search: debouncedSearch,
             });
             setConversations(rows);
-            // auto-select first if nothing selected
-            setSelectedId((cur) => cur ?? rows[0]?.id ?? null);
         } catch (e) {
             setListErr((e as Error).message);
         } finally {
