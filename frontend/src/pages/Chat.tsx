@@ -36,8 +36,6 @@ import {
     Image as ImageIcon,
     Loader2,
     RefreshCw,
-    CheckCheck,
-    Archive,
     AlertCircle,
 } from 'lucide-react';
 import {
@@ -81,11 +79,15 @@ const CHANNEL_COLOR: Record<ChatChannel, string> = {
 };
 
 const STATUS_LABEL: Record<ChatStatus, string> = {
-    open: 'รอตอบ',
-    assigned: 'กำลังคุย',
-    resolved: 'ปิดดีล',
-    archived: 'เก็บถาวร',
+    open: 'ยังไม่อ่าน',
+    assigned: 'กำลังดำเนินการ',
+    resolved: 'เสร็จสิ้น',
+    archived: 'เสร็จสิ้น',
 };
+
+// Status flow shown in the UI. `archived` is kept in the DB enum for
+// historical rows but no longer exposed — collapses into 'เสร็จสิ้น'.
+const ACTIVE_STATUSES: ChatStatus[] = ['open', 'assigned', 'resolved'];
 
 const IMG_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
 function renderMessageContent(content: string): ReactNode[] {
@@ -126,9 +128,9 @@ function timeAgo(iso: string | null): string {
 }
 
 export default function Chat() {
-    // Filters
+    // Filters — default to "อินบ็อกซ์" (no filter, show all)
     const [channel, setChannel] = useState<ChatChannel | null>(null);
-    const [status, setStatus] = useState<ChatStatus | null>('open');
+    const [status, setStatus] = useState<ChatStatus | null>(null);
     const [search, setSearch] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
 
@@ -340,12 +342,17 @@ export default function Chat() {
                             ))}
                         </div>
                         <div className="flex gap-1 flex-wrap text-[10px]">
-                            {(['open', 'assigned', 'resolved', 'archived'] as ChatStatus[]).map((s) => (
+                            <FilterChip
+                                label="อินบ็อกซ์"
+                                active={status === null}
+                                onClick={() => setStatus(null)}
+                            />
+                            {ACTIVE_STATUSES.map((s) => (
                                 <FilterChip
                                     key={s}
                                     label={STATUS_LABEL[s]}
                                     active={status === s}
-                                    onClick={() => setStatus(status === s ? null : s)}
+                                    onClick={() => setStatus(s)}
                                 />
                             ))}
                         </div>
@@ -444,27 +451,30 @@ export default function Chat() {
                                         <span>{STATUS_LABEL[selectedConv.status]}</span>
                                     </div>
                                 </div>
-                                <div className="flex gap-1">
-                                    {selectedConv.status !== 'resolved' && (
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => void handleSetStatus('resolved')}
-                                            className="gap-1.5 text-xs h-8"
-                                        >
-                                            <CheckCheck size={12} /> ปิดดีล
-                                        </Button>
-                                    )}
-                                    {selectedConv.status !== 'archived' && (
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => void handleSetStatus('archived')}
-                                            className="gap-1.5 text-xs h-8"
-                                        >
-                                            <Archive size={12} /> เก็บถาวร
-                                        </Button>
-                                    )}
+                                {/* Status toggle — any → any direction */}
+                                <div className="inline-flex rounded-md border border-neutral-200 p-0.5 bg-neutral-50">
+                                    {ACTIVE_STATUSES.map((s) => {
+                                        const isCurrent =
+                                            selectedConv.status === s ||
+                                            (s === 'resolved' && selectedConv.status === 'archived');
+                                        return (
+                                            <button
+                                                key={s}
+                                                type="button"
+                                                onClick={() => {
+                                                    if (!isCurrent) void handleSetStatus(s);
+                                                }}
+                                                className={cn(
+                                                    'text-xs px-3 h-7 rounded transition font-medium',
+                                                    isCurrent
+                                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                                        : 'text-neutral-600 hover:bg-white hover:text-neutral-900',
+                                                )}
+                                            >
+                                                {STATUS_LABEL[s]}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
 
