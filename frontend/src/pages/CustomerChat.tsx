@@ -36,7 +36,6 @@ interface ChatTurn {
     content: string;
     streaming?: boolean;
     error?: boolean;
-    clarification?: Array<{ sku: string; name_th: string; name_en?: string | null }>;
 }
 
 const STORAGE_KEY = 'jnac_customer_chat_v1';
@@ -334,8 +333,6 @@ export default function CustomerChat() {
                                     return { ...t, content: t.content + event.chunk };
                                 case 'blocked':
                                     return { ...t, content: event.answer };
-                                case 'clarification':
-                                    return { ...t, clarification: event.candidates };
                                 default:
                                     return t;
                             }
@@ -442,56 +439,35 @@ export default function CustomerChat() {
                     {/* Messages */}
                     <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-neutral-50">
                         {turns.map((t) => (
-                            <div key={t.id} className="flex flex-col gap-1.5">
-                                <div className={`flex gap-2 ${t.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                                    {t.role === 'assistant' && (
-                                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center flex-shrink-0 mt-0.5">
-                                            <Bot size={14} className="text-white" />
-                                        </div>
-                                    )}
-                                    <div
-                                        className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
-                                            t.role === 'user'
-                                                ? 'bg-indigo-600 text-white rounded-tr-sm'
-                                                : t.error
-                                                    ? 'bg-red-50 text-red-700 border border-red-200 rounded-tl-sm'
-                                                    : 'bg-white text-neutral-900 border border-neutral-200 rounded-tl-sm'
-                                        }`}
-                                    >
-                                        {renderMessageContent(t.content)}
-                                        {t.streaming && t.content.length === 0 && (
-                                            <span className="inline-flex items-center gap-1.5 text-neutral-500">
-                                                <Loader2 size={12} className="animate-spin" />
-                                                กำลังคิด...
-                                            </span>
-                                        )}
-                                        {t.streaming && t.content.length > 0 && (
-                                            <span className="inline-block w-2 h-3.5 ml-0.5 align-middle bg-indigo-500 animate-pulse rounded-sm" />
-                                        )}
-                                    </div>
-                                </div>
-                                {/* Clarification choice bubbles — shown below assistant message after streaming finishes */}
-                                {t.role === 'assistant' && t.clarification && t.clarification.length > 0 && !t.streaming && (
-                                    <div className="flex flex-wrap gap-1.5 pl-9">
-                                        {t.clarification.map((c) => (
-                                            <button
-                                                key={c.sku}
-                                                disabled={loading}
-                                                onClick={() => void ask(c.name_th)}
-                                                className="px-3 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-50 border border-indigo-200 transition"
-                                            >
-                                                {c.name_th}
-                                            </button>
-                                        ))}
-                                        <button
-                                            disabled={loading}
-                                            onClick={() => void ask('ไม่ใช่ค่ะ รบกวนช่วยหาให้หน่อยได้ไหมคะ')}
-                                            className="px-3 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-500 hover:bg-neutral-200 disabled:opacity-50 border border-neutral-200 transition"
-                                        >
-                                            ไม่ใช่ค่ะ
-                                        </button>
+                            <div
+                                key={t.id}
+                                className={`flex gap-2 ${t.role === 'user' ? 'flex-row-reverse' : ''}`}
+                            >
+                                {t.role === 'assistant' && (
+                                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center flex-shrink-0 mt-0.5">
+                                        <Bot size={14} className="text-white" />
                                     </div>
                                 )}
+                                <div
+                                    className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
+                                        t.role === 'user'
+                                            ? 'bg-indigo-600 text-white rounded-tr-sm'
+                                            : t.error
+                                                ? 'bg-red-50 text-red-700 border border-red-200 rounded-tl-sm'
+                                                : 'bg-white text-neutral-900 border border-neutral-200 rounded-tl-sm'
+                                    }`}
+                                >
+                                    {renderMessageContent(t.content)}
+                                    {t.streaming && t.content.length === 0 && (
+                                        <span className="inline-flex items-center gap-1.5 text-neutral-500">
+                                            <Loader2 size={12} className="animate-spin" />
+                                            กำลังคิด...
+                                        </span>
+                                    )}
+                                    {t.streaming && t.content.length > 0 && (
+                                        <span className="inline-block w-2 h-3.5 ml-0.5 align-middle bg-indigo-500 animate-pulse rounded-sm" />
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>

@@ -1259,7 +1259,6 @@ export type RagChatEvent =
   | { type: 'tool_call'; name: string; args: Record<string, unknown> }
   | { type: 'text'; chunk: string }
   | { type: 'blocked'; reason: string; answer: string }
-  | { type: 'clarification'; candidates: Array<{ sku: string; name_th: string; name_en?: string | null }> }
   | {
       type: 'done';
       sources?: RagChatSource[];
