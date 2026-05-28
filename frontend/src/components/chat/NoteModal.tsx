@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Save } from 'lucide-react';
+import { Loader2, Save, Search } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import type { ChatContactNote } from '../../lib/api';
+import { lookupZipcode, type ThaiAddressEntry } from '../../lib/thaiAddress';
 
 const TYPES: ChatContactNote['note_type'][] = [
   'general',
@@ -73,30 +74,76 @@ interface Props {
 
 export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
   const [type, setType] = useState<ChatContactNote['note_type']>('general');
-  const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [address, setAddress] = useState<AddressDraft>({});
   const [dueDate, setDueDate] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Postcode lookup state — same shape used in CustomerModal's AddressSection
+  const [zipOptions, setZipOptions] = useState<ThaiAddressEntry[]>([]);
+  const [zipSearching, setZipSearching] = useState(false);
+  const [zipNotFound, setZipNotFound] = useState(false);
+
   useEffect(() => {
     if (open) {
       setType(initial?.note_type ?? 'general');
-      setTitle(initial?.title ?? '');
       setContent(initial?.content ?? '');
       setAddress((initial?.address as AddressDraft) ?? {});
       setDueDate(initial?.due_date ? initial.due_date.slice(0, 16) : '');
+      setZipOptions([]);
+      setZipNotFound(false);
     }
   }, [open, initial]);
 
   const isAddressType = type === 'tax_invoice' || type === 'shipping';
+
+  async function runZipLookup(zip: string) {
+    const clean = zip.trim();
+    if (!/^\d{5}$/.test(clean)) {
+      setZipOptions([]);
+      setZipNotFound(false);
+      return;
+    }
+    setZipSearching(true);
+    setZipNotFound(false);
+    try {
+      const matches = await lookupZipcode(clean);
+      if (matches.length === 0) {
+        setZipOptions([]);
+        setZipNotFound(true);
+      } else if (matches.length === 1) {
+        const m = matches[0];
+        setAddress((prev) => ({
+          ...prev,
+          postcode: clean,
+          subdistrict: m.subdistrict,
+          district: m.district,
+          province: m.province,
+        }));
+        setZipOptions([]);
+      } else {
+        // Same zip → same district + province; user picks subdistrict.
+        const m = matches[0];
+        setAddress((prev) => ({
+          ...prev,
+          postcode: clean,
+          subdistrict: '',
+          district: m.district,
+          province: m.province,
+        }));
+        setZipOptions(matches);
+      }
+    } finally {
+      setZipSearching(false);
+    }
+  }
 
   const handleSave = async () => {
     setSaving(true);
     try {
       await onSubmit({
         note_type: type,
-        title: title.trim() || null,
+        title: null,
         content: !isAddressType ? content.trim() || null : null,
         address: isAddressType ? (address as Record<string, unknown>) : null,
         due_date: type === 'reminder' && dueDate ? new Date(dueDate).toISOString() : null,
@@ -120,7 +167,7 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
         <div className="space-y-4">
           <div>
             <Label className="text-xs">ประเภทโน้ต</Label>
-            <div className="grid grid-cols-4 gap-1.5 mt-1.5">
+            <div className="grid grid-cols-3 gap-1.5 mt-1.5">
               {TYPES.map((t) => (
                 <button
                   key={t}
@@ -138,16 +185,6 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
                 </button>
               ))}
             </div>
-          </div>
-
-          <div>
-            <Label className="text-xs">หัวข้อ</Label>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="เช่น สำนักงานใหญ่ / สาขา 1"
-              className="mt-1.5"
-            />
           </div>
 
           {isAddressType && (
@@ -210,25 +247,53 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
                   className="mt-1.5"
                 />
               </div>
+
+              {/* Postcode first — typing 5 digits auto-fills province/district/subdistrict */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label className="text-xs">ตำบล/แขวง</Label>
-                  <Input
-                    value={address.subdistrict ?? ''}
-                    onChange={(e) => setAddress({ ...address, subdistrict: e.target.value })}
-                    className="mt-1.5"
-                  />
+                  <Label className="text-xs">รหัสไปรษณีย์</Label>
+                  <div className="flex gap-1 mt-1.5">
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={5}
+                      placeholder="10330"
+                      value={address.postcode ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, '').slice(0, 5);
+                        setAddress({ ...address, postcode: v });
+                        setZipNotFound(false);
+                        if (v.length === 5) void runZipLookup(v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void runZipLookup(address.postcode ?? '');
+                        }
+                      }}
+                      onBlur={() => void runZipLookup(address.postcode ?? '')}
+                      className="flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void runZipLookup(address.postcode ?? '')}
+                      disabled={zipSearching}
+                      className="h-9 w-9 grid place-items-center rounded-md border border-neutral-200 bg-white hover:bg-neutral-50 disabled:opacity-50 flex-shrink-0"
+                      title="ค้นหารหัสไปรษณีย์"
+                    >
+                      {zipSearching ? (
+                        <Loader2 size={14} className="animate-spin text-neutral-500" />
+                      ) : (
+                        <Search size={14} className="text-neutral-500" />
+                      )}
+                    </button>
+                  </div>
+                  {zipNotFound && (
+                    <p className="text-[11px] text-amber-700 mt-1">
+                      ไม่พบรหัสไปรษณีย์ — กรอกเอง
+                    </p>
+                  )}
                 </div>
-                <div>
-                  <Label className="text-xs">อำเภอ/เขต</Label>
-                  <Input
-                    value={address.district ?? ''}
-                    onChange={(e) => setAddress({ ...address, district: e.target.value })}
-                    className="mt-1.5"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <Label className="text-xs">จังหวัด</Label>
                   <Input
@@ -237,13 +302,42 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
                     className="mt-1.5"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label className="text-xs">รหัสไปรษณีย์</Label>
+                  <Label className="text-xs">อำเภอ/เขต</Label>
                   <Input
-                    value={address.postcode ?? ''}
-                    onChange={(e) => setAddress({ ...address, postcode: e.target.value })}
+                    value={address.district ?? ''}
+                    onChange={(e) => setAddress({ ...address, district: e.target.value })}
                     className="mt-1.5"
                   />
+                </div>
+                <div>
+                  <Label className="text-xs">ตำบล/แขวง</Label>
+                  {zipOptions.length > 1 ? (
+                    <select
+                      value={address.subdistrict ?? ''}
+                      onChange={(e) => {
+                        setAddress({ ...address, subdistrict: e.target.value });
+                        setZipOptions([]);
+                      }}
+                      className="mt-1.5 w-full h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                    >
+                      <option value="">— เลือก —</option>
+                      {zipOptions.map((o) => (
+                        <option key={o.subdistrict} value={o.subdistrict}>
+                          {o.subdistrict}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input
+                      value={address.subdistrict ?? ''}
+                      onChange={(e) => setAddress({ ...address, subdistrict: e.target.value })}
+                      className="mt-1.5"
+                    />
+                  )}
                 </div>
               </div>
             </>
