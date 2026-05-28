@@ -205,20 +205,23 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
     }
   };
 
-  const displayName =
-    conversation.alias_name?.trim() || conversation.display_name;
-
   return (
     <Card className="w-80 flex-shrink-0 flex flex-col gap-0 py-0 overflow-hidden">
       <div className="overflow-y-auto flex-1 p-4 space-y-4">
-        {/* Header — avatar + editable alias + display + LINE ID */}
+        {/* Header — avatar + original display_name (read-only) + editable alias (nickname) + channel ID */}
         <div className="flex flex-col items-center text-center">
           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white text-2xl font-bold mb-2">
-            {displayName.charAt(0).toUpperCase()}
+            {conversation.display_name.charAt(0).toUpperCase()}
           </div>
 
+          {/* Original name from the channel — READ ONLY, no pencil, no click */}
+          <div className="text-base font-semibold text-neutral-900 px-2 py-1">
+            {conversation.display_name}
+          </div>
+
+          {/* Editable nickname (alias_name) — separate row below the original name */}
           {aliasEditing ? (
-            <div className="flex gap-1 w-full max-w-[220px]">
+            <div className="flex gap-1 w-full max-w-[220px] mt-1">
               <input
                 autoFocus
                 value={aliasDraft}
@@ -231,8 +234,8 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
                     setAliasEditing(false);
                   }
                 }}
-                placeholder={conversation.display_name}
-                className="flex-1 px-2 h-8 text-sm text-center rounded-md border border-indigo-500 bg-white outline-none focus:ring-2 focus:ring-indigo-100"
+                placeholder="ใส่ชื่อเล่น..."
+                className="flex-1 px-2 h-7 text-xs text-center rounded-md border border-indigo-500 bg-white outline-none focus:ring-2 focus:ring-indigo-100"
               />
               <button
                 type="button"
@@ -240,33 +243,39 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
                   e.preventDefault();
                   void handleAliasSave();
                 }}
-                className="h-8 w-8 grid place-items-center rounded-md bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                className="h-7 w-7 grid place-items-center rounded-md bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
               >
-                <Check size={14} />
+                <Check size={12} />
               </button>
             </div>
-          ) : (
+          ) : conversation.alias_name ? (
             <button
               type="button"
               onClick={() => {
                 setAliasDraft(conversation.alias_name ?? '');
                 setAliasEditing(true);
               }}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-base font-semibold text-neutral-900 hover:bg-neutral-50"
+              className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-md text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100"
+              title="แก้ไขชื่อเล่น"
             >
-              {displayName}
-              <Pencil size={11} className="text-neutral-400" />
+              ชื่อเล่น: {conversation.alias_name}
+              <Pencil size={9} className="opacity-60" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setAliasDraft('');
+                setAliasEditing(true);
+              }}
+              className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-md text-[10px] text-neutral-500 border border-dashed border-neutral-300 hover:bg-neutral-50"
+            >
+              <Pencil size={9} /> ใส่ชื่อเล่น
             </button>
           )}
 
-          {conversation.alias_name && (
-            <div className="text-xs text-neutral-500 mt-0.5">
-              ({conversation.display_name})
-            </div>
-          )}
-
           {conversation.external_id && (
-            <div className="text-[10px] text-neutral-400 font-mono mt-1 inline-flex items-center gap-0.5">
+            <div className="text-[10px] text-neutral-400 font-mono mt-1.5 inline-flex items-center gap-0.5">
               <Hash size={9} /> {conversation.external_id}
             </div>
           )}
