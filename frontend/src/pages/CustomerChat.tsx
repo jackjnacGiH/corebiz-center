@@ -468,9 +468,26 @@ export default function CustomerChat() {
                                 >
                                     {renderMessageContent(t.content)}
                                     {t.streaming && t.content.length === 0 && (
+                                        // Messenger-style typing indicator — three bouncing dots
+                                        // staggered 150ms apart. Looks the same in LINE OA, iMessage
+                                        // and WhatsApp; signals "someone is typing" without the
+                                        // spinning loader which reads as "loading the page".
                                         <span className="inline-flex items-center gap-1.5 text-neutral-500">
-                                            <Loader2 size={12} className="animate-spin" />
-                                            กำลังคิด...
+                                            <span className="text-xs">เอย กำลังพิมพ์</span>
+                                            <span className="inline-flex gap-1 ml-0.5">
+                                                <span
+                                                    className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                                                    style={{ animationDelay: '0ms', animationDuration: '1s' }}
+                                                />
+                                                <span
+                                                    className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                                                    style={{ animationDelay: '150ms', animationDuration: '1s' }}
+                                                />
+                                                <span
+                                                    className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                                                    style={{ animationDelay: '300ms', animationDuration: '1s' }}
+                                                />
+                                            </span>
                                         </span>
                                     )}
                                     {t.streaming && t.content.length > 0 && (
