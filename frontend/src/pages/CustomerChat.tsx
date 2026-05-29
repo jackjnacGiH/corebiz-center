@@ -472,19 +472,21 @@ export default function CustomerChat() {
                                         // staggered 150ms apart. Looks the same in LINE OA, iMessage
                                         // and WhatsApp; signals "someone is typing" without the
                                         // spinning loader which reads as "loading the page".
-                                        <span className="inline-flex items-center gap-1.5 text-neutral-500">
-                                            <span className="text-xs">เอย กำลังพิมพ์</span>
-                                            <span className="inline-flex gap-1 ml-0.5">
+                                        // Sized ~2x baseline so it reads as a real typing bubble
+                                        // at the bottom of a long thread instead of a tiny spinner.
+                                        <span className="inline-flex items-center gap-2.5 text-neutral-600 py-1.5 px-1">
+                                            <span className="text-sm font-medium">เอย กำลังพิมพ์</span>
+                                            <span className="inline-flex gap-2 ml-0.5">
                                                 <span
-                                                    className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce"
+                                                    className="w-4 h-4 rounded-full bg-indigo-400 animate-bounce"
                                                     style={{ animationDelay: '0ms', animationDuration: '1s' }}
                                                 />
                                                 <span
-                                                    className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce"
+                                                    className="w-4 h-4 rounded-full bg-indigo-400 animate-bounce"
                                                     style={{ animationDelay: '150ms', animationDuration: '1s' }}
                                                 />
                                                 <span
-                                                    className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce"
+                                                    className="w-4 h-4 rounded-full bg-indigo-400 animate-bounce"
                                                     style={{ animationDelay: '300ms', animationDuration: '1s' }}
                                                 />
                                             </span>
