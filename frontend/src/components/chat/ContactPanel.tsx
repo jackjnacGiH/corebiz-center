@@ -265,7 +265,27 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
       <div className="overflow-y-auto flex-1 p-4 space-y-4">
         {/* Header — avatar + original display_name (read-only) + editable alias (nickname) + channel ID */}
         <div className="flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white text-2xl font-bold mb-2">
+          {conversation.avatar_url ? (
+            <img
+              src={conversation.avatar_url}
+              alt={conversation.display_name}
+              className="w-16 h-16 rounded-full object-cover mb-2 border border-neutral-200 bg-neutral-100"
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              onError={(e) => {
+                // LINE avatar URLs occasionally rotate / 404 — fall back to the
+                // gradient initial without spamming the console.
+                const img = e.currentTarget;
+                img.style.display = 'none';
+                const fallback = img.nextElementSibling as HTMLElement | null;
+                if (fallback) fallback.style.display = 'grid';
+              }}
+            />
+          ) : null}
+          <div
+            className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white text-2xl font-bold mb-2"
+            style={{ display: conversation.avatar_url ? 'none' : 'grid' }}
+          >
             {conversation.display_name.charAt(0).toUpperCase()}
           </div>
 

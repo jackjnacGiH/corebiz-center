@@ -448,19 +448,44 @@ export default function Chat() {
                                         {timeAgo(c.last_message_at ?? c.created_at)}
                                     </span>
                                 </div>
-                                <div className="text-sm font-medium text-neutral-900 truncate">
-                                    {c.display_name}
-                                </div>
-                                {c.last_message_preview && (
-                                    <div className="text-xs text-neutral-500 truncate mt-0.5">
-                                        {c.last_message_preview}
+                                <div className="flex items-start gap-2">
+                                    {c.avatar_url ? (
+                                        <img
+                                            src={c.avatar_url}
+                                            alt={c.display_name}
+                                            className="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
+                                            referrerPolicy="no-referrer"
+                                            loading="lazy"
+                                            onError={(e) => {
+                                                const img = e.currentTarget;
+                                                img.style.display = 'none';
+                                                const fallback = img.nextElementSibling as HTMLElement | null;
+                                                if (fallback) fallback.style.display = 'grid';
+                                            }}
+                                        />
+                                    ) : null}
+                                    <div
+                                        className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 grid place-items-center text-white text-sm font-bold flex-shrink-0"
+                                        style={{ display: c.avatar_url ? 'none' : 'grid' }}
+                                    >
+                                        {c.display_name.charAt(0).toUpperCase()}
                                     </div>
-                                )}
-                                {c.unread_count > 0 && (
-                                    <span className="inline-block mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500 text-white">
-                                        {c.unread_count} new
-                                    </span>
-                                )}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-medium text-neutral-900 truncate">
+                                            {c.display_name}
+                                        </div>
+                                        {c.last_message_preview && (
+                                            <div className="text-xs text-neutral-500 truncate mt-0.5">
+                                                {c.last_message_preview}
+                                            </div>
+                                        )}
+                                        {c.unread_count > 0 && (
+                                            <span className="inline-block mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500 text-white">
+                                                {c.unread_count} new
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
                             </button>
                         ))}
                     </div>
@@ -480,7 +505,25 @@ export default function Chat() {
                         <>
                             {/* Thread header */}
                             <div className="px-4 py-3 border-b border-neutral-200 flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white flex-shrink-0">
+                                {selectedConv.avatar_url ? (
+                                    <img
+                                        src={selectedConv.avatar_url}
+                                        alt={selectedConv.display_name}
+                                        className="w-9 h-9 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
+                                        referrerPolicy="no-referrer"
+                                        loading="lazy"
+                                        onError={(e) => {
+                                            const img = e.currentTarget;
+                                            img.style.display = 'none';
+                                            const fallback = img.nextElementSibling as HTMLElement | null;
+                                            if (fallback) fallback.style.display = 'grid';
+                                        }}
+                                    />
+                                ) : null}
+                                <div
+                                    className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white flex-shrink-0"
+                                    style={{ display: selectedConv.avatar_url ? 'none' : 'grid' }}
+                                >
                                     <User size={16} />
                                 </div>
                                 <div className="flex-1 min-w-0">
