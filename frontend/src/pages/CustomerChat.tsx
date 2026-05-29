@@ -476,15 +476,15 @@ export default function CustomerChat() {
                                             <span className="text-xs">เอย กำลังพิมพ์</span>
                                             <span className="inline-flex gap-1 ml-0.5">
                                                 <span
-                                                    className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                                                    className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce"
                                                     style={{ animationDelay: '0ms', animationDuration: '1s' }}
                                                 />
                                                 <span
-                                                    className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                                                    className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce"
                                                     style={{ animationDelay: '150ms', animationDuration: '1s' }}
                                                 />
                                                 <span
-                                                    className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                                                    className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce"
                                                     style={{ animationDelay: '300ms', animationDuration: '1s' }}
                                                 />
                                             </span>
