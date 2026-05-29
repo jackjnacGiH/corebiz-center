@@ -325,6 +325,15 @@ export default function CustomerChat() {
                     channel: 'web',
                 },
                 (event) => {
+                    if (event.type === 'paused') {
+                        // Admin paused the bot — remove placeholder so the chat
+                        // looks like the message was sent but nobody is typing.
+                        // The customer's own message stays visible; admin reply
+                        // will appear via the realtime subscription on
+                        // chat_messages once they type one.
+                        setTurns((prev) => prev.filter((t) => t.id !== assistantId));
+                        return;
+                    }
                     setTurns((prev) =>
                         prev.map((t) => {
                             if (t.id !== assistantId) return t;

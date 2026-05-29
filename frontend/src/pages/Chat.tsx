@@ -436,6 +436,14 @@ export default function Chat() {
                                     >
                                         {CHANNEL_ICON[c.channel]} {CHANNEL_LABEL[c.channel]}
                                     </span>
+                                    {c.bot_enabled === false && (
+                                        <span
+                                            className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700"
+                                            title="บอทถูกปิดสำหรับแชทนี้ — แอดมินตอบเอง"
+                                        >
+                                            🤖 Off
+                                        </span>
+                                    )}
                                     <span className="text-[10px] text-neutral-400 tabular-nums ml-auto">
                                         {timeAgo(c.last_message_at ?? c.created_at)}
                                     </span>

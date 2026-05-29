@@ -1259,6 +1259,9 @@ export type RagChatEvent =
   | { type: 'tool_call'; name: string; args: Record<string, unknown> }
   | { type: 'text'; chunk: string }
   | { type: 'blocked'; reason: string; answer: string }
+  /** Admin paused the bot (per-chat, per-channel, or global kill-switch).
+   *  No text will follow — the widget should remove its placeholder bubble. */
+  | { type: 'paused'; reason: 'conversation' | 'channel' | 'global' }
   | {
       type: 'done';
       sources?: RagChatSource[];
@@ -1695,6 +1698,41 @@ export const orgSettingsApi = {
     if (error) throw error;
     return data as OrgSettings;
   },
+
+  /** Read just the global bot kill-switch (migration 0014). Defensive default
+   *  to `true` if the row or column is missing — bot stays on by default. */
+  async getBotEnabled(): Promise<boolean> {
+    const { data, error } = await (supabase.from('org_settings') as unknown as {
+      select: (cols: string) => {
+        eq: (col: string, v: boolean) => {
+          maybeSingle: () => Promise<{
+            data: { bot_enabled: boolean | null } | null;
+            error: Error | null;
+          }>;
+        };
+      };
+    })
+      .select('bot_enabled')
+      .eq('id', true)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.bot_enabled !== false; // null/missing → treated as enabled
+  },
+
+  /** Global kill-switch (migration 0014). bot_enabled column isn't yet in
+   *  database.types.ts — cast through unknown. */
+  async setBotEnabled(enabled: boolean): Promise<void> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id ?? null;
+    const { error } = await (supabase.from('org_settings') as unknown as {
+      update: (p: { bot_enabled: boolean; updated_by: string | null }) => {
+        eq: (col: string, v: boolean) => Promise<{ error: Error | null }>;
+      };
+    })
+      .update({ bot_enabled: enabled, updated_by: userId })
+      .eq('id', true);
+    if (error) throw error;
+  },
 };
 
 // =========================================================================
@@ -1767,6 +1805,9 @@ export interface ChatConversation {
   billing_address?: Record<string, unknown> | null;
   shipping_address?: Record<string, unknown> | null;
   last_customer_message_at?: string | null;
+  // Bot pause toggle (migration 0014) — defaults to true (bot replies).
+  // When false, rag-chat/line-webhook skip the auto-reply for this chat.
+  bot_enabled?: boolean;
 }
 
 export interface ChatMessage {
@@ -2040,6 +2081,8 @@ export interface AiPersona {
   prompt: string;
   updated_at: string;
   updated_by: string | null;
+  // Per-channel bot enable flag (migration 0014). Defaults true.
+  bot_enabled?: boolean;
 }
 
 /** Built-in factory defaults for "Reset to Default" — must match what was
@@ -2189,7 +2232,39 @@ export const aiPersonaApi = {
       prompt: def.prompt,
     });
   },
+
+  /** Per-channel bot toggle (migration 0014). Creates the persona row
+   *  if it doesn't exist so the flag has somewhere to live. */
+  async setBotEnabled(channel: PersonaChannel, enabled: boolean): Promise<void> {
+    const existing = await aiPersonaApi.get(channel);
+    if (existing) {
+      const { error } = await (supabase.from('ai_personas') as unknown as {
+        update: (p: { bot_enabled: boolean }) => {
+          eq: (col: string, v: string) => Promise<{ error: Error | null }>;
+        };
+      })
+        .update({ bot_enabled: enabled })
+        .eq('channel', channel);
+      if (error) throw error;
+    } else {
+      // No row yet — seed from defaults so we have somewhere to store the flag
+      const def = PERSONA_DEFAULTS[channel];
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id ?? null;
+      const { error } = await (supabase.from('ai_personas') as unknown as {
+        insert: (p: Record<string, unknown>) => Promise<{ error: Error | null }>;
+      }).insert({
+        channel,
+        display_name: def.display_name,
+        prompt: def.prompt,
+        bot_enabled: enabled,
+        updated_by: userId,
+      });
+      if (error) throw error;
+    }
+  },
 };
+
 
 // =========================================================================
 // Contact Panel — alias, tags, packer, notes, customer snapshot
@@ -2263,6 +2338,19 @@ export const chatProfileApi = {
     const { error } = await supabase
       .from('chat_conversations')
       .update({ assigned_to: userId })
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+
+  /** Per-conversation bot toggle (migration 0014). bot_enabled column not
+   *  yet in database.types.ts — cast through unknown. */
+  async setBotEnabled(conversationId: string, enabled: boolean): Promise<void> {
+    const { error } = await (supabase.from('chat_conversations') as unknown as {
+      update: (p: { bot_enabled: boolean }) => {
+        eq: (col: string, v: string) => Promise<{ error: Error | null }>;
+      };
+    })
+      .update({ bot_enabled: enabled })
       .eq('id', conversationId);
     if (error) throw error;
   },

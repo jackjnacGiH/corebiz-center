@@ -824,9 +824,121 @@ function IntegrationsTab() {
                 </CardContent>
             </Card>
 
+            <BotMasterKillSwitchCard />
             <AiPersonaCard />
             <LineChannelsCard />
         </div>
+    );
+}
+
+// ─── Bot Master Kill-Switch ──────────────────────────────────────────────────
+// Single toggle that disables the AI auto-reply across every channel. Used
+// when the team wants to take over all conversations manually — e.g. during
+// a campaign, an outage, or a brand-safety incident. Overrides per-channel
+// and per-conversation toggles.
+
+function BotMasterKillSwitchCard() {
+    const [enabled, setEnabled] = useState<boolean | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            setEnabled(await orgSettingsApi.getBotEnabled());
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => { void load(); }, []);
+
+    async function handleToggle() {
+        if (enabled === null) return;
+        const next = !enabled;
+        if (!next && !confirm(
+            'ยืนยันปิดบอททุกช่องทาง?\n\nลูกค้าจะไม่ได้รับการตอบกลับจาก AI เลย จนกว่าจะกดเปิดอีกครั้ง',
+        )) return;
+        setSaving(true);
+        setErr(null);
+        try {
+            await orgSettingsApi.setBotEnabled(next);
+            setEnabled(next);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <Card className={cn(
+            'border-2',
+            enabled === false ? 'border-red-300 bg-red-50/30' : 'border-neutral-200',
+        )}>
+            <CardHeader className="px-6">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                    <span className="text-2xl">{enabled === false ? '🛑' : '🤖'}</span>
+                    Master Kill-Switch — เปิด/ปิดบอททุกช่องทาง
+                </CardTitle>
+                <p className="text-xs text-neutral-500 mt-1">
+                    Override ทุก toggle ด้านล่าง — ปิดเมื่อทีมต้องการรับมือลูกค้าเองทุก channel
+                    (LINE OA, web widget, ฯลฯ)
+                </p>
+            </CardHeader>
+            <CardContent className="px-6">
+                {loading ? (
+                    <div className="flex items-center gap-2 text-sm text-neutral-500 py-4">
+                        <Loader2 size={16} className="animate-spin" /> กำลังโหลด...
+                    </div>
+                ) : (
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <div className={cn(
+                                'text-sm font-bold',
+                                enabled ? 'text-emerald-800' : 'text-red-800',
+                            )}>
+                                {enabled
+                                    ? 'บอทเปิดอยู่ — ตอบลูกค้าอัตโนมัติทุกช่องทาง'
+                                    : 'บอทถูกปิดทั้งหมด — ลูกค้าจะไม่ได้รับการตอบจาก AI'}
+                            </div>
+                            <div className="text-xs text-neutral-600 mt-0.5">
+                                {enabled
+                                    ? 'กด toggle เพื่อปิด bot ทุกช่องทาง'
+                                    : 'แอดมินตอบเองทุก chat — กด toggle เพื่อเปิดบอทกลับ'}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => void handleToggle()}
+                            disabled={saving || enabled === null}
+                            className={cn(
+                                'relative w-14 h-7 rounded-full transition flex-shrink-0 disabled:opacity-50',
+                                enabled ? 'bg-emerald-500' : 'bg-red-500',
+                            )}
+                            aria-label="Toggle global bot"
+                        >
+                            <div
+                                className={cn(
+                                    'absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all',
+                                    enabled ? 'left-[30px]' : 'left-0.5',
+                                )}
+                            />
+                        </button>
+                    </div>
+                )}
+                {err && (
+                    <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mt-3">
+                        <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                        <span>{err}</span>
+                    </div>
+                )}
+            </CardContent>
+        </Card>
     );
 }
 
@@ -975,6 +1087,13 @@ function AiPersonaCard() {
                     </div>
                 ) : (
                     <>
+                        {/* Per-channel bot enable toggle */}
+                        <PerChannelBotToggle
+                            channel={activeChannel}
+                            initialEnabled={personas[activeChannel]?.bot_enabled !== false}
+                            onChanged={() => void load()}
+                        />
+
                         {/* Display Name */}
                         <div>
                             <Label htmlFor="persona-name" className="text-sm font-medium">
@@ -1771,6 +1890,91 @@ function BoundToggleRow({
                     )}
                 />
             </button>
+        </div>
+    );
+}
+
+// ─── Per-channel bot enable toggle (lives inside AiPersonaCard tabs) ─────────
+// Lets the admin pause the bot for one channel (e.g. all of LINE OA) while
+// the others keep running. Independent of the global kill-switch and of the
+// per-conversation toggle in ContactPanel.
+
+function PerChannelBotToggle({
+    channel,
+    initialEnabled,
+    onChanged,
+}: {
+    channel: PersonaChannel;
+    initialEnabled: boolean;
+    onChanged: () => void;
+}) {
+    const [enabled, setEnabled] = useState(initialEnabled);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+
+    useEffect(() => { setEnabled(initialEnabled); }, [initialEnabled, channel]);
+
+    async function handleToggle() {
+        const next = !enabled;
+        setSaving(true);
+        setErr(null);
+        try {
+            await aiPersonaApi.setBotEnabled(channel, next);
+            setEnabled(next);
+            onChanged();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    const label = PERSONA_CHANNELS.find((c) => c.key === channel)?.label ?? channel;
+
+    return (
+        <div
+            className={cn(
+                'rounded-lg border-2 p-4',
+                enabled
+                    ? 'border-emerald-200 bg-emerald-50/40'
+                    : 'border-amber-300 bg-amber-50',
+            )}
+        >
+            <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                    <div className={cn(
+                        'text-sm font-bold',
+                        enabled ? 'text-emerald-800' : 'text-amber-900',
+                    )}>
+                        🤖 บอทช่อง {label}: {enabled ? 'เปิด' : 'ปิด'}
+                    </div>
+                    <div className="text-[11px] text-neutral-600 mt-0.5">
+                        {enabled
+                            ? 'บอทตอบลูกค้าในช่องทางนี้อัตโนมัติ'
+                            : 'บอทถูกปิด — แก้ persona ด้านล่างได้ แต่จะไม่มีผลจนกว่าจะเปิดสวิตช์นี้'}
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => void handleToggle()}
+                    disabled={saving}
+                    className={cn(
+                        'relative w-12 h-6 rounded-full transition flex-shrink-0 disabled:opacity-50',
+                        enabled ? 'bg-emerald-500' : 'bg-amber-500',
+                    )}
+                    aria-label={`Toggle bot for ${channel}`}
+                >
+                    <div
+                        className={cn(
+                            'absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all',
+                            enabled ? 'left-[26px]' : 'left-0.5',
+                        )}
+                    />
+                </button>
+            </div>
+            {err && (
+                <div className="text-xs text-red-700 mt-2">{err}</div>
+            )}
         </div>
     );
 }
