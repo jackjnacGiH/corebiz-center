@@ -18,6 +18,7 @@ import {
 } from '../lib/api';
 import type { Category, Warehouse } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { useLanguage } from '../i18n';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import ProductImagePreview from '../components/ProductImagePreview';
 import ImportInventoryModal from '../components/ImportInventoryModal';
@@ -38,11 +39,13 @@ function deriveStatus(p: ProductWithInventory): StockStatus {
   return 'normal';
 }
 
-const STATUS_META: Record<StockStatus, { label: string; text: string; bg: string; dot: string; bar: string }> = {
-  out:    { label: 'หมด',    text: 'text-red-600',     bg: 'bg-red-50',     dot: 'bg-red-500',     bar: 'bg-red-500' },
-  low:    { label: 'ใกล้หมด', text: 'text-amber-700',   bg: 'bg-amber-50',   dot: 'bg-amber-500',   bar: 'bg-amber-500' },
-  watch:  { label: 'ต่ำ',    text: 'text-orange-700',  bg: 'bg-orange-50',  dot: 'bg-orange-500',  bar: 'bg-orange-500' },
-  normal: { label: 'ปกติ',   text: 'text-emerald-700', bg: 'bg-emerald-50', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
+// Visual styling only — labels come from t.inventory.stockStatus.* so they
+// follow the global TH/EN toggle.
+const STATUS_META: Record<StockStatus, { text: string; bg: string; dot: string; bar: string }> = {
+  out:    { text: 'text-red-600',     bg: 'bg-red-50',     dot: 'bg-red-500',     bar: 'bg-red-500' },
+  low:    { text: 'text-amber-700',   bg: 'bg-amber-50',   dot: 'bg-amber-500',   bar: 'bg-amber-500' },
+  watch:  { text: 'text-orange-700',  bg: 'bg-orange-50',  dot: 'bg-orange-500',  bar: 'bg-orange-500' },
+  normal: { text: 'text-emerald-700', bg: 'bg-emerald-50', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
 };
 
 const PRODUCT_STATUS_META: Record<string, { label: string; dot: string; text: string }> = {
@@ -86,6 +89,7 @@ function calcMargin(price: number, cost: number | null | undefined): number | nu
 
 // ─── component ──────────────────────────────────────────────────────────
 export default function Inventory() {
+  const { t } = useLanguage();
   const [products, setProducts]     = useState<ProductWithInventory[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -336,9 +340,9 @@ export default function Inventory() {
             <Package size={20} strokeWidth={2.2} />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Inventory</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{t.inventory.title}</h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              {stats.count} SKUs · {formatTHB(stats.value, { compact: true })} มูลค่าสต๊อก
+              {stats.count} SKUs · {formatTHB(stats.value, { compact: true })} {t.inventory.kpi.stockValue}
               {stats.lowCount + stats.outCount > 0 && (
                 <> · <span className="text-amber-600 font-medium">{stats.lowCount + stats.outCount} alerts</span></>
               )}
@@ -362,26 +366,26 @@ export default function Inventory() {
           >
             <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
             <span className="hidden sm:inline">
-              {syncing ? 'กำลัง Sync…' : 'Sync Sheet'}
+              {syncing ? t.inventory.syncing : t.inventory.syncSheet}
             </span>
           </button>
           <IconBtn
             onClick={() => setIsSyncLogOpen(true)}
-            title="ประวัติ Sync สต็อก"
+            title={t.inventory.syncHistory}
           >
             <History size={15} />
           </IconBtn>
           <button
             onClick={() => setIsGroupManagerOpen(true)}
-            title="จัดการกลุ่มสินค้า — Folder ที่รวม SKU ชื่อเดียวกัน ต่างเบอร์/สี"
+            title={t.inventory.groupTooltip}
             className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition"
           >
             <Boxes size={14} />
-            <span className="hidden sm:inline">กลุ่มสินค้า</span>
+            <span className="hidden sm:inline">{t.inventory.groupProducts}</span>
           </button>
           <IconBtn
             onClick={() => setIsImportOpen(true)}
-            title="นำเข้าจาก CSV"
+            title={t.inventory.importCsv}
           >
             <Upload size={15} />
           </IconBtn>
@@ -405,17 +409,17 @@ export default function Inventory() {
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg shadow-sm transition"
           >
             <Plus size={15} />
-            <span>เพิ่มสินค้า</span>
+            <span>{t.inventory.addProduct}</span>
           </button>
         </div>
       </header>
 
       {/* ─── KPI Strip ──────────────────────────────────────────────── */}
       <section className="grid grid-cols-2 md:grid-cols-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <KpiCell label="Total SKUs" value={String(stats.count)} hint={`${formatNumber(stats.totalUnits)} หน่วยรวม`} />
-        <KpiCell label="Stock Value" value={formatTHB(stats.value, { compact: true })} hint={`มาร์จิ้น ${formatTHB(stats.potentialMargin, { compact: true })}`} accent="emerald" />
-        <KpiCell label="Low Stock" value={String(stats.lowCount)} hint={stats.lowCount > 0 ? 'ต้องสั่งเข้า' : 'ปกติทั้งหมด'} accent={stats.lowCount > 0 ? 'amber' : undefined} />
-        <KpiCell label="Out of Stock" value={String(stats.outCount)} hint={stats.outCount > 0 ? 'รีบเติม' : '—'} accent={stats.outCount > 0 ? 'red' : undefined} last />
+        <KpiCell label={t.inventory.kpi.totalSkus} value={String(stats.count)} hint={`${formatNumber(stats.totalUnits)} ${t.inventory.kpi.units}`} />
+        <KpiCell label={t.inventory.kpi.stockValue} value={formatTHB(stats.value, { compact: true })} hint={`${t.inventory.kpi.margin} ${formatTHB(stats.potentialMargin, { compact: true })}`} accent="emerald" />
+        <KpiCell label={t.inventory.kpi.lowStock} value={String(stats.lowCount)} hint={stats.lowCount > 0 ? t.inventory.kpi.mustOrder : t.inventory.kpi.allNormal} accent={stats.lowCount > 0 ? 'amber' : undefined} />
+        <KpiCell label={t.inventory.kpi.outOfStock} value={String(stats.outCount)} hint={stats.outCount > 0 ? t.inventory.kpi.refill : '—'} accent={stats.outCount > 0 ? 'red' : undefined} last />
       </section>
 
       {/* ─── Filter Toolbar ─────────────────────────────────────────── */}
@@ -425,32 +429,32 @@ export default function Inventory() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="ค้นหา SKU, ชื่อสินค้า, แบรนด์, barcode..."
+              placeholder={t.inventory.searchPlaceholder}
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full bg-white border border-slate-200 rounded-lg pl-9 pr-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition"
             />
           </div>
 
-          <SelectField icon={<Tag size={13} />} label="หมวด" value={selectedCategoryId}
-            options={[{ value: 'all', label: 'ทั้งหมด' }, ...categories.map(c => ({ value: c.id, label: c.name_th }))]}
+          <SelectField icon={<Tag size={13} />} label={t.inventory.filters.category} value={selectedCategoryId}
+            options={[{ value: 'all', label: t.inventory.filters.all }, ...categories.map(c => ({ value: c.id, label: c.name_th }))]}
             onChange={setSelectedCategoryId} />
-          <SelectField icon={<Filter size={13} />} label="สต๊อก" value={stockFilter}
+          <SelectField icon={<Filter size={13} />} label={t.inventory.filters.stock} value={stockFilter}
             options={[
-              { value: 'all',      label: 'ทั้งหมด' },
-              { value: 'in_stock', label: 'มีในสต๊อก' },
-              { value: 'low',      label: 'ใกล้หมด' },
-              { value: 'out',      label: 'หมด' },
+              { value: 'all',      label: t.inventory.filters.all },
+              { value: 'in_stock', label: t.inventory.filters.inStock },
+              { value: 'low',      label: t.inventory.filters.low },
+              { value: 'out',      label: t.inventory.filters.out },
             ]}
             onChange={v => setStockFilter(v as StockFilter)} />
-          <SelectField icon={<ArrowUpDown size={13} />} label="เรียง" value={sortKey}
+          <SelectField icon={<ArrowUpDown size={13} />} label={t.inventory.filters.sort} value={sortKey}
             options={[
-              { value: 'updated', label: 'อัพเดทล่าสุด' },
-              { value: 'name',    label: 'ชื่อ' },
-              { value: 'sku',     label: 'SKU' },
-              { value: 'stock',   label: 'จำนวน' },
-              { value: 'price',   label: 'ราคา' },
-              { value: 'value',   label: 'มูลค่าสต๊อก' },
+              { value: 'updated', label: t.inventory.sort.updated },
+              { value: 'name',    label: t.inventory.sort.name },
+              { value: 'sku',     label: t.inventory.sort.sku },
+              { value: 'stock',   label: t.inventory.sort.quantity },
+              { value: 'price',   label: t.inventory.sort.price },
+              { value: 'value',   label: t.inventory.sort.stockValue },
             ]}
             onChange={v => setSortKey(v as SortKey)} />
 
@@ -465,12 +469,12 @@ export default function Inventory() {
 
         <div className="flex items-center justify-between text-xs text-slate-500">
           <span>
-            แสดง <span className="text-slate-900 font-medium">{filtered.length}</span> / {products.length} รายการ
+            {t.inventory.list.showing} <span className="text-slate-900 font-medium">{filtered.length}</span> {t.inventory.list.of} {products.length} {t.inventory.list.items}
           </span>
           {selected.size > 0 && (
             <div className="flex items-center gap-3">
               <span className="font-medium text-slate-700">
-                เลือก <span className="text-blue-700">{selected.size}</span> รายการ
+                {t.inventory.bulk.selected} <span className="text-blue-700">{selected.size}</span> {t.inventory.bulk.items}
               </span>
               <button
                 type="button"
@@ -479,7 +483,7 @@ export default function Inventory() {
                 className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 hover:border-violet-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Sparkles size={12} />
-                แก้ไขที่เลือก ({selected.size})
+                {t.inventory.bulk.edit} ({selected.size})
               </button>
               <button
                 type="button"
@@ -492,7 +496,7 @@ export default function Inventory() {
                 ) : (
                   <Trash2 size={12} />
                 )}
-                {bulkDeleting ? 'กำลังลบ...' : `ลบที่เลือก (${selected.size})`}
+                {bulkDeleting ? t.inventory.bulk.deleting : `${t.inventory.bulk.delete} (${selected.size})`}
               </button>
               <button
                 type="button"
@@ -500,7 +504,7 @@ export default function Inventory() {
                 disabled={bulkDeleting}
                 className="text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50"
               >
-                ยกเลิก
+                {t.inventory.bulk.cancel}
               </button>
             </div>
           )}
@@ -530,13 +534,13 @@ export default function Inventory() {
                 </th>
                 <SortableTh label="SKU"    sortKey="sku"    active={sortKey} dir={sortDir} onClick={toggleSort} />
                 <th className="w-14 px-3 py-3"></th>
-                <SortableTh label="สินค้า" sortKey="name"   active={sortKey} dir={sortDir} onClick={toggleSort} />
-                <th className="px-4 py-3 text-left">หมวด</th>
-                <th className="px-4 py-3 text-center">สถานะ</th>
-                <SortableTh label="ราคา"   sortKey="price"  active={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-                <SortableTh label="สต๊อก"  sortKey="stock"  active={sortKey} dir={sortDir} onClick={toggleSort} align="left" />
-                <th className="px-4 py-3 text-left">ตำแหน่ง</th>
-                <SortableTh label="มูลค่า" sortKey="value"  active={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <SortableTh label={t.inventory.table.product} sortKey="name"   active={sortKey} dir={sortDir} onClick={toggleSort} />
+                <th className="px-4 py-3 text-left">{t.inventory.table.category}</th>
+                <th className="px-4 py-3 text-center">{t.inventory.table.status}</th>
+                <SortableTh label={t.inventory.table.price}   sortKey="price"  active={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <SortableTh label={t.inventory.table.stock}   sortKey="stock"  active={sortKey} dir={sortDir} onClick={toggleSort} align="left" />
+                <th className="px-4 py-3 text-left">{t.inventory.table.position}</th>
+                <SortableTh label={t.inventory.table.value}   sortKey="value"  active={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
                 <th className="w-24 px-4 py-3"></th>
               </tr>
             </thead>
@@ -555,15 +559,15 @@ export default function Inventory() {
                     <Box size={32} className="mx-auto mb-3 text-slate-300" />
                     <p className="text-sm text-slate-500">
                       {search || selectedCategoryId !== 'all' || stockFilter !== 'all'
-                        ? 'ไม่พบสินค้าที่ตรงกับตัวกรอง'
-                        : 'ยังไม่มีสินค้าในคลัง'}
+                        ? t.inventory.list.empty
+                        : t.inventory.list.emptyAll}
                     </p>
                     {(search || selectedCategoryId !== 'all' || stockFilter !== 'all') && (
                       <button
                         onClick={() => { setSearch(''); setSelectedCategoryId('all'); setStockFilter('all'); }}
                         className="mt-2 text-xs text-blue-600 hover:text-blue-700 font-medium"
                       >
-                        ล้างตัวกรอง
+                        {t.inventory.list.clearFilter}
                       </button>
                     )}
                   </td>
@@ -718,6 +722,7 @@ export default function Inventory() {
                           reorder={reorder}
                           unit={p.unit}
                           statusMeta={statusM}
+                          statusLabel={t.inventory.stockStatus[status]}
                           reserved={inv0?.reserved ?? 0}
                           lastSyncedAt={p.last_synced_at}
                         />
@@ -919,12 +924,13 @@ function SortableTh({
 }
 
 function StockCell({
-  qty, reorder, unit, statusMeta, reserved, lastSyncedAt,
+  qty, reorder, unit, statusMeta, statusLabel, reserved, lastSyncedAt,
 }: {
   qty: number;
   reorder: number;
   unit: string;
   statusMeta: typeof STATUS_META[StockStatus];
+  statusLabel: string;
   reserved: number;
   lastSyncedAt?: string | null;
 }) {
@@ -938,7 +944,7 @@ function StockCell({
         <span className="text-xs text-slate-500">{unit}</span>
         <span className={`ml-auto inline-flex items-center gap-1 text-[10px] font-medium ${statusMeta.text}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`} />
-          {statusMeta.label}
+          {statusLabel}
         </span>
       </div>
       <div className="mt-1.5 h-1 rounded-full bg-slate-100 overflow-hidden">

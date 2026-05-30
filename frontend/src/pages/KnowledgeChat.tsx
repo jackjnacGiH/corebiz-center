@@ -19,6 +19,7 @@ import {
     type RagChatSource,
 } from '../lib/api';
 import { useAuth } from '../lib/AuthProvider';
+import { useLanguage } from '../i18n';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -114,6 +115,7 @@ function renderMessageContent(content: string): ReactNode[] {
 
 export default function KnowledgeChat() {
     const { profile } = useAuth();
+    const { t } = useLanguage();
     const [turns, setTurns] = useState<ChatTurn[]>([
         {
             id: 'welcome',
@@ -286,17 +288,13 @@ export default function KnowledgeChat() {
                     </div>
                     <div className="min-w-0">
                         <h1 className="text-2xl font-bold tracking-tight text-neutral-900 flex items-center gap-2 flex-wrap">
-                            AI Admin Chat
+                            {t.ask.title}
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 uppercase tracking-wider">
                                 <Sparkles size={10} /> Gemini 2.5 Flash + Tools
                             </span>
                         </h1>
                         <p className="text-sm text-neutral-500 mt-1">
-                            ถามอะไรเกี่ยวกับนโยบาย สินค้า ขั้นตอน — ผมตอบจาก{' '}
-                            <a href="/rag" className="text-indigo-600 hover:underline font-medium">
-                                knowledge base
-                            </a>{' '}
-                            ของระบบ
+                            {t.ask.subtitle}
                         </p>
                     </div>
                 </div>
@@ -305,9 +303,9 @@ export default function KnowledgeChat() {
                     size="sm"
                     onClick={resetChat}
                     className="gap-2"
-                    title="เริ่มแชทใหม่"
+                    title={t.ask.resetTooltip}
                 >
-                    <RefreshCw size={13} /> Reset
+                    <RefreshCw size={13} /> {t.ask.reset}
                 </Button>
             </header>
 
@@ -316,7 +314,7 @@ export default function KnowledgeChat() {
                 {/* Sample questions sidebar */}
                 <Card className="hidden lg:flex flex-col w-64 flex-shrink-0 gap-3 py-4 px-4">
                     <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-1.5">
-                        <Lightbulb size={11} /> ลองถามตัวอย่าง
+                        <Lightbulb size={11} /> {t.ask.examples}
                     </div>
                     <div className="space-y-1.5">
                         {SAMPLE_QUESTIONS.map((q) => (
@@ -580,7 +578,7 @@ export default function KnowledgeChat() {
                             ) : (
                                 <Send size={16} />
                             )}
-                            ส่ง
+                            {t.ask.send}
                         </Button>
                     </form>
                 </Card>

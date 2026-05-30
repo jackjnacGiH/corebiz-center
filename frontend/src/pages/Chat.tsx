@@ -46,6 +46,7 @@ import {
     type ChatStatus,
 } from '../lib/api';
 import { supabase } from '../lib/supabase';
+import { useLanguage } from '../i18n';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -78,12 +79,21 @@ const CHANNEL_COLOR: Record<ChatChannel, string> = {
     email: 'bg-amber-50 text-amber-700 border-amber-200',
 };
 
-const STATUS_LABEL: Record<ChatStatus, string> = {
-    open: 'ยังไม่อ่าน',
-    assigned: 'กำลังดำเนินการ',
-    resolved: 'เสร็จสิ้น',
-    archived: 'เสร็จสิ้น',
-};
+// Localised status label. Reads from the active translation set so
+// "Inbox / Unread / In progress / Resolved" follow the global TH/EN
+// toggle. `archived` is kept in the DB enum but collapses into resolved.
+function statusLabel(
+    s: ChatStatus,
+    chatT: { statusFilter: { inbox: string; unread: string; inProgress: string; resolved: string } },
+): string {
+    switch (s) {
+        case 'open': return chatT.statusFilter.unread;
+        case 'assigned': return chatT.statusFilter.inProgress;
+        case 'resolved':
+        case 'archived':
+            return chatT.statusFilter.resolved;
+    }
+}
 
 // Status flow shown in the UI. `archived` is kept in the DB enum for
 // historical rows but no longer exposed — collapses into 'เสร็จสิ้น'.
@@ -128,7 +138,8 @@ function timeAgo(iso: string | null): string {
 }
 
 export default function Chat() {
-    // Filters — default to "อินบ็อกซ์" (no filter, show all)
+    const { t } = useLanguage();
+    // Filters — default to "Inbox" (no filter, show all)
     const [channel, setChannel] = useState<ChatChannel | null>(null);
     const [status, setStatus] = useState<ChatStatus | null>(null);
     const [search, setSearch] = useState('');
@@ -333,10 +344,8 @@ export default function Chat() {
                         <MessageSquare size={20} />
                     </div>
                     <div className="min-w-0">
-                        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Omni-Chat</h1>
-                        <p className="text-sm text-neutral-500">
-                            แชทจากลูกค้าทุกช่องทาง (Web, LINE, Facebook, Email)
-                        </p>
+                        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">{t.chat.title}</h1>
+                        <p className="text-sm text-neutral-500">{t.chat.subtitle}</p>
                     </div>
                 </div>
                 <Button
@@ -362,7 +371,7 @@ export default function Chat() {
                                 type="text"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                placeholder="ค้นหาชื่อ หรือข้อความ..."
+                                placeholder={t.chat.searchPlaceholder}
                                 className="w-full pl-7 pr-2 h-8 rounded-md border border-neutral-200 bg-neutral-50 text-xs outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                             />
                         </div>
@@ -384,14 +393,14 @@ export default function Chat() {
                         </div>
                         <div className="flex gap-1 flex-wrap text-[10px]">
                             <FilterChip
-                                label="อินบ็อกซ์"
+                                label={t.chat.statusFilter.inbox}
                                 active={status === null}
                                 onClick={() => setStatus(null)}
                             />
                             {ACTIVE_STATUSES.map((s) => (
                                 <FilterChip
                                     key={s}
-                                    label={STATUS_LABEL[s]}
+                                    label={statusLabel(s, t.chat)}
                                     active={status === s}
                                     onClick={() => setStatus(s)}
                                 />
@@ -404,7 +413,7 @@ export default function Chat() {
                         {loadingList && conversations.length === 0 && (
                             <div className="p-6 text-center text-xs text-neutral-500">
                                 <Loader2 size={14} className="animate-spin inline mr-1" />
-                                กำลังโหลด...
+                                {t.chat.loading}
                             </div>
                         )}
                         {listErr && (
@@ -415,7 +424,7 @@ export default function Chat() {
                         )}
                         {!loadingList && conversations.length === 0 && !listErr && (
                             <div className="p-6 text-center text-xs text-neutral-400">
-                                ยังไม่มีแชทในเงื่อนไขนี้
+                                {t.chat.emptyList}
                             </div>
                         )}
                         {conversations.map((c) => (
@@ -497,7 +506,7 @@ export default function Chat() {
                         <div className="flex-1 grid place-items-center text-neutral-400 text-sm">
                             <div className="text-center">
                                 <MessageSquare size={32} className="mx-auto mb-2 text-neutral-300" />
-                                เลือกการสนทนาจากรายการด้านซ้าย
+                                {t.chat.emptySelect}
                             </div>
                         </div>
                     )}
@@ -540,7 +549,7 @@ export default function Chat() {
                                             {CHANNEL_ICON[selectedConv.channel]} {CHANNEL_LABEL[selectedConv.channel]}
                                         </span>
                                         <span>·</span>
-                                        <span>{STATUS_LABEL[selectedConv.status]}</span>
+                                        <span>{statusLabel(selectedConv.status, t.chat)}</span>
                                     </div>
                                 </div>
                                 {/* Status toggle — any → any direction */}
@@ -563,7 +572,7 @@ export default function Chat() {
                                                         : 'text-neutral-600 hover:bg-white hover:text-neutral-900',
                                                 )}
                                             >
-                                                {STATUS_LABEL[s]}
+                                                {statusLabel(s, t.chat)}
                                             </button>
                                         );
                                     })}
@@ -575,7 +584,7 @@ export default function Chat() {
                                 {loadingMsgs && (
                                     <div className="text-center text-xs text-neutral-500">
                                         <Loader2 size={14} className="animate-spin inline mr-1" />
-                                        โหลดข้อความ...
+                                        {t.chat.loadingMessages}
                                     </div>
                                 )}
                                 {msgErr && (
@@ -604,7 +613,7 @@ export default function Chat() {
                                         }
                                     }}
                                     rows={2}
-                                    placeholder="พิมพ์คำตอบ... (Enter เพื่อส่ง, Shift+Enter ขึ้นบรรทัด)"
+                                    placeholder={t.chat.inputPlaceholder}
                                     disabled={sending}
                                     className="flex-1 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-none disabled:opacity-50"
                                 />
@@ -618,7 +627,7 @@ export default function Chat() {
                                     ) : (
                                         <Send size={14} />
                                     )}
-                                    ส่ง
+                                    {t.chat.send}
                                 </Button>
                             </form>
                         </>
@@ -665,6 +674,7 @@ function FilterChip({
 }
 
 function MessageRow({ msg }: { msg: ChatMessage }) {
+    const { t } = useLanguage();
     const isCustomer = msg.sender_type === 'customer';
     const isBot = msg.sender_type === 'bot';
     const isSystem = msg.sender_type === 'system';
@@ -691,7 +701,7 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
             </div>
             <div className="max-w-[70%]">
                 <div className="text-[10px] text-neutral-400 mb-0.5 px-1">
-                    {isCustomer ? 'ลูกค้า' : isBot ? 'AI' : msg.sender_name ?? 'Staff'}
+                    {isCustomer ? t.chat.customer : isBot ? 'AI' : msg.sender_name ?? 'Staff'}
                     {' · '}
                     {new Date(msg.created_at).toLocaleString('th-TH', {
                         hour: '2-digit',

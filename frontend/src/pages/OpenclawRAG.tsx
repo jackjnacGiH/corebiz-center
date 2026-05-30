@@ -35,6 +35,7 @@ import {
 } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { useLanguage } from '../i18n';
 import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
 import CategoryManagerModal from '../components/CategoryManagerModal';
@@ -73,6 +74,7 @@ export interface EditingSource {
 }
 
 export default function OpenclawRAG() {
+    const { t } = useLanguage();
     const [tab, setTab] = useState<'add' | 'browse' | 'test' | 'synonyms'>('add');
     const [sources, setSources] = useState<KnowledgeSource[]>([]);
     const [categories, setCategories] = useState<KnowledgeCategory[]>(FALLBACK_CATEGORIES);
@@ -132,10 +134,8 @@ export default function OpenclawRAG() {
     return (
         <div className="animate-fade-in space-y-6">
             <PageHeader
-                title="RAG — Knowledge Base"
-                subtitle={
-                    'ใส่/จัดการเอกสาร ความรู้ — ข้อมูลจะถูก embed + เก็บใน vector store เพื่อใช้ใน AI Admin Chat'
-                }
+                title={t.rag.title}
+                subtitle={t.rag.subtitle}
                 icon={<BrainCircuit size={20} />}
                 actions={
                     <a
@@ -143,7 +143,7 @@ export default function OpenclawRAG() {
                         className="inline-flex items-center gap-2 h-9 px-4 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-sm font-semibold transition"
                     >
                         <MessageCircle size={14} />
-                        เปิด AI Admin Chat
+                        {t.rag.openAdminChat}
                         <ExternalLink size={11} />
                     </a>
                 }
@@ -153,19 +153,19 @@ export default function OpenclawRAG() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <StatTile
                     icon={<FolderOpen size={18} />}
-                    label="แหล่งความรู้"
+                    label={t.rag.stats.sources}
                     value={stats.sources.toString()}
                     tone="indigo"
                 />
                 <StatTile
                     icon={<FileText size={18} />}
-                    label="Chunks ทั้งหมด"
+                    label={t.rag.stats.chunks}
                     value={stats.chunks.toString()}
                     tone="emerald"
                 />
                 <StatTile
                     icon={<Sparkles size={18} />}
-                    label="Tokens ประมาณ"
+                    label={t.rag.stats.tokens}
                     value={stats.tokens.toLocaleString()}
                     tone="amber"
                 />
@@ -182,16 +182,16 @@ export default function OpenclawRAG() {
             <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
                 <TabsList className="bg-neutral-100">
                     <TabsTrigger value="add" className="gap-2">
-                        <Plus size={14} /> เพิ่มความรู้
+                        <Plus size={14} /> {t.rag.tabs.add}
                     </TabsTrigger>
                     <TabsTrigger value="browse" className="gap-2">
-                        <FileEdit size={14} /> จัดการเอกสาร
+                        <FileEdit size={14} /> {t.rag.tabs.browse}
                     </TabsTrigger>
                     <TabsTrigger value="synonyms" className="gap-2">
-                        <Repeat size={14} /> คำพ้องความหมาย
+                        <Repeat size={14} /> {t.rag.tabs.synonyms}
                     </TabsTrigger>
                     <TabsTrigger value="test" className="gap-2">
-                        <FlaskConical size={14} /> ทดสอบ RAG
+                        <FlaskConical size={14} /> {t.rag.tabs.test}
                     </TabsTrigger>
                 </TabsList>
 
