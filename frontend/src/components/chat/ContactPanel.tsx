@@ -405,58 +405,59 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
 
         <Separator />
 
-        {/* Packer */}
-        <div>
-          <div className="text-[10px] uppercase font-bold text-neutral-500 mb-2 tracking-wide">
-            👷 ผู้รับผิดชอบ (Packer)
-          </div>
-          <PackerSelect
-            packers={packers}
-            selectedId={conversation.assigned_to}
-            onChange={(id) => void handleSetPacker(id)}
-          />
-        </div>
-
-        <Separator />
-
-        {/* Bot auto-reply toggle — pause the AI for this conversation only */}
-        <div>
-          <div className="text-[10px] uppercase font-bold text-neutral-500 mb-2 tracking-wide flex items-center gap-1">
-            <Bot size={11} /> บอทตอบอัตโนมัติ
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleToggleBot()}
-            className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border transition ${
-              botEnabled
-                ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100'
-                : 'border-amber-200 bg-amber-50 hover:bg-amber-100'
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span className={`text-base ${botEnabled ? '' : 'opacity-50'}`}>🤖</span>
-              <div className="text-left min-w-0">
-                <div className={`text-xs font-semibold ${botEnabled ? 'text-emerald-800' : 'text-amber-800'}`}>
-                  {botEnabled ? 'เปิดอยู่ — บอทตอบให้' : 'ปิด — แอดมินตอบเอง'}
-                </div>
-                <div className="text-[10px] text-neutral-600 leading-tight">
-                  {botEnabled ? 'กดเพื่อปิดเมื่อต้องการคุยเอง' : 'ลูกค้าทักเข้ามาจะไม่มีการตอบ'}
-                </div>
-              </div>
+        {/* Packer + Bot toggle — two-column compact row to save vertical space */}
+        <div className="grid grid-cols-2 gap-2">
+          {/* Packer */}
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase font-bold text-neutral-500 mb-1.5 tracking-wide truncate">
+              👷 ผู้รับผิดชอบ
             </div>
-            {/* Toggle pill */}
-            <div
-              className={`relative w-9 h-5 rounded-full transition flex-shrink-0 ${
-                botEnabled ? 'bg-emerald-500' : 'bg-neutral-300'
+            <PackerSelect
+              packers={packers}
+              selectedId={conversation.assigned_to}
+              onChange={(id) => void handleSetPacker(id)}
+            />
+          </div>
+
+          {/* Bot auto-reply toggle */}
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase font-bold text-neutral-500 mb-1.5 tracking-wide flex items-center gap-1 truncate">
+              <Bot size={10} /> บอทตอบ
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleToggleBot()}
+              title={
+                botEnabled
+                  ? 'บอทตอบลูกค้าให้ — กดเพื่อปิดเมื่อต้องการคุยเอง'
+                  : 'บอทถูกปิด — ลูกค้าทักเข้ามาจะไม่มีการตอบ. กดเพื่อเปิดกลับ'
+              }
+              className={`w-full h-9 flex items-center justify-between gap-1.5 px-2.5 rounded-md border transition ${
+                botEnabled
+                  ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100'
+                  : 'border-amber-200 bg-amber-50 hover:bg-amber-100'
               }`}
             >
-              <div
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
-                  botEnabled ? 'left-[18px]' : 'left-0.5'
+              <span
+                className={`text-xs font-semibold truncate ${
+                  botEnabled ? 'text-emerald-800' : 'text-amber-800'
                 }`}
-              />
-            </div>
-          </button>
+              >
+                {botEnabled ? '🤖 เปิด' : '🤖 ปิด'}
+              </span>
+              <div
+                className={`relative w-8 h-4 rounded-full transition flex-shrink-0 ${
+                  botEnabled ? 'bg-emerald-500' : 'bg-neutral-300'
+                }`}
+              >
+                <div
+                  className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${
+                    botEnabled ? 'left-[18px]' : 'left-0.5'
+                  }`}
+                />
+              </div>
+            </button>
+          </div>
         </div>
 
         <Separator />
