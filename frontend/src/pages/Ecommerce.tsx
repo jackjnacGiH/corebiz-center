@@ -85,6 +85,52 @@ function getHeroImage(p: ProductWithInventory): string | null {
   return getImages(p)[0] ?? null;
 }
 
+/**
+ * Product thumbnail used in the List + Table views: shows the hero image with
+ * a hover-zoom preview (same as the Inventory page). If the image fails to
+ * load — e.g. the file was removed from storage so the URL now 404s — it
+ * falls back to the given placeholder instead of the browser's broken-image
+ * box (which showed the truncated alt text). No hover is offered for a
+ * broken/absent image.
+ */
+function ProductThumb({
+  hero,
+  images,
+  alt,
+  imgClassName,
+  placeholder,
+}: {
+  hero: string | null;
+  images: string[];
+  alt: string;
+  imgClassName: string;
+  placeholder: ReactNode;
+}) {
+  const [errored, setErrored] = useState(false);
+  if (!hero || errored) return <>{placeholder}</>;
+  return (
+    <HoverCard openDelay={150} closeDelay={150}>
+      <HoverCardTrigger asChild>
+        <img
+          src={hero}
+          alt={alt}
+          loading="lazy"
+          className={imgClassName}
+          onError={() => setErrored(true)}
+        />
+      </HoverCardTrigger>
+      <HoverCardContent
+        side="right"
+        align="start"
+        sideOffset={8}
+        className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
+      >
+        <ProductImagePreview images={images} alt={alt} />
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
 /** Build a short discount badge label, or null if no discount. */
 function discountBadge(p: ProductWithInventory): string | null {
   const val = Number(p.discount_value ?? 0);
@@ -1039,28 +1085,13 @@ export default function Ecommerce() {
                     compact ? 'w-16 h-16' : 'w-28 h-28',
                   )}
                 >
-                  {hero ? (
-                    <HoverCard openDelay={150} closeDelay={150}>
-                      <HoverCardTrigger asChild>
-                        <img
-                          src={hero}
-                          alt={p.name_th}
-                          loading="lazy"
-                          className="w-full h-full object-contain cursor-zoom-in"
-                        />
-                      </HoverCardTrigger>
-                      <HoverCardContent
-                        side="right"
-                        align="start"
-                        sideOffset={8}
-                        className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
-                      >
-                        <ProductImagePreview images={getImages(p)} alt={p.name_th} />
-                      </HoverCardContent>
-                    </HoverCard>
-                  ) : (
-                    <Package size={compact ? 20 : 32} className="text-slate-300" />
-                  )}
+                  <ProductThumb
+                    hero={hero}
+                    images={getImages(p)}
+                    alt={p.name_th}
+                    imgClassName="w-full h-full object-contain cursor-zoom-in"
+                    placeholder={<Package size={compact ? 20 : 32} className="text-slate-300" />}
+                  />
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col gap-1.5">
                   <div className="flex items-baseline justify-between gap-2 flex-wrap">
@@ -1198,30 +1229,17 @@ export default function Ecommerce() {
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/70 transition">
                       <td className="px-3 py-2">
-                        {hero ? (
-                          <HoverCard openDelay={150} closeDelay={150}>
-                            <HoverCardTrigger asChild>
-                              <img
-                                src={hero}
-                                alt={p.name_th}
-                                loading="lazy"
-                                className="w-10 h-10 rounded-md object-contain border border-slate-200 bg-white cursor-zoom-in"
-                              />
-                            </HoverCardTrigger>
-                            <HoverCardContent
-                              side="right"
-                              align="start"
-                              sideOffset={8}
-                              className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
-                            >
-                              <ProductImagePreview images={getImages(p)} alt={p.name_th} />
-                            </HoverCardContent>
-                          </HoverCard>
-                        ) : (
-                          <div className="w-10 h-10 rounded-md border border-dashed border-slate-200 bg-slate-50 grid place-items-center text-slate-300">
-                            <Package size={16} />
-                          </div>
-                        )}
+                        <ProductThumb
+                          hero={hero}
+                          images={getImages(p)}
+                          alt={p.name_th}
+                          imgClassName="w-10 h-10 rounded-md object-contain border border-slate-200 bg-white cursor-zoom-in"
+                          placeholder={
+                            <div className="w-10 h-10 rounded-md border border-dashed border-slate-200 bg-slate-50 grid place-items-center text-slate-300">
+                              <Package size={16} />
+                            </div>
+                          }
+                        />
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-indigo-600 font-semibold">{p.sku}</td>
                       <td className="px-3 py-2">
