@@ -23,7 +23,18 @@ export async function captureScreen(): Promise<string> {
     if (!md || typeof md.getDisplayMedia !== 'function') {
         throw new Error('เบราว์เซอร์นี้ไม่รองรับการจับภาพหน้าจอ — ลองใช้ Chrome/Edge เวอร์ชันล่าสุด');
     }
-    const stream = await md.getDisplayMedia({ video: true, audio: false });
+    // Limit the browser picker to the "Window" pane only — Boss Jack found the
+    // Chrome Tab / Entire Screen options redundant. `displaySurface: 'window'`
+    // filters to app windows; `monitorTypeSurfaces`/`selfBrowserSurface` drop
+    // the Entire-Screen and current-tab panes. Older browsers ignore the hints
+    // they don't know (worst case: they show the full picker).
+    const stream = await md.getDisplayMedia({
+        video: { displaySurface: 'window' },
+        audio: false,
+        monitorTypeSurfaces: 'exclude',
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'exclude',
+    } as DisplayMediaStreamOptions);
     try {
         const video = document.createElement('video');
         video.srcObject = stream;
