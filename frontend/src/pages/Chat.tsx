@@ -37,6 +37,7 @@ import {
     Phone as PhoneIcon,
     Image as ImageIcon,
     Paperclip,
+    Crop,
     X,
     Loader2,
     RefreshCw,
@@ -58,6 +59,7 @@ import { cn } from '@/lib/utils';
 import ContactPanel from '../components/chat/ContactPanel';
 import EmojiButton from '../components/chat/EmojiButton';
 import QuickReplyButton from '../components/chat/QuickReplyButton';
+import ImageCropModal, { captureScreen } from '../components/chat/ImageCropModal';
 
 const CHANNEL_LABEL: Record<ChatChannel, string> = {
     livechat: 'Web Chat',
@@ -172,6 +174,11 @@ export default function Chat() {
     const [pendingImages, setPendingImages] = useState<{ file: File; previewUrl: string }[]>([]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Screen capture → crop → attach. `cropSrc` holds the captured frame
+    // (data-URL) while the crop modal is open.
+    const [cropSrc, setCropSrc] = useState<string | null>(null);
+    const [capturing, setCapturing] = useState(false);
 
     const threadScrollRef = useRef<HTMLDivElement>(null);
 
@@ -351,6 +358,35 @@ export default function Chat() {
             }
         }
         if (valid.length) setPendingImages((prev) => [...prev, ...valid]);
+    }
+
+    /** Capture a screen frame, then open the crop modal to pick a region. */
+    async function handleCaptureScreen() {
+        if (capturing) return;
+        setCapturing(true);
+        try {
+            const dataUrl = await captureScreen();
+            setCropSrc(dataUrl);
+        } catch (err) {
+            // Dismissing the browser share picker rejects with
+            // NotAllowedError / AbortError — treat that as a silent cancel.
+            const name = (err as Error)?.name;
+            if (name !== 'NotAllowedError' && name !== 'AbortError') {
+                alert((err as Error).message || 'จับภาพหน้าจอไม่สำเร็จ');
+            }
+        } finally {
+            setCapturing(false);
+        }
+    }
+
+    /** Cropped region from the modal → queue it like any other attachment. */
+    function handleCropConfirm(blob: Blob) {
+        const ext = blob.type === 'image/jpeg' ? 'jpg' : 'png';
+        const file = new File([blob], `screenshot-${Date.now()}.${ext}`, {
+            type: blob.type || 'image/png',
+        });
+        addImageFiles([file]);
+        setCropSrc(null);
     }
 
     function onFilesSelected(e: ChangeEvent<HTMLInputElement>) {
@@ -743,6 +779,15 @@ export default function Chat() {
                                         >
                                             <Paperclip size={18} />
                                         </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => void handleCaptureScreen()}
+                                            disabled={sending || capturing}
+                                            title="จับภาพหน้าจอแล้วครอปเพื่อส่ง"
+                                            className="grid place-items-center w-8 h-8 rounded-md text-neutral-500 hover:text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            {capturing ? <Loader2 size={18} className="animate-spin" /> : <Crop size={18} />}
+                                        </button>
                                         <QuickReplyButton draft={reply} onPick={insertAtCursor} disabled={sending} />
                                     </div>
 
@@ -798,6 +843,15 @@ export default function Chat() {
                     />
                 )}
             </div>
+
+            {/* Screen-capture → crop → attach */}
+            {cropSrc && (
+                <ImageCropModal
+                    src={cropSrc}
+                    onConfirm={handleCropConfirm}
+                    onCancel={() => setCropSrc(null)}
+                />
+            )}
         </div>
     );
 }
