@@ -33,6 +33,8 @@ import {
 import type { Category } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { downloadQuotation } from '../components/QuotationPDF';
+import ProductImagePreview from '../components/ProductImagePreview';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 
 type LeadTimeKey = 'ready' | 'twoThreeDays' | 'low';
 
@@ -74,10 +76,13 @@ function deriveStockTone(qty: number): { className: string; labelKey: 'ready' | 
   return { className: 'stock-tone tone-emerald', labelKey: 'ready' };
 }
 
+function getImages(p: ProductWithInventory): string[] {
+  if (!Array.isArray(p.images)) return [];
+  return (p.images as unknown[]).filter((x): x is string => typeof x === 'string');
+}
+
 function getHeroImage(p: ProductWithInventory): string | null {
-  if (!Array.isArray(p.images)) return null;
-  const imgs = (p.images as unknown[]).filter((x): x is string => typeof x === 'string');
-  return imgs[0] ?? null;
+  return getImages(p)[0] ?? null;
 }
 
 /** Build a short discount badge label, or null if no discount. */
@@ -1035,12 +1040,24 @@ export default function Ecommerce() {
                   )}
                 >
                   {hero ? (
-                    <img
-                      src={hero}
-                      alt={p.name_th}
-                      loading="lazy"
-                      className="w-full h-full object-contain"
-                    />
+                    <HoverCard openDelay={150} closeDelay={150}>
+                      <HoverCardTrigger asChild>
+                        <img
+                          src={hero}
+                          alt={p.name_th}
+                          loading="lazy"
+                          className="w-full h-full object-contain cursor-zoom-in"
+                        />
+                      </HoverCardTrigger>
+                      <HoverCardContent
+                        side="right"
+                        align="start"
+                        sideOffset={8}
+                        className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
+                      >
+                        <ProductImagePreview images={getImages(p)} alt={p.name_th} />
+                      </HoverCardContent>
+                    </HoverCard>
                   ) : (
                     <Package size={compact ? 20 : 32} className="text-slate-300" />
                   )}
@@ -1182,12 +1199,24 @@ export default function Ecommerce() {
                     <tr key={p.id} className="hover:bg-slate-50/70 transition">
                       <td className="px-3 py-2">
                         {hero ? (
-                          <img
-                            src={hero}
-                            alt={p.name_th}
-                            loading="lazy"
-                            className="w-10 h-10 rounded-md object-contain border border-slate-200 bg-white"
-                          />
+                          <HoverCard openDelay={150} closeDelay={150}>
+                            <HoverCardTrigger asChild>
+                              <img
+                                src={hero}
+                                alt={p.name_th}
+                                loading="lazy"
+                                className="w-10 h-10 rounded-md object-contain border border-slate-200 bg-white cursor-zoom-in"
+                              />
+                            </HoverCardTrigger>
+                            <HoverCardContent
+                              side="right"
+                              align="start"
+                              sideOffset={8}
+                              className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
+                            >
+                              <ProductImagePreview images={getImages(p)} alt={p.name_th} />
+                            </HoverCardContent>
+                          </HoverCard>
                         ) : (
                           <div className="w-10 h-10 rounded-md border border-dashed border-slate-200 bg-slate-50 grid place-items-center text-slate-300">
                             <Package size={16} />
