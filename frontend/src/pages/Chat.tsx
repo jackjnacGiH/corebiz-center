@@ -270,6 +270,12 @@ export default function Chat() {
                 (payload) => {
                     const row = payload.new as ChatMessage;
                     setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+                    // The DB trigger re-opens the conversation as "ยังไม่อ่าน"
+                    // on any customer message. But the admin is looking at THIS
+                    // thread right now, so clear its unread badge immediately.
+                    if (row.sender_type === 'customer') {
+                        void chatInboxApi.markRead(selectedId);
+                    }
                 },
             )
             .subscribe();
