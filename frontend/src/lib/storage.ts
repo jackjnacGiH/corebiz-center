@@ -69,6 +69,41 @@ export async function uploadProductImage(file: File, productKey: string): Promis
     return data.publicUrl;
 }
 
+const CHAT_BUCKET = 'chat-attachments';
+
+/**
+ * Upload one chat attachment image and return its public URL.
+ *
+ * Used by the Omni-Chat composer for both device uploads and clipboard
+ * paste / screen-crop (Ctrl+V of a screenshot). Files are namespaced by
+ * conversation id. The returned public URL is embedded into the outgoing
+ * message as markdown `![image](url)` — line-push then turns it into a
+ * native LINE image message, and the web widget renders it inline.
+ *
+ * Reuses the same `validateImage` guard (JPG/PNG/WebP/GIF, ≤5 MB) as
+ * product uploads.
+ */
+export async function uploadChatImage(file: File, conversationId: string): Promise<string> {
+    validateImage(file);
+
+    const ext = extFor(file);
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const path = `${conversationId}/${stamp}.${ext}`;
+
+    const { error: uploadErr } = await supabase.storage
+        .from(CHAT_BUCKET)
+        .upload(path, file, {
+            cacheControl: '31536000', // 1 year
+            upsert: false,
+            contentType: file.type,
+        });
+
+    if (uploadErr) throw uploadErr;
+
+    const { data } = supabase.storage.from(CHAT_BUCKET).getPublicUrl(path);
+    return data.publicUrl;
+}
+
 /**
  * Best-effort delete by public URL. Silently ignores errors (cleanup task).
  *

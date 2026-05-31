@@ -130,6 +130,18 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['chat_messages']['Insert']>
         Relationships: []
       }
+      chat_quick_reply_templates: {
+        Row: {
+          category: string | null; content: string; created_at: string; created_by: string | null;
+          id: string; is_favorite: boolean; sort_order: number; title: string; updated_at: string;
+        }
+        Insert: {
+          category?: string | null; content: string; created_at?: string; created_by?: string | null;
+          id?: string; is_favorite?: boolean; sort_order?: number; title: string; updated_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['chat_quick_reply_templates']['Insert']>
+        Relationships: []
+      }
       commissions: {
         Row: {
           agent_id: string; agent_link_id: string | null; amount: number; approved_at: string | null;

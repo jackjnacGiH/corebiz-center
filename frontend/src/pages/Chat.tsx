@@ -20,6 +20,8 @@ import {
     useMemo,
     useRef,
     useState,
+    type ChangeEvent,
+    type ClipboardEvent,
     type FormEvent,
     type ReactNode,
 } from 'react';
@@ -34,6 +36,8 @@ import {
     MessageCircle,
     Phone as PhoneIcon,
     Image as ImageIcon,
+    Paperclip,
+    X,
     Loader2,
     RefreshCw,
     AlertCircle,
@@ -45,12 +49,15 @@ import {
     type ChatMessage,
     type ChatStatus,
 } from '../lib/api';
+import { uploadChatImage, validateImage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { useLanguage } from '../i18n';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import ContactPanel from '../components/chat/ContactPanel';
+import EmojiButton from '../components/chat/EmojiButton';
+import QuickReplyButton from '../components/chat/QuickReplyButton';
 
 const CHANNEL_LABEL: Record<ChatChannel, string> = {
     livechat: 'Web Chat',
@@ -158,6 +165,13 @@ export default function Chat() {
     // Reply
     const [reply, setReply] = useState('');
     const [sending, setSending] = useState(false);
+
+    // Composer attachments: images queued via the attach button or clipboard
+    // paste (screen-crop → Ctrl+V). Each keeps the File plus a local
+    // object-URL for the thumbnail preview; uploaded on send.
+    const [pendingImages, setPendingImages] = useState<{ file: File; previewUrl: string }[]>([]);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const threadScrollRef = useRef<HTMLDivElement>(null);
 
@@ -299,16 +313,107 @@ export default function Chat() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [status]);
 
+    // Drop any queued attachments when switching conversations.
+    useEffect(() => {
+        setPendingImages((prev) => {
+            prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+            return [];
+        });
+    }, [selectedId]);
+
+    // ── Composer helpers ──────────────────────────────────────────────
+    /** Insert text (emoji or quick-reply template) at the textarea caret. */
+    function insertAtCursor(text: string) {
+        const ta = textareaRef.current;
+        if (!ta) {
+            setReply((r) => r + text);
+            return;
+        }
+        const start = ta.selectionStart ?? ta.value.length;
+        const end = ta.selectionEnd ?? ta.value.length;
+        setReply((r) => r.slice(0, start) + text + r.slice(end));
+        requestAnimationFrame(() => {
+            ta.focus();
+            const pos = start + text.length;
+            ta.setSelectionRange(pos, pos);
+        });
+    }
+
+    /** Queue image files (from the attach button or clipboard paste). */
+    function addImageFiles(files: File[]) {
+        const valid: { file: File; previewUrl: string }[] = [];
+        for (const file of files) {
+            try {
+                validateImage(file);
+                valid.push({ file, previewUrl: URL.createObjectURL(file) });
+            } catch (err) {
+                alert((err as Error).message);
+            }
+        }
+        if (valid.length) setPendingImages((prev) => [...prev, ...valid]);
+    }
+
+    function onFilesSelected(e: ChangeEvent<HTMLInputElement>) {
+        const files = Array.from(e.target.files ?? []);
+        if (files.length) addImageFiles(files);
+        e.target.value = ''; // allow re-selecting the same file
+    }
+
+    /** Clipboard paste — captures screenshots / cropped images (Ctrl+V). */
+    function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+        const imgs = Array.from(e.clipboardData.items)
+            .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+            .map((it) => it.getAsFile())
+            .filter((f): f is File => f !== null);
+        if (imgs.length > 0) {
+            e.preventDefault(); // don't also paste the binary as garbage text
+            addImageFiles(imgs);
+        }
+    }
+
+    function removePending(idx: number) {
+        setPendingImages((prev) => {
+            const next = [...prev];
+            const [removed] = next.splice(idx, 1);
+            if (removed) URL.revokeObjectURL(removed.previewUrl);
+            return next;
+        });
+    }
+
+    function clearPending() {
+        setPendingImages((prev) => {
+            prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+            return [];
+        });
+    }
+
     async function handleSend(e: FormEvent) {
         e.preventDefault();
-        if (!selectedId || !reply.trim() || sending) return;
+        if (!selectedId || sending) return;
+        const text = reply.trim();
+        const imgs = pendingImages;
+        if (!text && imgs.length === 0) return;
         setSending(true);
         try {
+            let content = text;
+            if (imgs.length > 0) {
+                // Upload each attachment, then embed as markdown ![image](url).
+                // line-push splits these into native LINE image messages and the
+                // web widget renders them inline — no backend change needed.
+                const urls: string[] = [];
+                for (const p of imgs) {
+                    urls.push(await uploadChatImage(p.file, selectedId));
+                }
+                const md = urls.map((u) => `![image](${u})`).join('\n');
+                content = text ? `${text}\n${md}` : md;
+            }
             await chatInboxApi.sendMessage({
                 conversationId: selectedId,
-                content: reply.trim(),
+                content,
+                contentType: imgs.length > 0 ? 'image' : 'text',
             });
             setReply('');
+            clearPending();
             // Optimistically refresh list so this conversation jumps to top
             void loadConvs();
         } catch (e) {
@@ -601,34 +706,85 @@ export default function Chat() {
                             {/* Reply box */}
                             <form
                                 onSubmit={handleSend}
-                                className="border-t border-neutral-200 p-3 flex gap-2 bg-white"
+                                className="border-t border-neutral-200 p-3 bg-white"
                             >
-                                <textarea
-                                    value={reply}
-                                    onChange={(e) => setReply(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                            e.preventDefault();
-                                            void handleSend(e as unknown as FormEvent);
-                                        }
-                                    }}
-                                    rows={2}
-                                    placeholder={t.chat.inputPlaceholder}
-                                    disabled={sending}
-                                    className="flex-1 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-none disabled:opacity-50"
+                                {/* Pending image attachments (device upload / paste) */}
+                                {pendingImages.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 mb-2">
+                                        {pendingImages.map((p, i) => (
+                                            <div
+                                                key={p.previewUrl}
+                                                className="relative w-16 h-16 rounded-lg border border-neutral-200 overflow-hidden bg-neutral-50"
+                                            >
+                                                <img src={p.previewUrl} alt="" className="w-full h-full object-cover" />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removePending(i)}
+                                                    title="เอารูปออก"
+                                                    className="absolute top-0.5 right-0.5 w-4 h-4 grid place-items-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                                                >
+                                                    <X size={10} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div className="flex items-end gap-2">
+                                    {/* Composer toolbar: emoji · attach image · quick replies */}
+                                    <div className="flex items-center gap-0.5 pb-0.5">
+                                        <EmojiButton onPick={insertAtCursor} disabled={sending} />
+                                        <button
+                                            type="button"
+                                            onClick={() => fileInputRef.current?.click()}
+                                            disabled={sending}
+                                            title="แนบรูปภาพ (หรือวางรูปที่ครอป/ก๊อปปี้ไว้ด้วย Ctrl+V)"
+                                            className="grid place-items-center w-8 h-8 rounded-md text-neutral-500 hover:text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            <Paperclip size={18} />
+                                        </button>
+                                        <QuickReplyButton draft={reply} onPick={insertAtCursor} disabled={sending} />
+                                    </div>
+
+                                    <textarea
+                                        ref={textareaRef}
+                                        value={reply}
+                                        onChange={(e) => setReply(e.target.value)}
+                                        onPaste={handlePaste}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                void handleSend(e as unknown as FormEvent);
+                                            }
+                                        }}
+                                        rows={2}
+                                        placeholder={t.chat.inputPlaceholder}
+                                        disabled={sending}
+                                        className="flex-1 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-none disabled:opacity-50"
+                                    />
+                                    <Button
+                                        type="submit"
+                                        disabled={sending || (!reply.trim() && pendingImages.length === 0)}
+                                        className="bg-indigo-600 hover:bg-indigo-700 self-end h-10 gap-2"
+                                    >
+                                        {sending ? (
+                                            <Loader2 size={14} className="animate-spin" />
+                                        ) : (
+                                            <Send size={14} />
+                                        )}
+                                        {t.chat.send}
+                                    </Button>
+                                </div>
+
+                                {/* Hidden file input driven by the attach button */}
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/png,image/jpeg,image/webp,image/gif"
+                                    multiple
+                                    className="hidden"
+                                    onChange={onFilesSelected}
                                 />
-                                <Button
-                                    type="submit"
-                                    disabled={sending || !reply.trim()}
-                                    className="bg-indigo-600 hover:bg-indigo-700 self-end h-10 gap-2"
-                                >
-                                    {sending ? (
-                                        <Loader2 size={14} className="animate-spin" />
-                                    ) : (
-                                        <Send size={14} />
-                                    )}
-                                    {t.chat.send}
-                                </Button>
                             </form>
                         </>
                     )}

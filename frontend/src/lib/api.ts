@@ -1825,6 +1825,24 @@ export interface ChatMessage {
   created_at: string;
 }
 
+/**
+ * A saved canned reply ("ข้อความตอบกลับที่ตั้งไว้"), shared across the
+ * whole team. Inserted into the composer from the Omni-Chat quick-reply
+ * panel. Content is plain text (emoji included) — images are not stored
+ * in templates for now.
+ */
+export interface ChatQuickReplyTemplate {
+  id: string;
+  title: string;
+  content: string;
+  category: string | null;
+  is_favorite: boolean;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export const chatInboxApi = {
   /** List conversations, newest-first. Filters are AND-combined. */
   async listConversations(opts: {
@@ -1872,6 +1890,10 @@ export const chatInboxApi = {
     conversationId: string;
     content: string;
     senderName?: string;
+    /** 'image' when the content embeds an uploaded image (markdown
+     *  ![image](url)). Defaults to 'text'. line-push splits markdown
+     *  images into native LINE image messages either way. */
+    contentType?: ChatMessage['content_type'];
   }): Promise<ChatMessage> {
     const { data: userData } = await supabase.auth.getUser();
     const senderId = userData.user?.id ?? null;
@@ -1891,18 +1913,25 @@ export const chatInboxApi = {
         sender_id: senderId,
         sender_name: input.senderName ?? userData.user?.email ?? 'Staff',
         content: input.content,
-        content_type: 'text',
+        content_type: input.contentType ?? 'text',
       })
       .select('*')
       .single();
     if (error) throw error;
+
+    // Inbox preview: collapse any image markdown into a "🖼️ รูปภาพ" label
+    // so the list shows a clean summary instead of a raw URL.
+    const preview = input.content
+      .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g, '🖼️ รูปภาพ')
+      .trim()
+      .slice(0, 140);
 
     // Bump summary so the inbox list re-orders
     await supabase
       .from('chat_conversations')
       .update({
         last_message_at: new Date().toISOString(),
-        last_message_preview: input.content.slice(0, 140),
+        last_message_preview: preview,
         unread_count: 0,
       })
       .eq('id', input.conversationId);
@@ -1952,6 +1981,65 @@ export const chatInboxApi = {
       .from('chat_conversations')
       .update({ unread_count: 0 })
       .eq('id', conversationId);
+    if (error) throw error;
+  },
+};
+
+// =========================================================================
+// Quick-reply templates — shared, team-wide canned replies for Omni-Chat
+// =========================================================================
+export const chatQuickReplyApi = {
+  /** List all templates, favourites first then sort_order. Shared by the
+   *  whole team (is_staff RLS). */
+  async list(): Promise<ChatQuickReplyTemplate[]> {
+    const { data, error } = await supabase
+      .from('chat_quick_reply_templates')
+      .select('*')
+      .order('is_favorite', { ascending: false })
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as ChatQuickReplyTemplate[];
+  },
+
+  async create(input: {
+    title: string;
+    content: string;
+    category?: string | null;
+    is_favorite?: boolean;
+  }): Promise<ChatQuickReplyTemplate> {
+    const { data: userData } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('chat_quick_reply_templates')
+      .insert({
+        title: input.title,
+        content: input.content,
+        category: input.category ?? null,
+        is_favorite: input.is_favorite ?? false,
+        created_by: userData.user?.id ?? null,
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as ChatQuickReplyTemplate;
+  },
+
+  async update(
+    id: string,
+    patch: Partial<Pick<ChatQuickReplyTemplate, 'title' | 'content' | 'category' | 'is_favorite' | 'sort_order'>>,
+  ): Promise<void> {
+    const { error } = await supabase
+      .from('chat_quick_reply_templates')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+  },
+
+  async remove(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('chat_quick_reply_templates')
+      .delete()
+      .eq('id', id);
     if (error) throw error;
   },
 };
