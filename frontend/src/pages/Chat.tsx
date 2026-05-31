@@ -784,7 +784,7 @@ export default function Chat() {
                                             type="button"
                                             onClick={() => void handleCaptureScreen()}
                                             disabled={sending || capturing}
-                                            title="จับภาพหน้าจอแล้วครอปเพื่อส่ง"
+                                            title="จับภาพหน้าจอแล้วครอป → ใส่ในช่องพิมพ์ · หรือกด Win+Shift+S ครอปเองทั้งจอ แล้ววาง Ctrl+V"
                                             className="grid place-items-center w-8 h-8 rounded-md text-neutral-500 hover:text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
                                         >
                                             {capturing ? <Loader2 size={18} className="animate-spin" /> : <Crop size={18} />}
