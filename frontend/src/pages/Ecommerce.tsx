@@ -440,17 +440,20 @@ export default function Ecommerce() {
   };
 
   /**
-   * Mini tile — roughly half the size of `renderCompactCard`. Used inside
-   * the expanded group panel in Grid + Compact views so a group with many
-   * SKU children fits more per row without horizontal scrolling.
-   * Boss Jack's spec: "ปรับ sub-grid Cards เล็กลง อีก 50%".
+   * Member tile for the expanded group panel (Grid + Compact views). Sized
+   * close to `renderCompactCard` so each SKU reads clearly; the surrounding
+   * sub-grid caps at 7-8 columns so extra SKUs wrap onto new rows instead of
+   * shrinking into a single tight row. Boss Jack's spec: "แสดงแค่ 7-8 รายการ
+   * ถ้าเกินให้เพิ่มแถว + ปรับขนาดรายการสินค้าให้ใหญ่ขึ้น".
    *
-   * What's dropped vs renderCompactCard to make room:
+   * What's dropped vs renderCompactCard to keep it lean:
    *   - "Brand" header dropped (rarely useful when SKUs share a brand
    *     within a group anyway)
    *   - Stock label dropped, only the count + unit remains
-   *   - Footer is a single row: price + tiny [+] / สั่งผลิต button
-   *   - Discount line-through becomes a small badge under the price
+   *   - Footer is a single row: price + [+] / สั่งผลิต button
+   *   - Discount line-through becomes a small line under the price
+   *   - Full product name still wraps — never truncated (Boss Jack:
+   *     "ห้ามตัดคำ ถ้าชื่อยาว ให้เพิ่มบรรทัดได้")
    */
   const renderMiniCard = (p: ProductWithInventory) => {
     const stockTone = deriveStockTone(p.total_quantity);
@@ -461,14 +464,14 @@ export default function Ecommerce() {
     return (
       <article
         key={p.id}
-        className="rounded-md border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-indigo-300 hover:shadow-sm transition relative text-[10px]"
+        className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col hover:border-indigo-300 hover:shadow-sm transition relative text-[11px]"
       >
         {badge && (
-          <span className="absolute top-0.5 right-0.5 z-10 inline-flex items-center px-1 py-px rounded-full bg-rose-500 text-white text-[8px] font-bold shadow-sm">
+          <span className="absolute top-1 right-1 z-10 inline-flex items-center px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold shadow-sm">
             {badge}
           </span>
         )}
-        <div className="aspect-square bg-white p-1 border-b border-slate-100">
+        <div className="aspect-square bg-white p-2 border-b border-slate-100">
           {hero ? (
             <img
               src={hero}
@@ -478,41 +481,41 @@ export default function Ecommerce() {
             />
           ) : (
             <div className="w-full h-full grid place-items-center text-slate-300">
-              <Package size={18} />
+              <Package size={26} />
             </div>
           )}
         </div>
-        <div className="p-1 flex flex-col gap-0.5 flex-1">
-          <span className="text-[8px] font-mono text-slate-400 truncate leading-tight">
+        <div className="p-2 flex flex-col gap-1 flex-1">
+          <span className="text-[10px] font-mono text-slate-400 truncate leading-tight">
             {p.sku}
           </span>
           {/* Full product name — no truncation. Wraps to as many lines as
               needed. CSS grid auto-sizes each row to the tallest card so
               short / long names sit nicely side-by-side. Boss Jack's spec:
               "ห้ามตัดคำ ถ้าชื่อยาว ให้เพิ่มบรรทัดได้". */}
-          <h3 className="text-[10px] font-semibold text-slate-900 leading-tight break-words">
+          <h3 className="text-[12px] font-semibold text-slate-900 leading-tight break-words">
             {p.name_th}
           </h3>
           <span
             className={cn(
-              'text-[8px] tabular-nums leading-tight truncate',
+              'text-[10px] tabular-nums leading-tight truncate',
               stockTone.className,
             )}
           >
             {formatNumber(p.total_quantity)} {p.unit}
           </span>
-          <div className="mt-auto flex items-center justify-between gap-1 pt-0.5">
+          <div className="mt-auto flex items-center justify-between gap-1.5 pt-1">
             <div className="flex flex-col leading-none">
               <strong
                 className={cn(
-                  'text-[11px] font-bold tabular-nums',
+                  'text-sm font-bold tabular-nums',
                   hasDiscount ? 'text-rose-600' : 'text-slate-900',
                 )}
               >
                 {formatCurrency(effective)}
               </strong>
               {hasDiscount && (
-                <span className="text-[8px] line-through text-slate-400 tabular-nums leading-tight">
+                <span className="text-[10px] line-through text-slate-400 tabular-nums leading-tight">
                   {formatCurrency(Number(p.price))}
                 </span>
               )}
@@ -521,19 +524,19 @@ export default function Ecommerce() {
               <button
                 type="button"
                 onClick={(e) => handleAddClick(e, p, true)}
-                className="h-5 px-1 rounded bg-orange-500 text-white text-[8px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap"
+                className="h-7 px-2 rounded-md bg-orange-500 text-white text-[10px] font-bold inline-flex items-center gap-0.5 whitespace-nowrap"
                 title={`สั่งผลิต ${p.name_th}`}
               >
-                <Plus size={8} /> สั่งผลิต
+                <Plus size={11} /> สั่งผลิต
               </button>
             ) : (
               <button
                 type="button"
                 onClick={(e) => handleAddClick(e, p, false)}
-                className="w-5 h-5 grid place-items-center rounded bg-indigo-500 text-white hover:bg-indigo-600 flex-shrink-0"
+                className="w-7 h-7 grid place-items-center rounded-md bg-indigo-500 text-white hover:bg-indigo-600 flex-shrink-0"
                 title={`${ecom.addToQuote}: ${p.name_th}`}
               >
-                <Plus size={11} />
+                <Plus size={14} />
               </button>
             )}
           </div>
@@ -933,8 +936,9 @@ export default function Ecommerce() {
                       group={group}
                       members={members}
                       onClose={() => toggleGroup(group.id)}
-                      // Mini-tile sub-grid: ~half size of compact, more cols
-                      memberGridCls="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12 gap-1.5"
+                      // Larger member tiles, capped at 7-8 cols so extra SKUs
+                      // wrap to new rows instead of cramming into one.
+                      memberGridCls="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-2.5"
                       renderMember={renderMiniCard}
                     />
                   </div>,
@@ -980,7 +984,9 @@ export default function Ecommerce() {
                       group={group}
                       members={members}
                       onClose={() => toggleGroup(group.id)}
-                      memberGridCls="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 2xl:grid-cols-12 gap-1.5"
+                      // Larger member tiles, capped at 7-8 cols so extra SKUs
+                      // wrap to new rows instead of cramming into one.
+                      memberGridCls="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-2.5"
                       renderMember={renderMiniCard}
                     />
                   </div>,
