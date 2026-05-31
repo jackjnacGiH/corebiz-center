@@ -60,6 +60,7 @@ import ContactPanel from '../components/chat/ContactPanel';
 import EmojiButton from '../components/chat/EmojiButton';
 import QuickReplyButton from '../components/chat/QuickReplyButton';
 import ImageCropModal, { captureScreen } from '../components/chat/ImageCropModal';
+import ProductCardButton from '../components/chat/ProductCardButton';
 
 const CHANNEL_LABEL: Record<ChatChannel, string> = {
     livechat: 'Web Chat',
@@ -171,7 +172,9 @@ export default function Chat() {
     // Composer attachments: images queued via the attach button or clipboard
     // paste (screen-crop → Ctrl+V). Each keeps the File plus a local
     // object-URL for the thumbnail preview; uploaded on send.
-    const [pendingImages, setPendingImages] = useState<{ file: File; previewUrl: string }[]>([]);
+    // `file` = a local upload/paste/crop to push to storage on send.
+    // `url`  = an already-hosted image (e.g. a product photo) embedded as-is.
+    const [pendingImages, setPendingImages] = useState<{ previewUrl: string; file?: File; url?: string }[]>([]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -320,10 +323,11 @@ export default function Chat() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [status]);
 
-    // Drop any queued attachments when switching conversations.
+    // Drop any queued attachments when switching conversations. Only blob
+    // previews (local files) need revoking; hosted product URLs don't.
     useEffect(() => {
         setPendingImages((prev) => {
-            prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+            prev.forEach((p) => { if (p.file) URL.revokeObjectURL(p.previewUrl); });
             return [];
         });
     }, [selectedId]);
@@ -390,6 +394,18 @@ export default function Chat() {
         setCropSrc(null);
     }
 
+    /** Attach an already-hosted image (e.g. a product photo) without re-upload. */
+    function attachHostedImage(url: string) {
+        setPendingImages((prev) => [...prev, { url, previewUrl: url }]);
+    }
+
+    /** Product-card picker → drop the formatted card text + product image into
+     *  the composer so the agent can review / tweak, then press Send. */
+    function handlePickProductCard(cardText: string, imageUrl: string | null) {
+        insertAtCursor(cardText);
+        if (imageUrl) attachHostedImage(imageUrl);
+    }
+
     function onFilesSelected(e: ChangeEvent<HTMLInputElement>) {
         const files = Array.from(e.target.files ?? []);
         if (files.length) addImageFiles(files);
@@ -412,14 +428,14 @@ export default function Chat() {
         setPendingImages((prev) => {
             const next = [...prev];
             const [removed] = next.splice(idx, 1);
-            if (removed) URL.revokeObjectURL(removed.previewUrl);
+            if (removed?.file) URL.revokeObjectURL(removed.previewUrl);
             return next;
         });
     }
 
     function clearPending() {
         setPendingImages((prev) => {
-            prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+            prev.forEach((p) => { if (p.file) URL.revokeObjectURL(p.previewUrl); });
             return [];
         });
     }
@@ -434,12 +450,13 @@ export default function Chat() {
         try {
             let content = text;
             if (imgs.length > 0) {
-                // Upload each attachment, then embed as markdown ![image](url).
-                // line-push splits these into native LINE image messages and the
-                // web widget renders them inline — no backend change needed.
+                // Local files upload to storage; already-hosted product photos
+                // are used as-is. Each becomes markdown ![image](url) — line-push
+                // splits these into native LINE image messages and the web widget
+                // renders them inline, so no backend change is needed.
                 const urls: string[] = [];
                 for (const p of imgs) {
-                    urls.push(await uploadChatImage(p.file, selectedId));
+                    urls.push(p.url ?? (await uploadChatImage(p.file!, selectedId)));
                 }
                 const md = urls.map((u) => `![image](${u})`).join('\n');
                 content = text ? `${text}\n${md}` : md;
@@ -790,6 +807,7 @@ export default function Chat() {
                                             {capturing ? <Loader2 size={18} className="animate-spin" /> : <Crop size={18} />}
                                         </button>
                                         <QuickReplyButton draft={reply} onPick={insertAtCursor} disabled={sending} />
+                                        <ProductCardButton onPick={handlePickProductCard} disabled={sending} />
                                     </div>
 
                                     <textarea
