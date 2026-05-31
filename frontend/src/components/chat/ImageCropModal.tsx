@@ -5,7 +5,7 @@ import {
     type MouseEvent as ReactMouseEvent,
     type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import { X, Maximize2, Loader2, Check } from 'lucide-react';
+import { X, Maximize2, Loader2 } from 'lucide-react';
 
 /**
  * Capture a single still frame of the screen / a window / a tab using the
@@ -74,8 +74,7 @@ export default function ImageCropModal({
     const dragStart = useRef<{ x: number; y: number } | null>(null);
     const [busy, setBusy] = useState(false);
 
-    // Focus the modal on open so Enter (send) / Esc (cancel) work immediately,
-    // without the agent having to click anything first.
+    // Focus the modal on open so Esc (cancel) works without clicking first.
     useEffect(() => {
         rootRef.current?.focus();
     }, []);
@@ -108,35 +107,44 @@ export default function ImageCropModal({
             h: Math.abs(p.y - s.y),
         });
     }
-    function onUp() {
+    // Finish a drag → commit the selection straight to the composer. No Enter,
+    // no extra click: release the mouse and the cropped region is attached.
+    // A too-small drag (a stray click) is ignored so nothing commits by accident.
+    function onUp(e: ReactMouseEvent) {
+        if (!dragStart.current) return;
+        const s = dragStart.current;
         dragStart.current = null;
+        const p = relPoint(e);
+        const rect = {
+            x: Math.min(s.x, p.x),
+            y: Math.min(s.y, p.y),
+            w: Math.abs(p.x - s.x),
+            h: Math.abs(p.y - s.y),
+        };
+        if (rect.w > 8 && rect.h > 8) doCrop(rect);
     }
 
-    function selectAll() {
+    /** Use the whole captured image (no cropping). */
+    function useWholeImage() {
         const img = imgRef.current;
         if (!img) return;
         const r = img.getBoundingClientRect();
-        setSel({ x: 0, y: 0, w: r.width, h: r.height });
+        doCrop({ x: 0, y: 0, w: r.width, h: r.height });
     }
 
     function onKeyDown(e: ReactKeyboardEvent) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            doCrop();
-        } else if (e.key === 'Escape') {
+        if (e.key === 'Escape') {
             e.preventDefault();
             onCancel();
         }
     }
 
-    function doCrop() {
+    function doCrop(region: Rect) {
         const img = imgRef.current;
         if (!img || busy) return;
         const r = img.getBoundingClientRect();
         const scaleX = img.naturalWidth / r.width;
         const scaleY = img.naturalHeight / r.height;
-        // Use the drawn selection, or the whole image if there's none / it's tiny.
-        const region = sel && sel.w > 4 && sel.h > 4 ? sel : { x: 0, y: 0, w: r.width, h: r.height };
         const sx = Math.round(region.x * scaleX);
         const sy = Math.round(region.y * scaleY);
         const sw = Math.max(1, Math.round(region.w * scaleX));
@@ -181,26 +189,27 @@ export default function ImageCropModal({
             ref={rootRef}
             tabIndex={-1}
             onKeyDown={onKeyDown}
-            className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4 outline-none"
+            className="fixed inset-0 z-50 bg-black/70 flex flex-col p-2 sm:p-3 outline-none"
             onMouseMove={onMove}
             onMouseUp={onUp}
         >
-            <div className="bg-white rounded-xl shadow-2xl overflow-hidden w-full max-w-[880px] flex flex-col">
-                <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-200">
+            <div className="bg-white rounded-xl shadow-2xl overflow-hidden w-full h-full flex flex-col">
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-200 flex-shrink-0">
                     <span className="text-sm font-bold text-neutral-800">
-                        ลากเมาส์เลือกพื้นที่ที่ต้องการ แล้วกด Enter (รูปจะไปอยู่ในช่องพิมพ์)
+                        ลากเมาส์คลุมพื้นที่ที่ต้องการ — ปล่อยเมาส์แล้วรูปจะไปอยู่ในช่องพิมพ์ทันที
                     </span>
                     <button
                         type="button"
                         onClick={onCancel}
                         className="text-neutral-400 hover:text-neutral-700"
-                        title="ปิด"
+                        title="ปิด (Esc)"
                     >
                         <X size={18} />
                     </button>
                 </div>
 
-                <div className="p-3 bg-neutral-100 overflow-auto grid place-items-center" style={{ maxHeight: '70vh' }}>
+                {/* Image fills the whole window so the crop area is big + easy to aim */}
+                <div className="flex-1 min-h-0 p-3 bg-neutral-100 overflow-auto grid place-items-center">
                     <div
                         className="relative inline-block select-none cursor-crosshair leading-none"
                         onMouseDown={onDown}
@@ -210,7 +219,7 @@ export default function ImageCropModal({
                             src={src}
                             alt=""
                             draggable={false}
-                            className="block max-w-full max-h-[62vh] object-contain"
+                            className="block object-contain max-w-[calc(100vw_-_3rem)] max-h-[calc(100vh_-_9.5rem)]"
                         />
                         {/* Selection rectangle */}
                         {sel && sel.w > 0 && sel.h > 0 && (
@@ -223,37 +232,35 @@ export default function ImageCropModal({
                         {!hasSelection && (
                             <div className="absolute inset-0 grid place-items-center pointer-events-none">
                                 <span className="px-3 py-1.5 rounded-full bg-black/55 text-white text-xs font-medium">
-                                    ลากเพื่อเลือกพื้นที่ แล้วกด Enter (หรือกด “ทั้งภาพ”)
+                                    ลากคลุมพื้นที่ที่ต้องการ แล้วปล่อยเมาส์ได้เลย (หรือกด “ใช้ทั้งภาพ”)
                                 </span>
                             </div>
                         )}
                     </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-neutral-200 bg-white">
-                    <button
-                        type="button"
-                        onClick={onCancel}
-                        className="h-9 px-4 rounded-md text-sm font-semibold text-neutral-600 hover:bg-neutral-100"
-                    >
-                        ยกเลิก
-                    </button>
-                    <button
-                        type="button"
-                        onClick={selectAll}
-                        className="h-9 px-4 rounded-md text-sm font-semibold text-neutral-700 border border-neutral-200 hover:bg-neutral-50 inline-flex items-center gap-1.5"
-                    >
-                        <Maximize2 size={14} /> ทั้งภาพ
-                    </button>
-                    <button
-                        type="button"
-                        onClick={doCrop}
-                        disabled={busy}
-                        className="h-9 px-4 rounded-md text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 inline-flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                        {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                        ใช้รูปนี้ (Enter)
-                    </button>
+                <div className="flex items-center justify-between gap-2 px-4 py-3 border-t border-neutral-200 bg-white flex-shrink-0">
+                    <span className="text-xs text-neutral-400 hidden sm:block">
+                        ลากเลือก = ใส่ช่องพิมพ์อัตโนมัติ · กด Esc เพื่อยกเลิก
+                    </span>
+                    <div className="flex items-center gap-2 ml-auto">
+                        {busy && <Loader2 size={16} className="animate-spin text-indigo-500" />}
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            className="h-9 px-4 rounded-md text-sm font-semibold text-neutral-600 hover:bg-neutral-100"
+                        >
+                            ยกเลิก
+                        </button>
+                        <button
+                            type="button"
+                            onClick={useWholeImage}
+                            disabled={busy}
+                            className="h-9 px-4 rounded-md text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 inline-flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                            <Maximize2 size={14} /> ใช้ทั้งภาพ
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
