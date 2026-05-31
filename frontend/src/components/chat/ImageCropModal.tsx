@@ -1,5 +1,11 @@
-import { useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { X, Check, Maximize2, Loader2 } from 'lucide-react';
+import {
+    useEffect,
+    useRef,
+    useState,
+    type MouseEvent as ReactMouseEvent,
+    type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
+import { X, Maximize2, Loader2, Send } from 'lucide-react';
 
 /**
  * Capture a single still frame of the screen / a window / a tab using the
@@ -53,17 +59,25 @@ const PNG_SIZE_CAP = 4.5 * 1024 * 1024; // fall back to JPEG above this
  */
 export default function ImageCropModal({
     src,
-    onConfirm,
+    onSend,
     onCancel,
 }: {
     src: string;
-    onConfirm: (blob: Blob) => void;
+    /** Crop the selected region (or whole image) and send it right away. */
+    onSend: (blob: Blob) => void;
     onCancel: () => void;
 }) {
     const imgRef = useRef<HTMLImageElement>(null);
+    const rootRef = useRef<HTMLDivElement>(null);
     const [sel, setSel] = useState<Rect | null>(null);
     const dragStart = useRef<{ x: number; y: number } | null>(null);
     const [busy, setBusy] = useState(false);
+
+    // Focus the modal on open so Enter (send) / Esc (cancel) work immediately,
+    // without the agent having to click anything first.
+    useEffect(() => {
+        rootRef.current?.focus();
+    }, []);
 
     /** Pointer position relative to the displayed image, clamped to bounds. */
     function relPoint(e: ReactMouseEvent) {
@@ -104,7 +118,17 @@ export default function ImageCropModal({
         setSel({ x: 0, y: 0, w: r.width, h: r.height });
     }
 
-    function confirm() {
+    function onKeyDown(e: ReactKeyboardEvent) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            doSend();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+        }
+    }
+
+    function doSend() {
         const img = imgRef.current;
         if (!img || busy) return;
         const r = img.getBoundingClientRect();
@@ -136,7 +160,7 @@ export default function ImageCropModal({
         setBusy(true);
         const finish = (blob: Blob | null) => {
             setBusy(false);
-            if (blob) onConfirm(blob);
+            if (blob) onSend(blob);
             else onCancel();
         };
         // Prefer PNG (crisp text); fall back to JPEG if it's too heavy.
@@ -153,14 +177,17 @@ export default function ImageCropModal({
 
     return (
         <div
-            className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4"
+            ref={rootRef}
+            tabIndex={-1}
+            onKeyDown={onKeyDown}
+            className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4 outline-none"
             onMouseMove={onMove}
             onMouseUp={onUp}
         >
             <div className="bg-white rounded-xl shadow-2xl overflow-hidden w-full max-w-[880px] flex flex-col">
                 <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-200">
                     <span className="text-sm font-bold text-neutral-800">
-                        ครอปภาพหน้าจอ — ลากเมาส์เพื่อเลือกพื้นที่ที่ต้องการส่ง
+                        ลากเมาส์เลือกพื้นที่ แล้วกด Enter เพื่อส่ง
                     </span>
                     <button
                         type="button"
@@ -195,7 +222,7 @@ export default function ImageCropModal({
                         {!hasSelection && (
                             <div className="absolute inset-0 grid place-items-center pointer-events-none">
                                 <span className="px-3 py-1.5 rounded-full bg-black/55 text-white text-xs font-medium">
-                                    ลากเพื่อเลือกพื้นที่ หรือกด “ทั้งภาพ”
+                                    ลากเพื่อเลือกพื้นที่ แล้วกด Enter เพื่อส่ง (หรือกด “ทั้งภาพ”)
                                 </span>
                             </div>
                         )}
@@ -219,12 +246,12 @@ export default function ImageCropModal({
                     </button>
                     <button
                         type="button"
-                        onClick={confirm}
+                        onClick={doSend}
                         disabled={busy}
                         className="h-9 px-4 rounded-md text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 inline-flex items-center gap-1.5 disabled:opacity-50"
                     >
-                        {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                        แนบรูปนี้
+                        {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        ส่ง (Enter)
                     </button>
                 </div>
             </div>

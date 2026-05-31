@@ -379,14 +379,29 @@ export default function Chat() {
         }
     }
 
-    /** Cropped region from the modal → queue it like any other attachment. */
-    function handleCropConfirm(blob: Blob) {
-        const ext = blob.type === 'image/jpeg' ? 'jpg' : 'png';
-        const file = new File([blob], `screenshot-${Date.now()}.${ext}`, {
-            type: blob.type || 'image/png',
-        });
-        addImageFiles([file]);
+    /** Cropped region from the modal → upload + send immediately (Enter). */
+    async function sendImageBlob(blob: Blob) {
+        const convId = selectedId;
         setCropSrc(null);
+        if (!convId || sending) return;
+        setSending(true);
+        try {
+            const ext = blob.type === 'image/jpeg' ? 'jpg' : 'png';
+            const file = new File([blob], `screenshot-${Date.now()}.${ext}`, {
+                type: blob.type || 'image/png',
+            });
+            const url = await uploadChatImage(file, convId);
+            await chatInboxApi.sendMessage({
+                conversationId: convId,
+                content: `![image](${url})`,
+                contentType: 'image',
+            });
+            void loadConvs();
+        } catch (e) {
+            alert(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
+        } finally {
+            setSending(false);
+        }
     }
 
     function onFilesSelected(e: ChangeEvent<HTMLInputElement>) {
@@ -848,7 +863,7 @@ export default function Chat() {
             {cropSrc && (
                 <ImageCropModal
                     src={cropSrc}
-                    onConfirm={handleCropConfirm}
+                    onSend={sendImageBlob}
                     onCancel={() => setCropSrc(null)}
                 />
             )}
