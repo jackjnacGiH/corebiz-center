@@ -182,6 +182,7 @@ export type Database = {
           phone: string | null; shipping_address: Json | null; source_channel: string | null;
           tags: string[]; tax_id: string | null; tier: string; total_orders: number; total_spent: number;
           updated_at: string; user_id: string | null; last_reorder_reminder_at: string | null;
+          last_winback_at: string | null;
         }
         Insert: {
           billing_address?: Json | null; code?: string | null; contact_name?: string | null;
@@ -190,6 +191,7 @@ export type Database = {
           phone?: string | null; shipping_address?: Json | null; source_channel?: string | null;
           tags?: string[]; tax_id?: string | null; tier?: string; total_orders?: number; total_spent?: number;
           updated_at?: string; user_id?: string | null; last_reorder_reminder_at?: string | null;
+          last_winback_at?: string | null;
         }
         Update: Partial<Database['public']['Tables']['customers']['Insert']>
         Relationships: []
@@ -532,6 +534,10 @@ export type Database = {
       redeem_loyalty_points: {
         Args: { p_customer_id: string; p_points: number; p_discount: number; p_label?: string | null }
         Returns: { coupon_code: string; new_balance: number }[]
+      }
+      issue_coupon: {
+        Args: { p_discount: number; p_label?: string | null }
+        Returns: string
       }
       match_knowledge: {
         Args: {

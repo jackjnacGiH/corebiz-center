@@ -595,6 +595,64 @@ export const reorderApi = {
 };
 
 // =========================================================================
+// Win-back (Phase 2) — re-engage lapsed customers (>= 90d) over LINE, with an
+// optional discount coupon. Backed by the winback_due view + issue_coupon RPC.
+// =========================================================================
+export interface WinbackDue {
+  id: string;
+  code: string | null;
+  name: string;
+  tier: string;
+  total_orders: number;
+  total_spent: number;
+  loyalty_points: number;
+  last_winback_at: string | null;
+  last_purchase_at: string;
+  recency_days: number;
+  conversation_id: string;
+  external_id: string;
+}
+
+export const winbackApi = {
+  /** Lapsed customers due for a win-back, highest lifetime value first. */
+  async listDue(): Promise<WinbackDue[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('winback_due')
+      .select('*')
+      .order('total_spent', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as WinbackDue[];
+  },
+
+  /** Send a win-back message. If `discount` > 0, mint a single-use coupon and
+   *  append it to the message. Sends via the LINE conversation (logs to
+   *  Omni-Chat + pushes to LINE) and stamps last_winback_at. */
+  async send(input: {
+    customerId: string; conversationId: string; text: string; discount?: number;
+  }): Promise<{ coupon?: string }> {
+    let coupon: string | undefined;
+    let text = input.text;
+    if (input.discount && input.discount > 0) {
+      const { data, error } = await supabase.rpc('issue_coupon', {
+        p_discount: input.discount, p_label: 'Win-back',
+      });
+      if (error) throw error;
+      coupon = data as string;
+      text += `\n\n🎁 ส่วนลดพิเศษสำหรับคุณ: ใช้โค้ด ${coupon} ลด ฿${input.discount} (ใช้ได้ 60 วัน)`;
+    }
+    await chatInboxApi.sendMessage({ conversationId: input.conversationId, content: text });
+    const { error: upErr } = await supabase
+      .from('customers')
+      .update({ last_winback_at: new Date().toISOString() })
+      .eq('id', input.customerId);
+    if (upErr) throw upErr;
+    return { coupon };
+  },
+};
+
+// =========================================================================
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {
