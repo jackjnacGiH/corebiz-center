@@ -1,27 +1,36 @@
-import { useEffect, useState } from 'react';
-import { Loader2, RefreshCw, AlertCircle, Bell, Send, Check, Info } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Loader2, RefreshCw, AlertCircle, Bell, Send, Check, Info, Clock, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { reorderApi, type ReorderDue } from '../lib/api';
 
 const baht = (n: unknown) => '฿' + new Intl.NumberFormat('th-TH').format(Math.round(Number(n) || 0));
 
-const DEFAULT_MSG =
-    'สวัสดีค่ะ คุณ{ชื่อ} 😊 จาก JNAC นะคะ — ลูกค้าเคยสั่งสินค้ากับเราไปสักพักแล้ว ของใกล้หมดหรือยังคะ? หากต้องการสั่งเพิ่ม แจ้งเอยได้เลยนะคะ มีราคาพิเศษสำหรับลูกค้าประจำด้วยค่ะ 🙏';
-
 /**
- * Reorder reminders: lists customers who are due to reorder (paid purchase
- * over the interval ago + a linked LINE chat) and lets the admin nudge each
- * one over LINE with one click, using an editable message template. The send
- * reuses the normal chat send (so it shows in Omni-Chat + goes to LINE) and
- * stamps the customer so they drop off the list.
+ * Multiple natural message variants. The system rotates randomly among them so
+ * no two customers get an identical message — the single biggest signal LINE
+ * uses to flag an account as a spam bot. Admins can edit / add lines.
  */
+const DEFAULT_VARIANTS = [
+    'สวัสดีค่ะ คุณ{ชื่อ} 😊 เอยจาก JNAC นะคะ ของที่เคยสั่งใกล้หมดหรือยังคะ? ถ้าต้องการเติม แจ้งเอยได้เลยค่ะ',
+    'คุณ{ชื่อ} สวัสดีค่ะ 🙏 ไม่ได้สั่งของกับเรามาพักนึงแล้ว มีอะไรให้เอยช่วยดูแลไหมคะ? มีราคาพิเศษสำหรับลูกค้าประจำอยู่นะคะ',
+    'สวัสดีค่ะคุณ{ชื่อ} เอยจาก JNAC ค่ะ 😊 แวะมาเช็กว่าจานขัด/กระดาษทรายพอใช้ไหมคะ ต้องการสั่งเพิ่มทักได้เลยนะคะ',
+    'คุณ{ชื่อ}คะ 🙏 ครบรอบที่เคยสั่งของกับเราพอดี ถ้าของใกล้หมดบอกเอยได้เลยค่ะ เดี๋ยวจัดให้ค่ะ',
+];
+
+const rand = (min: number, max: number) => min + Math.random() * (max - min);
+const TYPING_MS = () => rand(1600, 4200);     // pause before the message "sends" (human typing)
+const COOLDOWN_MS = () => rand(14000, 30000); // gap enforced before the next send (anti-burst)
+
 export default function CustomerReorder() {
     const [rows, setRows] = useState<ReorderDue[]>([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
-    const [template, setTemplate] = useState(DEFAULT_MSG);
+    const [variantsText, setVariantsText] = useState(DEFAULT_VARIANTS.join('\n'));
     const [sendingId, setSendingId] = useState<string | null>(null);
     const [sentIds, setSentIds] = useState<Set<string>>(new Set());
+    const [cooldownUntil, setCooldownUntil] = useState(0);
+    const [nowTs, setNowTs] = useState(0);
+    const variantCursor = useRef(0);
 
     async function load() {
         setLoading(true);
@@ -37,14 +46,37 @@ export default function CustomerReorder() {
     }
     useEffect(() => { void load(); }, []);
 
+    // Tick once a second only while a cooldown is active (drives the countdown).
+    useEffect(() => {
+        if (cooldownUntil <= Date.now()) return;
+        setNowTs(Date.now());
+        const t = setInterval(() => setNowTs(Date.now()), 500);
+        return () => clearInterval(t);
+    }, [cooldownUntil]);
+
+    const cooldownLeft = Math.max(0, Math.ceil((cooldownUntil - nowTs) / 1000));
+    const cooling = cooldownLeft > 0;
+
+    function nextVariant(): string {
+        const variants = variantsText.split('\n').map((s) => s.trim()).filter(Boolean);
+        if (variants.length === 0) return DEFAULT_VARIANTS[0];
+        // Shuffle-ish: advance a cursor by a random step so consecutive sends
+        // don't repeat the same line, but it's not perfectly sequential either.
+        variantCursor.current = (variantCursor.current + 1 + Math.floor(Math.random() * variants.length)) % variants.length;
+        return variants[variantCursor.current];
+    }
+
     async function send(r: ReorderDue) {
-        if (sendingId) return;
+        if (sendingId || cooling) return;
         setSendingId(r.id);
         setErr(null);
         try {
-            const text = template.replaceAll('{ชื่อ}', r.name).replaceAll('{name}', r.name);
+            // Mimic a human pausing to type before the message goes out.
+            await new Promise((res) => setTimeout(res, TYPING_MS()));
+            const text = nextVariant().replaceAll('{ชื่อ}', r.name).replaceAll('{name}', r.name);
             await reorderApi.sendReminder({ customerId: r.id, conversationId: r.conversation_id, text });
             setSentIds((s) => new Set(s).add(r.id));
+            setCooldownUntil(Date.now() + COOLDOWN_MS()); // pace the next send
         } catch (e) {
             setErr(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
         } finally {
@@ -62,26 +94,37 @@ export default function CustomerReorder() {
 
     return (
         <div className="flex flex-col gap-3">
+            {/* Anti-spam guidance */}
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800 leading-relaxed flex items-start gap-2">
+                <ShieldCheck size={14} className="mt-0.5 flex-shrink-0 text-amber-600" />
+                <div>
+                    <b>ส่งแบบเหมือนคน กัน LINE มองเป็นบอท:</b> ระบบ<b>สุ่มสลับข้อความหลายแบบ</b> (ไม่ส่งซ้ำกันเป๊ะ) ·
+                    <b>หน่วงก่อนส่ง</b>เหมือนคนพิมพ์ · <b>เว้นจังหวะ</b>ระหว่างส่งแต่ละราย (กันส่งรัว) ·
+                    แนะนำส่งในเวลาทำการ และไม่ส่งถี่เกินไป (LINE OA มีโควตาข้อความ/เดือน + ระบบกันสแปม)
+                </div>
+            </div>
+
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 flex items-start gap-2">
                     <AlertCircle size={16} className="mt-0.5 flex-shrink-0" /> <span>{err}</span>
                 </div>
             )}
 
-            {/* Message template */}
+            {/* Message variants */}
             <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
                 <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50 text-xs font-bold text-neutral-700 flex items-center gap-1.5">
-                    <Bell size={13} className="text-indigo-500" /> ข้อความเตือนซื้อซ้ำ (แก้ได้)
+                    <Bell size={13} className="text-indigo-500" /> ข้อความเตือน (ใส่ได้หลายแบบ — บรรทัดละ 1 ข้อความ)
                 </div>
                 <div className="p-3">
                     <textarea
-                        value={template}
-                        onChange={(e) => setTemplate(e.target.value)}
-                        rows={3}
+                        value={variantsText}
+                        onChange={(e) => setVariantsText(e.target.value)}
+                        rows={5}
                         className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 resize-none"
                     />
                     <p className="mt-1 text-[10px] text-neutral-400 flex items-center gap-1">
-                        <Info size={11} /> ใช้ <code className="font-mono">{'{ชื่อ}'}</code> แทนชื่อลูกค้า · ส่งผ่าน LINE และจะขึ้นใน Omni-Chat ด้วย
+                        <Info size={11} /> ใช้ <code className="font-mono">{'{ชื่อ}'}</code> แทนชื่อลูกค้า · ระบบจะ<b>สุ่มสลับ</b>ข้อความให้แต่ละราย ·
+                        ส่งผ่าน LINE และจะขึ้นใน Omni-Chat ด้วย
                     </p>
                 </div>
             </div>
@@ -89,7 +132,10 @@ export default function CustomerReorder() {
             {/* Due list */}
             <div className="rounded-lg border border-neutral-200 bg-white overflow-hidden">
                 <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50 text-xs font-semibold text-neutral-600 flex items-center justify-between">
-                    <span>ลูกค้าที่ถึงรอบเตือน · {rows.length} ราย</span>
+                    <span>
+                        ลูกค้าที่ถึงรอบเตือน · {rows.length} ราย
+                        {sentIds.size > 0 && <span className="text-emerald-600 ml-1.5">(ส่งแล้ว {sentIds.size})</span>}
+                    </span>
                     <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium">
                         <RefreshCw size={12} /> รีเฟรช
                     </button>
@@ -116,6 +162,7 @@ export default function CustomerReorder() {
                             <tbody className="divide-y divide-neutral-100">
                                 {rows.map((r) => {
                                     const sent = sentIds.has(r.id);
+                                    const isSending = sendingId === r.id;
                                     return (
                                         <tr key={r.id} className={cn('hover:bg-neutral-50/70 transition', sent && 'bg-emerald-50/40')}>
                                             <td className="px-3 py-2">
@@ -141,11 +188,16 @@ export default function CustomerReorder() {
                                                     <button
                                                         type="button"
                                                         onClick={() => void send(r)}
-                                                        disabled={sendingId === r.id}
-                                                        className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-green-600 text-white text-[11px] font-bold hover:bg-green-700 disabled:opacity-50 ml-auto"
+                                                        disabled={sendingId !== null || cooling}
+                                                        className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-green-600 text-white text-[11px] font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed ml-auto whitespace-nowrap"
                                                     >
-                                                        {sendingId === r.id ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                                                        ส่งเตือน LINE
+                                                        {isSending ? (
+                                                            <><Loader2 size={12} className="animate-spin" /> กำลังส่ง...</>
+                                                        ) : cooling ? (
+                                                            <><Clock size={12} /> รอ {cooldownLeft}s</>
+                                                        ) : (
+                                                            <><Send size={12} /> ส่งเตือน LINE</>
+                                                        )}
                                                     </button>
                                                 )}
                                             </td>
@@ -159,8 +211,8 @@ export default function CustomerReorder() {
             </div>
 
             <p className="text-[10px] text-neutral-400 leading-relaxed">
-                รอบเตือน = 45 วันนับจากออเดอร์ที่จ่ายเงินล่าสุด (ปรับได้ในฐานข้อมูล: view <code className="font-mono">reorder_due</code>) ·
-                เตือนแล้วจะเว้น 30 วันก่อนเตือนอีกครั้ง
+                รอบเตือน = 45 วันนับจากออเดอร์ที่จ่ายเงินล่าสุด · เตือนแล้วเว้น 30 วันก่อนเตือนอีกครั้ง (ปรับได้ในฐานข้อมูล: view <code className="font-mono">reorder_due</code>) ·
+                ส่งทีละราย เว้นจังหวะ ~15–30 วิ เพื่อให้เป็นธรรมชาติ
             </p>
         </div>
     );
