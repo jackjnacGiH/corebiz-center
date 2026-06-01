@@ -549,6 +549,22 @@ export type Database = {
         Args: { p_token: string; p_score: number; p_comment?: string | null }
         Returns: boolean
       }
+      get_or_create_referral_code: {
+        Args: { p_customer_id: string }
+        Returns: string
+      }
+      create_referral: {
+        Args: { p_referrer_id: string; p_referee_name: string; p_referee_phone?: string | null; p_note?: string | null }
+        Returns: string
+      }
+      submit_referral: {
+        Args: { p_code: string; p_referee_name: string; p_referee_phone?: string | null; p_note?: string | null }
+        Returns: boolean
+      }
+      reward_referral: {
+        Args: { p_referral_id: string; p_referrer_points?: number; p_referee_discount?: number; p_referrer_discount?: number }
+        Returns: Json
+      }
       match_knowledge: {
         Args: {
           query_embedding: string; match_threshold?: number; match_count?: number;

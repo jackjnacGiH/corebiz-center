@@ -791,6 +791,92 @@ export const surveyApi = {
 };
 
 // =========================================================================
+// Referral program (Phase 3, "แนะนำเพื่อน") — customer-to-customer referrals.
+// Each customer has a share code; a friend registers via the public /refer
+// page; staff reward both sides. Backed by migration 0023.
+// =========================================================================
+export interface ReferralRow {
+  id: string;
+  referrer_id: string;
+  referee_name: string;
+  referee_phone: string | null;
+  referee_customer_id: string | null;
+  status: 'pending' | 'rewarded' | 'expired';
+  referrer_points: number;
+  referrer_coupon: string | null;
+  referee_coupon: string | null;
+  source: 'staff' | 'public';
+  note: string | null;
+  created_at: string;
+  rewarded_at: string | null;
+  referrer_name: string | null;
+  referrer_code: string | null;
+  referrer_share_code: string | null;
+  referee_customer_name: string | null;
+}
+
+export const referralApi = {
+  /** All referrals (joined to referrer + referee names), newest first. */
+  async listOverview(): Promise<ReferralRow[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('referral_overview')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as ReferralRow[];
+  },
+
+  /** Get (or lazily create) a customer's stable share code. */
+  async code(customerId: string): Promise<string> {
+    const { data, error } = await supabase.rpc('get_or_create_referral_code', { p_customer_id: customerId });
+    if (error) throw error;
+    return data as string;
+  },
+
+  /** Staff: record a referral directly. */
+  async create(input: { referrerId: string; refereeName: string; refereePhone?: string; note?: string }): Promise<string> {
+    const { data, error } = await supabase.rpc('create_referral', {
+      p_referrer_id: input.referrerId,
+      p_referee_name: input.refereeName,
+      p_referee_phone: input.refereePhone ?? null,
+      p_note: input.note ?? null,
+    });
+    if (error) throw error;
+    return data as string;
+  },
+
+  /** Reward both sides: referrer points (+ optional coupon) and a friend coupon. */
+  async reward(input: {
+    referralId: string; referrerPoints: number; refereeDiscount: number; referrerDiscount?: number;
+  }): Promise<{ referrer_coupon: string | null; referee_coupon: string | null }> {
+    const { data, error } = await supabase.rpc('reward_referral', {
+      p_referral_id: input.referralId,
+      p_referrer_points: input.referrerPoints,
+      p_referee_discount: input.refereeDiscount,
+      p_referrer_discount: input.referrerDiscount ?? 0,
+    });
+    if (error) throw error;
+    return (data ?? { referrer_coupon: null, referee_coupon: null }) as {
+      referrer_coupon: string | null; referee_coupon: string | null;
+    };
+  },
+
+  /** Public (anon): a friend registers using a referrer's share code. */
+  async submit(code: string, refereeName: string, refereePhone?: string, note?: string): Promise<boolean> {
+    const { data, error } = await supabase.rpc('submit_referral', {
+      p_code: code,
+      p_referee_name: refereeName,
+      p_referee_phone: refereePhone ?? null,
+      p_note: note ?? null,
+    });
+    if (error) throw error;
+    return Boolean(data);
+  },
+};
+
+// =========================================================================
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {

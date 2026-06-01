@@ -11,6 +11,7 @@ import OpenclawRAG from './pages/OpenclawRAG';
 import KnowledgeChat from './pages/KnowledgeChat';
 import CustomerChat from './pages/CustomerChat';
 import SurveyPage from './pages/SurveyPage';
+import ReferPage from './pages/ReferPage';
 import Affiliate from './pages/Affiliate';
 import Settings from './pages/Settings';
 import Login from './pages/auth/Login';
@@ -34,6 +35,8 @@ function App() {
             <Route path="/widget" element={<CustomerChat />} />
             {/* Public satisfaction / NPS rating page reached from a LINE link. */}
             <Route path="/survey/:token" element={<SurveyPage />} />
+            {/* Public referral landing page reached from a customer's share link. */}
+            <Route path="/refer/:code" element={<ReferPage />} />
             <Route
               path="/"
               element={
