@@ -15,6 +15,7 @@ import type {
   CustomerBranch, CustomerBranchInsert, CustomerBranchUpdate,
   Order, OrderInsert, OrderUpdate,
   OrderItem,
+  Quote, LoyaltyTransaction,
   Notification,
   OrgSettings, OrgSettingsUpdate,
 } from './database.types';
@@ -472,6 +473,51 @@ export const customerRfmApi = {
       .order('monetary', { ascending: false });
     if (error) throw error;
     return (data ?? []) as CustomerRFM[];
+  },
+};
+
+// =========================================================================
+// Customer 360° profile — one customer + all their linked history, fetched
+// in parallel for the CRM profile drawer.
+// =========================================================================
+export interface CustomerProfileBundle {
+  customer: Customer;
+  rfm: CustomerRFM | null;
+  orders: Order[];
+  quotes: Quote[];
+  loyalty: LoyaltyTransaction[];
+  chats: ChatConversation[];
+  branches: CustomerBranch[];
+}
+
+export const customerProfileApi = {
+  async get(customerId: string): Promise<CustomerProfileBundle> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const [cRes, rfmRes, oRes, qRes, lRes, chRes, bRes] = await Promise.all([
+      supabase.from('customers').select('*').eq('id', customerId).single(),
+      db.from('customer_rfm').select('*').eq('id', customerId).maybeSingle(),
+      supabase.from('orders').select('*').eq('customer_id', customerId)
+        .order('created_at', { ascending: false }).limit(50),
+      supabase.from('quotes').select('*').eq('customer_id', customerId)
+        .order('created_at', { ascending: false }).limit(50),
+      supabase.from('loyalty_transactions').select('*').eq('customer_id', customerId)
+        .order('created_at', { ascending: false }).limit(50),
+      supabase.from('chat_conversations').select('*').eq('customer_id', customerId)
+        .order('last_message_at', { ascending: false, nullsFirst: false }).limit(20),
+      supabase.from('customer_branches').select('*').eq('customer_id', customerId)
+        .order('sort_order', { ascending: true }),
+    ]);
+    if (cRes.error) throw cRes.error;
+    return {
+      customer: cRes.data as Customer,
+      rfm: (rfmRes.data ?? null) as CustomerRFM | null,
+      orders: (oRes.data ?? []) as Order[],
+      quotes: (qRes.data ?? []) as Quote[],
+      loyalty: (lRes.data ?? []) as LoyaltyTransaction[],
+      chats: (chRes.data ?? []) as ChatConversation[],
+      branches: (bRes.data ?? []) as CustomerBranch[],
+    };
   },
 };
 

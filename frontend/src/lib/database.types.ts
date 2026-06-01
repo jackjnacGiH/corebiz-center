@@ -583,3 +583,6 @@ export type OrderUpdate  = Database['public']['Tables']['orders']['Update']
 
 export type OrderItem        = Database['public']['Tables']['order_items']['Row']
 export type OrderItemInsert  = Database['public']['Tables']['order_items']['Insert']
+
+export type Quote               = Database['public']['Tables']['quotes']['Row']
+export type LoyaltyTransaction  = Database['public']['Tables']['loyalty_transactions']['Row']

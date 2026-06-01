@@ -29,6 +29,7 @@ import ImportCustomersModal from '../components/ImportCustomersModal';
 import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
 import CustomerSegments from '../components/CustomerSegments';
+import CustomerProfile from '../components/CustomerProfile';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -77,6 +78,8 @@ export default function CRM() {
     const [bulkDeleting, setBulkDeleting] = useState(false);
     // Which view: the customer list, or the RFM segment breakdown.
     const [view, setView] = useState<'list' | 'rfm'>('list');
+    // Customer id whose 360° profile drawer is open (null = closed).
+    const [profileId, setProfileId] = useState<string | null>(null);
 
     async function load() {
         setLoading(true);
@@ -598,17 +601,28 @@ export default function CRM() {
                                             {c.total_orders}
                                         </TableCell>
                                         <TableCell className="px-5 text-center align-top pt-4">
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => {
-                                                    setEditing(c);
-                                                    setIsModalOpen(true);
-                                                }}
-                                                className="h-8 gap-1 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                                            >
-                                                <Edit2 size={13} /> {t.common.edit}
-                                            </Button>
+                                            <div className="inline-flex items-center gap-1.5">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => setProfileId(c.id)}
+                                                    title="ดูโปรไฟล์ 360°"
+                                                    className="h-8 gap-1 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                                                >
+                                                    <UserCircle size={13} /> โปรไฟล์
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => {
+                                                        setEditing(c);
+                                                        setIsModalOpen(true);
+                                                    }}
+                                                    className="h-8 gap-1 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                                                >
+                                                    <Edit2 size={13} /> {t.common.edit}
+                                                </Button>
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -632,6 +646,10 @@ export default function CRM() {
                 onImported={() => void load()}
                 existingCustomers={customers}
             />
+
+            {profileId && (
+                <CustomerProfile customerId={profileId} onClose={() => setProfileId(null)} />
+            )}
         </div>
     );
 }
