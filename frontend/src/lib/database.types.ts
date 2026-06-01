@@ -472,12 +472,14 @@ export type Database = {
           created_by: string | null; customer_id: string | null; discount: number; id: string;
           notes: string | null; status: string; subtotal: number; total: number;
           updated_at: string; valid_until: string | null; vat: number;
+          last_followup_at: string | null;
         }
         Insert: {
           code: string; converted_to_order_id?: string | null; created_at?: string;
           created_by?: string | null; customer_id?: string | null; discount?: number; id?: string;
           notes?: string | null; status?: string; subtotal?: number; total?: number;
           updated_at?: string; valid_until?: string | null; vat?: number;
+          last_followup_at?: string | null;
         }
         Update: Partial<Database['public']['Tables']['quotes']['Insert']>
         Relationships: []

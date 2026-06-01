@@ -653,6 +653,51 @@ export const winbackApi = {
 };
 
 // =========================================================================
+// Quote follow-up (Phase 2, "กู้ตะกร้า") — chase open quotes that never became
+// an order. Backed by the open_quotes view (migration 0021).
+// =========================================================================
+export interface OpenQuote {
+  id: string;
+  code: string;
+  status: string;
+  total: number;
+  created_at: string;
+  valid_until: string | null;
+  last_followup_at: string | null;
+  customer_id: string | null;
+  customer_name: string | null;
+  customer_code: string | null;
+  age_days: number;
+  conversation_id: string | null;   // null if the quote's customer has no LINE chat
+  external_id: string | null;
+}
+
+export const quoteFollowupApi = {
+  /** Open (unconverted, non-draft/rejected) quotes — highest value first. */
+  async listOpen(): Promise<OpenQuote[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('open_quotes')
+      .select('*')
+      .order('total', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as OpenQuote[];
+  },
+
+  /** Send a follow-up over the quote's customer LINE chat (logs to Omni-Chat +
+   *  pushes to LINE), then stamp the quote so it's not chased again too soon. */
+  async sendFollowup(input: { quoteId: string; conversationId: string; text: string }): Promise<void> {
+    await chatInboxApi.sendMessage({ conversationId: input.conversationId, content: input.text });
+    const { error } = await supabase
+      .from('quotes')
+      .update({ last_followup_at: new Date().toISOString() })
+      .eq('id', input.quoteId);
+    if (error) throw error;
+  },
+};
+
+// =========================================================================
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {
