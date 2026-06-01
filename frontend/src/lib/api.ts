@@ -550,6 +550,51 @@ export const loyaltyApi = {
 };
 
 // =========================================================================
+// Reorder reminders (Phase 1) — customers due to reorder consumables, nudged
+// over their linked LINE chat. Backed by the reorder_due view (migration 0019).
+// =========================================================================
+export interface ReorderDue {
+  id: string;
+  code: string | null;
+  name: string;
+  tier: string;
+  total_orders: number;
+  total_spent: number;
+  loyalty_points: number;
+  last_reorder_reminder_at: string | null;
+  last_purchase_at: string;
+  recency_days: number;
+  conversation_id: string;
+  external_id: string;
+}
+
+export const reorderApi = {
+  /** Customers due for a reorder reminder, most overdue first. */
+  async listDue(): Promise<ReorderDue[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('reorder_due')
+      .select('*')
+      .order('recency_days', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as ReorderDue[];
+  },
+
+  /** Send a reorder reminder: post it into the customer's LINE conversation
+   *  (logs the message + pushes to LINE via the existing send path), then
+   *  stamp the customer so they're not nudged again too soon. */
+  async sendReminder(input: { customerId: string; conversationId: string; text: string }): Promise<void> {
+    await chatInboxApi.sendMessage({ conversationId: input.conversationId, content: input.text });
+    const { error } = await supabase
+      .from('customers')
+      .update({ last_reorder_reminder_at: new Date().toISOString() })
+      .eq('id', input.customerId);
+    if (error) throw error;
+  },
+};
+
+// =========================================================================
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {

@@ -181,7 +181,7 @@ export type Database = {
           id: string; loyalty_points: number; mobile: string | null; name: string; notes: string | null;
           phone: string | null; shipping_address: Json | null; source_channel: string | null;
           tags: string[]; tax_id: string | null; tier: string; total_orders: number; total_spent: number;
-          updated_at: string; user_id: string | null;
+          updated_at: string; user_id: string | null; last_reorder_reminder_at: string | null;
         }
         Insert: {
           billing_address?: Json | null; code?: string | null; contact_name?: string | null;
@@ -189,7 +189,7 @@ export type Database = {
           id?: string; loyalty_points?: number; mobile?: string | null; name: string; notes?: string | null;
           phone?: string | null; shipping_address?: Json | null; source_channel?: string | null;
           tags?: string[]; tax_id?: string | null; tier?: string; total_orders?: number; total_spent?: number;
-          updated_at?: string; user_id?: string | null;
+          updated_at?: string; user_id?: string | null; last_reorder_reminder_at?: string | null;
         }
         Update: Partial<Database['public']['Tables']['customers']['Insert']>
         Relationships: []

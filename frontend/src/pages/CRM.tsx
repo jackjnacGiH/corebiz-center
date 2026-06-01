@@ -18,6 +18,7 @@ import {
     FileDown,
     Trash2,
     Target,
+    Bell,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
@@ -30,6 +31,7 @@ import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
 import CustomerSegments from '../components/CustomerSegments';
 import CustomerProfile from '../components/CustomerProfile';
+import CustomerReorder from '../components/CustomerReorder';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -76,8 +78,8 @@ export default function CRM() {
     const [isImportOpen, setIsImportOpen] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [bulkDeleting, setBulkDeleting] = useState(false);
-    // Which view: the customer list, or the RFM segment breakdown.
-    const [view, setView] = useState<'list' | 'rfm'>('list');
+    // Which view: customer list, RFM segments, or reorder reminders.
+    const [view, setView] = useState<'list' | 'rfm' | 'reorder'>('list');
     // Customer id whose 360° profile drawer is open (null = closed).
     const [profileId, setProfileId] = useState<string | null>(null);
 
@@ -357,9 +359,20 @@ export default function CRM() {
                 >
                     <Target size={14} /> กลุ่มลูกค้า (RFM)
                 </button>
+                <button
+                    type="button"
+                    onClick={() => setView('reorder')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'reorder' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <Bell size={14} /> เตือนซื้อซ้ำ
+                </button>
             </div>
 
             {view === 'rfm' && <CustomerSegments />}
+            {view === 'reorder' && <CustomerReorder />}
 
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
