@@ -1,7 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import {
     X, Loader2, AlertCircle, ShoppingCart, FileText, Award, MessageSquare,
-    MapPin, Phone, Mail, Smartphone, Building2, Tag, Hash, Star,
+    MapPin, Phone, Mail, Smartphone, Building2, Tag, Hash, Star, Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -10,6 +10,7 @@ import {
     type RfmSegment,
 } from '../lib/api';
 import type { Json } from '../lib/database.types';
+import LoyaltyActionsModal from './LoyaltyActionsModal';
 
 const baht = (n: unknown) => '฿' + new Intl.NumberFormat('th-TH', { maximumFractionDigits: 0 }).format(Math.round(Number(n) || 0));
 const fmtDate = (iso: string | null | undefined) =>
@@ -58,12 +59,15 @@ const CHANNEL_LABEL: Record<string, string> = {
     whatsapp: 'WhatsApp', livechat: 'เว็บแชท', email: 'Email',
 };
 
-function Section({ icon, title, count, children }: { icon: ReactNode; title: string; count?: number; children: ReactNode }) {
+function Section({ icon, title, count, action, children }: { icon: ReactNode; title: string; count?: number; action?: ReactNode; children: ReactNode }) {
     return (
         <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
             <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50 flex items-center gap-2 text-xs font-bold text-neutral-700">
                 {icon} {title}
-                {count != null && <span className="ml-auto text-neutral-400 font-medium tabular-nums">{count}</span>}
+                <span className="ml-auto flex items-center gap-2">
+                    {count != null && <span className="text-neutral-400 font-medium tabular-nums">{count}</span>}
+                    {action}
+                </span>
             </div>
             <div className="divide-y divide-neutral-100">{children}</div>
         </div>
@@ -94,17 +98,21 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
     const [data, setData] = useState<CustomerProfileBundle | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
+    const [manageLoyalty, setManageLoyalty] = useState(false);
 
-    useEffect(() => {
-        let cancelled = false;
+    const reload = useCallback(async () => {
         setLoading(true);
         setErr(null);
-        customerProfileApi.get(customerId)
-            .then((d) => { if (!cancelled) setData(d); })
-            .catch((e) => { if (!cancelled) setErr((e as Error).message); })
-            .finally(() => { if (!cancelled) setLoading(false); });
-        return () => { cancelled = true; };
+        try {
+            setData(await customerProfileApi.get(customerId));
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
     }, [customerId]);
+
+    useEffect(() => { void reload(); }, [reload]);
 
     useEffect(() => {
         function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -118,6 +126,7 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
     const shipping = fmtAddress(c?.shipping_address);
 
     return (
+        <>
         <div className="fixed inset-0 z-50 flex justify-end">
             <button type="button" aria-label="ปิด" className="absolute inset-0 bg-black/40" onClick={onClose} />
             <aside className="relative w-full max-w-2xl bg-neutral-50 h-full shadow-2xl overflow-y-auto">
@@ -230,7 +239,20 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                         </Section>
 
                         {/* Loyalty */}
-                        <Section icon={<Award size={13} className="text-indigo-500" />} title="แต้มสะสม" count={data.loyalty.length}>
+                        <Section
+                            icon={<Award size={13} className="text-indigo-500" />}
+                            title="แต้มสะสม"
+                            count={data.loyalty.length}
+                            action={
+                                <button
+                                    type="button"
+                                    onClick={() => setManageLoyalty(true)}
+                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800"
+                                >
+                                    <Sparkles size={11} /> จัดการแต้ม
+                                </button>
+                            }
+                        >
                             {data.loyalty.length === 0 && empty('ยังไม่มีรายการแต้ม')}
                             {data.loyalty.slice(0, 12).map((l) => (
                                 <div key={l.id} className="px-3 py-2 flex items-center gap-2 text-xs">
@@ -281,6 +303,16 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                 )}
             </aside>
         </div>
+        {manageLoyalty && c && (
+            <LoyaltyActionsModal
+                customerId={c.id}
+                customerName={c.name}
+                balance={c.loyalty_points}
+                onClose={() => setManageLoyalty(false)}
+                onDone={() => void reload()}
+            />
+        )}
+        </>
     );
 }
 

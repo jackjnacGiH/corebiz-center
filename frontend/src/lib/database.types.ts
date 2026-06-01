@@ -525,6 +525,14 @@ export type Database = {
     Functions: {
       is_owner: { Args: Record<string, never>; Returns: boolean }
       is_staff: { Args: Record<string, never>; Returns: boolean }
+      adjust_loyalty_points: {
+        Args: { p_customer_id: string; p_points: number; p_note?: string | null }
+        Returns: number
+      }
+      redeem_loyalty_points: {
+        Args: { p_customer_id: string; p_points: number; p_discount: number; p_label?: string | null }
+        Returns: { coupon_code: string; new_balance: number }[]
+      }
       match_knowledge: {
         Args: {
           query_embedding: string; match_threshold?: number; match_count?: number;

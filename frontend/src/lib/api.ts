@@ -522,6 +522,34 @@ export const customerProfileApi = {
 };
 
 // =========================================================================
+// Loyalty points — manual adjust + redeem-for-coupon (Phase 1).
+// Backed by the security-definer RPCs in migration 0018.
+// =========================================================================
+export const loyaltyApi = {
+  /** Grant (+) or deduct (−) points manually. Returns the new balance. */
+  async adjust(customerId: string, points: number, note?: string): Promise<number> {
+    const { data, error } = await supabase.rpc('adjust_loyalty_points', {
+      p_customer_id: customerId, p_points: points, p_note: note ?? null,
+    });
+    if (error) throw error;
+    return data as number;
+  },
+
+  /** Redeem points for a single-use fixed-baht discount coupon. Returns the
+   *  coupon code + the customer's new balance. */
+  async redeem(
+    customerId: string, points: number, discount: number, label?: string,
+  ): Promise<{ coupon_code: string; new_balance: number }> {
+    const { data, error } = await supabase.rpc('redeem_loyalty_points', {
+      p_customer_id: customerId, p_points: points, p_discount: discount, p_label: label ?? null,
+    });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row as { coupon_code: string; new_balance: number };
+  },
+};
+
+// =========================================================================
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {
