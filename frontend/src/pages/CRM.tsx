@@ -21,6 +21,7 @@ import {
     Bell,
     HeartHandshake,
     ShoppingCart,
+    Smile,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
@@ -36,6 +37,7 @@ import CustomerProfile from '../components/CustomerProfile';
 import CustomerReorder from '../components/CustomerReorder';
 import CustomerWinback from '../components/CustomerWinback';
 import CustomerQuoteFollowup from '../components/CustomerQuoteFollowup';
+import CustomerSurvey from '../components/CustomerSurvey';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -83,7 +85,7 @@ export default function CRM() {
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [bulkDeleting, setBulkDeleting] = useState(false);
     // Which CRM view is active.
-    const [view, setView] = useState<'list' | 'rfm' | 'reorder' | 'winback' | 'quotes'>('list');
+    const [view, setView] = useState<'list' | 'rfm' | 'reorder' | 'winback' | 'quotes' | 'nps'>('list');
     // Customer id whose 360° profile drawer is open (null = closed).
     const [profileId, setProfileId] = useState<string | null>(null);
 
@@ -393,12 +395,23 @@ export default function CRM() {
                 >
                     <ShoppingCart size={14} /> กู้ตะกร้า
                 </button>
+                <button
+                    type="button"
+                    onClick={() => setView('nps')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'nps' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <Smile size={14} /> ความพึงพอใจ
+                </button>
             </div>
 
             {view === 'rfm' && <CustomerSegments />}
             {view === 'reorder' && <CustomerReorder />}
             {view === 'winback' && <CustomerWinback />}
             {view === 'quotes' && <CustomerQuoteFollowup />}
+            {view === 'nps' && <CustomerSurvey />}
 
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

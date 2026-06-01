@@ -698,6 +698,99 @@ export const quoteFollowupApi = {
 };
 
 // =========================================================================
+// Satisfaction surveys / NPS (Phase 3) — send a LINE survey link, customer
+// rates on a public page (no login). Backed by migration 0022:
+// survey_due view + create_survey (staff) + submit_survey (anon) RPCs.
+// =========================================================================
+export interface SurveyDue {
+  id: string;
+  code: string | null;
+  name: string;
+  tier: string;
+  total_orders: number;
+  total_spent: number;
+  conversation_id: string;
+  external_id: string;
+  last_survey_at: string | null;
+}
+
+export interface SurveyResult {
+  id: string;
+  customer_id: string | null;
+  conversation_id: string | null;
+  type: string;
+  score: number | null;
+  comment: string | null;
+  created_at: string;
+  answered_at: string | null;
+  customer_name: string | null;
+  customer_code: string | null;
+}
+
+export const surveyApi = {
+  /** Real customers (paid + LINE) due for a satisfaction survey, top value first. */
+  async listDue(): Promise<SurveyDue[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('survey_due')
+      .select('*')
+      .order('total_spent', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as SurveyDue[];
+  },
+
+  /** All surveys (answered + pending) with the customer name, newest first. */
+  async listResults(limit = 200): Promise<SurveyResult[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('surveys')
+      .select('*, customer:customers(name, code)')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((data ?? []) as any[]).map((r) => ({
+      id: r.id,
+      customer_id: r.customer_id,
+      conversation_id: r.conversation_id,
+      type: r.type,
+      score: r.score,
+      comment: r.comment,
+      created_at: r.created_at,
+      answered_at: r.answered_at,
+      customer_name: r.customer?.name ?? null,
+      customer_code: r.customer?.code ?? null,
+    }));
+  },
+
+  /** Create a survey for the customer, append its rating link to `text`, and
+   *  send it over their LINE chat (logs to Omni-Chat + pushes to LINE). */
+  async createAndSend(input: { customerId: string; conversationId: string; text: string }): Promise<void> {
+    const { data: token, error } = await supabase.rpc('create_survey', {
+      p_customer_id: input.customerId,
+      p_conversation_id: input.conversationId,
+    });
+    if (error) throw error;
+    const link = `${window.location.origin}/survey/${token}`;
+    const content = `${input.text}\n\n⭐ ให้คะแนนความพึงพอใจ (ใช้เวลาแค่ 30 วินาที): ${link}`;
+    await chatInboxApi.sendMessage({ conversationId: input.conversationId, content });
+  },
+
+  /** Public (anon): record an answer by token. Returns false if already answered. */
+  async submit(token: string, score: number, comment?: string): Promise<boolean> {
+    const { data, error } = await supabase.rpc('submit_survey', {
+      p_token: token,
+      p_score: score,
+      p_comment: comment ?? null,
+    });
+    if (error) throw error;
+    return Boolean(data);
+  },
+};
+
+// =========================================================================
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {

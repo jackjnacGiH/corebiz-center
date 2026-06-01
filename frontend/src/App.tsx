@@ -10,6 +10,7 @@ import Marketing from './pages/Marketing';
 import OpenclawRAG from './pages/OpenclawRAG';
 import KnowledgeChat from './pages/KnowledgeChat';
 import CustomerChat from './pages/CustomerChat';
+import SurveyPage from './pages/SurveyPage';
 import Affiliate from './pages/Affiliate';
 import Settings from './pages/Settings';
 import Login from './pages/auth/Login';
@@ -31,6 +32,8 @@ function App() {
             {/* Public customer-facing AI chat widget — designed to be
                 iframed onto jnac.co.th. No auth required. */}
             <Route path="/widget" element={<CustomerChat />} />
+            {/* Public satisfaction / NPS rating page reached from a LINE link. */}
+            <Route path="/survey/:token" element={<SurveyPage />} />
             <Route
               path="/"
               element={

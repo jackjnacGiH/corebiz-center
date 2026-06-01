@@ -541,6 +541,14 @@ export type Database = {
         Args: { p_discount: number; p_label?: string | null }
         Returns: string
       }
+      create_survey: {
+        Args: { p_customer_id: string; p_conversation_id?: string | null; p_order_id?: string | null }
+        Returns: string
+      }
+      submit_survey: {
+        Args: { p_token: string; p_score: number; p_comment?: string | null }
+        Returns: boolean
+      }
       match_knowledge: {
         Args: {
           query_embedding: string; match_threshold?: number; match_count?: number;
