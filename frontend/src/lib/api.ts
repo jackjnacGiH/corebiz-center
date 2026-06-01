@@ -419,6 +419,63 @@ export const customersApi = {
 };
 
 // =========================================================================
+// Customer RFM — Recency / Frequency / Monetary scores + segment.
+// Backed by the `customer_rfm` view (migration 0017). Read-only.
+// =========================================================================
+export type RfmSegment =
+  | 'champion'
+  | 'loyal'
+  | 'new'
+  | 'cant_lose'
+  | 'at_risk'
+  | 'hibernating'
+  | 'needs_attention'
+  | 'prospect';
+
+export interface CustomerRFM {
+  id: string;
+  code: string | null;
+  name: string;
+  contact_name: string | null;
+  customer_type: string;
+  tier: string;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  tags: string[];
+  loyalty_points: number;
+  created_at: string;
+  /** ISO date of the last paid order, or null if never purchased. */
+  last_purchase_at: string | null;
+  /** Days since last paid order, or null. */
+  recency_days: number | null;
+  frequency: number;        // total paid orders
+  monetary: number;         // total paid spend (฿)
+  r_score: number;          // 0–5
+  f_score: number;          // 0–5
+  m_score: number;          // 0–5
+  fm_score: number;         // rounded average of F & M
+  segment: RfmSegment;
+}
+
+export const customerRfmApi = {
+  /** RFM scores + segment for every customer (most valuable first). */
+  async list(): Promise<CustomerRFM[]> {
+    // `customer_rfm` is a read-only VIEW kept OUT of the generated Database
+    // type — adding it there broke from() resolution for other relations. So
+    // we query it through an untyped client handle and cast the result.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('customer_rfm')
+      .select('*')
+      .order('monetary', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as CustomerRFM[];
+  },
+};
+
+// =========================================================================
 // Customer branches
 // =========================================================================
 export const customerBranchesApi = {

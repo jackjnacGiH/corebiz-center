@@ -17,6 +17,7 @@ import {
     Upload,
     FileDown,
     Trash2,
+    Target,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
@@ -27,6 +28,7 @@ import CustomerModal, { type CustomerFormData } from '../components/CustomerModa
 import ImportCustomersModal from '../components/ImportCustomersModal';
 import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
+import CustomerSegments from '../components/CustomerSegments';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -73,6 +75,8 @@ export default function CRM() {
     const [isImportOpen, setIsImportOpen] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [bulkDeleting, setBulkDeleting] = useState(false);
+    // Which view: the customer list, or the RFM segment breakdown.
+    const [view, setView] = useState<'list' | 'rfm'>('list');
 
     async function load() {
         setLoading(true);
@@ -328,12 +332,40 @@ export default function CRM() {
                 />
             </div>
 
+            {/* View toggle: customer list ↔ RFM segments */}
+            <div className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start">
+                <button
+                    type="button"
+                    onClick={() => setView('list')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'list' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <Users size={14} /> รายชื่อลูกค้า
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setView('rfm')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'rfm' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <Target size={14} /> กลุ่มลูกค้า (RFM)
+                </button>
+            </div>
+
+            {view === 'rfm' && <CustomerSegments />}
+
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                     ✗ {err}
                 </div>
             )}
 
+            {view === 'list' && (
+            <>
             {/* Selection action bar */}
             <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-500">
                 <span>
@@ -584,6 +616,8 @@ export default function CRM() {
                     </Table>
                 </CardContent>
             </Card>
+            </>
+            )}
 
             <CustomerModal
                 isOpen={isModalOpen}
