@@ -172,6 +172,10 @@ export default function Inventory() {
   useRealtimeTable('product_groups', () => void load());
 
   // Filter + sort
+  const searchTokens = useMemo(
+    () => search.toLowerCase().split(/\s+/).filter(Boolean),
+    [search],
+  );
   const filtered = useMemo(() => {
     let rows = products.filter(p => {
       if (selectedCategoryId !== 'all' && p.category_id !== selectedCategoryId) return false;
@@ -179,13 +183,12 @@ export default function Inventory() {
       if (stockFilter === 'low' && !(p.low_stock || p.total_quantity === 0)) return false;
       if (stockFilter === 'out' && p.total_quantity !== 0) return false;
 
-      if (!search) return true;
-      const s = search.toLowerCase();
-      return p.name_th.toLowerCase().includes(s)
-        || (p.name_en?.toLowerCase().includes(s) ?? false)
-        || p.sku.toLowerCase().includes(s)
-        || (p.brand?.toLowerCase().includes(s) ?? false)
-        || (p.barcode?.toLowerCase().includes(s) ?? false);
+      // Tokenized AND search — every query word must appear in the product's
+      // combined searchable text. Robust to irregular spacing in stored names
+      // (some SKUs have a double space), word order, and punctuation spacing.
+      if (searchTokens.length === 0) return true;
+      const hay = `${p.name_th} ${p.name_en ?? ''} ${p.sku} ${p.brand ?? ''} ${p.barcode ?? ''}`.toLowerCase();
+      return searchTokens.every(tok => hay.includes(tok));
     });
 
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -201,7 +204,7 @@ export default function Inventory() {
       }
     });
     return rows;
-  }, [products, search, selectedCategoryId, stockFilter, sortKey, sortDir]);
+  }, [products, searchTokens, selectedCategoryId, stockFilter, sortKey, sortDir]);
 
   // KPI stats
   const stats = useMemo(() => {
