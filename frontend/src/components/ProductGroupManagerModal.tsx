@@ -74,6 +74,7 @@ export default function ProductGroupManagerModal({ isOpen, onClose, onChanged }:
     const [err, setErr] = useState<string | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
+    const [groupSearch, setGroupSearch] = useState('');
 
     async function loadAll() {
         setLoading(true);
@@ -103,6 +104,16 @@ export default function ProductGroupManagerModal({ isOpen, onClose, onChanged }:
         () => groups.find((g) => g.id === selectedId) ?? null,
         [groups, selectedId],
     );
+
+    const filteredGroups = useMemo(() => {
+        const q = groupSearch.trim().toLowerCase();
+        if (!q) return groups;
+        return groups.filter(
+            (g) =>
+                g.name.toLowerCase().includes(q) ||
+                (g.description?.toLowerCase().includes(q) ?? false),
+        );
+    }, [groups, groupSearch]);
 
     const members = useMemo(
         () => products.filter((p) => p.group_id === selectedId),
@@ -190,7 +201,7 @@ export default function ProductGroupManagerModal({ isOpen, onClose, onChanged }:
                 <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
                     {/* ── Left: list of groups ─────────────────────────── */}
                     <div className="md:col-span-4 border-r border-neutral-200 flex flex-col overflow-hidden">
-                        <div className="p-3 border-b border-neutral-200">
+                        <div className="p-3 border-b border-neutral-200 space-y-2">
                             <Button
                                 type="button"
                                 onClick={() => setShowCreate(true)}
@@ -198,6 +209,33 @@ export default function ProductGroupManagerModal({ isOpen, onClose, onChanged }:
                             >
                                 <Plus size={14} /> สร้างกลุ่มใหม่
                             </Button>
+                            <div className="relative">
+                                <Search
+                                    size={13}
+                                    className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"
+                                />
+                                <Input
+                                    value={groupSearch}
+                                    onChange={(e) => setGroupSearch(e.target.value)}
+                                    placeholder="ค้นหากลุ่ม..."
+                                    className="pl-9 h-9"
+                                />
+                                {groupSearch && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setGroupSearch('')}
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700"
+                                        title="ล้างคำค้น"
+                                    >
+                                        <X size={13} />
+                                    </button>
+                                )}
+                            </div>
+                            {groupSearch.trim() && (
+                                <div className="text-[11px] text-neutral-500 tabular-nums px-0.5">
+                                    พบ {filteredGroups.length} กลุ่ม
+                                </div>
+                            )}
                         </div>
                         <div className="flex-1 overflow-y-auto">
                             {loading && groups.length === 0 && (
@@ -211,7 +249,12 @@ export default function ProductGroupManagerModal({ isOpen, onClose, onChanged }:
                                     ยังไม่มีกลุ่ม — กดสร้างกลุ่มใหม่
                                 </div>
                             )}
-                            {groups.map((g) => (
+                            {!loading && groups.length > 0 && filteredGroups.length === 0 && (
+                                <div className="p-8 text-center text-sm text-neutral-500">
+                                    ไม่พบกลุ่มที่ตรงกับ "{groupSearch}"
+                                </div>
+                            )}
+                            {filteredGroups.map((g) => (
                                 <button
                                     key={g.id}
                                     type="button"
