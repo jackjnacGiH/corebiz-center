@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { X, Loader2, Gift, Plus, Minus, Check, Copy, AlertCircle, Sparkles } from 'lucide-react';
+import { X, Loader2, Gift, Plus, Minus, Check, Copy, AlertCircle, Sparkles, ShoppingBag, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { loyaltyApi } from '../lib/api';
+import { loyaltyApi, tierApi } from '../lib/api';
 
 const baht = (n: number) => '฿' + new Intl.NumberFormat('th-TH').format(n);
 const nf = (n: number) => new Intl.NumberFormat('th-TH').format(n);
@@ -38,7 +38,7 @@ export default function LoyaltyActionsModal({
     onClose: () => void;
     onDone: () => void;
 }) {
-    const [tab, setTab] = useState<'redeem' | 'adjust'>('redeem');
+    const [tab, setTab] = useState<'redeem' | 'adjust' | 'earn'>('redeem');
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [coupon, setCoupon] = useState<{ code: string; discount: number; points: number } | null>(null);
@@ -47,6 +47,26 @@ export default function LoyaltyActionsModal({
     const [adjSign, setAdjSign] = useState<1 | -1>(1);
     const [adjPoints, setAdjPoints] = useState('');
     const [adjNote, setAdjNote] = useState('');
+
+    const [earnAmount, setEarnAmount] = useState('');
+    const [earnResult, setEarnResult] = useState<{ points_granted: number; multiplier: number; new_balance: number } | null>(null);
+
+    async function doEarn() {
+        const amt = parseInt(earnAmount.replace(/\D/g, ''), 10);
+        if (!amt || busy) return;
+        setBusy(true);
+        setErr(null);
+        try {
+            const res = await tierApi.grantPoints(customerId, amt, `แต้มจากยอดซื้อ ฿${nf(amt)}`);
+            setEarnResult(res);
+            setEarnAmount('');
+            onDone();
+        } catch (e) {
+            setErr(translateErr((e as Error).message));
+        } finally {
+            setBusy(false);
+        }
+    }
 
     async function doRedeem(points: number, discount: number) {
         if (busy) return;
@@ -135,6 +155,10 @@ export default function LoyaltyActionsModal({
                                 className={cn('flex-1 py-2 text-xs font-semibold inline-flex items-center justify-center gap-1.5', tab === 'redeem' ? 'text-indigo-700 border-b-2 border-indigo-500' : 'text-neutral-500')}>
                                 <Gift size={14} /> แลกแต้ม
                             </button>
+                            <button type="button" onClick={() => { setTab('earn'); setErr(null); setEarnResult(null); }}
+                                className={cn('flex-1 py-2 text-xs font-semibold inline-flex items-center justify-center gap-1.5', tab === 'earn' ? 'text-indigo-700 border-b-2 border-indigo-500' : 'text-neutral-500')}>
+                                <ShoppingBag size={14} /> จากยอดซื้อ
+                            </button>
                             <button type="button" onClick={() => { setTab('adjust'); setErr(null); }}
                                 className={cn('flex-1 py-2 text-xs font-semibold inline-flex items-center justify-center gap-1.5', tab === 'adjust' ? 'text-indigo-700 border-b-2 border-indigo-500' : 'text-neutral-500')}>
                                 <Plus size={14} /> ปรับแต้ม
@@ -147,7 +171,36 @@ export default function LoyaltyActionsModal({
                             </div>
                         )}
 
-                        {tab === 'redeem' ? (
+                        {tab === 'earn' ? (
+                            <div className="p-3 flex flex-col gap-2.5">
+                                {earnResult ? (
+                                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-center">
+                                        <div className="inline-flex items-center gap-1 text-emerald-700 font-bold text-lg"><Star size={16} className="fill-emerald-400 text-emerald-400" /> +{nf(earnResult.points_granted)} แต้ม</div>
+                                        <div className="text-[11px] text-emerald-600 mt-0.5">ตัวคูณระดับ x{earnResult.multiplier} · ยอดแต้มใหม่ {nf(earnResult.new_balance)}</div>
+                                    </div>
+                                ) : (
+                                    <p className="text-[11px] text-neutral-500">ใส่ยอดซื้อ ระบบจะให้แต้มตามฐาน (1 แต้ม/฿100) คูณตัวคูณของระดับลูกค้าให้อัตโนมัติ</p>
+                                )}
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-neutral-400">฿</span>
+                                    <input
+                                        type="text" inputMode="numeric" value={earnAmount}
+                                        onChange={(e) => { setEarnAmount(e.target.value.replace(/\D/g, '').slice(0, 9)); setEarnResult(null); }}
+                                        placeholder="ยอดซื้อ (บาท)"
+                                        className="flex-1 h-9 rounded-md border border-neutral-200 px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => void doEarn()}
+                                    disabled={busy || !earnAmount}
+                                    className="h-9 rounded-md bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                >
+                                    {busy ? <Loader2 size={14} className="animate-spin" /> : <ShoppingBag size={14} />}
+                                    ให้แต้มจากยอดซื้อ
+                                </button>
+                            </div>
+                        ) : tab === 'redeem' ? (
                             <div className="p-3 grid grid-cols-2 gap-2">
                                 {REWARD_TIERS.map((r) => {
                                     const ok = balance >= r.points;

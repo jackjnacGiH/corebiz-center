@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Loader2, RefreshCw, AlertCircle, UserPlus, Gift, Users, Check, Copy, Link2,
-  Search, X, Award, Sparkles, Clock,
+  Search, X, Award, Sparkles, Clock, Trophy, Info, Link as LinkIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { referralApi, customersApi, type ReferralRow } from '../lib/api';
+import { referralApi, customersApi, type ReferralRow, type ReferralLeader } from '../lib/api';
 import type { Customer } from '../lib/database.types';
 
 export default function CustomerReferral() {
   const [rows, setRows] = useState<ReferralRow[]>([]);
+  const [leaders, setLeaders] = useState<ReferralLeader[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [linkFor, setLinkFor] = useState<ReferralRow | null>(null);
 
   // record-a-referral form
   const [referrer, setReferrer] = useState<Customer | null>(null);
@@ -31,9 +33,10 @@ export default function CustomerReferral() {
     setLoading(true);
     setErr(null);
     try {
-      const [r, c] = await Promise.all([referralApi.listOverview(), customersApi.list()]);
+      const [r, c, lb] = await Promise.all([referralApi.listOverview(), customersApi.list(), referralApi.leaderboard()]);
       setRows(r);
       setCustomers(c);
+      setLeaders(lb);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -134,6 +137,33 @@ export default function CustomerReferral() {
         <Stat icon={<Award size={14} />} tone="emerald" label="จ่ายรางวัลแล้ว" value={String(rewarded)} />
         <Stat icon={<Sparkles size={14} />} tone="violet" label="แต้มที่แจกไป" value={pointsGiven.toLocaleString()} />
       </div>
+
+      {/* Leaderboard */}
+      {leaders.length > 0 && (
+        <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
+          <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50 text-xs font-bold text-neutral-700 flex items-center gap-1.5">
+            <Trophy size={13} className="text-amber-500" /> อันดับผู้แนะนำ (Top referrers)
+          </div>
+          <div className="divide-y divide-neutral-100">
+            {leaders.slice(0, 5).map((l, i) => (
+              <div key={l.referrer_id} className="flex items-center gap-3 px-3 py-2">
+                <div className={cn('w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-extrabold flex-shrink-0',
+                  i === 0 ? 'bg-amber-100 text-amber-700' : i === 1 ? 'bg-slate-100 text-slate-600' : i === 2 ? 'bg-orange-100 text-orange-700' : 'bg-neutral-100 text-neutral-500')}>
+                  {i + 1}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-neutral-800 truncate">{l.referrer_name ?? '—'}</div>
+                  <div className="text-[10px] text-neutral-400">{l.referrer_code ?? ''}</div>
+                </div>
+                <div className="text-right text-[10px] text-neutral-500 leading-tight">
+                  <div><b className="text-emerald-600">{l.rewarded_count}</b> สำเร็จ · {l.total_referrals} ทั้งหมด</div>
+                  {l.points_earned > 0 && <div className="text-violet-600">+{l.points_earned.toLocaleString()} แต้ม</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Record a referral */}
       <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
@@ -250,6 +280,13 @@ export default function CustomerReferral() {
                       <div className="text-xs font-medium text-neutral-800 truncate max-w-[180px]">{r.referee_name}</div>
                       {r.referee_phone && <div className="text-[10px] text-neutral-400">{r.referee_phone}</div>}
                       {r.note && <div className="text-[10px] text-neutral-400 truncate max-w-[180px]">📝 {r.note}</div>}
+                      {r.referee_customer_name ? (
+                        <div className="text-[10px] text-emerald-600 inline-flex items-center gap-0.5 mt-0.5"><LinkIcon size={9} /> {r.referee_customer_name}</div>
+                      ) : r.status !== 'rewarded' ? (
+                        <button type="button" onClick={() => setLinkFor(r)} className="text-[10px] text-indigo-500 hover:text-indigo-600 inline-flex items-center gap-0.5 mt-0.5">
+                          <LinkIcon size={9} /> ผูกลูกค้า
+                        </button>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2">
                       <div className="text-xs text-neutral-700 truncate max-w-[150px]">{r.referrer_name ?? '—'}</div>
@@ -299,6 +336,64 @@ export default function CustomerReferral() {
       {rewardFor && (
         <RewardModal row={rewardFor} onClose={() => setRewardFor(null)} onDone={() => { setRewardFor(null); void load(); }} />
       )}
+      {linkFor && (
+        <LinkModal row={linkFor} customers={customers} onClose={() => setLinkFor(null)} onDone={() => { setLinkFor(null); void load(); }} />
+      )}
+    </div>
+  );
+}
+
+function LinkModal({ row, customers, onClose, onDone }: {
+  row: ReferralRow; customers: Customer[]; onClose: () => void; onDone: () => void;
+}) {
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return customers.slice(0, 30);
+    return customers.filter((c) => c.name?.toLowerCase().includes(s) || c.code?.toLowerCase().includes(s) || c.phone?.includes(s)).slice(0, 30);
+  }, [customers, q]);
+
+  async function pick(c: Customer) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await referralApi.linkCustomer(row.id, c.id);
+      onDone();
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-white rounded-xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
+          <h3 className="text-sm font-bold text-neutral-800 inline-flex items-center gap-1.5"><LinkIcon size={14} className="text-indigo-500" /> ผูกเพื่อนกับลูกค้า</h3>
+          <button type="button" onClick={onClose} className="text-neutral-400 hover:text-neutral-600"><X size={16} /></button>
+        </div>
+        <div className="p-3">
+          <p className="text-[11px] text-neutral-500 mb-2">เพื่อน: <b className="text-neutral-800">{row.referee_name}</b> → เลือกบัญชีลูกค้าที่ตรงกัน (เมื่อผูกแล้ว จ่ายรางวัลเป็นแต้มให้เพื่อนได้)</p>
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาชื่อ / รหัส / เบอร์..."
+            className="w-full rounded-md border border-neutral-200 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-400 mb-2" />
+          {err && <div className="text-xs text-red-600 mb-2 flex items-center gap-1"><AlertCircle size={13} /> {err}</div>}
+          <div className="max-h-60 overflow-y-auto rounded-lg border border-neutral-100">
+            {busy ? (
+              <div className="p-4 text-center text-xs text-neutral-400"><Loader2 size={14} className="animate-spin inline mr-1" /> กำลังผูก...</div>
+            ) : filtered.length === 0 ? (
+              <div className="p-4 text-center text-xs text-neutral-400">ไม่พบลูกค้า</div>
+            ) : filtered.map((c) => (
+              <button key={c.id} type="button" onClick={() => void pick(c)}
+                className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-neutral-50 last:border-0">
+                <div className="text-sm text-neutral-800 truncate">{c.name}</div>
+                <div className="text-[10px] text-neutral-400 font-mono">{c.code ?? '—'}{c.phone ? ` · ${c.phone}` : ''}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -316,12 +411,14 @@ function Stat({ icon, label, value, tone }: {
 }
 
 function RewardModal({ row, onClose, onDone }: { row: ReferralRow; onClose: () => void; onDone: () => void }) {
+  const linked = !!row.referee_customer_id;
   const [referrerPoints, setReferrerPoints] = useState(100);
   const [refereeDiscount, setRefereeDiscount] = useState(200);
+  const [refereePoints, setRefereePoints] = useState(0);
   const [referrerDiscount, setReferrerDiscount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [result, setResult] = useState<{ referrer_coupon: string | null; referee_coupon: string | null } | null>(null);
+  const [result, setResult] = useState<{ referrer_coupon: string | null; referee_coupon: string | null; referee_points: number } | null>(null);
 
   async function go() {
     setBusy(true);
@@ -329,6 +426,7 @@ function RewardModal({ row, onClose, onDone }: { row: ReferralRow; onClose: () =
     try {
       const res = await referralApi.reward({
         referralId: row.id, referrerPoints, refereeDiscount, referrerDiscount,
+        refereePoints: linked ? refereePoints : 0,
       });
       setResult(res);
     } catch (e) {
@@ -352,6 +450,7 @@ function RewardModal({ row, onClose, onDone }: { row: ReferralRow; onClose: () =
             <p className="mt-2 text-sm font-semibold text-neutral-800">จ่ายรางวัลเรียบร้อย 🎉</p>
             <div className="mt-3 text-xs text-neutral-600 space-y-1.5">
               {referrerPoints > 0 && <div>ผู้แนะนำ <b>{row.referrer_name}</b> ได้รับ <b>+{referrerPoints}</b> แต้ม</div>}
+              {result.referee_points > 0 && <div>เพื่อนใหม่ <b>{row.referee_customer_name}</b> ได้รับ <b>+{result.referee_points}</b> แต้ม</div>}
               {result.referrer_coupon && <div>คูปองผู้แนะนำ: <code className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-mono">{result.referrer_coupon}</code></div>}
               {result.referee_coupon && <div>คูปองเพื่อนใหม่: <code className="bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded font-mono">{result.referee_coupon}</code></div>}
             </div>
@@ -365,6 +464,13 @@ function RewardModal({ row, onClose, onDone }: { row: ReferralRow; onClose: () =
             </div>
             <NumberRow label="แต้มให้ผู้แนะนำ" suffix="แต้ม" value={referrerPoints} onChange={setReferrerPoints} step={50} />
             <NumberRow label="คูปองส่วนลดเพื่อนใหม่" suffix="฿" value={refereeDiscount} onChange={setRefereeDiscount} step={50} />
+            {linked ? (
+              <NumberRow label="แต้มให้เพื่อนใหม่" suffix="แต้ม" value={refereePoints} onChange={setRefereePoints} step={50} />
+            ) : (
+              <div className="flex items-center gap-1.5 text-[10px] text-amber-600 bg-amber-50 rounded-md px-2 py-1.5">
+                <Info size={12} className="flex-shrink-0" /> ผูกเพื่อนกับบัญชีลูกค้าก่อน ถึงจะให้ "แต้ม" กับเพื่อนได้ (ตอนนี้ให้ได้เฉพาะคูปอง)
+              </div>
+            )}
             <NumberRow label="คูปองส่วนลดผู้แนะนำ (ถ้ามี)" suffix="฿" value={referrerDiscount} onChange={setReferrerDiscount} step={50} />
 
             {err && <div className="text-xs text-red-600 flex items-center gap-1"><AlertCircle size={13} /> {err}</div>}

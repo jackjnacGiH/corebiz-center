@@ -562,7 +562,15 @@ export type Database = {
         Returns: boolean
       }
       reward_referral: {
-        Args: { p_referral_id: string; p_referrer_points?: number; p_referee_discount?: number; p_referrer_discount?: number }
+        Args: { p_referral_id: string; p_referrer_points?: number; p_referee_discount?: number; p_referrer_discount?: number; p_referee_points?: number }
+        Returns: Json
+      }
+      link_referral_customer: {
+        Args: { p_referral_id: string; p_customer_id: string }
+        Returns: undefined
+      }
+      grant_purchase_points: {
+        Args: { p_customer_id: string; p_amount: number; p_note?: string | null }
         Returns: Json
       }
       match_knowledge: {

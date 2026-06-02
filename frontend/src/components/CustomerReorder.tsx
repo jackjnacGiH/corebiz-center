@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, RefreshCw, AlertCircle, Bell, Send, Check, Info, Clock, ShieldCheck } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Bell, Send, Check, Info, Clock, ShieldCheck, Wand2, CalendarClock, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { reorderApi, type ReorderDue } from '../lib/api';
+import { reorderApi, type ReorderDue, type ReorderForecast } from '../lib/api';
 
 const baht = (n: unknown) => '฿' + new Intl.NumberFormat('th-TH').format(Math.round(Number(n) || 0));
 
@@ -22,7 +22,9 @@ const TYPING_MS = () => rand(1600, 4200);     // pause before the message "sends
 const COOLDOWN_MS = () => rand(14000, 30000); // gap enforced before the next send (anti-burst)
 
 export default function CustomerReorder() {
+    const [mode, setMode] = useState<'forecast' | 'due'>('forecast');
     const [rows, setRows] = useState<ReorderDue[]>([]);
+    const [forecast, setForecast] = useState<ReorderForecast[]>([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [variantsText, setVariantsText] = useState(DEFAULT_VARIANTS.join('\n'));
@@ -36,7 +38,8 @@ export default function CustomerReorder() {
         setLoading(true);
         setErr(null);
         try {
-            setRows(await reorderApi.listDue());
+            if (mode === 'forecast') setForecast(await reorderApi.listForecast());
+            else setRows(await reorderApi.listDue());
             setSentIds(new Set());
         } catch (e) {
             setErr((e as Error).message);
@@ -44,7 +47,7 @@ export default function CustomerReorder() {
             setLoading(false);
         }
     }
-    useEffect(() => { void load(); }, []);
+    useEffect(() => { void load(); }, [mode]);
 
     // Tick once a second only while a cooldown is active (drives the countdown).
     useEffect(() => {
@@ -66,16 +69,16 @@ export default function CustomerReorder() {
         return variants[variantCursor.current];
     }
 
-    async function send(r: ReorderDue) {
-        if (sendingId || cooling) return;
-        setSendingId(r.id);
+    async function send(id: string, name: string, conversationId: string | null) {
+        if (sendingId || cooling || !conversationId) return;
+        setSendingId(id);
         setErr(null);
         try {
             // Mimic a human pausing to type before the message goes out.
             await new Promise((res) => setTimeout(res, TYPING_MS()));
-            const text = nextVariant().replaceAll('{ชื่อ}', r.name).replaceAll('{name}', r.name);
-            await reorderApi.sendReminder({ customerId: r.id, conversationId: r.conversation_id, text });
-            setSentIds((s) => new Set(s).add(r.id));
+            const text = nextVariant().replaceAll('{ชื่อ}', name).replaceAll('{name}', name);
+            await reorderApi.sendReminder({ customerId: id, conversationId, text });
+            setSentIds((s) => new Set(s).add(id));
             setCooldownUntil(Date.now() + COOLDOWN_MS()); // pace the next send
         } catch (e) {
             setErr(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
@@ -94,6 +97,20 @@ export default function CustomerReorder() {
 
     return (
         <div className="flex flex-col gap-3">
+            {/* Mode toggle: learned-cycle forecast vs simple 45-day due list */}
+            <div className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start">
+                <button type="button" onClick={() => setMode('forecast')}
+                    className={cn('inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        mode === 'forecast' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100')}>
+                    <Wand2 size={14} /> พยากรณ์อัตโนมัติ
+                </button>
+                <button type="button" onClick={() => setMode('due')}
+                    className={cn('inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        mode === 'due' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100')}>
+                    <Bell size={14} /> ครบกำหนด 45 วัน
+                </button>
+            </div>
+
             {/* Anti-spam guidance */}
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800 leading-relaxed flex items-start gap-2">
                 <ShieldCheck size={14} className="mt-0.5 flex-shrink-0 text-amber-600" />
@@ -129,7 +146,16 @@ export default function CustomerReorder() {
                 </div>
             </div>
 
+            {/* Forecast list (auto-draft queue from learned purchase cycle) */}
+            {mode === 'forecast' && (
+                <ForecastList
+                    forecast={forecast} sentIds={sentIds} sendingId={sendingId} cooling={cooling} cooldownLeft={cooldownLeft}
+                    onSend={(id, name, conv) => void send(id, name, conv)} onReload={() => void load()}
+                />
+            )}
+
             {/* Due list */}
+            {mode === 'due' && (
             <div className="rounded-lg border border-neutral-200 bg-white overflow-hidden">
                 <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50 text-xs font-semibold text-neutral-600 flex items-center justify-between">
                     <span>
@@ -187,7 +213,7 @@ export default function CustomerReorder() {
                                                 ) : (
                                                     <button
                                                         type="button"
-                                                        onClick={() => void send(r)}
+                                                        onClick={() => void send(r.id, r.name, r.conversation_id)}
                                                         disabled={sendingId !== null || cooling}
                                                         className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-green-600 text-white text-[11px] font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed ml-auto whitespace-nowrap"
                                                     >
@@ -209,11 +235,106 @@ export default function CustomerReorder() {
                     </div>
                 )}
             </div>
+            )}
 
             <p className="text-[10px] text-neutral-400 leading-relaxed">
-                รอบเตือน = 45 วันนับจากออเดอร์ที่จ่ายเงินล่าสุด · เตือนแล้วเว้น 30 วันก่อนเตือนอีกครั้ง (ปรับได้ในฐานข้อมูล: view <code className="font-mono">reorder_due</code>) ·
-                ส่งทีละราย เว้นจังหวะ ~15–30 วิ เพื่อให้เป็นธรรมชาติ
+                {mode === 'forecast'
+                    ? 'พยากรณ์อัตโนมัติ = เรียนรู้รอบซื้อจริงของลูกค้าแต่ละราย (เฉลี่ยระยะห่างระหว่างออเดอร์ที่จ่ายเงิน) แล้วคาดวันครบรอบถัดไป · ระบบจัดคิวให้ แอดมินกดส่งเอง (กัน LINE มองเป็นบอท)'
+                    : 'รอบเตือน = 45 วันนับจากออเดอร์ที่จ่ายเงินล่าสุด · เตือนแล้วเว้น 30 วันก่อนเตือนอีกครั้ง · ส่งทีละราย เว้นจังหวะ ~15–30 วิ เพื่อให้เป็นธรรมชาติ'}
             </p>
+        </div>
+    );
+}
+
+function ForecastList({ forecast, sentIds, sendingId, cooling, cooldownLeft, onSend, onReload }: {
+    forecast: ReorderForecast[];
+    sentIds: Set<string>;
+    sendingId: string | null;
+    cooling: boolean;
+    cooldownLeft: number;
+    onSend: (id: string, name: string, conv: string | null) => void;
+    onReload: () => void;
+}) {
+    const fmtDate = (s: string) => new Date(s).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
+    return (
+        <div className="rounded-lg border border-neutral-200 bg-white overflow-hidden">
+            <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50 text-xs font-semibold text-neutral-600 flex items-center justify-between">
+                <span>
+                    คิวพยากรณ์ซื้อซ้ำ · {forecast.length} ราย
+                    {sentIds.size > 0 && <span className="text-emerald-600 ml-1.5">(ส่งแล้ว {sentIds.size})</span>}
+                </span>
+                <button type="button" onClick={onReload} className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium">
+                    <RefreshCw size={12} /> รีเฟรช
+                </button>
+            </div>
+
+            {forecast.length === 0 ? (
+                <div className="p-6 text-center text-xs text-neutral-400 leading-relaxed">
+                    ยังไม่มีข้อมูลพอจะพยากรณ์<br />
+                    <span className="text-neutral-300">(ลูกค้าต้องมีออเดอร์ที่จ่ายเงิน ≥ 2 ครั้ง ระบบถึงเรียนรอบซื้อได้)</span>
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                        <thead className="bg-neutral-50 border-b border-neutral-100 text-[10px] uppercase tracking-wider text-neutral-500">
+                            <tr>
+                                <th className="px-3 py-2 text-left">ลูกค้า</th>
+                                <th className="px-3 py-2 text-center">รอบซื้อ</th>
+                                <th className="px-3 py-2 text-left">สินค้าที่ซื้อบ่อย</th>
+                                <th className="px-3 py-2 text-center">ครบรอบ</th>
+                                <th className="px-3 py-2 text-right">ส่งเตือน</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100">
+                            {forecast.map((f) => {
+                                const sent = sentIds.has(f.id);
+                                const isSending = sendingId === f.id;
+                                const overdue = f.days_until_due < 0;
+                                const dueSoon = f.days_until_due >= 0 && f.days_until_due <= 7;
+                                const hasLine = !!f.conversation_id;
+                                return (
+                                    <tr key={f.id} className={cn('hover:bg-neutral-50/70 transition', sent && 'bg-emerald-50/40', overdue && !sent && 'bg-amber-50/30')}>
+                                        <td className="px-3 py-2">
+                                            <div className="font-medium text-neutral-900 truncate max-w-[180px]">{f.name}</div>
+                                            <div className="text-[10px] text-neutral-400">{f.code ?? '—'} · {f.tier}{hasLine ? ' · LINE' : ''}</div>
+                                        </td>
+                                        <td className="px-3 py-2 text-center text-[11px] text-neutral-600 whitespace-nowrap">
+                                            <CalendarClock size={11} className="inline mr-0.5 text-neutral-400" />ทุก ~{f.avg_cycle_days} วัน
+                                            <div className="text-[9px] text-neutral-400">{f.paid_orders} ออเดอร์</div>
+                                        </td>
+                                        <td className="px-3 py-2">
+                                            {f.usual_items ? (
+                                                <div className="text-[10px] text-neutral-500 truncate max-w-[200px] inline-flex items-center gap-1"><Package size={10} className="flex-shrink-0 text-neutral-300" /> {f.usual_items}</div>
+                                            ) : <span className="text-[10px] text-neutral-300">—</span>}
+                                        </td>
+                                        <td className="px-3 py-2 text-center whitespace-nowrap">
+                                            <div className={cn('text-[11px] font-bold', overdue ? 'text-red-600' : dueSoon ? 'text-amber-600' : 'text-neutral-500')}>
+                                                {overdue ? `เลย ${Math.abs(f.days_until_due)} วัน` : f.days_until_due === 0 ? 'วันนี้' : `อีก ${f.days_until_due} วัน`}
+                                            </div>
+                                            <div className="text-[9px] text-neutral-400">{fmtDate(f.predicted_due_at)}</div>
+                                        </td>
+                                        <td className="px-3 py-2 text-right">
+                                            {sent ? (
+                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600"><Check size={13} /> ส่งแล้ว</span>
+                                            ) : !hasLine ? (
+                                                <span className="text-[10px] text-neutral-400">ไม่มี LINE</span>
+                                            ) : (
+                                                <button type="button" onClick={() => onSend(f.id, f.name, f.conversation_id)}
+                                                    disabled={sendingId !== null || cooling}
+                                                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-green-600 text-white text-[11px] font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed ml-auto whitespace-nowrap">
+                                                    {isSending ? <><Loader2 size={12} className="animate-spin" /> กำลังส่ง...</>
+                                                        : cooling ? <><Clock size={12} /> รอ {cooldownLeft}s</>
+                                                            : <><Send size={12} /> ส่งเตือน LINE</>}
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 }

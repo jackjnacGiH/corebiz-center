@@ -23,6 +23,8 @@ import {
     ShoppingCart,
     Smile,
     Gift,
+    Crown,
+    Megaphone,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
@@ -40,6 +42,8 @@ import CustomerWinback from '../components/CustomerWinback';
 import CustomerQuoteFollowup from '../components/CustomerQuoteFollowup';
 import CustomerSurvey from '../components/CustomerSurvey';
 import CustomerReferral from '../components/CustomerReferral';
+import TierBenefits from '../components/TierBenefits';
+import CustomerCampaign from '../components/CustomerCampaign';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -87,7 +91,7 @@ export default function CRM() {
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [bulkDeleting, setBulkDeleting] = useState(false);
     // Which CRM view is active.
-    const [view, setView] = useState<'list' | 'rfm' | 'reorder' | 'winback' | 'quotes' | 'nps' | 'referral'>('list');
+    const [view, setView] = useState<'list' | 'rfm' | 'reorder' | 'winback' | 'quotes' | 'nps' | 'referral' | 'tier' | 'campaign'>('list');
     // Customer id whose 360° profile drawer is open (null = closed).
     const [profileId, setProfileId] = useState<string | null>(null);
 
@@ -345,8 +349,8 @@ export default function CRM() {
                 />
             </div>
 
-            {/* View toggle: customer list ↔ RFM segments */}
-            <div className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start">
+            {/* View toggle: customer list ↔ RFM segments ↔ retention tools */}
+            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start">
                 <button
                     type="button"
                     onClick={() => setView('list')}
@@ -417,6 +421,26 @@ export default function CRM() {
                 >
                     <Gift size={14} /> แนะนำเพื่อน
                 </button>
+                <button
+                    type="button"
+                    onClick={() => setView('tier')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'tier' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <Crown size={14} /> สิทธิ์ Tier
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setView('campaign')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'campaign' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <Megaphone size={14} /> แคมเปญ
+                </button>
             </div>
 
             {view === 'rfm' && <CustomerSegments />}
@@ -425,6 +449,8 @@ export default function CRM() {
             {view === 'quotes' && <CustomerQuoteFollowup />}
             {view === 'nps' && <CustomerSurvey />}
             {view === 'referral' && <CustomerReferral />}
+            {view === 'tier' && <TierBenefits />}
+            {view === 'campaign' && <CustomerCampaign />}
 
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

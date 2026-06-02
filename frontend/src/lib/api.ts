@@ -568,6 +568,23 @@ export interface ReorderDue {
   external_id: string;
 }
 
+/** Phase 4: forecast row — predicted reorder date from the learned purchase cycle. */
+export interface ReorderForecast {
+  id: string;
+  code: string | null;
+  name: string;
+  tier: string;
+  avg_cycle_days: number;
+  paid_orders: number;
+  last_purchase_at: string;
+  predicted_due_at: string;
+  days_until_due: number;        // negative = overdue
+  last_reorder_reminder_at: string | null;
+  conversation_id: string | null; // null if no LINE chat
+  external_id: string | null;
+  usual_items: string | null;
+}
+
 export const reorderApi = {
   /** Customers due for a reorder reminder, most overdue first. */
   async listDue(): Promise<ReorderDue[]> {
@@ -579,6 +596,19 @@ export const reorderApi = {
       .order('recency_days', { ascending: false });
     if (error) throw error;
     return (data ?? []) as ReorderDue[];
+  },
+
+  /** Auto-reorder forecast: customers ranked by how due they are (most overdue
+   *  first) based on their learned purchase cycle. */
+  async listForecast(): Promise<ReorderForecast[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('reorder_forecast')
+      .select('*')
+      .order('days_until_due', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as ReorderForecast[];
   },
 
   /** Send a reorder reminder: post it into the customer's LINE conversation
@@ -791,6 +821,65 @@ export const surveyApi = {
 };
 
 // =========================================================================
+// Tier privileges (Phase 4) — per-tier loyalty multiplier + standing discount,
+// editable by staff. Backed by tier_benefits + customer_benefits + the
+// grant_purchase_points RPC (migration 0024).
+// =========================================================================
+export interface TierBenefit {
+  tier: string;
+  label: string;
+  sort_order: number;
+  point_multiplier: number;
+  discount_percent: number;
+  min_spend: number;
+  color: string;
+}
+
+export interface CustomerBenefit {
+  id: string;
+  tier: string;
+  tier_label: string;
+  point_multiplier: number;
+  discount_percent: number;
+  color: string;
+}
+
+export const tierApi = {
+  /** All tiers with their benefits, lowest → highest. */
+  async listBenefits(): Promise<TierBenefit[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db.from('tier_benefits').select('*').order('sort_order', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as TierBenefit[];
+  },
+
+  /** Update a tier's multiplier / discount (staff RLS). */
+  async updateBenefit(tier: string, patch: { point_multiplier?: number; discount_percent?: number }): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { error } = await db.from('tier_benefits').update({ ...patch, updated_at: new Date().toISOString() }).eq('tier', tier);
+    if (error) throw error;
+  },
+
+  /** A single customer's effective benefits (for the 360° profile). */
+  async customerBenefit(customerId: string): Promise<CustomerBenefit | null> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db.from('customer_benefits').select('*').eq('id', customerId).maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as CustomerBenefit | null;
+  },
+
+  /** Grant purchase points with the customer's tier multiplier applied. */
+  async grantPoints(customerId: string, amount: number, note?: string): Promise<{ points_granted: number; multiplier: number; new_balance: number }> {
+    const { data, error } = await supabase.rpc('grant_purchase_points', { p_customer_id: customerId, p_amount: amount, p_note: note ?? null });
+    if (error) throw error;
+    return data as { points_granted: number; multiplier: number; new_balance: number };
+  },
+};
+
+// =========================================================================
 // Referral program (Phase 3, "แนะนำเพื่อน") — customer-to-customer referrals.
 // Each customer has a share code; a friend registers via the public /refer
 // page; staff reward both sides. Backed by migration 0023.
@@ -803,6 +892,7 @@ export interface ReferralRow {
   referee_customer_id: string | null;
   status: 'pending' | 'rewarded' | 'expired';
   referrer_points: number;
+  referee_points: number;
   referrer_coupon: string | null;
   referee_coupon: string | null;
   source: 'staff' | 'public';
@@ -813,6 +903,17 @@ export interface ReferralRow {
   referrer_code: string | null;
   referrer_share_code: string | null;
   referee_customer_name: string | null;
+}
+
+export interface ReferralLeader {
+  referrer_id: string;
+  referrer_name: string | null;
+  referrer_code: string | null;
+  tier: string;
+  total_referrals: number;
+  rewarded_count: number;
+  pending_count: number;
+  points_earned: number;
 }
 
 export const referralApi = {
@@ -847,19 +948,40 @@ export const referralApi = {
     return data as string;
   },
 
-  /** Reward both sides: referrer points (+ optional coupon) and a friend coupon. */
+  /** Top referrers leaderboard (most successful first). */
+  async leaderboard(): Promise<ReferralLeader[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('referral_leaderboard')
+      .select('*')
+      .order('rewarded_count', { ascending: false })
+      .order('total_referrals', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as ReferralLeader[];
+  },
+
+  /** Link a referral to an existing customer record (the friend joined). */
+  async linkCustomer(referralId: string, customerId: string): Promise<void> {
+    const { error } = await supabase.rpc('link_referral_customer', { p_referral_id: referralId, p_customer_id: customerId });
+    if (error) throw error;
+  },
+
+  /** Reward both sides: referrer points (+ optional coupon), friend coupon, and
+   *  friend loyalty points (only credited if the friend is linked to a customer). */
   async reward(input: {
-    referralId: string; referrerPoints: number; refereeDiscount: number; referrerDiscount?: number;
-  }): Promise<{ referrer_coupon: string | null; referee_coupon: string | null }> {
+    referralId: string; referrerPoints: number; refereeDiscount: number; referrerDiscount?: number; refereePoints?: number;
+  }): Promise<{ referrer_coupon: string | null; referee_coupon: string | null; referee_points: number }> {
     const { data, error } = await supabase.rpc('reward_referral', {
       p_referral_id: input.referralId,
       p_referrer_points: input.referrerPoints,
       p_referee_discount: input.refereeDiscount,
       p_referrer_discount: input.referrerDiscount ?? 0,
+      p_referee_points: input.refereePoints ?? 0,
     });
     if (error) throw error;
-    return (data ?? { referrer_coupon: null, referee_coupon: null }) as {
-      referrer_coupon: string | null; referee_coupon: string | null;
+    return (data ?? { referrer_coupon: null, referee_coupon: null, referee_points: 0 }) as {
+      referrer_coupon: string | null; referee_coupon: string | null; referee_points: number;
     };
   },
 
@@ -873,6 +995,43 @@ export const referralApi = {
     });
     if (error) throw error;
     return Boolean(data);
+  },
+};
+
+// =========================================================================
+// Segment campaigns (Phase 4) — target a customer group by RFM segment / tier
+// and send one-by-one (paced, human-like). Backed by campaign_recipients view.
+// =========================================================================
+export interface CampaignRecipient {
+  id: string;
+  code: string | null;
+  name: string;
+  tier: string;
+  segment: string | null;
+  recency_days: number | null;
+  total_orders: number | null;
+  total_spent: number | null;
+  loyalty_points: number;
+  conversation_id: string;
+  external_id: string;
+}
+
+export const segmentCampaignApi = {
+  /** All LINE-reachable customers with their RFM segment + tier (for targeting). */
+  async listRecipients(): Promise<CampaignRecipient[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('campaign_recipients')
+      .select('*')
+      .order('total_spent', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as CampaignRecipient[];
+  },
+
+  /** Send one campaign message into a customer's LINE chat (logs to Omni-Chat). */
+  async send(conversationId: string, text: string): Promise<void> {
+    await chatInboxApi.sendMessage({ conversationId, content: text });
   },
 };
 
