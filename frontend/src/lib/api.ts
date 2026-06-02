@@ -877,6 +877,112 @@ export const tierApi = {
     if (error) throw error;
     return data as { points_granted: number; multiplier: number; new_balance: number };
   },
+
+  /** Customers whose lifetime spend suggests a different tier than they're on. */
+  async listSuggestions(): Promise<TierSuggestion[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db.from('tier_suggestions').select('*').order('total_spent', { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as TierSuggestion[];
+  },
+
+  /** Move a customer to a tier (staff). */
+  async applyTier(customerId: string, tier: string): Promise<void> {
+    const { error } = await supabase.rpc('apply_customer_tier', { p_customer_id: customerId, p_tier: tier });
+    if (error) throw error;
+  },
+};
+
+export interface TierSuggestion {
+  id: string;
+  code: string | null;
+  name: string;
+  current_tier: string;
+  suggested_tier: string;
+  total_spent: number;
+  total_orders: number;
+  loyalty_points: number;
+  conversation_id: string | null;
+  external_id: string | null;
+}
+
+// =========================================================================
+// CRM dashboard (Phase 5) — one-call snapshot of customer health.
+// =========================================================================
+export interface DashboardStats {
+  customers: { total: number; with_line: number; general: number; silver: number; gold: number; vip: number };
+  orders: { paid_orders: number; revenue: number };
+  repeat: { buyers: number; repeat_buyers: number; rate: number };
+  nps: { responses: number; promoters: number; passives: number; detractors: number; score: number | null };
+  loyalty: { points_outstanding: number };
+  coupons: { active: number };
+  referrals: { total: number; rewarded: number; pending: number };
+  segments: { segment: string | null; count: number; value: number }[];
+}
+
+export const crmDashboardApi = {
+  async stats(): Promise<DashboardStats> {
+    const { data, error } = await supabase.rpc('crm_dashboard_stats');
+    if (error) throw error;
+    return data as unknown as DashboardStats;
+  },
+};
+
+// =========================================================================
+// Scheduled sends (Phase 5) — queue a LINE message for a future time; admin
+// confirms the send when it's due. Backed by scheduled_messages (migration 0029).
+// =========================================================================
+export interface ScheduledMessage {
+  id: string;
+  customer_id: string | null;
+  conversation_id: string;
+  kind: 'custom' | 'campaign' | 'reorder' | 'promo';
+  text: string;
+  scheduled_at: string;
+  status: 'pending' | 'sent' | 'cancelled';
+  note: string | null;
+  created_at: string;
+  sent_at: string | null;
+  customer_name: string | null;
+  customer_code: string | null;
+  is_due: boolean;
+}
+
+export const scheduleApi = {
+  async listOverview(): Promise<ScheduledMessage[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db.from('scheduled_overview').select('*').order('scheduled_at', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as ScheduledMessage[];
+  },
+
+  async create(input: { customerId: string | null; conversationId: string; text: string; scheduledAt: string; kind?: string }): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { error } = await db.from('scheduled_messages').insert({
+      customer_id: input.customerId, conversation_id: input.conversationId,
+      text: input.text, scheduled_at: input.scheduledAt, kind: input.kind ?? 'custom',
+    });
+    if (error) throw error;
+  },
+
+  async cancel(id: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { error } = await db.from('scheduled_messages').update({ status: 'cancelled' }).eq('id', id);
+    if (error) throw error;
+  },
+
+  /** Send a due scheduled message now (logs to Omni-Chat + LINE), mark sent. */
+  async sendNow(item: ScheduledMessage): Promise<void> {
+    await chatInboxApi.sendMessage({ conversationId: item.conversation_id, content: item.text });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { error } = await db.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', item.id);
+    if (error) throw error;
+  },
 };
 
 // =========================================================================

@@ -573,6 +573,14 @@ export type Database = {
         Args: { p_customer_id: string; p_amount: number; p_note?: string | null }
         Returns: Json
       }
+      apply_customer_tier: {
+        Args: { p_customer_id: string; p_tier: string }
+        Returns: undefined
+      }
+      crm_dashboard_stats: {
+        Args: Record<string, never>
+        Returns: Json
+      }
       match_knowledge: {
         Args: {
           query_embedding: string; match_threshold?: number; match_count?: number;

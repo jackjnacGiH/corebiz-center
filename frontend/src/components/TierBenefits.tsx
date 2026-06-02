@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Loader2, RefreshCw, AlertCircle, Crown, Check, Star, Percent, Info } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Crown, Check, Star, Percent, Info, ArrowUp, ArrowDown, Send, Wand2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { tierApi, type TierBenefit } from '../lib/api';
+import { tierApi, segmentCampaignApi, type TierBenefit, type TierSuggestion } from '../lib/api';
 
 const baht = (n: unknown) => '฿' + new Intl.NumberFormat('th-TH').format(Math.round(Number(n) || 0));
+
+const TIER_RANK: Record<string, number> = { general: 0, silver: 1, gold: 2, vip: 3 };
+const TIER_TH: Record<string, string> = { general: 'ทั่วไป', silver: 'เงิน', gold: 'ทอง', vip: 'วีไอพี' };
 
 const TIER_STYLE: Record<string, { ring: string; chip: string; icon: string }> = {
   general: { ring: 'border-neutral-200', chip: 'bg-neutral-100 text-neutral-600', icon: 'text-neutral-400' },
@@ -15,17 +18,21 @@ const TIER_STYLE: Record<string, { ring: string; chip: string; icon: string }> =
 export default function TierBenefits() {
   const [rows, setRows] = useState<TierBenefit[]>([]);
   const [draft, setDraft] = useState<Record<string, { point_multiplier: number; discount_percent: number }>>({});
+  const [suggestions, setSuggestions] = useState<TierSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [savingTier, setSavingTier] = useState<string | null>(null);
   const [savedTier, setSavedTier] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [notifiedIds, setNotifiedIds] = useState<Set<string>>(new Set());
 
   async function load() {
     setLoading(true);
     setErr(null);
     try {
-      const data = await tierApi.listBenefits();
+      const [data, sugg] = await Promise.all([tierApi.listBenefits(), tierApi.listSuggestions()]);
       setRows(data);
+      setSuggestions(sugg);
       const d: Record<string, { point_multiplier: number; discount_percent: number }> = {};
       data.forEach((r) => { d[r.tier] = { point_multiplier: Number(r.point_multiplier), discount_percent: Number(r.discount_percent) }; });
       setDraft(d);
@@ -36,6 +43,36 @@ export default function TierBenefits() {
     }
   }
   useEffect(() => { void load(); }, []);
+
+  async function applySuggestion(s: TierSuggestion) {
+    setBusyId(s.id);
+    setErr(null);
+    try {
+      await tierApi.applyTier(s.id, s.suggested_tier);
+      setSuggestions((list) => list.filter((x) => x.id !== s.id));
+    } catch (e) {
+      setErr(`ปรับระดับไม่สำเร็จ: ${(e as Error).message}`);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function notifyUpgrade(s: TierSuggestion) {
+    if (!s.conversation_id) return;
+    setBusyId(s.id);
+    setErr(null);
+    try {
+      const b = rows.find((r) => r.tier === s.suggested_tier);
+      const perks = b ? `รับสิทธิ์: แต้ม x${Number(b.point_multiplier)} · ส่วนลดประจำ ${Number(b.discount_percent)}%` : '';
+      const text = `🎉 ยินดีด้วยค่ะ คุณ${s.name}! JNAC ขอเลื่อนระดับสมาชิกของคุณเป็น "${TIER_TH[s.suggested_tier] ?? s.suggested_tier}" 👑 ${perks} ขอบคุณที่ไว้วางใจเราเสมอมานะคะ 🙏`;
+      await segmentCampaignApi.send(s.conversation_id, text);
+      setNotifiedIds((set) => new Set(set).add(s.id));
+    } catch (e) {
+      setErr(`แจ้งลูกค้าไม่สำเร็จ: ${(e as Error).message}`);
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   const dirty = (r: TierBenefit) =>
     draft[r.tier] && (draft[r.tier].point_multiplier !== Number(r.point_multiplier) || draft[r.tier].discount_percent !== Number(r.discount_percent));
@@ -148,9 +185,53 @@ export default function TierBenefits() {
         })}
       </div>
 
+      {/* Auto-tier suggestions */}
+      <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
+        <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50 text-xs font-bold text-neutral-700 flex items-center gap-1.5">
+          <Wand2 size={13} className="text-indigo-500" /> ลูกค้าที่ควรปรับระดับอัตโนมัติ
+          {suggestions.length > 0 && <span className="text-[10px] text-neutral-400 font-normal">({suggestions.length} ราย — เทียบยอดสะสมกับเกณฑ์)</span>}
+        </div>
+        {suggestions.length === 0 ? (
+          <div className="p-5 text-center text-xs text-neutral-400">ทุกคนอยู่ในระดับที่เหมาะสมแล้ว 👍<br /><span className="text-neutral-300">(เมื่อยอดสะสมถึงเกณฑ์ ระบบจะเสนอเลื่อนระดับให้ที่นี่)</span></div>
+        ) : (
+          <div className="divide-y divide-neutral-100">
+            {suggestions.map((s) => {
+              const up = (TIER_RANK[s.suggested_tier] ?? 0) > (TIER_RANK[s.current_tier] ?? 0);
+              const notified = notifiedIds.has(s.id);
+              return (
+                <div key={s.id} className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-neutral-800 truncate">{s.name}</div>
+                    <div className="text-[10px] text-neutral-400">{s.code ?? '—'} · ยอดสะสม {baht(s.total_spent)}</div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] whitespace-nowrap">
+                    <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-500">{TIER_TH[s.current_tier] ?? s.current_tier}</span>
+                    {up ? <ArrowUp size={13} className="text-emerald-500" /> : <ArrowDown size={13} className="text-amber-500" />}
+                    <span className={cn('px-1.5 py-0.5 rounded font-bold', up ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700')}>{TIER_TH[s.suggested_tier] ?? s.suggested_tier}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {up && s.conversation_id && (
+                      <button type="button" onClick={() => void notifyUpgrade(s)} disabled={busyId === s.id || notified}
+                        className={cn('inline-flex items-center gap-1 h-7 px-2 rounded-md text-[11px] font-bold whitespace-nowrap',
+                          notified ? 'bg-emerald-100 text-emerald-700' : 'bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-50')}>
+                        {notified ? <><Check size={12} /> แจ้งแล้ว</> : <><Send size={12} /> แจ้ง LINE</>}
+                      </button>
+                    )}
+                    <button type="button" onClick={() => void applySuggestion(s)} disabled={busyId === s.id}
+                      className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap">
+                      {busyId === s.id ? <Loader2 size={12} className="animate-spin" /> : 'ปรับระดับ'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <p className="text-[10px] text-neutral-400 leading-relaxed flex items-start gap-1">
         <Info size={11} className="mt-0.5 flex-shrink-0" />
-        เกณฑ์ยอดสะสมเป็นค่าอ้างอิงสำหรับเลื่อนระดับ (ปรับ tier ของลูกค้าได้ที่โปรไฟล์) · ฐานแต้ม = 1 แต้มต่อ ฿100 แล้วคูณตัวคูณของระดับ
+        เกณฑ์ยอดสะสมเป็นค่าอ้างอิงสำหรับเลื่อนระดับ · ฐานแต้ม = 1 แต้มต่อ ฿100 แล้วคูณตัวคูณของระดับ · เมื่อออเดอร์ถูกทำเครื่องหมาย "จ่ายแล้ว" ระบบให้แต้มตามระดับอัตโนมัติ
       </p>
     </div>
   );

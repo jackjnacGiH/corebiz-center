@@ -25,6 +25,8 @@ import {
     Gift,
     Crown,
     Megaphone,
+    LayoutDashboard,
+    CalendarClock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
@@ -44,6 +46,8 @@ import CustomerSurvey from '../components/CustomerSurvey';
 import CustomerReferral from '../components/CustomerReferral';
 import TierBenefits from '../components/TierBenefits';
 import CustomerCampaign from '../components/CustomerCampaign';
+import CrmDashboard from '../components/CrmDashboard';
+import CustomerSchedule from '../components/CustomerSchedule';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -91,7 +95,7 @@ export default function CRM() {
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [bulkDeleting, setBulkDeleting] = useState(false);
     // Which CRM view is active.
-    const [view, setView] = useState<'list' | 'rfm' | 'reorder' | 'winback' | 'quotes' | 'nps' | 'referral' | 'tier' | 'campaign'>('list');
+    const [view, setView] = useState<'dashboard' | 'list' | 'rfm' | 'reorder' | 'winback' | 'quotes' | 'nps' | 'referral' | 'tier' | 'campaign' | 'schedule'>('list');
     // Customer id whose 360° profile drawer is open (null = closed).
     const [profileId, setProfileId] = useState<string | null>(null);
 
@@ -353,6 +357,16 @@ export default function CRM() {
             <div className="flex flex-wrap items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start">
                 <button
                     type="button"
+                    onClick={() => setView('dashboard')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'dashboard' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <LayoutDashboard size={14} /> แดชบอร์ด
+                </button>
+                <button
+                    type="button"
                     onClick={() => setView('list')}
                     className={cn(
                         'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
@@ -441,8 +455,19 @@ export default function CRM() {
                 >
                     <Megaphone size={14} /> แคมเปญ
                 </button>
+                <button
+                    type="button"
+                    onClick={() => setView('schedule')}
+                    className={cn(
+                        'inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition',
+                        view === 'schedule' ? 'bg-indigo-500 text-white shadow-sm' : 'text-neutral-600 hover:bg-neutral-100',
+                    )}
+                >
+                    <CalendarClock size={14} /> นัดส่ง
+                </button>
             </div>
 
+            {view === 'dashboard' && <CrmDashboard />}
             {view === 'rfm' && <CustomerSegments />}
             {view === 'reorder' && <CustomerReorder />}
             {view === 'winback' && <CustomerWinback />}
@@ -451,6 +476,7 @@ export default function CRM() {
             {view === 'referral' && <CustomerReferral />}
             {view === 'tier' && <TierBenefits />}
             {view === 'campaign' && <CustomerCampaign />}
+            {view === 'schedule' && <CustomerSchedule />}
 
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
