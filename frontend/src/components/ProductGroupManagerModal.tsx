@@ -470,14 +470,13 @@ function GroupDetailPanel({
     }
 
     const filteredCandidates = useMemo(() => {
-        if (!search.trim()) return unassigned;
-        const s = search.toLowerCase();
-        return unassigned.filter(
-            (p) =>
-                p.sku.toLowerCase().includes(s) ||
-                p.name_th.toLowerCase().includes(s) ||
-                (p.brand?.toLowerCase().includes(s) ?? false),
-        );
+        // Tokenized AND match — robust to irregular spacing in stored names.
+        const tokens = search.toLowerCase().split(/\s+/).filter(Boolean);
+        if (tokens.length === 0) return unassigned;
+        return unassigned.filter((p) => {
+            const hay = `${p.name_th} ${p.sku} ${p.brand ?? ''}`.toLowerCase();
+            return tokens.every((t) => hay.includes(t));
+        });
     }, [unassigned, search]);
 
     return (

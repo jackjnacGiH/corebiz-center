@@ -241,14 +241,17 @@ export default function Ecommerce() {
   }
 
   const filteredProducts = useMemo(() => {
+    // Tokenized AND search: split the query on any whitespace and require every
+    // token to appear somewhere in the product's searchable text. This is robust
+    // to extra/irregular spacing in the stored names (e.g. some SKUs have a
+    // double space "3 mm.  Size :"), word order, and punctuation spacing — so a
+    // pasted full name like "ล้อทรายมีแกน 3 mm. Size : 15x13.5x3mm" still matches.
+    const tokens = search.toLowerCase().split(/\s+/).filter(Boolean);
     return products.filter(p => {
       if (selectedCategoryId !== 'all' && p.category_id !== selectedCategoryId) return false;
-      if (!search) return true;
-      const s = search.toLowerCase();
-      return p.name_th.toLowerCase().includes(s)
-        || (p.name_en?.toLowerCase().includes(s) ?? false)
-        || p.sku.toLowerCase().includes(s)
-        || (p.brand?.toLowerCase().includes(s) ?? false);
+      if (tokens.length === 0) return true;
+      const hay = `${p.name_th} ${p.name_en ?? ''} ${p.sku} ${p.brand ?? ''}`.toLowerCase();
+      return tokens.every(t => hay.includes(t));
     });
   }, [products, search, selectedCategoryId]);
 
