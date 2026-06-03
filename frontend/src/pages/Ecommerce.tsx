@@ -27,10 +27,13 @@ import {
   categoriesApi,
   quotesApi,
   quoteRecordApi,
+  customersApi,
+  tierApi,
   getEffectivePrice,
   type ProductWithInventory,
+  type CustomerBenefit,
 } from '../lib/api';
-import type { Category } from '../lib/database.types';
+import type { Category, Customer } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { downloadQuotation } from '../components/QuotationPDF';
 import ProductImagePreview from '../components/ProductImagePreview';
@@ -191,6 +194,13 @@ export default function Ecommerce() {
   const [saving, setSaving] = useState(false);
   const [savedCode, setSavedCode] = useState<string | null>(null);
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
+  // Quote-for customer (links the quote → unlocks CRM: RFM, follow-up, points…)
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [quoteCustomer, setQuoteCustomer] = useState<Customer | null>(null);
+  const [quoteBenefit, setQuoteBenefit] = useState<CustomerBenefit | null>(null);
+  const [applyTierDiscount, setApplyTierDiscount] = useState(true);
+  const [custPickerOpen, setCustPickerOpen] = useState(false);
+  const [custQuery, setCustQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>(readSavedViewMode);
 
   // Persist view mode across visits
@@ -205,12 +215,14 @@ export default function Ecommerce() {
   async function load() {
     setLoading(true); setErr(null);
     try {
-      const [p, c] = await Promise.all([
+      const [p, c, cust] = await Promise.all([
         productsApi.list(),
         categoriesApi.list(),
+        customersApi.list().catch(() => [] as Customer[]),
       ]);
       setProducts(p.filter(x => x.status === 'active'));
       setCategories(c);
+      setCustomers(cust);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -616,6 +628,30 @@ export default function Ecommerce() {
     setCart(prev => prev.filter((_, i) => i !== idx));
   }
 
+  async function pickQuoteCustomer(c: Customer | null) {
+    setQuoteCustomer(c);
+    setQuoteBenefit(null);
+    setCustPickerOpen(false);
+    setCustQuery('');
+    setApplyTierDiscount(true);
+    if (c) {
+      try { setQuoteBenefit(await tierApi.customerBenefit(c.id)); } catch { /* ignore */ }
+    }
+  }
+
+  const filteredQuoteCustomers = useMemo(() => {
+    const q = custQuery.trim().toLowerCase();
+    if (!q) return customers.slice(0, 30);
+    return customers.filter(c =>
+      c.name?.toLowerCase().includes(q)
+      || c.code?.toLowerCase().includes(q)
+      || c.phone?.includes(q),
+    ).slice(0, 30);
+  }, [customers, custQuery]);
+
+  // Member discount % that will be applied to the quote (0 when none / unticked)
+  const tierDiscPct = (applyTierDiscount && quoteBenefit) ? Number(quoteBenefit.discount_percent) || 0 : 0;
+
   async function handleCreateQuote() {
     if (cart.length === 0) return;
     setSaving(true);
@@ -634,21 +670,30 @@ export default function Ecommerce() {
       const isLineMto = (i: typeof cart[number]) =>
         !!i.madeToOrder || i.qty > i.product.total_quantity;
       const hasMto = cart.some(isLineMto);
+      const noteParts: string[] = [];
+      if (hasMto) noteParts.push('มีรายการสินค้าสั่งผลิต (Made-to-Order) — โปรดยืนยันระยะเวลาผลิตและจัดส่งกับลูกค้าก่อนยืนยันใบเสนอราคา');
+      if (tierDiscPct > 0 && quoteBenefit) noteParts.push(`ใส่ส่วนลดสมาชิกระดับ ${quoteBenefit.tier_label} ${tierDiscPct}% แล้ว`);
       const result = await quotesApi.createWithItems({
-        items: cart.map(i => ({
-          product_id: i.product.id,
-          sku: i.product.sku,
-          product_name: isLineMto(i) ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
-          quantity: i.qty,
-          unit_price: getEffectivePrice(i.product),
-        })),
-        notes: hasMto
-          ? 'มีรายการสินค้าสั่งผลิต (Made-to-Order) — โปรดยืนยันระยะเวลาผลิตและจัดส่งกับลูกค้าก่อนยืนยันใบเสนอราคา'
-          : undefined,
+        customer_id: quoteCustomer?.id ?? null,
+        items: cart.map(i => {
+          const unit = getEffectivePrice(i.product);
+          // Member (tier) discount applies on top of the product's list price.
+          const tierDisc = tierDiscPct > 0 ? Math.round(unit * i.qty * tierDiscPct) / 100 : 0;
+          return {
+            product_id: i.product.id,
+            sku: i.product.sku,
+            product_name: isLineMto(i) ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
+            quantity: i.qty,
+            unit_price: unit,
+            discount: tierDisc,
+          };
+        }),
+        notes: noteParts.length > 0 ? noteParts.join(' · ') : undefined,
       });
       setSavedCode(result.code);
       setSavedQuoteId(result.id);
       setCart([]);
+      void pickQuoteCustomer(null);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -1532,6 +1577,56 @@ export default function Ecommerce() {
                   <span>{ecom.grandTotal}</span>
                   <strong>{formatCurrency(cartTotal)}</strong>
                 </div>
+
+                {/* Quote-for customer — links the quote so it flows into CRM
+                    (RFM / quote follow-up / loyalty when it converts). Optional. */}
+                <div className="mt-1 mb-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-2.5">
+                  <div className="text-[11px] font-semibold text-indigo-900 mb-1.5">ออกใบเสนอราคาในนามลูกค้า</div>
+                  {quoteCustomer ? (
+                    <div className="flex items-center justify-between gap-2 rounded-md bg-white border border-neutral-200 px-2.5 py-1.5">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-neutral-900 truncate">{quoteCustomer.name}</div>
+                        <div className="text-[10px] text-neutral-400 truncate">
+                          {quoteCustomer.code ?? '—'}
+                          {quoteBenefit && (
+                            <span className="ml-1 text-violet-600">· ระดับ{quoteBenefit.tier_label}{Number(quoteBenefit.discount_percent) > 0 ? ` (−${Number(quoteBenefit.discount_percent)}%)` : ''}</span>
+                          )}
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => void pickQuoteCustomer(null)} className="text-neutral-400 hover:text-neutral-700 p-1 flex-shrink-0"><X size={14} /></button>
+                    </div>
+                  ) : custPickerOpen ? (
+                    <div className="rounded-md bg-white border border-neutral-200 overflow-hidden">
+                      <div className="p-1.5 border-b border-neutral-100 relative">
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+                        <input autoFocus value={custQuery} onChange={e => setCustQuery(e.target.value)} placeholder="ค้นหาลูกค้า..." className="w-full pl-7 pr-2 py-1 text-sm outline-none" />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto">
+                        {filteredQuoteCustomers.length === 0 ? (
+                          <div className="p-3 text-center text-[11px] text-neutral-400">ไม่พบลูกค้า</div>
+                        ) : filteredQuoteCustomers.map(c => (
+                          <button key={c.id} type="button" onClick={() => void pickQuoteCustomer(c)} className="w-full text-left px-2.5 py-1.5 hover:bg-indigo-50 border-b border-neutral-50 last:border-0">
+                            <div className="text-sm text-neutral-800 truncate">{c.name}</div>
+                            <div className="text-[10px] text-neutral-400 font-mono truncate">{c.code ?? '—'}{c.phone ? ` · ${c.phone}` : ''}</div>
+                          </button>
+                        ))}
+                      </div>
+                      <button type="button" onClick={() => { setCustPickerOpen(false); setCustQuery(''); }} className="w-full text-center text-[11px] text-neutral-500 hover:bg-neutral-50 py-1 border-t border-neutral-100">ปิด</button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setCustPickerOpen(true)} className="w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-dashed border-indigo-300 bg-white px-2.5 py-1.5 text-[12px] text-indigo-600 hover:bg-indigo-50">
+                      <Plus size={13} /> เลือกลูกค้า
+                    </button>
+                  )}
+                  {quoteCustomer && quoteBenefit && Number(quoteBenefit.discount_percent) > 0 && (
+                    <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-neutral-700 cursor-pointer">
+                      <input type="checkbox" checked={applyTierDiscount} onChange={e => setApplyTierDiscount(e.target.checked)} className="accent-indigo-600" />
+                      ใส่ส่วนลดสมาชิกระดับ{quoteBenefit.tier_label} {Number(quoteBenefit.discount_percent)}% ในใบเสนอราคา
+                    </label>
+                  )}
+                  <p className="mt-1 text-[10px] text-neutral-400 leading-snug">ผูกใบเสนอราคากับลูกค้า → ใช้ติดตาม/วิเคราะห์ใน CRM ได้ (เว้นว่างได้)</p>
+                </div>
+
                 <button
                   className="checkout-button"
                   onClick={handleCreateQuote}
