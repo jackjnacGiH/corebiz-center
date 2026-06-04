@@ -38,6 +38,7 @@ import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { downloadQuotation } from '../components/QuotationPDF';
 import ProductImagePreview from '../components/ProductImagePreview';
 import CustomerPickerModal from '../components/CustomerPickerModal';
+import QuotePreviewPanel, { type PreviewLine } from '../components/QuotePreviewPanel';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 
 type LeadTimeKey = 'ready' | 'twoThreeDays' | 'low';
@@ -201,6 +202,8 @@ export default function Ecommerce() {
   const [quoteBenefit, setQuoteBenefit] = useState<CustomerBenefit | null>(null);
   const [applyTierDiscount, setApplyTierDiscount] = useState(true);
   const [custPickerOpen, setCustPickerOpen] = useState(false);
+  const [quoteNote, setQuoteNote] = useState('');
+  const [showPreview, setShowPreview] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>(readSavedViewMode);
 
   // Persist view mode across visits
@@ -633,6 +636,7 @@ export default function Ecommerce() {
     setQuoteBenefit(null);
     setCustPickerOpen(false);
     setApplyTierDiscount(true);
+    if (c) setShowPreview(true);
     if (c) {
       try { setQuoteBenefit(await tierApi.customerBenefit(c.id)); } catch { /* ignore */ }
     }
@@ -640,6 +644,24 @@ export default function Ecommerce() {
 
   // Member discount % that will be applied to the quote (0 when none / unticked)
   const tierDiscPct = (applyTierDiscount && quoteBenefit) ? Number(quoteBenefit.discount_percent) || 0 : 0;
+
+  // Live quote-preview lines + totals (must match handleCreateQuote's math).
+  const previewLines = useMemo<PreviewLine[]>(() => cart.map(i => {
+    const unit = getEffectivePrice(i.product);
+    const mto = !!i.madeToOrder || i.qty > i.product.total_quantity;
+    const gross = unit * i.qty;
+    const lineDisc = tierDiscPct > 0 ? Math.round(gross * tierDiscPct) / 100 : 0;
+    return {
+      id: i.product.id, sku: i.product.sku,
+      name: (mto ? '[สั่งผลิต] ' : '') + i.product.name_th,
+      qty: i.qty, unit, lineDisc, total: gross - lineDisc, mto,
+    };
+  }), [cart, tierDiscPct]);
+  const previewSubtotal = useMemo(() => previewLines.reduce((s, l) => s + l.unit * l.qty, 0), [previewLines]);
+  const previewMemberDisc = useMemo(() => previewLines.reduce((s, l) => s + l.lineDisc, 0), [previewLines]);
+  const previewNet = previewSubtotal - previewMemberDisc;
+  const previewVat = Math.round(previewNet * 0.07 * 100) / 100;
+  const previewTotal = previewNet + previewVat;
 
   async function handleCreateQuote() {
     if (cart.length === 0) return;
@@ -660,6 +682,7 @@ export default function Ecommerce() {
         !!i.madeToOrder || i.qty > i.product.total_quantity;
       const hasMto = cart.some(isLineMto);
       const noteParts: string[] = [];
+      if (quoteNote.trim()) noteParts.push(quoteNote.trim());
       if (hasMto) noteParts.push('มีรายการสินค้าสั่งผลิต (Made-to-Order) — โปรดยืนยันระยะเวลาผลิตและจัดส่งกับลูกค้าก่อนยืนยันใบเสนอราคา');
       if (tierDiscPct > 0 && quoteBenefit) noteParts.push(`ใส่ส่วนลดสมาชิกระดับ ${quoteBenefit.tier_label} ${tierDiscPct}% แล้ว`);
       const result = await quotesApi.createWithItems({
@@ -682,6 +705,7 @@ export default function Ecommerce() {
       setSavedCode(result.code);
       setSavedQuoteId(result.id);
       setCart([]);
+      setQuoteNote('');
       void pickQuoteCustomer(null);
     } catch (e) {
       setErr((e as Error).message);
@@ -1592,6 +1616,11 @@ export default function Ecommerce() {
                       <Plus size={13} /> เลือกลูกค้า
                     </button>
                   )}
+                  {quoteCustomer && !showPreview && (
+                    <button type="button" onClick={() => setShowPreview(true)} className="mt-1.5 text-[11px] text-indigo-600 hover:underline">
+                      👁 ดูตัวอย่างใบเสนอราคา
+                    </button>
+                  )}
                   {quoteCustomer && quoteBenefit && Number(quoteBenefit.discount_percent) > 0 && (
                     <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-neutral-700 cursor-pointer">
                       <input type="checkbox" checked={applyTierDiscount} onChange={e => setApplyTierDiscount(e.target.checked)} className="accent-indigo-600" />
@@ -1623,6 +1652,22 @@ export default function Ecommerce() {
         selectedId={quoteCustomer?.id ?? null}
         onClose={() => setCustPickerOpen(false)}
         onSelect={(c) => void pickQuoteCustomer(c)}
+      />
+
+      <QuotePreviewPanel
+        open={isCartOpen && showPreview && cart.length > 0}
+        customer={quoteCustomer}
+        benefit={quoteBenefit}
+        lines={previewLines}
+        subtotal={previewSubtotal}
+        memberDisc={previewMemberDisc}
+        net={previewNet}
+        vat={previewVat}
+        total={previewTotal}
+        note={quoteNote}
+        onNote={setQuoteNote}
+        format={formatCurrency}
+        onClose={() => setShowPreview(false)}
       />
     </div>
   );
