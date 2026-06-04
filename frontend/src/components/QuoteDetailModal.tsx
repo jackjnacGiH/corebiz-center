@@ -91,15 +91,15 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
         }
     }
 
-    async function saveItems(lines: EditLine[]) {
+    async function saveItems(lines: EditLine[], discount: number) {
         if (!quote) return;
         setSavingItems(true);
         setErr(null);
         try {
             await quoteRecordApi.updateItems(quote.id, lines.map((l) => ({
                 product_id: l.product_id ?? undefined, sku: l.sku, product_name: l.product_name,
-                quantity: l.quantity, unit_price: l.unit_price, discount: l.discount,
-            })));
+                quantity: l.quantity, unit_price: l.unit_price, discount: 0,
+            })), discount);
             const fresh = await quoteRecordApi.getWithItems(quote.id);
             setQuote(fresh.quote);
             setItems(fresh.items);
@@ -233,9 +233,9 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                         <EditableQuoteItems
                             initial={items.map((it) => ({
                                 product_id: it.product_id, sku: it.sku, product_name: it.product_name,
-                                quantity: it.quantity, unit_price: Number(it.unit_price),
-                                discount: Number((it as { discount?: number }).discount ?? 0),
+                                quantity: it.quantity, unit_price: Number(it.unit_price), discount: 0,
                             }))}
+                            initialDiscount={Number(quote.discount) || items.reduce((s, it) => s + Number((it as { discount?: number }).discount ?? 0), 0)}
                             products={products}
                             format={formatTHB}
                             onSave={saveItems}

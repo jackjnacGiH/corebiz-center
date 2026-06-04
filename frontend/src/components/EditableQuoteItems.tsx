@@ -12,21 +12,25 @@ export interface EditLine {
 }
 
 /**
- * Editable line-item table for a quote / sales order: change qty, unit price,
- * per-line discount, remove a line, or add a product (searchable). Live totals.
- * Save returns the full line set to the parent (which persists + recomputes).
+ * Editable line-item table for a quote / sales order: change qty + unit price,
+ * remove a line, or add a product (searchable). The discount is a SINGLE
+ * bill-foot field (not per line), so each row shows its full price and the
+ * discount is clearly visible at the bottom. Live totals. Save returns the
+ * lines + the bill-foot discount to the parent (which persists + recomputes).
  */
 export default function EditableQuoteItems({
-  initial, products, format, onSave, onCancel, busy,
+  initial, initialDiscount = 0, products, format, onSave, onCancel, busy,
 }: {
   initial: EditLine[];
+  initialDiscount?: number;
   products: ProductWithInventory[];
   format: (n: number) => string;
-  onSave: (lines: EditLine[]) => void;
+  onSave: (lines: EditLine[], discount: number) => void;
   onCancel: () => void;
   busy?: boolean;
 }) {
   const [lines, setLines] = useState<EditLine[]>(initial);
+  const [discount, setDiscount] = useState<number>(initialDiscount);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [q, setQ] = useState('');
 
@@ -55,9 +59,10 @@ export default function EditableQuoteItems({
     setQ('');
   }
 
-  const subtotal = lines.reduce((a, l) => a + l.unit_price * l.quantity - (l.discount || 0), 0);
-  const vat = Math.round(subtotal * 0.07 * 100) / 100;
-  const total = subtotal + vat;
+  const subtotal = lines.reduce((a, l) => a + l.unit_price * l.quantity, 0);
+  const net = subtotal - (discount || 0);
+  const vat = Math.round(net * 0.07 * 100) / 100;
+  const total = net + vat;
 
   return (
     <div className="rounded-lg border border-indigo-200 bg-indigo-50/30 p-3 space-y-3">
@@ -73,8 +78,7 @@ export default function EditableQuoteItems({
               <th className="text-center font-semibold px-2 py-1.5 w-7">#</th>
               <th className="text-left font-semibold px-2 py-1.5">สินค้า</th>
               <th className="text-center font-semibold px-1 py-1.5 w-24">จำนวน</th>
-              <th className="text-right font-semibold px-2 py-1.5 w-24">หน่วยละ</th>
-              <th className="text-right font-semibold px-2 py-1.5 w-24">ส่วนลด</th>
+              <th className="text-right font-semibold px-2 py-1.5 w-28">หน่วยละ</th>
               <th className="text-right font-semibold px-2 py-1.5 w-24">รวม</th>
               <th className="w-8" />
             </tr>
@@ -97,17 +101,14 @@ export default function EditableQuoteItems({
                 <td className="px-2 py-1.5">
                   <input type="number" min={0} value={l.unit_price} onChange={(e) => patch(i, { unit_price: Math.max(0, Number(e.target.value) || 0) })} className="w-full text-right rounded border border-neutral-200 px-1.5 py-1 outline-none focus:border-indigo-400 tabular-nums" />
                 </td>
-                <td className="px-2 py-1.5">
-                  <input type="number" min={0} value={l.discount} onChange={(e) => patch(i, { discount: Math.max(0, Number(e.target.value) || 0) })} className="w-full text-right rounded border border-neutral-200 px-1.5 py-1 outline-none focus:border-indigo-400 tabular-nums" />
-                </td>
-                <td className="px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">{format(l.unit_price * l.quantity - (l.discount || 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">{format(l.unit_price * l.quantity)}</td>
                 <td className="px-1 py-1.5 text-center">
                   <button type="button" onClick={() => remove(i)} className="text-neutral-300 hover:text-red-600"><Trash2 size={14} /></button>
                 </td>
               </tr>
             ))}
             {lines.length === 0 && (
-              <tr><td colSpan={7} className="px-2 py-4 text-center text-neutral-400">ยังไม่มีรายการ — กดเพิ่มสินค้า</td></tr>
+              <tr><td colSpan={6} className="px-2 py-4 text-center text-neutral-400">ยังไม่มีรายการ — กดเพิ่มสินค้า</td></tr>
             )}
           </tbody>
         </table>
@@ -145,14 +146,18 @@ export default function EditableQuoteItems({
 
       {/* Totals + actions */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div className="text-[12px] text-neutral-600 space-y-0.5">
+        <div className="text-[12px] text-neutral-600 space-y-1">
           <div>ยอดรวมสินค้า: <b className="tabular-nums text-neutral-800">{format(subtotal)}</b></div>
+          <div className="flex items-center gap-2">
+            <span>ส่วนลด (บาท):</span>
+            <input type="number" min={0} value={discount} onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} className="w-24 text-right rounded border border-neutral-200 px-1.5 py-1 outline-none focus:border-indigo-400 tabular-nums" />
+          </div>
           <div>ภาษี 7%: <b className="tabular-nums text-neutral-800">{format(vat)}</b></div>
           <div className="text-sm">ยอดสุทธิ: <b className="tabular-nums text-indigo-700">{format(total)}</b></div>
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={onCancel} disabled={busy} className="h-9 px-3 rounded-md border border-neutral-200 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-50">ยกเลิก</button>
-          <button type="button" onClick={() => onSave(lines)} disabled={busy} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50">
+          <button type="button" onClick={() => onSave(lines, discount)} disabled={busy} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} บันทึกรายการ
           </button>
         </div>

@@ -650,19 +650,18 @@ export default function Ecommerce() {
   const tierDiscPct = (applyTierDiscount && quoteBenefit) ? Number(quoteBenefit.discount_percent) || 0 : 0;
 
   // Live quote-preview lines + totals (must match handleCreateQuote's math).
+  // Lines stay at full price; the member discount is one bill-foot line.
   const previewLines = useMemo<PreviewLine[]>(() => cart.map(i => {
     const unit = getEffectivePrice(i.product);
     const mto = !!i.madeToOrder || i.qty > i.product.total_quantity;
-    const gross = unit * i.qty;
-    const lineDisc = tierDiscPct > 0 ? Math.round(gross * tierDiscPct) / 100 : 0;
     return {
       id: i.product.id, sku: i.product.sku,
       name: (mto ? '[สั่งผลิต] ' : '') + i.product.name_th,
-      qty: i.qty, unit, lineDisc, total: gross - lineDisc, mto,
+      qty: i.qty, unit, lineDisc: 0, total: unit * i.qty, mto,
     };
-  }), [cart, tierDiscPct]);
+  }), [cart]);
   const previewSubtotal = useMemo(() => previewLines.reduce((s, l) => s + l.unit * l.qty, 0), [previewLines]);
-  const previewMemberDisc = useMemo(() => previewLines.reduce((s, l) => s + l.lineDisc, 0), [previewLines]);
+  const previewMemberDisc = useMemo(() => (tierDiscPct > 0 ? Math.round(previewSubtotal * tierDiscPct) / 100 : 0), [previewSubtotal, tierDiscPct]);
   const previewNet = previewSubtotal - previewMemberDisc;
   const previewVat = Math.round(previewNet * 0.07 * 100) / 100;
   const previewTotal = previewNet + previewVat;
@@ -689,21 +688,19 @@ export default function Ecommerce() {
       if (quoteNote.trim()) noteParts.push(quoteNote.trim());
       if (hasMto) noteParts.push('มีรายการสินค้าสั่งผลิต (Made-to-Order) — โปรดยืนยันระยะเวลาผลิตและจัดส่งกับลูกค้าก่อนยืนยันใบเสนอราคา');
       if (tierDiscPct > 0 && quoteBenefit) noteParts.push(`ใส่ส่วนลดสมาชิกระดับ ${quoteBenefit.tier_label} ${tierDiscPct}% แล้ว`);
+      // Lines stay at full price; the member discount is one bill-foot line.
+      const grossSubtotal = cart.reduce((s, i) => s + getEffectivePrice(i.product) * i.qty, 0);
+      const memberDiscount = tierDiscPct > 0 ? Math.round(grossSubtotal * tierDiscPct) / 100 : 0;
       const result = await quotesApi.createWithItems({
         customer_id: quoteCustomer?.id ?? null,
-        items: cart.map(i => {
-          const unit = getEffectivePrice(i.product);
-          // Member (tier) discount applies on top of the product's list price.
-          const tierDisc = tierDiscPct > 0 ? Math.round(unit * i.qty * tierDiscPct) / 100 : 0;
-          return {
-            product_id: i.product.id,
-            sku: i.product.sku,
-            product_name: isLineMto(i) ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
-            quantity: i.qty,
-            unit_price: unit,
-            discount: tierDisc,
-          };
-        }),
+        discount: memberDiscount,
+        items: cart.map(i => ({
+          product_id: i.product.id,
+          sku: i.product.sku,
+          product_name: isLineMto(i) ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
+          quantity: i.qty,
+          unit_price: getEffectivePrice(i.product),
+        })),
         notes: noteParts.length > 0 ? noteParts.join(' · ') : undefined,
       });
       setSavedCode(result.code);

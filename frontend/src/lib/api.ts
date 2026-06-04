@@ -1299,11 +1299,13 @@ export const ordersApi = {
     return { order: order as unknown as OrderWithCustomer, items: items ?? [] };
   },
 
-  /** Replace an order's line items and recompute totals (keeps shipping_fee). */
-  async updateItems(orderId: string, items: QuoteDraftItem[], shippingFee = 0): Promise<void> {
+  /** Replace an order's line items + bill-foot discount, recompute totals (keeps shipping_fee). */
+  async updateItems(orderId: string, items: QuoteDraftItem[], discount = 0, shippingFee = 0): Promise<void> {
     const subtotal = items.reduce((a, it) => a + it.unit_price * it.quantity - (it.discount ?? 0), 0);
-    const vat = Math.round(subtotal * 0.07 * 100) / 100;
-    const total = subtotal + vat + (Number(shippingFee) || 0);
+    const disc = Math.max(0, Math.round((discount || 0) * 100) / 100);
+    const net = subtotal - disc;
+    const vat = Math.round(net * 0.07 * 100) / 100;
+    const total = net + vat + (Number(shippingFee) || 0);
     const { error: delErr } = await supabase.from('order_items').delete().eq('order_id', orderId);
     if (delErr) throw delErr;
     if (items.length > 0) {
@@ -1315,7 +1317,7 @@ export const ordersApi = {
       const { error: insErr } = await supabase.from('order_items').insert(rows as never);
       if (insErr) throw insErr;
     }
-    const { error: upErr } = await supabase.from('orders').update({ subtotal, vat, total } as never).eq('id', orderId);
+    const { error: upErr } = await supabase.from('orders').update({ subtotal, discount: disc, vat, total } as never).eq('id', orderId);
     if (upErr) throw upErr;
   },
 
@@ -1362,6 +1364,7 @@ export const quotesApi = {
   async createWithItems(input: {
     customer_id?: string | null;
     items: QuoteDraftItem[];
+    discount?: number;       // whole-quote discount (e.g. member discount), shown at the bill foot
     vat_rate?: number;       // 0.07 default
     valid_days?: number;     // 30 default
     notes?: string;
@@ -1369,10 +1372,13 @@ export const quotesApi = {
     const vat_rate = input.vat_rate ?? 0.07;
     const valid_days = input.valid_days ?? 30;
 
+    // Line items stay at full price; the discount is a single bill-foot line.
     const subtotal = input.items.reduce((acc, it) =>
       acc + (it.unit_price * it.quantity) - (it.discount ?? 0), 0);
-    const vat = Math.round(subtotal * vat_rate * 100) / 100;
-    const total = subtotal + vat;
+    const discount = Math.max(0, Math.round((input.discount ?? 0) * 100) / 100);
+    const net = subtotal - discount;
+    const vat = Math.round(net * vat_rate * 100) / 100;
+    const total = net + vat;
 
     // code is generated DB-side by a sequence default (QT-<8-digit running no.),
     // guaranteed unique — don't set it here.
@@ -1384,6 +1390,7 @@ export const quotesApi = {
         customer_id: input.customer_id ?? null,
         status: 'draft',
         subtotal,
+        discount,
         vat,
         total,
         valid_until,
@@ -1642,11 +1649,13 @@ export const quoteRecordApi = {
     if (error) throw error;
   },
 
-  /** Replace a quote's line items and recompute its totals (subtotal/vat/total). */
-  async updateItems(quoteId: string, items: QuoteDraftItem[]): Promise<void> {
+  /** Replace a quote's line items + bill-foot discount, recompute totals. */
+  async updateItems(quoteId: string, items: QuoteDraftItem[], discount = 0): Promise<void> {
     const subtotal = items.reduce((a, it) => a + it.unit_price * it.quantity - (it.discount ?? 0), 0);
-    const vat = Math.round(subtotal * 0.07 * 100) / 100;
-    const total = subtotal + vat;
+    const disc = Math.max(0, Math.round((discount || 0) * 100) / 100);
+    const net = subtotal - disc;
+    const vat = Math.round(net * 0.07 * 100) / 100;
+    const total = net + vat;
     const { error: delErr } = await supabase.from('quote_items').delete().eq('quote_id', quoteId);
     if (delErr) throw delErr;
     if (items.length > 0) {
@@ -1658,7 +1667,7 @@ export const quoteRecordApi = {
       const { error: insErr } = await supabase.from('quote_items').insert(rows as never);
       if (insErr) throw insErr;
     }
-    const { error: upErr } = await supabase.from('quotes').update({ subtotal, vat, total } as never).eq('id', quoteId);
+    const { error: upErr } = await supabase.from('quotes').update({ subtotal, discount: disc, vat, total } as never).eq('id', quoteId);
     if (upErr) throw upErr;
   },
 

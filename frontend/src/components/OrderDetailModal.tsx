@@ -81,15 +81,15 @@ export default function OrderDetailModal({
         }
     }
 
-    async function saveItems(lines: EditLine[]) {
+    async function saveItems(lines: EditLine[], discount: number) {
         if (!order) return;
         setSavingItems(true);
         setErr(null);
         try {
             await ordersApi.updateItems(order.id, lines.map((l) => ({
                 product_id: l.product_id ?? undefined, sku: l.sku, product_name: l.product_name,
-                quantity: l.quantity, unit_price: l.unit_price, discount: l.discount,
-            })), Number((order as { shipping_fee?: number }).shipping_fee ?? 0));
+                quantity: l.quantity, unit_price: l.unit_price, discount: 0,
+            })), discount, Number((order as { shipping_fee?: number }).shipping_fee ?? 0));
             const fresh = await ordersApi.getById(order.id);
             setOrder(fresh.order);
             setItems(fresh.items);
@@ -217,9 +217,9 @@ export default function OrderDetailModal({
                                 <EditableQuoteItems
                                     initial={items.map((it) => ({
                                         product_id: it.product_id, sku: it.sku, product_name: it.product_name,
-                                        quantity: it.quantity, unit_price: Number(it.unit_price),
-                                        discount: Number((it as { discount?: number }).discount ?? 0),
+                                        quantity: it.quantity, unit_price: Number(it.unit_price), discount: 0,
                                     }))}
+                                    initialDiscount={Number(order.discount) || items.reduce((s, it) => s + Number((it as { discount?: number }).discount ?? 0), 0)}
                                     products={products}
                                     format={formatTHB}
                                     onSave={saveItems}
