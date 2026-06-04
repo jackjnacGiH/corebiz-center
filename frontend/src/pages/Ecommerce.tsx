@@ -29,6 +29,7 @@ import {
   quoteRecordApi,
   customersApi,
   tierApi,
+  orgSettingsApi,
   getEffectivePrice,
   type ProductWithInventory,
   type CustomerBenefit,
@@ -204,6 +205,7 @@ export default function Ecommerce() {
   const [custPickerOpen, setCustPickerOpen] = useState(false);
   const [quoteNote, setQuoteNote] = useState('');
   const [showPreview, setShowPreview] = useState(true);
+  const [quoteOrg, setQuoteOrg] = useState<Awaited<ReturnType<typeof orgSettingsApi.get>>>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(readSavedViewMode);
 
   // Persist view mode across visits
@@ -218,14 +220,16 @@ export default function Ecommerce() {
   async function load() {
     setLoading(true); setErr(null);
     try {
-      const [p, c, cust] = await Promise.all([
+      const [p, c, cust, org] = await Promise.all([
         productsApi.list(),
         categoriesApi.list(),
         customersApi.list().catch(() => [] as Customer[]),
+        orgSettingsApi.get().catch(() => null),
       ]);
       setProducts(p.filter(x => x.status === 'active'));
       setCategories(c);
       setCustomers(cust);
+      setQuoteOrg(org);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -1657,6 +1661,7 @@ export default function Ecommerce() {
 
       <QuotePreviewPanel
         open={isCartOpen && showPreview && cart.length > 0}
+        org={quoteOrg}
         customer={quoteCustomer}
         benefit={quoteBenefit}
         lines={previewLines}
