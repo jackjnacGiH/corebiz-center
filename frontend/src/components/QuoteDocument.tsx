@@ -15,8 +15,15 @@ export interface QuoteDocItem {
   sku: string;
   qty: number;
   unit: number;
+  /** Product unit label (ชิ้น / แพ็ค / …) shown after the quantity. */
+  unitLabel?: string | null;
   lineDisc?: number;
   total: number;
+}
+
+/** Quantities: thousands separator, no decimals (e.g. 1,250). */
+function formatQty(n: number): string {
+  return new Intl.NumberFormat('th-TH', { maximumFractionDigits: 0 }).format(n);
 }
 
 /**
@@ -112,7 +119,9 @@ export default function QuoteDocument({
                   <div className="text-neutral-800 leading-snug">{l.name}</div>
                   <div className="text-[10px] text-neutral-400 font-mono">{l.sku}{(l.lineDisc ?? 0) > 0 ? ` · ลด ${format(l.lineDisc as number)}` : ''}</div>
                 </td>
-                <td className="px-2 py-2 text-right tabular-nums">{l.qty}</td>
+                <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+                  {formatQty(l.qty)}{l.unitLabel ? <span className="text-neutral-400"> {l.unitLabel}</span> : ''}
+                </td>
                 <td className="px-2 py-2 text-right tabular-nums">{format(l.unit)}</td>
                 <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">{format(l.total)}</td>
               </tr>

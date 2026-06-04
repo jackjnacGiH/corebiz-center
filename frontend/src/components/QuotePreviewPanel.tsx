@@ -9,6 +9,7 @@ export interface PreviewLine {
   sku: string;
   qty: number;
   unit: number;
+  unitLabel?: string | null;
   lineDisc: number;
   total: number;
   mto: boolean;

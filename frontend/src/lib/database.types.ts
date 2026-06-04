@@ -297,12 +297,12 @@ export type Database = {
       order_items: {
         Row: {
           created_at: string; discount: number; id: string; order_id: string; product_id: string;
-          product_name: string; quantity: number; sku: string; total: number; unit_price: number;
+          product_name: string; quantity: number; sku: string; total: number; unit: string | null; unit_price: number;
           variant_id: string | null;
         }
         Insert: {
           created_at?: string; discount?: number; id?: string; order_id: string; product_id: string;
-          product_name: string; quantity: number; sku: string; total: number; unit_price: number;
+          product_name: string; quantity: number; sku: string; total: number; unit?: string | null; unit_price: number;
           variant_id?: string | null;
         }
         Update: Partial<Database['public']['Tables']['order_items']['Insert']>
@@ -457,12 +457,12 @@ export type Database = {
       quote_items: {
         Row: {
           discount: number; id: string; product_id: string; product_name: string;
-          quantity: number; quote_id: string; sku: string; total: number; unit_price: number;
+          quantity: number; quote_id: string; sku: string; total: number; unit: string | null; unit_price: number;
           variant_id: string | null;
         }
         Insert: {
           discount?: number; id?: string; product_id: string; product_name: string;
-          quantity: number; quote_id: string; sku: string; total: number; unit_price: number;
+          quantity: number; quote_id: string; sku: string; total: number; unit?: string | null; unit_price: number;
           variant_id?: string | null;
         }
         Update: Partial<Database['public']['Tables']['quote_items']['Insert']>

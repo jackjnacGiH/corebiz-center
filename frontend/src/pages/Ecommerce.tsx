@@ -56,12 +56,11 @@ interface CartItem {
 }
 
 function formatCurrency(value: number): string {
-  // 0 decimals when integer, up to 2 decimals when not — so 15 → "฿15"
-  // but 14.55 (after a percent discount) → "฿14.55"
+  // Always 2 decimals for money — so 15 → "฿15.00", 14.55 → "฿14.55".
   return new Intl.NumberFormat('th-TH', {
     style: 'currency',
     currency: 'THB',
-    minimumFractionDigits: 0,
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
 }
@@ -657,7 +656,7 @@ export default function Ecommerce() {
     return {
       id: i.product.id, sku: i.product.sku,
       name: (mto ? '[สั่งผลิต] ' : '') + i.product.name_th,
-      qty: i.qty, unit, lineDisc: 0, total: unit * i.qty, mto,
+      qty: i.qty, unit, unitLabel: i.product.unit, lineDisc: 0, total: unit * i.qty, mto,
     };
   }), [cart]);
   const previewSubtotal = useMemo(() => previewLines.reduce((s, l) => s + l.unit * l.qty, 0), [previewLines]);
@@ -700,6 +699,7 @@ export default function Ecommerce() {
           product_name: isLineMto(i) ? `[สั่งผลิต] ${i.product.name_th}` : i.product.name_th,
           quantity: i.qty,
           unit_price: getEffectivePrice(i.product),
+          unit: i.product.unit,
         })),
         notes: noteParts.length > 0 ? noteParts.join(' · ') : undefined,
       });

@@ -1311,7 +1311,7 @@ export const ordersApi = {
     if (items.length > 0) {
       const rows = items.map((it) => ({
         order_id: orderId, product_id: it.product_id ?? null, variant_id: null, sku: it.sku, product_name: it.product_name,
-        quantity: it.quantity, unit_price: it.unit_price, discount: it.discount ?? 0,
+        quantity: it.quantity, unit_price: it.unit_price, unit: it.unit ?? null, discount: it.discount ?? 0,
         total: it.unit_price * it.quantity - (it.discount ?? 0),
       }));
       const { error: insErr } = await supabase.from('order_items').insert(rows as never);
@@ -1354,6 +1354,8 @@ export interface QuoteDraftItem {
   quantity: number;
   unit_price: number;
   discount?: number;
+  /** Product unit label (ชิ้น / แพ็ค / …) shown next to the quantity on documents. */
+  unit?: string | null;
 }
 
 export const quotesApi = {
@@ -1407,6 +1409,7 @@ export const quotesApi = {
       product_name: it.product_name,
       quantity: it.quantity,
       unit_price: it.unit_price,
+      unit: it.unit ?? null,
       discount: it.discount ?? 0,
       total: it.unit_price * it.quantity - (it.discount ?? 0),
     }));
@@ -1606,6 +1609,7 @@ export interface QuoteItem {
   product_name: string;
   quantity: number;
   unit_price: number;
+  unit: string | null;
   discount: number;
   total: number;
 }
@@ -1632,7 +1636,7 @@ export const quoteRecordApi = {
           customer:customers(id,name,tax_id,billing_address)`)
         .eq('id', id).single(),
       supabase.from('quote_items')
-        .select('id,product_id,variant_id,sku,product_name,quantity,unit_price,discount,total')
+        .select('id,product_id,variant_id,sku,product_name,quantity,unit_price,unit,discount,total')
         .eq('quote_id', id),
     ]);
     if (qErr) throw qErr;
@@ -1661,7 +1665,7 @@ export const quoteRecordApi = {
     if (items.length > 0) {
       const rows = items.map((it) => ({
         quote_id: quoteId, product_id: it.product_id ?? null, sku: it.sku, product_name: it.product_name,
-        quantity: it.quantity, unit_price: it.unit_price, discount: it.discount ?? 0,
+        quantity: it.quantity, unit_price: it.unit_price, unit: it.unit ?? null, discount: it.discount ?? 0,
         total: it.unit_price * it.quantity - (it.discount ?? 0),
       }));
       const { error: insErr } = await supabase.from('quote_items').insert(rows as never);
@@ -1709,7 +1713,7 @@ export const quoteRecordApi = {
     // 2. Load the quote's items (we need them to mirror as order_items).
     const { data: qItems, error: qiErr } = await supabase
       .from('quote_items')
-      .select('product_id,variant_id,sku,product_name,quantity,unit_price,discount,total')
+      .select('product_id,variant_id,sku,product_name,quantity,unit_price,unit,discount,total')
       .eq('quote_id', quoteId);
     if (qiErr) throw qiErr;
     if (!qItems || qItems.length === 0) {
@@ -1749,7 +1753,7 @@ export const quoteRecordApi = {
     const itemsForOrder = (qItems as Array<{
       product_id: string; variant_id: string | null; sku: string;
       product_name: string; quantity: number; unit_price: number;
-      discount: number; total: number;
+      unit: string | null; discount: number; total: number;
     }>).map((it) => ({
       order_id: order.id,
       product_id: it.product_id,
@@ -1758,10 +1762,11 @@ export const quoteRecordApi = {
       product_name: it.product_name,
       quantity: it.quantity,
       unit_price: it.unit_price,
+      unit: it.unit ?? null,
       discount: it.discount,
       total: it.total,
     }));
-    const { error: oiErr } = await supabase.from('order_items').insert(itemsForOrder);
+    const { error: oiErr } = await supabase.from('order_items').insert(itemsForOrder as never);
     if (oiErr) throw oiErr;
 
     // 5. Flip the quote and link it to the order.

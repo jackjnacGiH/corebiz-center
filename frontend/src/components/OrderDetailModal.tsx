@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ShoppingBag, Loader2, Pencil } from 'lucide-react';
-import { ordersApi, orgSettingsApi, productsApi, type OrderWithCustomer, type ProductWithInventory } from '../lib/api';
+import { ordersApi, orgSettingsApi, productsApi, tierApi, type OrderWithCustomer, type ProductWithInventory } from '../lib/api';
 import type { OrderItem } from '../lib/database.types';
 import {
     Dialog,
@@ -47,7 +47,8 @@ function formatTHB(v: number | string): string {
     return new Intl.NumberFormat('th-TH', {
         style: 'currency',
         currency: 'THB',
-        maximumFractionDigits: 0,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
     }).format(Number(v));
 }
 
@@ -65,6 +66,8 @@ export default function OrderDetailModal({
     const [editing, setEditing] = useState(false);
     const [products, setProducts] = useState<ProductWithInventory[]>([]);
     const [savingItems, setSavingItems] = useState(false);
+    const [memberPct, setMemberPct] = useState(0);
+    const [memberLabel, setMemberLabel] = useState<string>('');
 
     useEffect(() => {
         if (!isOpen) { setEditing(false); return; }
@@ -75,6 +78,14 @@ export default function OrderDetailModal({
         setErr(null);
         try {
             if (products.length === 0) setProducts(await productsApi.list());
+            const custId = order?.customer?.id;
+            if (custId) {
+                const b = await tierApi.customerBenefit(custId).catch(() => null);
+                setMemberPct(b ? Number(b.discount_percent) || 0 : 0);
+                setMemberLabel(b?.tier_label ?? '');
+            } else {
+                setMemberPct(0); setMemberLabel('');
+            }
             setEditing(true);
         } catch (e) {
             setErr((e as Error).message);
@@ -88,7 +99,7 @@ export default function OrderDetailModal({
         try {
             await ordersApi.updateItems(order.id, lines.map((l) => ({
                 product_id: l.product_id ?? undefined, sku: l.sku, product_name: l.product_name,
-                quantity: l.quantity, unit_price: l.unit_price, discount: 0,
+                quantity: l.quantity, unit_price: l.unit_price, unit: l.unit ?? null, discount: 0,
             })), discount, Number((order as { shipping_fee?: number }).shipping_fee ?? 0));
             const fresh = await ordersApi.getById(order.id);
             setOrder(fresh.order);
@@ -204,8 +215,10 @@ export default function OrderDetailModal({
                                 </div>
                             </div>
 
-                            {/* Edit items */}
-                            {!editing && (
+                            {/* Edit items — only while the document is still a quote /
+                                sales order being prepared (รอดำเนินการ / กำลังเตรียม).
+                                Once จัดส่งแล้ว / รับสินค้าแล้ว / ยกเลิก / คืนสินค้า it's locked. */}
+                            {!editing && (order.status === 'pending' || order.status === 'processing') && (
                                 <div className="flex justify-end">
                                     <button type="button" onClick={() => void enterEdit()} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-indigo-200 text-indigo-700 text-xs font-semibold hover:bg-indigo-50">
                                         <Pencil size={13} /> แก้ไขรายการ
@@ -218,8 +231,11 @@ export default function OrderDetailModal({
                                     initial={items.map((it) => ({
                                         product_id: it.product_id, sku: it.sku, product_name: it.product_name,
                                         quantity: it.quantity, unit_price: Number(it.unit_price), discount: 0,
+                                        unit: (it as { unit?: string | null }).unit ?? null,
                                     }))}
                                     initialDiscount={Number(order.discount) || items.reduce((s, it) => s + Number((it as { discount?: number }).discount ?? 0), 0)}
+                                    memberPct={memberPct}
+                                    memberLabel={memberLabel}
                                     products={products}
                                     format={formatTHB}
                                     onSave={saveItems}
@@ -242,6 +258,7 @@ export default function OrderDetailModal({
                                     items={items.map((it) => ({
                                         name: it.product_name, sku: it.sku, qty: it.quantity,
                                         unit: Number(it.unit_price),
+                                        unitLabel: (it as { unit?: string | null }).unit ?? null,
                                         lineDisc: Number((it as { discount?: number }).discount ?? 0),
                                         total: Number(it.total),
                                     }))}
