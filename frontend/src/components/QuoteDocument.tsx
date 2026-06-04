@@ -25,11 +25,12 @@ export interface QuoteDocItem {
  * order-management quote detail so they render identically. Pure presentation.
  */
 export default function QuoteDocument({
-  org, code, dateLabel, customerName, customerAddress, customerTaxId,
+  org, title = 'ใบเสนอราคา', code, dateLabel, customerName, customerAddress, customerTaxId,
   contactName, contactPhone, items, subtotal, discount = 0, discountLabel,
   net, vat, total, note, editableNote, format,
 }: {
   org: OrgInfo | null;
+  title?: string;
   code?: string | null;
   dateLabel: string;
   customerName: string;
@@ -71,7 +72,7 @@ export default function QuoteDocument({
           </div>
         </div>
         <div className="text-right flex-shrink-0">
-          <div className="text-2xl font-extrabold text-neutral-800">ใบเสนอราคา</div>
+          <div className="text-2xl font-extrabold text-neutral-800">{title}</div>
           <div className="mt-2 text-[11px] text-neutral-600 space-y-0.5 min-w-[160px]">
             <div className="flex justify-between gap-4"><span className="text-neutral-400">เลขที่</span><span className="font-mono font-medium">{code ?? '(ออกเมื่อบันทึก)'}</span></div>
             <div className="flex justify-between gap-4"><span className="text-neutral-400">วันที่</span><span className="font-medium">{dateLabel}</span></div>

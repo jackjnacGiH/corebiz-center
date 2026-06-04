@@ -1284,7 +1284,7 @@ export const ordersApi = {
   async getById(id: string): Promise<{ order: OrderWithCustomer; items: OrderItem[] }> {
     const { data: order, error: orderErr } = await supabase
       .from('orders')
-      .select('*, customer:customers(id,name,code,tier)')
+      .select('*, customer:customers(id,name,code,tier,tax_id,billing_address)')
       .eq('id', id)
       .single();
     if (orderErr) throw orderErr;
@@ -1644,7 +1644,7 @@ export const quoteRecordApi = {
     // 1. Idempotency: if already accepted + linked, return the existing order.
     const { data: existing, error: exErr } = await supabase
       .from('quotes')
-      .select('id, status, converted_to_order_id, customer_id, subtotal, discount, vat, total, notes')
+      .select('id, code, status, converted_to_order_id, customer_id, subtotal, discount, vat, total, notes')
       .eq('id', quoteId)
       .single();
     if (exErr) throw exErr;
@@ -1667,20 +1667,18 @@ export const quoteRecordApi = {
       throw new Error('ใบเสนอราคานี้ไม่มีรายการสินค้า ไม่สามารถสร้างคำสั่งซื้อได้');
     }
 
-    // 3. Create the order. Code: ORD-YYYYMMDD-XXXX
-    //
-    // Status notes:
-    //   - `status: 'processing'`  — Boss Jack's flow says approving a
-    //     quote means "ok, start preparing this order", which maps to
-    //     the existing "กำลังเตรียม" tab. We deliberately skip 'pending'
-    //     because the quote itself was already sitting in รอดำเนินการ
-    //     waiting for this exact decision.
+    // 3. Create the order.
+    //   - Code: same running number as the quote, with the QT- prefix swapped
+    //     for SO- (Sales Order) — e.g. QT-01000003 → SO-01000003. Quote codes
+    //     are unique + each quote converts once (idempotency above), so SO-
+    //     codes can't collide.
+    //   - `status: 'processing'`  — approving a quote means "start preparing",
+    //     which maps to the "กำลังเตรียม" tab (the quote was already รอดำเนินการ).
     //   - `payment_status: 'unpaid'` — the orders_payment_status_check
     //     constraint only accepts ['unpaid','partial','paid','refunded'].
-    //     'pending' would violate it.
-    const code = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${
-      String(Math.floor(Math.random() * 9000) + 1000)
-    }`;
+    const code = existing.code?.startsWith('QT-')
+      ? 'SO-' + existing.code.slice(3)
+      : 'SO-' + (existing.code ?? quoteId.slice(0, 8));
     const { data: order, error: oErr } = await supabase
       .from('orders')
       .insert({

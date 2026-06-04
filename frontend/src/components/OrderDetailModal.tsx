@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { ShoppingBag, User, Calendar, CreditCard, Truck, Loader2 } from 'lucide-react';
-import { ordersApi, type OrderWithCustomer } from '../lib/api';
+import { useEffect, useState } from 'react';
+import { ShoppingBag, Loader2 } from 'lucide-react';
+import { ordersApi, orgSettingsApi, type OrderWithCustomer } from '../lib/api';
 import type { OrderItem } from '../lib/database.types';
 import {
     Dialog,
@@ -9,6 +9,7 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
 
 interface Props {
     isOpen: boolean;
@@ -59,6 +60,12 @@ export default function OrderDetailModal({
     const [items, setItems] = useState<OrderItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState<string | null>(null);
+    const [org, setOrg] = useState<OrgInfo | null>(null);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        orgSettingsApi.get().then((o) => setOrg(o)).catch(() => setOrg(null));
+    }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen || !orderId) return;
@@ -87,7 +94,7 @@ export default function OrderDetailModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
-            <DialogContent className="sm:max-w-3xl p-0 gap-0 max-h-[90vh] flex flex-col">
+            <DialogContent className="sm:max-w-4xl p-0 gap-0 max-h-[90vh] flex flex-col">
                 {/* ── Header ──────────────────────────────────────────── */}
                 <DialogHeader className="px-6 py-5 border-b border-neutral-200 bg-neutral-50">
                     <div className="flex items-center gap-4">
@@ -121,35 +128,13 @@ export default function OrderDetailModal({
 
                     {!loading && order && (
                         <>
-                            {/* Top metadata */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                <InfoTile
-                                    icon={<User size={13} />}
-                                    label="ลูกค้า"
-                                    value={order.customer?.name ?? '—'}
-                                />
-                                <InfoTile
-                                    icon={<Calendar size={13} />}
-                                    label="วันที่"
-                                    value={new Date(order.created_at).toLocaleDateString('th-TH', {
-                                        year: 'numeric',
-                                        month: 'short',
-                                        day: 'numeric',
-                                    })}
-                                />
-                                <InfoTile
-                                    icon={<CreditCard size={13} />}
-                                    label="การชำระเงิน"
-                                    value={order.payment_status}
-                                />
-                                <InfoTile
-                                    icon={<Truck size={13} />}
-                                    label="ช่องทาง"
-                                    value={order.channel}
-                                />
+                            {/* Payment + channel quick info */}
+                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                <span className="px-2 py-1 rounded bg-neutral-100 text-neutral-600">การชำระเงิน: {order.payment_status}</span>
+                                <span className="px-2 py-1 rounded bg-neutral-100 text-neutral-600">ช่องทาง: {order.channel}</span>
                             </div>
 
-                            {/* Status selector */}
+                            {/* Status selector (order management) */}
                             <div className="rounded-lg border border-neutral-200 bg-white p-4">
                                 <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">
                                     เปลี่ยนสถานะ
@@ -173,75 +158,32 @@ export default function OrderDetailModal({
                                 </div>
                             </div>
 
-                            {/* Items */}
-                            <div className="rounded-lg border border-neutral-200 bg-white p-4">
-                                <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">
-                                    รายการสินค้า ({items.length})
-                                </div>
-                                {items.length === 0 ? (
-                                    <div className="text-sm text-neutral-500 py-2">
-                                        ยังไม่มีรายการ
-                                    </div>
-                                ) : (
-                                    <div className="space-y-2">
-                                        {items.map((it) => (
-                                            <div
-                                                key={it.id}
-                                                className="flex items-center justify-between gap-4 py-2.5 border-b border-neutral-200 last:border-0"
-                                            >
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="text-sm font-semibold text-neutral-900 truncate">
-                                                        {it.product_name}
-                                                    </div>
-                                                    <div className="text-xs text-neutral-500 mt-0.5 tabular-nums">
-                                                        {it.sku} × {it.quantity} @{' '}
-                                                        {formatTHB(it.unit_price)}
-                                                    </div>
-                                                </div>
-                                                <div className="text-sm font-bold text-emerald-700 tabular-nums">
-                                                    {formatTHB(it.total)}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Totals */}
-                            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-2">
-                                <Row label="ยอดสินค้า" value={formatTHB(order.subtotal)} />
-                                {Number(order.discount) > 0 && (
-                                    <Row
-                                        label="ส่วนลด"
-                                        value={`- ${formatTHB(order.discount)}`}
-                                    />
-                                )}
-                                <Row label="ภาษี (VAT)" value={formatTHB(order.vat)} />
-                                {Number(order.shipping_fee) > 0 && (
-                                    <Row
-                                        label="ค่าจัดส่ง"
-                                        value={formatTHB(order.shipping_fee)}
-                                    />
-                                )}
-                                <div className="border-t border-neutral-200 pt-2 mt-2">
-                                    <Row
-                                        label="ยอดสุทธิ"
-                                        value={formatTHB(order.total)}
-                                        bold
-                                    />
-                                </div>
-                            </div>
-
-                            {order.notes && (
-                                <div className="rounded-lg border border-neutral-200 bg-white p-4">
-                                    <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2">
-                                        หมายเหตุ
-                                    </div>
-                                    <div className="text-sm text-neutral-700 leading-relaxed">
-                                        {order.notes}
-                                    </div>
-                                </div>
-                            )}
+                            {/* Same document layout as the quotation — title + SO- code differ */}
+                            <QuoteDocument
+                                org={org}
+                                title="ใบสั่งขาย"
+                                code={order.code}
+                                dateLabel={new Date(order.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}
+                                customerName={order.customer?.name ?? '— ลูกค้าทั่วไป —'}
+                                customerAddress={
+                                    formatThaiAddress((order.customer as { billing_address?: unknown } | null)?.billing_address)
+                                    || formatThaiAddress((order as { shipping_address?: unknown }).shipping_address)
+                                }
+                                customerTaxId={(order.customer as { tax_id?: string | null } | null)?.tax_id ?? null}
+                                items={items.map((it) => ({
+                                    name: it.product_name, sku: it.sku, qty: it.quantity,
+                                    unit: Number(it.unit_price),
+                                    lineDisc: Number((it as { discount?: number }).discount ?? 0),
+                                    total: Number(it.total),
+                                }))}
+                                subtotal={Number(order.subtotal)}
+                                discount={Number(order.discount)}
+                                net={Number(order.subtotal) - Number(order.discount)}
+                                vat={Number(order.vat)}
+                                total={Number(order.total)}
+                                note={order.notes}
+                                format={formatTHB}
+                            />
                         </>
                     )}
                 </div>
@@ -250,34 +192,3 @@ export default function OrderDetailModal({
     );
 }
 
-function InfoTile({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-    return (
-        <div className="rounded-lg border border-neutral-200 bg-white p-3">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">
-                {icon}
-                {label}
-            </div>
-            <div className="text-sm font-semibold text-neutral-900 truncate">{value}</div>
-        </div>
-    );
-}
-
-function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
-    return (
-        <div className="flex justify-between items-baseline text-sm">
-            <span className={cn(bold ? 'text-neutral-900 font-bold' : 'text-neutral-600')}>
-                {label}
-            </span>
-            <span
-                className={cn(
-                    'tabular-nums',
-                    bold
-                        ? 'text-emerald-700 font-bold text-lg'
-                        : 'text-neutral-700 font-medium',
-                )}
-            >
-                {value}
-            </span>
-        </div>
-    );
-}

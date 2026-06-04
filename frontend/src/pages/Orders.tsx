@@ -79,7 +79,7 @@ const QUOTE_STATUS_STYLES: Record<string, string> = {
 };
 
 const QUOTE_STATUS_LABELS: Record<string, string> = {
-    draft:    'ฉบับร่าง',
+    draft:    'รอดำเนินการ',
     sent:     'ส่งให้ลูกค้าแล้ว',
     rejected: 'ปฏิเสธ',
     expired:  'หมดอายุ',

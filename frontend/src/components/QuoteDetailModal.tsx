@@ -46,7 +46,7 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-    draft:    'ฉบับร่าง',
+    draft:    'รอดำเนินการ',
     sent:     'ส่งให้ลูกค้าแล้ว',
     accepted: 'อนุมัติ → คำสั่งซื้อ',
     rejected: 'ปฏิเสธ',
