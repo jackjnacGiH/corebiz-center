@@ -70,7 +70,7 @@ export default function CustomerPickerModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-stretch sm:items-center justify-center bg-black/50 sm:p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[1200] flex items-stretch sm:items-center justify-center bg-black/50 sm:p-4" onMouseDown={onClose}>
       <div
         className="bg-white w-full sm:max-w-3xl sm:rounded-2xl shadow-2xl flex flex-col max-h-screen sm:max-h-[88vh] overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}

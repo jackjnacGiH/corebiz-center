@@ -44,7 +44,7 @@ export default function QuotePreviewPanel({
   const discPct = benefit ? Number(benefit.discount_percent) || 0 : 0;
 
   return (
-    <div className="fixed left-0 top-0 bottom-0 z-[60] w-full max-w-[420px] bg-white shadow-2xl border-r border-neutral-200 flex flex-col">
+    <div className="fixed left-0 top-0 bottom-0 z-[1100] w-full max-w-[420px] bg-white shadow-2xl border-r border-neutral-200 flex flex-col">
       {/* Header */}
       <div className="px-4 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center gap-2 flex-shrink-0">
         <FileText size={16} className="text-indigo-500" />

@@ -1592,9 +1592,11 @@ export default function Ecommerce() {
                 </div>
 
                 {/* Quote-for customer — links the quote so it flows into CRM
-                    (RFM / quote follow-up / loyalty when it converts). Optional. */}
-                <div className="mt-1 mb-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-2.5">
-                  <div className="text-[11px] font-semibold text-indigo-900 mb-1.5">ออกใบเสนอราคาในนามลูกค้า</div>
+                    (RFM / quote follow-up / loyalty when it converts). Optional.
+                    inline display:block so the .cart-summary>div flex rule doesn't
+                    lay our children out in a row. */}
+                <div className="mt-1 mb-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-2.5" style={{ display: 'block' }}>
+                  <div className="text-[11px] font-semibold text-indigo-900 mb-1.5">ลูกค้า</div>
                   {quoteCustomer ? (
                     <div className="flex items-center justify-between gap-2 rounded-md bg-white border border-neutral-200 px-2.5 py-1.5">
                       <div className="min-w-0">
@@ -1627,7 +1629,6 @@ export default function Ecommerce() {
                       ใส่ส่วนลดสมาชิกระดับ{quoteBenefit.tier_label} {Number(quoteBenefit.discount_percent)}% ในใบเสนอราคา
                     </label>
                   )}
-                  <p className="mt-1 text-[10px] text-neutral-400 leading-snug">ผูกใบเสนอราคากับลูกค้า → ใช้ติดตาม/วิเคราะห์ใน CRM ได้ (เว้นว่างได้)</p>
                 </div>
 
                 <button
