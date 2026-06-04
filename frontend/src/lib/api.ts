@@ -1299,6 +1299,26 @@ export const ordersApi = {
     return { order: order as unknown as OrderWithCustomer, items: items ?? [] };
   },
 
+  /** Replace an order's line items and recompute totals (keeps shipping_fee). */
+  async updateItems(orderId: string, items: QuoteDraftItem[], shippingFee = 0): Promise<void> {
+    const subtotal = items.reduce((a, it) => a + it.unit_price * it.quantity - (it.discount ?? 0), 0);
+    const vat = Math.round(subtotal * 0.07 * 100) / 100;
+    const total = subtotal + vat + (Number(shippingFee) || 0);
+    const { error: delErr } = await supabase.from('order_items').delete().eq('order_id', orderId);
+    if (delErr) throw delErr;
+    if (items.length > 0) {
+      const rows = items.map((it) => ({
+        order_id: orderId, product_id: it.product_id ?? null, variant_id: null, sku: it.sku, product_name: it.product_name,
+        quantity: it.quantity, unit_price: it.unit_price, discount: it.discount ?? 0,
+        total: it.unit_price * it.quantity - (it.discount ?? 0),
+      }));
+      const { error: insErr } = await supabase.from('order_items').insert(rows as never);
+      if (insErr) throw insErr;
+    }
+    const { error: upErr } = await supabase.from('orders').update({ subtotal, vat, total } as never).eq('id', orderId);
+    if (upErr) throw upErr;
+  },
+
   async updateStatus(id: string, status: Order['status']): Promise<Order> {
     const patch: OrderUpdate = { status };
     const { data, error } = await supabase
@@ -1326,7 +1346,7 @@ export const ordersApi = {
 // Quotes (ใบเสนอราคา)
 // =========================================================================
 export interface QuoteDraftItem {
-  product_id: string;
+  product_id?: string | null;
   sku: string;
   product_name: string;
   quantity: number;
@@ -1384,7 +1404,7 @@ export const quotesApi = {
       total: it.unit_price * it.quantity - (it.discount ?? 0),
     }));
 
-    const { error: iErr } = await supabase.from('quote_items').insert(rows);
+    const { error: iErr } = await supabase.from('quote_items').insert(rows as never);
     if (iErr) throw iErr;
 
     return quote;
@@ -1620,6 +1640,26 @@ export const quoteRecordApi = {
       .update({ status } as never)
       .eq('id', id);
     if (error) throw error;
+  },
+
+  /** Replace a quote's line items and recompute its totals (subtotal/vat/total). */
+  async updateItems(quoteId: string, items: QuoteDraftItem[]): Promise<void> {
+    const subtotal = items.reduce((a, it) => a + it.unit_price * it.quantity - (it.discount ?? 0), 0);
+    const vat = Math.round(subtotal * 0.07 * 100) / 100;
+    const total = subtotal + vat;
+    const { error: delErr } = await supabase.from('quote_items').delete().eq('quote_id', quoteId);
+    if (delErr) throw delErr;
+    if (items.length > 0) {
+      const rows = items.map((it) => ({
+        quote_id: quoteId, product_id: it.product_id ?? null, sku: it.sku, product_name: it.product_name,
+        quantity: it.quantity, unit_price: it.unit_price, discount: it.discount ?? 0,
+        total: it.unit_price * it.quantity - (it.discount ?? 0),
+      }));
+      const { error: insErr } = await supabase.from('quote_items').insert(rows as never);
+      if (insErr) throw insErr;
+    }
+    const { error: upErr } = await supabase.from('quotes').update({ subtotal, vat, total } as never).eq('id', quoteId);
+    if (upErr) throw upErr;
   },
 
   /** Permanently remove a quote (cascades to quote_items). */

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ShoppingBag, Loader2 } from 'lucide-react';
-import { ordersApi, orgSettingsApi, type OrderWithCustomer } from '../lib/api';
+import { ShoppingBag, Loader2, Pencil } from 'lucide-react';
+import { ordersApi, orgSettingsApi, productsApi, type OrderWithCustomer, type ProductWithInventory } from '../lib/api';
 import type { OrderItem } from '../lib/database.types';
 import {
     Dialog,
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
+import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
 
 interface Props {
     isOpen: boolean;
@@ -61,11 +62,45 @@ export default function OrderDetailModal({
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [org, setOrg] = useState<OrgInfo | null>(null);
+    const [editing, setEditing] = useState(false);
+    const [products, setProducts] = useState<ProductWithInventory[]>([]);
+    const [savingItems, setSavingItems] = useState(false);
 
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen) { setEditing(false); return; }
         orgSettingsApi.get().then((o) => setOrg(o)).catch(() => setOrg(null));
     }, [isOpen]);
+
+    async function enterEdit() {
+        setErr(null);
+        try {
+            if (products.length === 0) setProducts(await productsApi.list());
+            setEditing(true);
+        } catch (e) {
+            setErr((e as Error).message);
+        }
+    }
+
+    async function saveItems(lines: EditLine[]) {
+        if (!order) return;
+        setSavingItems(true);
+        setErr(null);
+        try {
+            await ordersApi.updateItems(order.id, lines.map((l) => ({
+                product_id: l.product_id ?? undefined, sku: l.sku, product_name: l.product_name,
+                quantity: l.quantity, unit_price: l.unit_price, discount: l.discount,
+            })), Number((order as { shipping_fee?: number }).shipping_fee ?? 0));
+            const fresh = await ordersApi.getById(order.id);
+            setOrder(fresh.order);
+            setItems(fresh.items);
+            setEditing(false);
+            onStatusChange?.();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSavingItems(false);
+        }
+    }
 
     useEffect(() => {
         if (!isOpen || !orderId) return;
@@ -92,6 +127,12 @@ export default function OrderDetailModal({
         }
     }
 
+    // Once shipped/delivered the document becomes a delivery note (ใบส่งของ)
+    // with the same running number, prefix swapped to DN-.
+    const isDelivery = order?.status === 'shipped' || order?.status === 'delivered';
+    const docTitle = isDelivery ? 'ใบส่งของ' : 'ใบสั่งขาย';
+    const docCode = order ? (isDelivery ? order.code.replace(/^(SO|ORD|QT)-/, 'DN-') : order.code) : '';
+
     return (
         <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
             <DialogContent className="sm:max-w-4xl p-0 gap-0 max-h-[90vh] flex flex-col">
@@ -101,7 +142,7 @@ export default function OrderDetailModal({
                         <div className="w-11 h-11 rounded-lg bg-indigo-500 grid place-items-center flex-shrink-0">
                             <ShoppingBag size={20} className="text-white" />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                             <DialogTitle className="text-lg font-bold text-neutral-900">
                                 รายละเอียดคำสั่งซื้อ
                             </DialogTitle>
@@ -109,6 +150,11 @@ export default function OrderDetailModal({
                                 {order?.code ?? 'Loading...'}
                             </p>
                         </div>
+                        {order && (
+                            <span className={cn('px-3 py-1.5 rounded-md text-xs font-bold border flex-shrink-0', STATUS_STYLES[order.status as OrderStatus] ?? STATUS_STYLES.pending)}>
+                                {STATUS_LABELS[order.status as OrderStatus] ?? order.status}
+                            </span>
+                        )}
                     </div>
                 </DialogHeader>
 
@@ -158,32 +204,56 @@ export default function OrderDetailModal({
                                 </div>
                             </div>
 
-                            {/* Same document layout as the quotation — title + SO- code differ */}
-                            <QuoteDocument
-                                org={org}
-                                title="ใบสั่งขาย"
-                                code={order.code}
-                                dateLabel={new Date(order.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}
-                                customerName={order.customer?.name ?? '— ลูกค้าทั่วไป —'}
-                                customerAddress={
-                                    formatThaiAddress((order.customer as { billing_address?: unknown } | null)?.billing_address)
-                                    || formatThaiAddress((order as { shipping_address?: unknown }).shipping_address)
-                                }
-                                customerTaxId={(order.customer as { tax_id?: string | null } | null)?.tax_id ?? null}
-                                items={items.map((it) => ({
-                                    name: it.product_name, sku: it.sku, qty: it.quantity,
-                                    unit: Number(it.unit_price),
-                                    lineDisc: Number((it as { discount?: number }).discount ?? 0),
-                                    total: Number(it.total),
-                                }))}
-                                subtotal={Number(order.subtotal)}
-                                discount={Number(order.discount)}
-                                net={Number(order.subtotal) - Number(order.discount)}
-                                vat={Number(order.vat)}
-                                total={Number(order.total)}
-                                note={order.notes}
-                                format={formatTHB}
-                            />
+                            {/* Edit items */}
+                            {!editing && (
+                                <div className="flex justify-end">
+                                    <button type="button" onClick={() => void enterEdit()} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-indigo-200 text-indigo-700 text-xs font-semibold hover:bg-indigo-50">
+                                        <Pencil size={13} /> แก้ไขรายการ
+                                    </button>
+                                </div>
+                            )}
+
+                            {editing ? (
+                                <EditableQuoteItems
+                                    initial={items.map((it) => ({
+                                        product_id: it.product_id, sku: it.sku, product_name: it.product_name,
+                                        quantity: it.quantity, unit_price: Number(it.unit_price),
+                                        discount: Number((it as { discount?: number }).discount ?? 0),
+                                    }))}
+                                    products={products}
+                                    format={formatTHB}
+                                    onSave={saveItems}
+                                    onCancel={() => setEditing(false)}
+                                    busy={savingItems}
+                                />
+                            ) : (
+                                /* Same document layout as the quotation — title + SO-/DN- code differ */
+                                <QuoteDocument
+                                    org={org}
+                                    title={docTitle}
+                                    code={docCode}
+                                    dateLabel={new Date(order.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}
+                                    customerName={order.customer?.name ?? '— ลูกค้าทั่วไป —'}
+                                    customerAddress={
+                                        formatThaiAddress((order.customer as { billing_address?: unknown } | null)?.billing_address)
+                                        || formatThaiAddress((order as { shipping_address?: unknown }).shipping_address)
+                                    }
+                                    customerTaxId={(order.customer as { tax_id?: string | null } | null)?.tax_id ?? null}
+                                    items={items.map((it) => ({
+                                        name: it.product_name, sku: it.sku, qty: it.quantity,
+                                        unit: Number(it.unit_price),
+                                        lineDisc: Number((it as { discount?: number }).discount ?? 0),
+                                        total: Number(it.total),
+                                    }))}
+                                    subtotal={Number(order.subtotal)}
+                                    discount={Number(order.discount)}
+                                    net={Number(order.subtotal) - Number(order.discount)}
+                                    vat={Number(order.vat)}
+                                    total={Number(order.total)}
+                                    note={order.notes}
+                                    format={formatTHB}
+                                />
+                            )}
                         </>
                     )}
                 </div>

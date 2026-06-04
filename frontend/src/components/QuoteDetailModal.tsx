@@ -18,7 +18,7 @@ import {
     Loader2,
     AlertCircle,
 } from 'lucide-react';
-import { quoteRecordApi, orgSettingsApi, type QuoteListItem, type QuoteItem } from '../lib/api';
+import { quoteRecordApi, orgSettingsApi, productsApi, type QuoteListItem, type QuoteItem, type ProductWithInventory } from '../lib/api';
 import {
     Dialog,
     DialogContent,
@@ -26,8 +26,10 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
+import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
 
 interface Props {
     isOpen: boolean;
@@ -70,11 +72,45 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
     const [rejecting, setRejecting] = useState(false);
     const [approvedCode, setApprovedCode] = useState<string | null>(null);
     const [org, setOrg] = useState<OrgInfo | null>(null);
+    const [editing, setEditing] = useState(false);
+    const [products, setProducts] = useState<ProductWithInventory[]>([]);
+    const [savingItems, setSavingItems] = useState(false);
 
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen) { setEditing(false); return; }
         orgSettingsApi.get().then((o) => setOrg(o)).catch(() => setOrg(null));
     }, [isOpen]);
+
+    async function enterEdit() {
+        setErr(null);
+        try {
+            if (products.length === 0) setProducts(await productsApi.list());
+            setEditing(true);
+        } catch (e) {
+            setErr((e as Error).message);
+        }
+    }
+
+    async function saveItems(lines: EditLine[]) {
+        if (!quote) return;
+        setSavingItems(true);
+        setErr(null);
+        try {
+            await quoteRecordApi.updateItems(quote.id, lines.map((l) => ({
+                product_id: l.product_id ?? undefined, sku: l.sku, product_name: l.product_name,
+                quantity: l.quantity, unit_price: l.unit_price, discount: l.discount,
+            })));
+            const fresh = await quoteRecordApi.getWithItems(quote.id);
+            setQuote(fresh.quote);
+            setItems(fresh.items);
+            setEditing(false);
+            onChange?.();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSavingItems(false);
+        }
+    }
 
     useEffect(() => {
         if (!isOpen || !quoteId) {
@@ -193,7 +229,22 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                         </div>
                     )}
 
-                    {quote && (
+                    {quote && editing && (
+                        <EditableQuoteItems
+                            initial={items.map((it) => ({
+                                product_id: it.product_id, sku: it.sku, product_name: it.product_name,
+                                quantity: it.quantity, unit_price: Number(it.unit_price),
+                                discount: Number((it as { discount?: number }).discount ?? 0),
+                            }))}
+                            products={products}
+                            format={formatTHB}
+                            onSave={saveItems}
+                            onCancel={() => setEditing(false)}
+                            busy={savingItems}
+                        />
+                    )}
+
+                    {quote && !editing && (
                         <QuoteDocument
                             org={org}
                             code={quote.code}
@@ -220,11 +271,22 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                     )}
                 </div>
 
-                {/* Action footer */}
+                {/* Action footer (hidden while editing items — the editor has its own buttons) */}
+                {!editing && (
                 <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex flex-wrap gap-2 justify-end">
                     <Button type="button" variant="outline" onClick={onClose}>
                         ปิด
                     </Button>
+                    {isActionable && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void enterEdit()}
+                            className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 gap-1.5"
+                        >
+                            <Pencil size={14} /> แก้ไขรายการ
+                        </Button>
+                    )}
                     {isActionable && (
                         <>
                             <Button
@@ -262,6 +324,7 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                         </span>
                     )}
                 </div>
+                )}
             </DialogContent>
         </Dialog>
     );
