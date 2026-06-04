@@ -37,6 +37,7 @@ import type { Category, Customer } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
 import { downloadQuotation } from '../components/QuotationPDF';
 import ProductImagePreview from '../components/ProductImagePreview';
+import CustomerPickerModal from '../components/CustomerPickerModal';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 
 type LeadTimeKey = 'ready' | 'twoThreeDays' | 'low';
@@ -200,7 +201,6 @@ export default function Ecommerce() {
   const [quoteBenefit, setQuoteBenefit] = useState<CustomerBenefit | null>(null);
   const [applyTierDiscount, setApplyTierDiscount] = useState(true);
   const [custPickerOpen, setCustPickerOpen] = useState(false);
-  const [custQuery, setCustQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>(readSavedViewMode);
 
   // Persist view mode across visits
@@ -632,22 +632,11 @@ export default function Ecommerce() {
     setQuoteCustomer(c);
     setQuoteBenefit(null);
     setCustPickerOpen(false);
-    setCustQuery('');
     setApplyTierDiscount(true);
     if (c) {
       try { setQuoteBenefit(await tierApi.customerBenefit(c.id)); } catch { /* ignore */ }
     }
   }
-
-  const filteredQuoteCustomers = useMemo(() => {
-    const q = custQuery.trim().toLowerCase();
-    if (!q) return customers.slice(0, 30);
-    return customers.filter(c =>
-      c.name?.toLowerCase().includes(q)
-      || c.code?.toLowerCase().includes(q)
-      || c.phone?.includes(q),
-    ).slice(0, 30);
-  }, [customers, custQuery]);
 
   // Member discount % that will be applied to the quote (0 when none / unticked)
   const tierDiscPct = (applyTierDiscount && quoteBenefit) ? Number(quoteBenefit.discount_percent) || 0 : 0;
@@ -1593,25 +1582,10 @@ export default function Ecommerce() {
                           )}
                         </div>
                       </div>
-                      <button type="button" onClick={() => void pickQuoteCustomer(null)} className="text-neutral-400 hover:text-neutral-700 p-1 flex-shrink-0"><X size={14} /></button>
-                    </div>
-                  ) : custPickerOpen ? (
-                    <div className="rounded-md bg-white border border-neutral-200 overflow-hidden">
-                      <div className="p-1.5 border-b border-neutral-100 relative">
-                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
-                        <input autoFocus value={custQuery} onChange={e => setCustQuery(e.target.value)} placeholder="ค้นหาลูกค้า..." className="w-full pl-7 pr-2 py-1 text-sm outline-none" />
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button type="button" onClick={() => setCustPickerOpen(true)} className="text-[11px] text-indigo-600 hover:underline px-1">เปลี่ยน</button>
+                        <button type="button" onClick={() => void pickQuoteCustomer(null)} className="text-neutral-400 hover:text-neutral-700 p-1"><X size={14} /></button>
                       </div>
-                      <div className="max-h-40 overflow-y-auto">
-                        {filteredQuoteCustomers.length === 0 ? (
-                          <div className="p-3 text-center text-[11px] text-neutral-400">ไม่พบลูกค้า</div>
-                        ) : filteredQuoteCustomers.map(c => (
-                          <button key={c.id} type="button" onClick={() => void pickQuoteCustomer(c)} className="w-full text-left px-2.5 py-1.5 hover:bg-indigo-50 border-b border-neutral-50 last:border-0">
-                            <div className="text-sm text-neutral-800 truncate">{c.name}</div>
-                            <div className="text-[10px] text-neutral-400 font-mono truncate">{c.code ?? '—'}{c.phone ? ` · ${c.phone}` : ''}</div>
-                          </button>
-                        ))}
-                      </div>
-                      <button type="button" onClick={() => { setCustPickerOpen(false); setCustQuery(''); }} className="w-full text-center text-[11px] text-neutral-500 hover:bg-neutral-50 py-1 border-t border-neutral-100">ปิด</button>
                     </div>
                   ) : (
                     <button type="button" onClick={() => setCustPickerOpen(true)} className="w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-dashed border-indigo-300 bg-white px-2.5 py-1.5 text-[12px] text-indigo-600 hover:bg-indigo-50">
@@ -1642,6 +1616,14 @@ export default function Ecommerce() {
           </aside>
         </div>
       )}
+
+      <CustomerPickerModal
+        open={custPickerOpen}
+        customers={customers}
+        selectedId={quoteCustomer?.id ?? null}
+        onClose={() => setCustPickerOpen(false)}
+        onSelect={(c) => void pickQuoteCustomer(c)}
+      />
     </div>
   );
 }
