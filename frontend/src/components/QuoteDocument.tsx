@@ -7,6 +7,7 @@ export interface OrgInfo {
   phone?: string | null;
   email?: string | null;
   website?: string | null;
+  logo_url?: string | null;
 }
 
 export interface QuoteDocItem {
@@ -52,7 +53,11 @@ export default function QuoteDocument({
       {/* ── Company header (seller) ─────────────────────────── */}
       <div className="flex items-start justify-between gap-6 border-b-2 border-[#1696F4] pb-4">
         <div className="flex items-start gap-3 min-w-0">
-          <JnacLogo className="w-12 h-12 flex-shrink-0" />
+          {org?.logo_url ? (
+            <img src={org.logo_url} alt="โลโก้" className="w-12 h-12 flex-shrink-0 object-contain" />
+          ) : (
+            <JnacLogo className="w-12 h-12 flex-shrink-0" />
+          )}
           <div className="min-w-0">
           <div className="text-xl font-extrabold text-[#1696F4] leading-tight">
             {org?.business_name ?? 'บริษัท เจ แนค (ประเทศไทย) จำกัด'} <span className="text-[11px] font-medium text-neutral-400">(สำนักงานใหญ่)</span>

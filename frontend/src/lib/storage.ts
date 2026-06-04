@@ -69,6 +69,20 @@ export async function uploadProductImage(file: File, productKey: string): Promis
     return data.publicUrl;
 }
 
+/** Upload the company logo (for quotation/bill headers) → returns public URL. */
+export async function uploadOrgLogo(file: File): Promise<string> {
+    validateImage(file);
+    const ext = extFor(file);
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const path = `org/logo-${stamp}.${ext}`;
+    const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: file.type });
+    if (uploadErr) throw uploadErr;
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    return data.publicUrl;
+}
+
 const CHAT_BUCKET = 'chat-attachments';
 
 /**

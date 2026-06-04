@@ -21,7 +21,10 @@ import {
     Lock,
     RotateCcw,
     Sparkles,
+    Upload,
+    Image as ImageIcon,
 } from 'lucide-react';
+import { uploadOrgLogo, validateImage } from '../lib/storage';
 import { useAuth } from '../lib/AuthProvider';
 import { supabase, DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '../lib/supabase';
 import {
@@ -197,6 +200,35 @@ export default function Settings() {
     const [savingOrg, setSavingOrg] = useState(false);
     const [orgErr, setOrgErr] = useState<string | null>(null);
     const [orgSavedAt, setOrgSavedAt] = useState<number | null>(null);
+    const [logoUploading, setLogoUploading] = useState(false);
+
+    async function handleLogoUpload(file: File) {
+        setLogoUploading(true);
+        setOrgErr(null);
+        try {
+            validateImage(file);
+            const url = await uploadOrgLogo(file);
+            const updated = await orgSettingsApi.update({ logo_url: url });
+            setOrgSettings(updated);
+        } catch (e) {
+            setOrgErr((e as Error).message);
+        } finally {
+            setLogoUploading(false);
+        }
+    }
+
+    async function handleLogoRemove() {
+        setLogoUploading(true);
+        setOrgErr(null);
+        try {
+            const updated = await orgSettingsApi.update({ logo_url: null });
+            setOrgSettings(updated);
+        } catch (e) {
+            setOrgErr((e as Error).message);
+        } finally {
+            setLogoUploading(false);
+        }
+    }
 
     useEffect(() => {
         let cancelled = false;
@@ -621,6 +653,37 @@ export default function Settings() {
                                 </div>
                             ) : (
                                 <>
+                                    {/* Company logo (shown on quotation/bill headers) */}
+                                    <div className="space-y-2">
+                                        <Label>โลโก้บริษัท (แสดงบนหัวใบเสนอราคา)</Label>
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-16 h-16 rounded-lg border border-neutral-200 bg-neutral-50 grid place-items-center overflow-hidden flex-shrink-0">
+                                                {orgSettings?.logo_url ? (
+                                                    <img src={orgSettings.logo_url} alt="โลโก้" className="w-full h-full object-contain" />
+                                                ) : (
+                                                    <ImageIcon size={20} className="text-neutral-300" />
+                                                )}
+                                            </div>
+                                            <label className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-sm font-medium cursor-pointer ${logoUploading ? 'opacity-60 pointer-events-none border-neutral-200 text-neutral-400' : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'}`}>
+                                                {logoUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                                                อัปโหลดโลโก้
+                                                <input
+                                                    type="file"
+                                                    accept="image/png,image/jpeg,image/webp"
+                                                    className="hidden"
+                                                    disabled={logoUploading}
+                                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleLogoUpload(f); e.target.value = ''; }}
+                                                />
+                                            </label>
+                                            {orgSettings?.logo_url && !logoUploading && (
+                                                <button type="button" onClick={() => void handleLogoRemove()} className="text-xs text-red-600 hover:underline">
+                                                    ลบโลโก้
+                                                </button>
+                                            )}
+                                        </div>
+                                        <p className="text-[11px] text-neutral-400">แนะนำ PNG พื้นหลังโปร่งใส รูปสี่เหลี่ยมจัตุรัส · สูงสุด 5MB</p>
+                                    </div>
+
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div className="space-y-2">
                                             <Label htmlFor="biz-name">ชื่อธุรกิจ</Label>

@@ -433,6 +433,7 @@ export type Database = {
           phone: string | null;
           email: string | null;
           website: string | null;
+          logo_url: string | null;
           updated_at: string;
           updated_by: string | null;
         }
@@ -445,6 +446,7 @@ export type Database = {
           address?: string | null;
           phone?: string | null;
           email?: string | null;
+          logo_url?: string | null;
           website?: string | null;
           updated_at?: string;
           updated_by?: string | null;
