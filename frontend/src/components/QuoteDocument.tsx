@@ -50,9 +50,11 @@ export default function QuoteDocument({
   return (
     <div className="text-neutral-800">
       {/* ── Company header (seller) ─────────────────────────── */}
-      <div className="flex items-start justify-between gap-6 border-b-2 border-indigo-500 pb-4">
-        <div className="min-w-0">
-          <div className="text-xl font-extrabold text-[#1e74c4] leading-tight">
+      <div className="flex items-start justify-between gap-6 border-b-2 border-[#1696F4] pb-4">
+        <div className="flex items-start gap-3 min-w-0">
+          <JnacLogo className="w-12 h-12 flex-shrink-0" />
+          <div className="min-w-0">
+          <div className="text-xl font-extrabold text-[#1696F4] leading-tight">
             {org?.business_name ?? 'บริษัท เจ แนค (ประเทศไทย) จำกัด'} <span className="text-[11px] font-medium text-neutral-400">(สำนักงานใหญ่)</span>
           </div>
           <div className="mt-1.5 text-[11px] text-neutral-600 leading-relaxed space-y-0.5">
@@ -60,6 +62,7 @@ export default function QuoteDocument({
             {org?.tax_id && <div>เลขประจำตัวผู้เสียภาษี {org.tax_id}</div>}
             {org?.phone && <div>โทร. {org.phone}</div>}
             {(org?.website || org?.email) && <div>{org?.website}{org?.website && org?.email ? ' · ' : ''}{org?.email && `Email: ${org.email}`}</div>}
+          </div>
           </div>
         </div>
         <div className="text-right flex-shrink-0">
@@ -147,6 +150,16 @@ export default function QuoteDocument({
 }
 
 export { formatThaiAddress };
+
+/** JNAC mark — bright-blue circular swoosh (recreated as SVG). */
+export function JnacLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="JNAC">
+      <path d="M44 11 A39.5 39.5 0 0 1 71 85" stroke="#1696F4" strokeWidth="13" strokeLinecap="round" />
+      <path d="M56 89 A39.5 39.5 0 0 1 29 15" stroke="#1696F4" strokeWidth="13" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 function Row({ label, value, cls }: { label: string; value: string; cls?: string }) {
   return (
