@@ -1354,15 +1354,13 @@ export const quotesApi = {
     const vat = Math.round(subtotal * vat_rate * 100) / 100;
     const total = subtotal + vat;
 
-    const code = `QT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${
-      String(Math.floor(Math.random() * 9000) + 1000)
-    }`;
+    // code is generated DB-side by a sequence default (QT-<8-digit running no.),
+    // guaranteed unique — don't set it here.
     const valid_until = new Date(Date.now() + valid_days * 86400000).toISOString().slice(0, 10);
 
     const { data: quote, error: qErr } = await supabase
       .from('quotes')
       .insert({
-        code,
         customer_id: input.customer_id ?? null,
         status: 'draft',
         subtotal,

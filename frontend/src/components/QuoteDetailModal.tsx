@@ -13,14 +13,12 @@
 import { useEffect, useState } from 'react';
 import {
     FileText,
-    User,
-    Calendar,
     CheckCircle2,
     XCircle,
     Loader2,
     AlertCircle,
 } from 'lucide-react';
-import { quoteRecordApi, type QuoteListItem, type QuoteItem } from '../lib/api';
+import { quoteRecordApi, orgSettingsApi, type QuoteListItem, type QuoteItem } from '../lib/api';
 import {
     Dialog,
     DialogContent,
@@ -29,6 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
 
 interface Props {
     isOpen: boolean;
@@ -70,6 +69,12 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
     const [approving, setApproving] = useState(false);
     const [rejecting, setRejecting] = useState(false);
     const [approvedCode, setApprovedCode] = useState<string | null>(null);
+    const [org, setOrg] = useState<OrgInfo | null>(null);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        orgSettingsApi.get().then((o) => setOrg(o)).catch(() => setOrg(null));
+    }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen || !quoteId) {
@@ -136,7 +141,7 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
 
     return (
         <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
-            <DialogContent className="sm:max-w-2xl p-0 gap-0 max-h-[92vh] flex flex-col">
+            <DialogContent className="sm:max-w-4xl p-0 gap-0 max-h-[92vh] flex flex-col">
                 <DialogHeader className="px-6 py-5 border-b border-neutral-200 bg-neutral-50">
                     <div className="flex items-center gap-4">
                         <div className="w-11 h-11 rounded-lg bg-amber-500 grid place-items-center flex-shrink-0">
@@ -189,101 +194,29 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                     )}
 
                     {quote && (
-                        <>
-                            {/* Customer + meta */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <InfoCell
-                                    icon={<User size={14} className="text-neutral-400" />}
-                                    label="ลูกค้า"
-                                    value={quote.customer?.name ?? '— ลูกค้าทั่วไป —'}
-                                />
-                                <InfoCell
-                                    icon={<Calendar size={14} className="text-neutral-400" />}
-                                    label="วันที่สร้าง"
-                                    value={new Date(quote.created_at).toLocaleString('th-TH', {
-                                        year: 'numeric',
-                                        month: 'short',
-                                        day: 'numeric',
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                    })}
-                                />
-                            </div>
-
-                            {quote.notes && (
-                                <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-xs text-orange-800 leading-relaxed">
-                                    <div className="font-bold mb-1">หมายเหตุ</div>
-                                    {quote.notes}
-                                </div>
-                            )}
-
-                            {/* Line items */}
-                            <div className="rounded-lg border border-neutral-200 overflow-hidden">
-                                <table className="w-full text-sm">
-                                    <thead className="bg-neutral-50 border-b border-neutral-200">
-                                        <tr>
-                                            <th className="text-left px-3 py-2 text-[10px] font-semibold text-neutral-600 uppercase tracking-wider">
-                                                สินค้า
-                                            </th>
-                                            <th className="text-center px-3 py-2 text-[10px] font-semibold text-neutral-600 uppercase tracking-wider">
-                                                จำนวน
-                                            </th>
-                                            <th className="text-right px-3 py-2 text-[10px] font-semibold text-neutral-600 uppercase tracking-wider">
-                                                ราคา
-                                            </th>
-                                            <th className="text-right px-3 py-2 text-[10px] font-semibold text-neutral-600 uppercase tracking-wider">
-                                                รวม
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-neutral-100">
-                                        {items.map((it) => (
-                                            <tr key={it.id}>
-                                                <td className="px-3 py-2">
-                                                    <div className="font-medium text-neutral-900 text-xs">
-                                                        {it.product_name}
-                                                    </div>
-                                                    <div className="text-[10px] text-neutral-500 font-mono">
-                                                        {it.sku}
-                                                    </div>
-                                                </td>
-                                                <td className="px-3 py-2 text-center text-xs tabular-nums">
-                                                    {it.quantity.toLocaleString('th-TH')}
-                                                </td>
-                                                <td className="px-3 py-2 text-right text-xs tabular-nums text-neutral-700">
-                                                    {formatTHB(it.unit_price)}
-                                                </td>
-                                                <td className="px-3 py-2 text-right text-xs font-semibold tabular-nums">
-                                                    {formatTHB(it.total)}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            {/* Totals */}
-                            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-1.5 text-sm">
-                                <div className="flex justify-between text-neutral-600">
-                                    <span>ยอดรวม</span>
-                                    <span className="tabular-nums">{formatTHB(quote.subtotal)}</span>
-                                </div>
-                                {Number(quote.discount) > 0 && (
-                                    <div className="flex justify-between text-rose-600">
-                                        <span>ส่วนลด</span>
-                                        <span className="tabular-nums">- {formatTHB(quote.discount)}</span>
-                                    </div>
-                                )}
-                                <div className="flex justify-between text-neutral-600">
-                                    <span>ภาษี 7%</span>
-                                    <span className="tabular-nums">{formatTHB(quote.vat)}</span>
-                                </div>
-                                <div className="flex justify-between font-bold text-base text-neutral-900 pt-2 border-t border-neutral-200">
-                                    <span>ยอดสุทธิ</span>
-                                    <span className="tabular-nums">{formatTHB(quote.total)}</span>
-                                </div>
-                            </div>
-                        </>
+                        <QuoteDocument
+                            org={org}
+                            code={quote.code}
+                            dateLabel={new Date(quote.created_at).toLocaleString('th-TH', {
+                                year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                            })}
+                            customerName={quote.customer?.name ?? '— ลูกค้าทั่วไป —'}
+                            customerAddress={formatThaiAddress(quote.customer?.billing_address)}
+                            customerTaxId={quote.customer?.tax_id ?? null}
+                            items={items.map((it) => ({
+                                name: it.product_name, sku: it.sku, qty: it.quantity,
+                                unit: Number(it.unit_price),
+                                lineDisc: Number((it as { discount?: number }).discount ?? 0),
+                                total: Number(it.total),
+                            }))}
+                            subtotal={Number(quote.subtotal)}
+                            discount={Number(quote.discount)}
+                            net={Number(quote.subtotal) - Number(quote.discount)}
+                            vat={Number(quote.vat)}
+                            total={Number(quote.total)}
+                            note={quote.notes}
+                            format={formatTHB}
+                        />
                     )}
                 </div>
 
@@ -331,25 +264,5 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                 </div>
             </DialogContent>
         </Dialog>
-    );
-}
-
-function InfoCell({
-    icon,
-    label,
-    value,
-}: {
-    icon: React.ReactNode;
-    label: string;
-    value: string;
-}) {
-    return (
-        <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2">
-            <div className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold flex items-center gap-1.5">
-                {icon}
-                {label}
-            </div>
-            <div className="text-sm font-medium text-neutral-900 mt-0.5">{value}</div>
-        </div>
     );
 }
