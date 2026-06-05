@@ -71,40 +71,58 @@ export function GroupCard({
   name,
   cover,
   count,
+  priceMin,
+  priceMax,
+  inStock,
 }: {
   id: string;
   name: string;
   cover: string | null;
   count: number;
+  priceMin: number | null;
+  priceMax: number | null;
+  inStock: boolean;
 }) {
+  const priceLabel =
+    priceMin == null || priceMax == null
+      ? null
+      : priceMin === priceMax
+        ? formatTHB(priceMin)
+        : `${formatTHB(priceMin)}-${formatTHB(priceMax)}`;
   return (
     <Link
       href={`/g/${encodeURIComponent(id)}`}
       className="group block rounded-xl border border-neutral-200 bg-white overflow-hidden hover:shadow-md transition"
     >
-      <div className="aspect-[4/3] bg-neutral-50 grid place-items-center overflow-hidden">
+      <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden relative">
         {cover ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={cover}
             alt={name}
             loading="lazy"
-            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+            className="w-full h-full object-contain p-3 group-hover:scale-105 transition duration-300"
           />
         ) : (
-          <span className="text-neutral-300 text-sm">{name}</span>
+          <span className="text-neutral-300 text-sm px-2 text-center">{name}</span>
         )}
+        <span className="absolute top-2 left-2 rounded-full bg-white/90 border border-neutral-200 px-2 py-0.5 text-[10px] font-semibold text-neutral-500">
+          กลุ่ม
+        </span>
       </div>
-      <div className="p-3">
+      <div className="p-3 space-y-1.5">
         <h3 className="text-sm font-semibold text-neutral-800 leading-snug line-clamp-2 min-h-[2.5rem]">
           {name}
         </h3>
-        <span
-          className="mt-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
-          style={{ background: "rgba(22,150,244,0.1)", color: BRAND }}
-        >
-          {count} รายการ
-        </span>
+        {priceLabel && (
+          <div className="font-extrabold text-sm" style={{ color: BRAND }}>
+            {priceLabel}
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <StockBadge inStock={inStock} />
+          <span className="text-[11px] text-neutral-400 whitespace-nowrap">{count} รายการ</span>
+        </div>
       </div>
     </Link>
   );

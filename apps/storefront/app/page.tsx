@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getAllProducts, getCategories, getGroups, imagesOf } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP } from "@/lib/seo";
+import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard } from "@/components/ui";
 
 export const revalidate = 3600;
@@ -25,6 +26,9 @@ export default async function Home() {
   // product image when the group has no cover_image set.
   const counts = new Map<string, number>();
   const coverFallback = new Map<string, string>();
+  const priceMin = new Map<string, number>();
+  const priceMax = new Map<string, number>();
+  const anyStock = new Map<string, boolean>();
   for (const p of products) {
     if (!p.group_id) continue;
     counts.set(p.group_id, (counts.get(p.group_id) ?? 0) + 1);
@@ -32,6 +36,10 @@ export default async function Home() {
       const img = imagesOf(p)[0];
       if (img) coverFallback.set(p.group_id, img);
     }
+    const eff = effectivePrice(p);
+    priceMin.set(p.group_id, Math.min(priceMin.get(p.group_id) ?? Infinity, eff));
+    priceMax.set(p.group_id, Math.max(priceMax.get(p.group_id) ?? -Infinity, eff));
+    anyStock.set(p.group_id, (anyStock.get(p.group_id) ?? false) || p.in_stock);
   }
   const visibleGroups = groups.filter((g) => (counts.get(g.id) ?? 0) > 0);
   const ungrouped = products.filter((p) => !p.group_id);
@@ -49,6 +57,9 @@ export default async function Home() {
           name={g.name}
           cover={g.cover_image || coverFallback.get(g.id) || null}
           count={counts.get(g.id) ?? 0}
+          priceMin={priceMin.get(g.id) ?? null}
+          priceMax={priceMax.get(g.id) ?? null}
+          inStock={anyStock.get(g.id) ?? false}
         />
       ),
     })),
