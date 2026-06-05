@@ -17,6 +17,7 @@ import {
   breadcrumbLd,
   productUrl,
   categoryUrl,
+  groupUrl,
   SHOP,
 } from "@/lib/seo";
 import { effectivePrice, formatTHB } from "@/lib/format";
@@ -74,18 +75,23 @@ export default async function ProductPage({
   const specs = specRows(p);
   const faqs = faqOf(p, org);
 
+  // Prefer the product group for the breadcrumb (matches the shop's group-first
+  // navigation), falling back to the category.
+  const parent =
+    p.group_id && p.group_name
+      ? { name: p.group_name, href: `/g/${p.group_id}`, url: groupUrl(p.group_id) }
+      : p.category_slug && p.category_name_th
+        ? { name: p.category_name_th, href: `/c/${p.category_slug}`, url: categoryUrl(p.category_slug) }
+        : null;
+
   const crumbItems = [
     { name: "หน้าแรก", href: "/" },
-    ...(p.category_slug && p.category_name_th
-      ? [{ name: p.category_name_th, href: `/c/${p.category_slug}` }]
-      : []),
+    ...(parent ? [{ name: parent.name, href: parent.href }] : []),
     { name: p.name_th },
   ];
   const crumbLdItems = [
     { name: "หน้าแรก", url: SHOP },
-    ...(p.category_slug && p.category_name_th
-      ? [{ name: p.category_name_th, url: categoryUrl(p.category_slug) }]
-      : []),
+    ...(parent ? [{ name: parent.name, url: parent.url }] : []),
     { name: p.name_th, url: productUrl(p.sku) },
   ];
 

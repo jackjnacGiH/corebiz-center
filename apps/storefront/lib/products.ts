@@ -24,6 +24,7 @@ export interface SProduct {
   category_slug: string | null;
   category_name_th: string | null;
   category_name_en: string | null;
+  group_id: string | null;
   group_name: string | null;
   in_stock: boolean;
 }
@@ -32,6 +33,13 @@ export interface SCategory {
   slug: string;
   name_th: string;
   name_en: string | null;
+}
+
+export interface SGroup {
+  id: string;
+  name: string;
+  cover_image: string | null;
+  description: string | null;
 }
 
 const SELECT = "*";
@@ -73,6 +81,32 @@ export async function getProductsByCategory(slug: string): Promise<SProduct[]> {
     .from("storefront_products")
     .select(SELECT)
     .eq("category_slug", slug)
+    .order("name_th", { ascending: true });
+  return (data ?? []) as unknown as SProduct[];
+}
+
+export async function getGroups(): Promise<SGroup[]> {
+  const { data } = await supabase
+    .from("product_groups")
+    .select("id,name,cover_image,description")
+    .order("name", { ascending: true });
+  return (data ?? []) as SGroup[];
+}
+
+export async function getGroupById(id: string): Promise<SGroup | null> {
+  const { data } = await supabase
+    .from("product_groups")
+    .select("id,name,cover_image,description")
+    .eq("id", id)
+    .maybeSingle();
+  return (data as SGroup | null) ?? null;
+}
+
+export async function getProductsByGroup(groupId: string): Promise<SProduct[]> {
+  const { data } = await supabase
+    .from("storefront_products")
+    .select(SELECT)
+    .eq("group_id", groupId)
     .order("name_th", { ascending: true });
   return (data ?? []) as unknown as SProduct[];
 }

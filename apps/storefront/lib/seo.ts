@@ -59,6 +59,10 @@ export function categoryUrl(slug: string): string {
   return `${SHOP}/c/${encodeURIComponent(slug)}`;
 }
 
+export function groupUrl(id: string): string {
+  return `${SHOP}/g/${encodeURIComponent(id)}`;
+}
+
 export function organizationLd(org: OrgInfo) {
   return {
     "@context": "https://schema.org",

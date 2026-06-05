@@ -66,6 +66,50 @@ export function ProductCard({ p }: { p: SProduct }) {
   );
 }
 
+export function GroupCard({
+  id,
+  name,
+  cover,
+  count,
+}: {
+  id: string;
+  name: string;
+  cover: string | null;
+  count: number;
+}) {
+  return (
+    <Link
+      href={`/g/${encodeURIComponent(id)}`}
+      className="group block rounded-xl border border-neutral-200 bg-white overflow-hidden hover:shadow-md transition"
+    >
+      <div className="aspect-[4/3] bg-neutral-50 grid place-items-center overflow-hidden">
+        {cover ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={cover}
+            alt={name}
+            loading="lazy"
+            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+          />
+        ) : (
+          <span className="text-neutral-300 text-sm">{name}</span>
+        )}
+      </div>
+      <div className="p-3">
+        <h3 className="text-sm font-semibold text-neutral-800 leading-snug line-clamp-2 min-h-[2.5rem]">
+          {name}
+        </h3>
+        <span
+          className="mt-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
+          style={{ background: "rgba(22,150,244,0.1)", color: BRAND }}
+        >
+          {count} รายการ
+        </span>
+      </div>
+    </Link>
+  );
+}
+
 export function CtaButtons({ org, label }: { org: OrgInfo; label?: string }) {
   return (
     <div className="flex flex-wrap gap-3">
