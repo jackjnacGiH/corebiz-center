@@ -36,6 +36,30 @@ export default async function Home() {
   const visibleGroups = groups.filter((g) => (counts.get(g.id) ?? 0) > 0);
   const ungrouped = products.filter((p) => !p.group_id);
 
+  // Merge group cards + standalone product cards into one list, sorted by Thai
+  // name — a card is either a whole group (drills in) or a single product.
+  const entries: { key: string; sort: string; el: React.ReactNode }[] = [
+    ...visibleGroups.map((g) => ({
+      key: `g-${g.id}`,
+      sort: g.name,
+      el: (
+        <GroupCard
+          key={`g-${g.id}`}
+          id={g.id}
+          name={g.name}
+          cover={g.cover_image || coverFallback.get(g.id) || null}
+          count={counts.get(g.id) ?? 0}
+        />
+      ),
+    })),
+    ...ungrouped.map((p) => ({
+      key: `p-${p.id}`,
+      sort: p.name_th,
+      el: <ProductCard key={`p-${p.id}`} p={p} />,
+    })),
+  ];
+  entries.sort((a, b) => a.sort.localeCompare(b.sort, "th"));
+
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={ld(itemListLd(products))} />
@@ -75,43 +99,19 @@ export default async function Home() {
           </section>
         )}
 
-        {/* Product groups (drill in to see members) */}
-        {visibleGroups.length > 0 && (
-          <section className="mt-10">
-            <h2 className="text-lg font-bold text-neutral-900 mb-4">
-              กลุ่มสินค้า{" "}
-              <span className="text-sm font-normal text-neutral-400">
-                ({visibleGroups.length} กลุ่ม)
-              </span>
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {visibleGroups.map((g) => (
-                <GroupCard
-                  key={g.id}
-                  id={g.id}
-                  name={g.name}
-                  cover={g.cover_image || coverFallback.get(g.id) || null}
-                  count={counts.get(g.id) ?? 0}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Ungrouped products shown individually */}
-        {ungrouped.length > 0 && (
-          <section className="mt-12">
-            <h2 className="text-lg font-bold text-neutral-900 mb-4">
-              สินค้าอื่นๆ{" "}
-              <span className="text-sm font-normal text-neutral-400">({ungrouped.length} รายการ)</span>
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {ungrouped.map((p) => (
-                <ProductCard key={p.id} p={p} />
-              ))}
-            </div>
-          </section>
-        )}
+        {/* One merged catalog grid: group cards + standalone product cards,
+            sorted alphabetically — like the admin Industrial Product Catalog. */}
+        <section className="mt-10">
+          <h2 className="text-lg font-bold text-neutral-900 mb-4">
+            สินค้าทั้งหมด{" "}
+            <span className="text-sm font-normal text-neutral-400">
+              ({entries.length} รายการ)
+            </span>
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {entries.map((e) => e.el)}
+          </div>
+        </section>
       </main>
     </>
   );
