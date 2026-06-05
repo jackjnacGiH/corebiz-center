@@ -10,6 +10,11 @@
       "entrypoint": "apps/jnac-admin-chat",
       "routePrefix": "/jnac",
       "framework": "nextjs"
+    },
+    "shop": {
+      "entrypoint": "apps/storefront",
+      "routePrefix": "/shop",
+      "framework": "nextjs"
     }
   }
 }
