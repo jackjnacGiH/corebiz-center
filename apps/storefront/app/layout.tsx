@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { getOrg, organizationLd, localBusinessLd, ld, SITE, SHOP } from "@/lib/seo";
 import { Nav, Footer } from "@/components/ui";
+import ChatWidget from "@/components/ChatWidget";
 
 const DESC =
   "JNAC (เจ แนค) ผู้จำหน่ายวัสดุและอุปกรณ์งานขัด เจียร ตัด ขัดเงา และเครื่องมือลมสำหรับงานอุตสาหกรรม — กระดาษทราย จานทราย ล้อขัด ใบตัด ครบวงจร พร้อมราคาและสเปกชัดเจน ขอใบเสนอราคาได้ทันที";
@@ -35,6 +36,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <Nav org={org} />
         <div className="flex-1">{children}</div>
         <Footer org={org} />
+        <ChatWidget />
       </body>
     </html>
   );
