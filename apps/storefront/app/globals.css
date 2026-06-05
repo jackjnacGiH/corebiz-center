@@ -13,3 +13,26 @@ body {
     "Sarabun", "Noto Sans Thai", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Let customers freely select & copy text on every page (product names, SKUs,
+   prices, specs, FAQ — including text inside product cards, which are links).
+   Disabling native link/image dragging makes a click-drag select the text
+   instead of starting a link/image drag; keep the iOS long-press callout. */
+* {
+  -webkit-user-select: text;
+  user-select: text;
+}
+a,
+img {
+  -webkit-user-drag: none;
+  -khtml-user-drag: none;
+  -moz-user-drag: none;
+  user-drag: none;
+}
+img {
+  -webkit-user-select: none;
+  user-select: none;
+}
+html {
+  -webkit-touch-callout: default;
+}
