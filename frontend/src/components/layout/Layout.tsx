@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useSidebar } from '@/hooks/useSidebar';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
+import BackToTop from '../BackToTop';
 import { cn } from '@/lib/utils';
 
 const Layout: React.FC = () => {
@@ -44,6 +45,7 @@ const Layout: React.FC = () => {
                 <div className="page-content">
                     <Outlet />
                 </div>
+                <BackToTop />
             </main>
         </div>
     );
