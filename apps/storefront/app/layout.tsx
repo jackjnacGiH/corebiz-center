@@ -3,6 +3,8 @@ import "./globals.css";
 import { getOrg, organizationLd, localBusinessLd, ld, SITE, SHOP } from "@/lib/seo";
 import { Nav, Footer } from "@/components/ui";
 import ChatWidget from "@/components/ChatWidget";
+import { CartProvider } from "@/components/cart/CartProvider";
+import CartDrawer from "@/components/cart/CartDrawer";
 
 const DESC =
   "JNAC (เจ แนค) ผู้จำหน่ายวัสดุและอุปกรณ์งานขัด เจียร ตัด ขัดเงา และเครื่องมือลมสำหรับงานอุตสาหกรรม — กระดาษทราย จานทราย ล้อขัด ใบตัด ครบวงจร พร้อมราคาและสเปกชัดเจน ขอใบเสนอราคาได้ทันที";
@@ -33,9 +35,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="bg-neutral-50 text-neutral-900 antialiased min-h-screen flex flex-col">
         <script type="application/ld+json" dangerouslySetInnerHTML={ld(organizationLd(org))} />
         <script type="application/ld+json" dangerouslySetInnerHTML={ld(localBusinessLd(org))} />
-        <Nav org={org} />
-        <div className="flex-1">{children}</div>
-        <Footer org={org} />
+        <CartProvider>
+          <Nav org={org} />
+          <div className="flex-1">{children}</div>
+          <Footer org={org} />
+          <CartDrawer />
+        </CartProvider>
         <ChatWidget />
       </body>
     </html>

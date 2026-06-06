@@ -119,6 +119,66 @@ export function imagesOf(p: SProduct): string[] {
     : [];
 }
 
+/** Detect the abrasive product type from the Thai name (factual category). */
+function detectType(name: string): string {
+  const n = name;
+  if (/สก๊อตไบร์ท|ใยสังเคราะห์|non-?woven|แฮร์ไลน์/i.test(n)) return "วัสดุใยขัดสังเคราะห์ (สก๊อตไบร์ท)";
+  if (/กระดาษทราย/i.test(n)) return "กระดาษทราย";
+  if (/จานทราย|flap/i.test(n)) return "จานทรายซ้อน";
+  if (/ล้อขัด|ล้อทราย/i.test(n)) return "ล้อขัด/ล้อทราย";
+  if (/ใบตัด|cut/i.test(n)) return "ใบตัด";
+  if (/ใบเจียร|หินเจียร|grinding/i.test(n)) return "ใบเจียร";
+  return "วัสดุงานขัด/เจียร";
+}
+
+const SPECISH = /ขนาด|size|qty|box|cnt|rpm|speed|code|grain|backing|grit|^สี|color|ชนิด|type|รุ่น|จำนวน/i;
+
+/** Clean the stored description into bullet lines (strip leading dashes/bullets;
+ *  drop a line that just repeats the product name). This is the customer's real
+ *  data — we only reformat it, never invent. */
+export function descriptionBullets(p: SProduct): string[] {
+  const out: string[] = [];
+  for (let line of (p.description_th || "").split(/\r?\n/)) {
+    line = line.replace(/^\s*[-•*–·]+\s*/u, "").trim();
+    if (!line) continue;
+    if (line === (p.name_th || "").trim()) continue;
+    out.push(line);
+  }
+  return out;
+}
+
+/** "รายละเอียดสินค้า" bullets — the real description lines, or a factual
+ *  fallback from the material tags when there's no description. */
+export function detailBullets(p: SProduct): string[] {
+  const b = descriptionBullets(p);
+  if (b.length) return b;
+  const out: string[] = [];
+  const mats = (p.feature_tags ?? []).filter(Boolean);
+  if (mats.length) out.push(`เหมาะสำหรับงาน ${mats.join(", ")}`);
+  if (p.brand) out.push(`แบรนด์: ${p.brand}`);
+  if (p.unit) out.push(`หน่วยจำหน่าย: ${p.unit}`);
+  if (p.min_order_qty && p.min_order_qty > 1) out.push(`สั่งขั้นต่ำ: ${p.min_order_qty} ${p.unit || "ชิ้น"}`);
+  return out;
+}
+
+/** Concise, marketing-flavoured "what is it / what problem it solves" —
+ *  derived from the product's own usage line + type + materials (factual). */
+export function productSummary(p: SProduct, orgName: string): string {
+  const bullets = descriptionBullets(p);
+  const usage = bullets.find((b) => /เหมาะ|ใช้สำหรับ|สำหรับงาน|ขัด|ลบรอย|สร้างลาย|เก็บผิว/.test(b) && !SPECISH.test(b));
+  const brand = p.brand ? ` (${p.brand})` : "";
+  const lead = `${p.name_th}${brand} จาก ${orgName}`;
+  if (usage) {
+    const u = usage.replace(/^เหมาะสำหรับ\s*/u, "").trim();
+    const text = `${lead} — วัสดุงานขัดคุณภาพที่เหมาะสำหรับ${u} ช่วยให้งานเก็บผิวเรียบเนียน รวดเร็ว และได้มาตรฐาน`;
+    return text.length > 300 ? text.slice(0, 300) + "…" : text;
+  }
+  const mats = (p.feature_tags ?? []).slice(0, 4).join(", ");
+  return `${lead} เป็น${detectType(p.name_th)}คุณภาพสำหรับงานขัด เจียร ตัด และเก็บผิวชิ้นงาน${
+    mats ? ` ${mats}` : ""
+  } ช่วยให้ผิวงานเรียบเนียนและประหยัดเวลาทำงาน`;
+}
+
 /** Answer-first summary (≈40–60 words) — what the AI snippet should lift. */
 export function answerSummary(p: SProduct, orgName: string): string {
   const desc = (p.description_th || "").trim();
@@ -181,18 +241,42 @@ export function faqOf(p: SProduct, org: OrgInfo): { q: string; a: string }[] {
       ? `${name} มีสต็อกพร้อมจัดส่ง สามารถสั่งซื้อและขอใบเสนอราคาได้ทันที.`
       : `${name} เป็นสินค้าสั่งผลิต/สั่งจอง ทีมงานจะตรวจสอบระยะเวลาผลิตและแจ้งกลับ ติดต่อเพื่อขอใบเสนอราคาและกำหนดส่ง.`,
   });
+  // วิธีใช้งาน
+  const usage = descriptionBullets(p).find(
+    (b) => /เหมาะ|ใช้สำหรับ|สำหรับงาน|ขัด|ลบรอย|สร้างลาย|เก็บผิว/.test(b) && !SPECISH.test(b),
+  );
   faqs.push({
-    q: `สั่งซื้อ ${name} ได้ที่ไหน?`,
-    a: `สั่งซื้อหรือขอใบเสนอราคากับ ${org.business_name}${org.phone ? ` โทร ${org.phone}` : ""}${
-      org.email ? ` อีเมล ${org.email}` : ""
-    } หรือแชทกับทีมงานผ่านเว็บไซต์ได้ทันที.`,
+    q: `${name} ใช้งานอย่างไร?`,
+    a: `ติดตั้ง ${name} เข้ากับเครื่องมือที่รองรับขนาดนี้ (เช่น เครื่องเจียร/เครื่องขัดมือ) เลือกความเร็วรอบไม่เกินค่าที่กำหนดบนสินค้า แล้วเดินเครื่องขัดไปตามแนวชิ้นงานอย่างสม่ำเสมอ${
+      usage ? ` ${usage.replace(/^เหมาะสำหรับ\s*/u, "เหมาะสำหรับ")}` : ""
+    } ควรสวมอุปกรณ์เซฟตี้ (แว่นตา/ถุงมือ) ทุกครั้ง.`,
   });
+
+  // ใช้กับวัสดุอะไร
+  const mats = (p.feature_tags ?? []).filter(Boolean);
   const cat = p.category_name_th || p.group_name;
-  if (cat) {
+  if (mats.length || cat) {
     faqs.push({
-      q: `${name} เหมาะกับงานประเภทใด?`,
-      a: `${name} อยู่ในกลุ่ม${cat} เหมาะสำหรับงานขัด เจียร ตัด ลอกสนิม และเก็บผิวชิ้นงานโลหะ ไม้ สเตนเลส และงานอุตสาหกรรมทั่วไป.`,
+      q: `${name} ใช้กับวัสดุหรืองานอะไรได้บ้าง?`,
+      a: `เหมาะกับงาน${mats.length ? ` ${mats.join(", ")}` : "ขัด เจียร ตัด เก็บผิว"} ${
+        cat ? `(กลุ่ม${cat}) ` : ""
+      }ทั้งงานขัดลบรอย ลอกสนิม สร้างลาย และเก็บผิวชิ้นงานในอุตสาหกรรมทั่วไป.`,
     });
   }
+
+  // ซื้อที่ไหน / ใกล้บ้าน / ส่งทั่วประเทศ
+  faqs.push({
+    q: `ซื้อ ${name} ได้ที่ไหน? มีร้านใกล้บ้านไหม?`,
+    a: `${org.business_name} จัดส่งทั่วประเทศ สั่งซื้อออนไลน์ได้จากทุกที่ ไม่ว่าคุณจะอยู่จังหวัดใด เราจัดส่งถึงหน้าบ้านหรือหน้างานได้เลย${
+      org.phone ? ` หรือสอบถามทีมงาน/ตัวแทนใกล้คุณได้ที่ โทร ${org.phone}` : ""
+    } เพียงหยิบสินค้าใส่ตะกร้าแล้วส่งคำขอใบเสนอราคาผ่านเว็บไซต์.`,
+  });
+
+  // ราคาขายส่ง
+  faqs.push({
+    q: `${name} มีราคาขายส่งไหม?`,
+    a: `มีราคาพิเศษสำหรับการสั่งซื้อจำนวนมาก/ขายส่ง — หยิบสินค้าใส่ตะกร้าแล้วส่งคำขอใบเสนอราคา ทีมงานจะเสนอราคาขายส่งที่ดีที่สุดให้ตามจำนวนที่ต้องการ.`,
+  });
+
   return faqs;
 }

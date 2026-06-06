@@ -3,6 +3,7 @@ import type { SProduct } from "@/lib/products";
 import { imagesOf } from "@/lib/products";
 import { effectivePrice, formatTHB } from "@/lib/format";
 import { SITE, type OrgInfo } from "@/lib/seo";
+import CartButton from "@/components/cart/CartButton";
 
 const BRAND = "#1696F4";
 
@@ -194,18 +195,10 @@ export function Nav({ org }: { org: OrgInfo }) {
           </span>
         </Link>
         <div className="flex items-center gap-3 text-sm font-medium text-neutral-600 flex-shrink-0">
-          <Link href="/" className="hidden sm:inline hover:text-neutral-900">
+          <Link href="/" className="hidden md:inline hover:text-neutral-900">
             สินค้าทั้งหมด
           </Link>
-          <a
-            href={`${SITE}/widget`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-4 py-2 rounded-lg transition"
-            style={{ background: "rgba(22,150,244,0.1)", color: BRAND }}
-          >
-            แชทสอบถาม
-          </a>
+          <CartButton />
         </div>
       </div>
     </nav>

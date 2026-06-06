@@ -4,8 +4,8 @@ import {
   getProductBySku,
   getAllSkus,
   imagesOf,
-  answerSummary,
-  featuresOf,
+  productSummary,
+  detailBullets,
   specRows,
   faqOf,
 } from "@/lib/products";
@@ -21,7 +21,8 @@ import {
   SHOP,
 } from "@/lib/seo";
 import { effectivePrice, formatTHB } from "@/lib/format";
-import { Breadcrumb, StockBadge, CtaButtons } from "@/components/ui";
+import { Breadcrumb, StockBadge } from "@/components/ui";
+import AddToCartButton from "@/components/cart/AddToCartButton";
 
 export const revalidate = 3600;
 export const dynamicParams = true;
@@ -42,7 +43,7 @@ export async function generateMetadata({
   const p = await getProductBySku(decodeURIComponent(sku));
   if (!p) return { title: "ไม่พบสินค้า" };
   const org = await getOrg();
-  const desc = answerSummary(p, org.business_name).slice(0, 155);
+  const desc = productSummary(p, org.business_name).slice(0, 155);
   const title = `${p.name_th}${p.brand ? ` (${p.brand})` : ""} ราคา ${formatTHB(effectivePrice(p))}`;
   const imgs = imagesOf(p);
   return {
@@ -70,8 +71,8 @@ export default async function ProductPage({
   const org = await getOrg();
 
   const imgs = imagesOf(p);
-  const summary = answerSummary(p, org.business_name);
-  const features = featuresOf(p);
+  const summary = productSummary(p, org.business_name);
+  const details = detailBullets(p);
   const specs = specRows(p);
   const faqs = faqOf(p, org);
 
@@ -135,7 +136,11 @@ export default async function ProductPage({
 
           {/* Details */}
           <div className="mt-10 lg:mt-0">
-            <div className="text-xs text-neutral-400 font-mono mb-2">SKU: {p.sku}</div>
+            <div className="mb-2">
+              <span className="inline-flex items-center rounded-md bg-neutral-100 px-2.5 py-1 text-sm sm:text-base font-mono font-semibold text-neutral-700">
+                SKU: {p.sku}
+              </span>
+            </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900">
               {p.name_th}
             </h1>
@@ -163,15 +168,30 @@ export default async function ProductPage({
               <p className="text-sm text-neutral-700 leading-relaxed">{summary}</p>
             </div>
 
-            <div className="mt-8">
-              <CtaButtons org={org} />
+            <div className="mt-8 flex flex-wrap gap-3">
+              <AddToCartButton
+                sku={p.sku}
+                name={p.name_th}
+                price={effectivePrice(p)}
+                unit={p.unit}
+                image={imgs[0] ?? null}
+                moq={p.min_order_qty ?? 1}
+              />
+              {org.phone && (
+                <a
+                  href={`tel:${org.phone.replace(/\s+/g, "")}`}
+                  className="rounded-lg border border-neutral-300 py-3.5 px-5 font-semibold text-neutral-700 hover:bg-neutral-50 transition"
+                >
+                  โทร {org.phone}
+                </a>
+              )}
             </div>
 
-            {features.length > 0 && (
+            {details.length > 0 && (
               <div className="mt-10 border-t border-neutral-200 pt-8">
-                <h2 className="text-lg font-bold text-neutral-900 mb-4">จุดเด่นที่สำคัญ (Key Features)</h2>
+                <h2 className="text-lg font-bold text-neutral-900 mb-4">รายละเอียดสินค้า</h2>
                 <ul className="space-y-3 text-sm text-neutral-600">
-                  {features.map((f, i) => (
+                  {details.map((f, i) => (
                     <li key={i} className="flex gap-3">
                       <svg
                         className="h-5 w-5 flex-shrink-0"
