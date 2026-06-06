@@ -5,7 +5,7 @@ import { getOrg, ld, itemListLd, breadcrumbLd, SHOP } from "@/lib/seo";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard } from "@/components/ui";
 
-export const revalidate = 3600;
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "วัสดุงานขัด เจียร ตัด ขัดเงา – แคตตาล็อกสินค้า JNAC",

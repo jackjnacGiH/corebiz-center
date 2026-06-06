@@ -24,7 +24,7 @@ import { effectivePrice, formatTHB } from "@/lib/format";
 import { Breadcrumb, StockBadge } from "@/components/ui";
 import AddToCartButton from "@/components/cart/AddToCartButton";
 
-export const revalidate = 3600;
+export const revalidate = 300;
 export const dynamicParams = true;
 
 const BRAND = "#1696F4";

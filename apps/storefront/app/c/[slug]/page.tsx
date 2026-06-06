@@ -4,7 +4,7 @@ import { getCategories, getProductsByCategory } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
 import { ProductCard, Breadcrumb } from "@/components/ui";
 
-export const revalidate = 3600;
+export const revalidate = 300;
 export const dynamicParams = true;
 
 export async function generateStaticParams() {
