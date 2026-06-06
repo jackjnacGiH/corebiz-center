@@ -4,6 +4,7 @@ import { imagesOf } from "@/lib/products";
 import { effectivePrice, formatTHB } from "@/lib/format";
 import { SITE, type OrgInfo } from "@/lib/seo";
 import CartButton from "@/components/cart/CartButton";
+import CardAddButton from "@/components/cart/CardAddButton";
 
 const BRAND = "#1696F4";
 
@@ -38,32 +39,39 @@ export function Price({ p }: { p: SProduct }) {
 export function ProductCard({ p }: { p: SProduct }) {
   const img = imagesOf(p)[0];
   return (
-    <Link
-      href={`/p/${encodeURIComponent(p.sku)}`}
-      className="group block rounded-xl border border-neutral-200 bg-white overflow-hidden hover:shadow-md transition"
-    >
-      <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden">
-        {img ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={img}
-            alt={p.name_th}
-            loading="lazy"
-            className="w-full h-full object-contain p-3 group-hover:scale-105 transition duration-300"
-          />
-        ) : (
-          <span className="text-neutral-300 text-sm">ไม่มีรูป</span>
-        )}
-      </div>
-      <div className="p-3 space-y-1.5">
-        <div className="text-[11px] text-neutral-400 font-mono">{p.sku}</div>
-        <h3 className="text-sm text-neutral-800 leading-snug line-clamp-2 min-h-[2.5rem]">
-          {p.name_th}
-        </h3>
-        <Price p={p} />
-        <StockBadge inStock={p.in_stock} />
-      </div>
-    </Link>
+    <div className="group relative rounded-xl border border-neutral-200 bg-white overflow-hidden hover:shadow-md transition">
+      <Link href={`/p/${encodeURIComponent(p.sku)}`} className="block">
+        <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden">
+          {img ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={img}
+              alt={p.name_th}
+              loading="lazy"
+              className="w-full h-full object-contain p-3 group-hover:scale-105 transition duration-300"
+            />
+          ) : (
+            <span className="text-neutral-300 text-sm">ไม่มีรูป</span>
+          )}
+        </div>
+        <div className="p-3 space-y-1.5">
+          <div className="text-[11px] text-neutral-400 font-mono">{p.sku}</div>
+          <h3 className="text-sm text-neutral-800 leading-snug line-clamp-2 min-h-[2.5rem]">
+            {p.name_th}
+          </h3>
+          <Price p={p} />
+          <StockBadge inStock={p.in_stock} />
+        </div>
+      </Link>
+      <CardAddButton
+        sku={p.sku}
+        name={p.name_th}
+        price={effectivePrice(p)}
+        unit={p.unit}
+        image={img ?? null}
+        moq={p.min_order_qty ?? 1}
+      />
+    </div>
   );
 }
 
