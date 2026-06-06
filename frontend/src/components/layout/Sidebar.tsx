@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '../../i18n';
 import { cn } from '@/lib/utils';
+import QuickLinksMenu from './QuickLinksMenu';
 
 export interface SidebarProps {
     /** Desktop rail mode: collapse to 64px and show icons only */
@@ -80,20 +81,25 @@ const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Nav */}
             <nav className="sidebar-nav">
-                {menuItems.map((item) => (
-                    <NavLink
-                        key={item.path}
-                        to={item.path}
-                        end={item.path === '/'}
-                        onClick={onItemClick}
-                        className={({ isActive }) =>
-                            cn('nav-link', isActive && 'active', collapsed && 'nav-link--collapsed')
-                        }
-                        title={collapsed ? item.name : undefined}
-                    >
-                        {item.icon}
-                        {!collapsed && <span className="truncate">{item.name}</span>}
-                    </NavLink>
+                {menuItems.map((item, idx) => (
+                    <React.Fragment key={item.path}>
+                        <NavLink
+                            to={item.path}
+                            end={item.path === '/'}
+                            onClick={onItemClick}
+                            className={({ isActive }) =>
+                                cn('nav-link', isActive && 'active', collapsed && 'nav-link--collapsed')
+                            }
+                            title={collapsed ? item.name : undefined}
+                        >
+                            {item.icon}
+                            {!collapsed && <span className="truncate">{item.name}</span>}
+                        </NavLink>
+                        {/* "Link>>" quick-links menu sits 2nd, right under Dashboard */}
+                        {idx === 0 && (
+                            <QuickLinksMenu collapsed={collapsed} onItemClick={onItemClick} />
+                        )}
+                    </React.Fragment>
                 ))}
             </nav>
 

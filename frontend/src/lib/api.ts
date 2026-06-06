@@ -3390,3 +3390,47 @@ export const keywordSynonymsApi = {
   },
 };
 
+
+// =========================================================================
+// Quick Links — sidebar "Link>>" external bookmarks (staff-managed)
+// =========================================================================
+export interface QuickLink {
+  id: string;
+  label: string;
+  url: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export const quickLinkApi = {
+  async list(): Promise<QuickLink[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('quick_links')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as QuickLink[];
+  },
+
+  async create(label: string, url: string): Promise<QuickLink> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('quick_links')
+      .insert({ label, url })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as QuickLink;
+  },
+
+  async remove(id: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { error } = await db.from('quick_links').delete().eq('id', id);
+    if (error) throw error;
+  },
+};
