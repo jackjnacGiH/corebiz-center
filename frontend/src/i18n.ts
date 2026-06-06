@@ -356,7 +356,7 @@ export const translations = {
     },
     nav: {
       dashboard: 'แดชบอร์ด',
-      ecommerce: 'ร้านค้าออนไลน์',
+      ecommerce: 'รายการสินค้าขาย',
       inventory: 'คลังสินค้า',
       orders: 'คำสั่งซื้อ',
       crm: 'ระบบลูกค้า',
