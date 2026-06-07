@@ -85,6 +85,32 @@ export async function getProductsByCategory(slug: string): Promise<SProduct[]> {
   return (data ?? []) as unknown as SProduct[];
 }
 
+/** Free-text product search (name TH/EN, SKU, brand, group, category, tags).
+ *  Filters in-memory over the catalog (~hundreds of rows) — flexible matching,
+ *  no PostgREST filter-injection risk. Multi-word: every word must match. */
+export async function searchProducts(q: string): Promise<SProduct[]> {
+  const term = (q || "").trim().toLowerCase();
+  if (!term) return [];
+  const words = term.split(/\s+/).filter(Boolean);
+  const all = await getAllProducts();
+  return all.filter((p) => {
+    const hay = [
+      p.name_th,
+      p.name_en,
+      p.sku,
+      p.brand,
+      p.group_name,
+      p.category_name_th,
+      ...(p.tags ?? []),
+      ...(p.feature_tags ?? []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
 export async function getGroups(): Promise<SGroup[]> {
   const { data } = await supabase
     .from("product_groups")
