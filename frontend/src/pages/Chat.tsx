@@ -42,6 +42,7 @@ import {
     Loader2,
     RefreshCw,
     AlertCircle,
+    ChevronLeft,
 } from 'lucide-react';
 import {
     chatInboxApi,
@@ -526,8 +527,8 @@ export default function Chat() {
 
             {/* Two-pane */}
             <div className="flex gap-4 flex-1 min-h-0">
-                {/* List */}
-                <Card className="w-80 flex-shrink-0 flex flex-col gap-0 py-0 overflow-hidden">
+                {/* List — full-width on phone; hidden on phone once a chat is open */}
+                <Card className={cn('w-full md:w-80 flex-shrink-0 flex-col gap-0 py-0 overflow-hidden', selectedId ? 'hidden md:flex' : 'flex')}>
                     {/* Filters */}
                     <div className="p-3 border-b border-neutral-200 space-y-2">
                         <div className="relative">
@@ -665,8 +666,8 @@ export default function Chat() {
                     </div>
                 </Card>
 
-                {/* Thread */}
-                <Card className="flex-1 flex flex-col gap-0 py-0 overflow-hidden">
+                {/* Thread — hidden on phone until a chat is selected */}
+                <Card className={cn('flex-1 flex-col gap-0 py-0 overflow-hidden', selectedId ? 'flex' : 'hidden md:flex')}>
                     {!selectedConv && (
                         <div className="flex-1 grid place-items-center text-neutral-400 text-sm">
                             <div className="text-center">
@@ -679,6 +680,14 @@ export default function Chat() {
                         <>
                             {/* Thread header */}
                             <div className="px-4 py-3 border-b border-neutral-200 flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedId(null)}
+                                    className="md:hidden -ml-1.5 p-1 text-neutral-500 hover:text-neutral-900 flex-shrink-0"
+                                    aria-label="ย้อนกลับไปรายการแชท"
+                                >
+                                    <ChevronLeft size={20} />
+                                </button>
                                 {selectedConv.avatar_url ? (
                                     <img
                                         src={selectedConv.avatar_url}
@@ -745,7 +754,7 @@ export default function Chat() {
                             </div>
 
                             {/* Messages */}
-                            <div ref={threadScrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-neutral-50">
+                            <div ref={threadScrollRef} className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-neutral-50">
                                 {loadingMsgs && (
                                     <div className="text-center text-xs text-neutral-500">
                                         <Loader2 size={14} className="animate-spin inline mr-1" />
@@ -860,12 +869,15 @@ export default function Chat() {
                     )}
                 </Card>
 
-                {/* Contact panel (right side) — only when a conversation is selected */}
+                {/* Contact panel (right side) — desktop only (lg+); phone/tablet
+                    keep the two-pane / single-pane flow uncluttered */}
                 {selectedConv && (
-                    <ContactPanel
-                        conversation={selectedConv}
-                        onConversationChanged={() => void loadConvs()}
-                    />
+                    <div className="hidden lg:flex flex-shrink-0">
+                        <ContactPanel
+                            conversation={selectedConv}
+                            onConversationChanged={() => void loadConvs()}
+                        />
+                    </div>
                 )}
             </div>
 
@@ -934,7 +946,7 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
             >
                 {isCustomer ? <User size={13} /> : isBot ? <Bot size={13} /> : <MessageSquare size={13} />}
             </div>
-            <div className="max-w-[70%]">
+            <div className="max-w-[85%] sm:max-w-[70%]">
                 <div className="text-[10px] text-neutral-400 mb-0.5 px-1">
                     {isCustomer ? t.chat.customer : isBot ? 'AI' : msg.sender_name ?? 'Staff'}
                     {' · '}
