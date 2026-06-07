@@ -309,17 +309,16 @@ export function Footer({ org }: { org: OrgInfo }) {
               <li>📧 อีเมล: info@jnac.co.th</li>
               {org.address && <li>🏢 {org.address}</li>}
             </ul>
-            <div className="mt-4 inline-flex flex-col items-center gap-1 rounded-lg bg-white p-2 shadow-sm">
+            <div className="mt-4 inline-block rounded-md bg-white p-1.5 shadow-sm">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/shop/line-qr.jpg"
-                alt="QR สำหรับเพิ่มเพื่อน LINE @jnac ของ JNAC"
+                alt="QR เพิ่มเพื่อน LINE @jnac ของ JNAC"
                 width={62}
                 height={59}
                 loading="lazy"
-                className="h-[59px] w-[62px] object-contain"
+                className="block h-[59px] w-[62px] object-contain"
               />
-              <span className="text-[9px] font-medium text-neutral-600">สแกนเพิ่มเพื่อน LINE</span>
             </div>
           </div>
           <div>
