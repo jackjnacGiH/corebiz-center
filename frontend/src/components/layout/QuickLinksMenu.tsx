@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link2, Plus, ChevronDown, ExternalLink, Trash2, Loader2 } from 'lucide-react';
+import { Link2, Plus, ChevronDown, ExternalLink, Trash2, Loader2, ChevronUp } from 'lucide-react';
 import { quickLinkApi, type QuickLink } from '../../lib/api';
 import { cn } from '@/lib/utils';
 
@@ -79,6 +79,18 @@ export default function QuickLinksMenu({
     }
   }
 
+  /** Move a link up (dir -1) or down (dir +1), then persist the new order. */
+  function move(index: number, dir: -1 | 1) {
+    const j = index + dir;
+    if (j < 0 || j >= links.length) return;
+    const next = [...links];
+    [next[index], next[j]] = [next[j], next[index]];
+    setLinks(next);
+    quickLinkApi.reorder(next.map((l) => l.id)).catch(() => {
+      quickLinkApi.list().then(setLinks).catch(() => undefined);
+    });
+  }
+
   return (
     <div className="relative" ref={ref}>
       {/* Header row */}
@@ -125,8 +137,8 @@ export default function QuickLinksMenu({
             <div className="text-xs text-neutral-400 px-2 py-1.5">ยังไม่มีลิงก์ — กด + เพื่อเพิ่ม</div>
           )}
 
-          {links.map((l) => (
-            <div key={l.id} className="group/li flex items-center gap-1">
+          {links.map((l, i) => (
+            <div key={l.id} className="group/li flex items-center gap-0.5">
               <a
                 href={l.url}
                 target="_blank"
@@ -137,14 +149,34 @@ export default function QuickLinksMenu({
                 <ExternalLink size={14} className="flex-shrink-0 text-neutral-400" />
                 <span className="truncate">{l.label}</span>
               </a>
-              <button
-                type="button"
-                onClick={() => remove(l.id)}
-                title="ลบลิงก์"
-                className="opacity-0 group-hover/li:opacity-100 p-1 text-neutral-300 hover:text-red-600 transition"
-              >
-                <Trash2 size={13} />
-              </button>
+              <div className="flex items-center opacity-0 group-hover/li:opacity-100 transition flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => move(i, -1)}
+                  disabled={i === 0}
+                  title="เลื่อนขึ้น"
+                  className="p-0.5 text-neutral-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-neutral-400"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => move(i, 1)}
+                  disabled={i === links.length - 1}
+                  title="เลื่อนลง"
+                  className="p-0.5 text-neutral-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-neutral-400"
+                >
+                  <ChevronDown size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => remove(l.id)}
+                  title="ลบลิงก์"
+                  className="p-0.5 text-neutral-300 hover:text-red-600"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
             </div>
           ))}
 

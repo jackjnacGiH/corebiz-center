@@ -3433,4 +3433,13 @@ export const quickLinkApi = {
     const { error } = await db.from('quick_links').delete().eq('id', id);
     if (error) throw error;
   },
+
+  /** Persist a new order — sets sort_order = position for each id. */
+  async reorder(orderedIds: string[]): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    await Promise.all(
+      orderedIds.map((id, i) => db.from('quick_links').update({ sort_order: i }).eq('id', id)),
+    );
+  },
 };
