@@ -7,7 +7,7 @@ import { CartProvider } from "@/components/cart/CartProvider";
 import CartDrawer from "@/components/cart/CartDrawer";
 
 const DESC =
-  "JNAC (เจ แนค) ผู้จำหน่ายวัสดุและอุปกรณ์งานขัด เจียร ตัด ขัดเงา และเครื่องมือลมสำหรับงานอุตสาหกรรม — กระดาษทราย จานทราย ล้อขัด ใบตัด ครบวงจร พร้อมราคาและสเปกชัดเจน ขอใบเสนอราคาได้ทันที";
+  "JNAC (เจ แนค) ผู้จำหน่ายวัสดุและอุปกรณ์อุตสาหกรรมครบวงจร — งานขัด ตัด เจาะ เจียร, เครื่องมือช่าง (Tools) และพลาสติกวิศวกรรม พร้อมราคาและสเปกชัดเจน ขอใบเสนอราคาได้ทันที";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
