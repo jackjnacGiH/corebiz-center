@@ -309,7 +309,7 @@ export function Footer({ org }: { org: OrgInfo }) {
               <li>📧 อีเมล: info@jnac.co.th</li>
               {org.address && <li>🏢 {org.address}</li>}
             </ul>
-            <div className="mt-4 inline-block rounded-md bg-white p-1.5 shadow-sm">
+            <div className="mt-4 inline-block rounded bg-white p-[3px] shadow-sm">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/shop/line-qr.jpg"
