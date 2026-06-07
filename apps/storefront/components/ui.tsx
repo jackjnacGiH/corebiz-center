@@ -199,9 +199,12 @@ export function Nav({ org }: { org: OrgInfo }) {
             {org.business_name}
           </span>
         </Link>
-        <div className="flex items-center gap-4 sm:gap-6 text-sm font-semibold flex-shrink-0">
-          <Link href="/" className="hidden md:inline text-white/80 hover:text-white transition">หน้าแรก</Link>
-          <Link href="/products" className="hidden md:inline text-white/80 hover:text-white transition">สินค้าทั้งหมด</Link>
+        <div className="flex items-center gap-3 lg:gap-5 text-sm font-semibold flex-shrink-0">
+          <Link href="/" className="hidden lg:inline text-white/80 hover:text-white transition">หน้าแรก</Link>
+          <Link href="/products" className="hidden lg:inline text-white/80 hover:text-white transition">สินค้าทั้งหมด</Link>
+          <Link href="/how-to-order" className="hidden lg:inline text-white/80 hover:text-white transition">วิธีการสั่งซื้อ</Link>
+          <Link href="/knowledge" className="hidden lg:inline text-white/80 hover:text-white transition">ศูนย์ความรู้ (AIO)</Link>
+          <a href="#contact" className="hidden lg:inline text-white/80 hover:text-white transition">ติดต่อเรา</a>
           <CartButton />
         </div>
       </div>
@@ -233,9 +236,9 @@ export function Footer({ org }: { org: OrgInfo }) {
           <div>
             <h3 className={underline}>เมนูด่วน</h3>
             <ul className="space-y-2 text-sm">
-              <li><Link href="/products" className="text-white/75 hover:text-white transition">ขอใบเสนอราคา (Quotation)</Link></li>
-              <li><a href={`${SITE}/widget`} target="_blank" rel="noopener noreferrer" className="text-white/75 hover:text-white transition">ศูนย์ความรู้ AIO / สอบถาม</a></li>
-              <li><Link href="/products" className="text-white/75 hover:text-white transition">ดูแคตตาล็อกสินค้า</Link></li>
+              <li><Link href="/products" className="text-white/75 hover:text-white transition">สินค้าทั้งหมด</Link></li>
+              <li><Link href="/how-to-order" className="text-white/75 hover:text-white transition">วิธีการสั่งซื้อ</Link></li>
+              <li><Link href="/knowledge" className="text-white/75 hover:text-white transition">ศูนย์ความรู้ (AIO)</Link></li>
             </ul>
           </div>
         </div>
