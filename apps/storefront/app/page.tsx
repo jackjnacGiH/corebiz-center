@@ -10,7 +10,7 @@ export const revalidate = 300;
 export const metadata: Metadata = {
   title: "วัสดุงานขัด เจียร ตัด ขัดเงา – แคตตาล็อกสินค้า JNAC",
   description:
-    "แคตตาล็อกสินค้า JNAC: งานขัด ตัด เจาะ เจียร, เครื่องมือช่าง (Tools) และพลาสติกวิศวกรรม พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — สอบถามหรือขอใบเสนอราคาได้ทันที",
+    "แคตตาล็อกสินค้า JNAC: งานขัด ตัด เจียร, เครื่องมือช่าง (Tools) และพลาสติกวิศวกรรม พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — สอบถามหรือขอใบเสนอราคาได้ทันที",
   alternates: { canonical: "/shop" },
 };
 
@@ -83,11 +83,11 @@ export default async function Home() {
         {/* Hero — Answer-First (AEO) */}
         <section className="rounded-2xl border border-neutral-200 bg-white p-6 sm:p-10">
           <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-neutral-900">
-            วัสดุงานขัด ตัด เจาะ เจียร · เครื่องมือช่าง · พลาสติกวิศวกรรม โดย {org.business_name}
+            วัสดุงานขัด ตัด เจียร · เครื่องมือช่าง · พลาสติกวิศวกรรม โดย {org.business_name}
           </h1>
           <p className="mt-4 max-w-3xl text-neutral-600 leading-relaxed">
             {org.business_name} (JNAC) ผู้จำหน่ายวัสดุและอุปกรณ์อุตสาหกรรมครบวงจร ครอบคลุม 3 กลุ่มหลัก:
-            งานขัด ตัด เจาะ เจียร (กระดาษทราย จานทราย ล้อขัด ใบตัด ใบเจียร), เครื่องมือช่าง (Tools) และพลาสติกวิศวกรรม
+            งานขัด ตัด เจียร (กระดาษทราย จานทราย ล้อขัด ใบตัด ใบเจียร), เครื่องมือช่าง (Tools) และพลาสติกวิศวกรรม
             จาก {products.length}+ รายการสินค้า — เลือกดูตามกลุ่มสินค้า เช็กราคาและสถานะพร้อมส่ง/สั่งผลิต และขอใบเสนอราคากับทีมงานได้ทันที
           </p>
         </section>

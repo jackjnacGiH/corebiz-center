@@ -230,7 +230,7 @@ export function Footer({ org }: { org: OrgInfo }) {
           )}
         </div>
         <div className="text-xs text-neutral-400 pt-4">
-          © {org.business_name} · จำหน่ายวัสดุงานขัด ตัด เจาะ เจียร เครื่องมือช่าง และพลาสติกวิศวกรรม
+          © {org.business_name} · จำหน่ายวัสดุงานขัด ตัด เจียร เครื่องมือช่าง และพลาสติกวิศวกรรม
         </div>
       </div>
     </footer>
