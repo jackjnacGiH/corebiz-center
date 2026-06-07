@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getCategories, getProductsByCategory } from "@/lib/products";
+import { getCategories, getProductsByCategory, getGroups, imagesOf } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
-import { ProductCard, Breadcrumb } from "@/components/ui";
+import { effectivePrice } from "@/lib/format";
+import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -29,16 +30,62 @@ export async function generateMetadata({
   };
 }
 
-export default async function CategoryPage({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}) {
+export default async function CategoryPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const cats = await getCategories();
   const cat = cats.find((c) => c.slug === slug);
   if (!cat) notFound();
-  const [products, org] = await Promise.all([getProductsByCategory(slug), getOrg()]);
+  const [products, groups, org] = await Promise.all([
+    getProductsByCategory(slug),
+    getGroups(),
+    getOrg(),
+  ]);
+
+  // Group-card merge (scoped to this category) — same UX as the catalog page.
+  const counts = new Map<string, number>();
+  const coverFallback = new Map<string, string>();
+  const priceMin = new Map<string, number>();
+  const priceMax = new Map<string, number>();
+  const anyStock = new Map<string, boolean>();
+  for (const p of products) {
+    if (!p.group_id) continue;
+    counts.set(p.group_id, (counts.get(p.group_id) ?? 0) + 1);
+    if (!coverFallback.has(p.group_id)) {
+      const img = imagesOf(p)[0];
+      if (img) coverFallback.set(p.group_id, img);
+    }
+    const eff = effectivePrice(p);
+    priceMin.set(p.group_id, Math.min(priceMin.get(p.group_id) ?? Infinity, eff));
+    priceMax.set(p.group_id, Math.max(priceMax.get(p.group_id) ?? -Infinity, eff));
+    anyStock.set(p.group_id, (anyStock.get(p.group_id) ?? false) || p.in_stock);
+  }
+  const visibleGroups = groups.filter((g) => (counts.get(g.id) ?? 0) > 0);
+  const ungrouped = products.filter((p) => !p.group_id);
+
+  const entries: { key: string; sort: string; el: React.ReactNode }[] = [
+    ...visibleGroups.map((g) => ({
+      key: `g-${g.id}`,
+      sort: g.name,
+      el: (
+        <GroupCard
+          key={`g-${g.id}`}
+          id={g.id}
+          name={g.name}
+          cover={g.cover_image || coverFallback.get(g.id) || null}
+          count={counts.get(g.id) ?? 0}
+          priceMin={priceMin.get(g.id) ?? null}
+          priceMax={priceMax.get(g.id) ?? null}
+          inStock={anyStock.get(g.id) ?? false}
+        />
+      ),
+    })),
+    ...ungrouped.map((p) => ({
+      key: `p-${p.id}`,
+      sort: p.name_th,
+      el: <ProductCard key={`p-${p.id}`} p={p} />,
+    })),
+  ];
+  entries.sort((a, b) => a.sort.localeCompare(b.sort, "th"));
 
   return (
     <>
@@ -62,9 +109,7 @@ export default async function CategoryPage({
           เลือกดูราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต พร้อมขอใบเสนอราคาได้ทันที
         </p>
         <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {products.map((p) => (
-            <ProductCard key={p.id} p={p} />
-          ))}
+          {entries.map((e) => e.el)}
         </div>
         {products.length === 0 && (
           <p className="mt-10 text-center text-neutral-400">ยังไม่มีสินค้าในหมวดนี้</p>
