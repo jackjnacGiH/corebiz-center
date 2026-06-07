@@ -23,6 +23,7 @@ import {
 import { effectivePrice, formatTHB } from "@/lib/format";
 import { Breadcrumb, StockBadge } from "@/components/ui";
 import AddToCartButton from "@/components/cart/AddToCartButton";
+import SearchBox from "@/components/SearchBox";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -104,6 +105,10 @@ export default async function ProductPage({
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         <Breadcrumb items={crumbItems} />
+
+        <div className="mb-8 max-w-xl">
+          <SearchBox variant="page" />
+        </div>
 
         <div className="lg:grid lg:grid-cols-2 lg:gap-x-12 xl:gap-x-16">
           {/* Images */}

@@ -4,6 +4,7 @@ import { getAllProducts, getCategories, getGroups, imagesOf } from "@/lib/produc
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP } from "@/lib/seo";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
+import SearchBox from "@/components/SearchBox";
 
 export const revalidate = 300;
 
@@ -88,6 +89,10 @@ export default async function ProductsCatalog() {
         <p className="mt-2 text-neutral-600">
           {org.business_name} — งานขัด ตัด เจียร, เครื่องมือช่าง และพลาสติกวิศวกรรม
         </p>
+
+        <div className="mt-6 max-w-xl">
+          <SearchBox variant="page" />
+        </div>
 
         {categories.length > 0 && (
           <section className="mt-6">

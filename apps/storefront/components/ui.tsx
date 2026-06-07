@@ -5,7 +5,6 @@ import { effectivePrice, formatTHB } from "@/lib/format";
 import { SITE, type OrgInfo } from "@/lib/seo";
 import CartButton from "@/components/cart/CartButton";
 import CardAddButton from "@/components/cart/CardAddButton";
-import SearchBox from "@/components/SearchBox";
 
 const BRAND = "#1696F4";
 
@@ -264,8 +263,8 @@ export function SocialLinks() {
 export function Nav({ org }: { org: OrgInfo }) {
   return (
     <nav className="sticky top-0 z-50 shadow-lg" style={{ background: NAVY }}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between gap-3 h-16 items-center">
-        <Link href="/" className="flex items-center gap-2.5 min-w-0 flex-shrink-0">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between h-16 items-center">
+        <Link href="/" className="flex items-center gap-2.5 min-w-0">
           {org.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={org.logo_url} alt={org.business_name} className="w-9 h-9 object-contain flex-shrink-0 brightness-0 invert" />
@@ -276,7 +275,6 @@ export function Nav({ org }: { org: OrgInfo }) {
             {org.business_name}
           </span>
         </Link>
-        <SearchBox variant="nav" className="hidden sm:block flex-1 max-w-[260px] lg:max-w-md" />
         <div className="flex items-center gap-3 lg:gap-5 text-sm font-semibold flex-shrink-0">
           <Link href="/" className="hidden lg:inline text-white/80 hover:text-white transition">หน้าแรก</Link>
           <Link href="/products" className="hidden lg:inline text-white/80 hover:text-white transition">สินค้าทั้งหมด</Link>
@@ -285,10 +283,6 @@ export function Nav({ org }: { org: OrgInfo }) {
           <a href="#contact" className="hidden lg:inline text-white/80 hover:text-white transition">ติดต่อเรา</a>
           <CartButton />
         </div>
-      </div>
-      {/* Mobile: full-width search row */}
-      <div className="sm:hidden px-4 pb-3">
-        <SearchBox variant="nav" className="w-full" />
       </div>
     </nav>
   );

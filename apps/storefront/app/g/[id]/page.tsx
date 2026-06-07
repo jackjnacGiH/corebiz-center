@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getGroups, getGroupById, getProductsByGroup } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
 import { ProductCard, Breadcrumb } from "@/components/ui";
+import SearchBox from "@/components/SearchBox";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -59,6 +60,9 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
             ? group.description
             : `รวมสินค้ากลุ่ม ${group.name} จาก ${org.business_name} ทั้งหมด ${products.length} รายการ เลือกดูราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต พร้อมขอใบเสนอราคาได้ทันที`}
         </p>
+        <div className="mt-6 max-w-xl">
+          <SearchBox variant="page" />
+        </div>
         <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {products.map((p) => (
             <ProductCard key={p.id} p={p} />
