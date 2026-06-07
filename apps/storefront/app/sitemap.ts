@@ -20,6 +20,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [
     { url: SHOP, changeFrequency: "daily", priority: 1 },
+    { url: `${SHOP}/products`, changeFrequency: "daily", priority: 0.9 },
     ...visibleGroups.map((g) => ({
       url: groupUrl(g.id),
       changeFrequency: "weekly" as const,

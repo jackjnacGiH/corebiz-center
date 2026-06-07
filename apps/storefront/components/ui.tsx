@@ -182,30 +182,26 @@ export function Breadcrumb({ items }: { items: { name: string; href?: string }[]
   );
 }
 
+const NAVY = "#0C3C63";
+
 export function Nav({ org }: { org: OrgInfo }) {
   return (
-    <nav className="bg-white border-b border-neutral-200 sticky top-0 z-50">
+    <nav className="sticky top-0 z-50 shadow-lg" style={{ background: NAVY }}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between h-16 items-center">
-        <Link href="/" className="flex items-center gap-2 min-w-0">
+        <Link href="/" className="flex items-center gap-2.5 min-w-0">
           {org.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={org.logo_url} alt={org.business_name} className="w-8 h-8 object-contain flex-shrink-0" />
+            <img src={org.logo_url} alt={org.business_name} className="w-9 h-9 object-contain flex-shrink-0 brightness-0 invert" />
           ) : (
-            <span
-              className="w-8 h-8 rounded-md text-white grid place-items-center font-bold flex-shrink-0"
-              style={{ background: BRAND }}
-            >
-              J
-            </span>
+            <span className="w-9 h-9 rounded-md grid place-items-center font-bold flex-shrink-0 bg-white/15 text-white">J</span>
           )}
-          <span className="font-bold text-base sm:text-lg tracking-tight text-neutral-900 truncate">
+          <span className="font-bold text-sm sm:text-base tracking-tight text-white truncate">
             {org.business_name}
           </span>
         </Link>
-        <div className="flex items-center gap-3 text-sm font-medium text-neutral-600 flex-shrink-0">
-          <Link href="/" className="hidden md:inline hover:text-neutral-900">
-            สินค้าทั้งหมด
-          </Link>
+        <div className="flex items-center gap-4 sm:gap-6 text-sm font-semibold flex-shrink-0">
+          <Link href="/" className="hidden md:inline text-white/80 hover:text-white transition">หน้าแรก</Link>
+          <Link href="/products" className="hidden md:inline text-white/80 hover:text-white transition">สินค้าทั้งหมด</Link>
           <CartButton />
         </div>
       </div>
@@ -214,23 +210,37 @@ export function Nav({ org }: { org: OrgInfo }) {
 }
 
 export function Footer({ org }: { org: OrgInfo }) {
+  const underline = "font-bold mb-3 inline-block relative after:absolute after:left-0 after:-bottom-1 after:w-10 after:h-0.5 after:bg-[#1696F4]";
   return (
-    <footer className="border-t border-neutral-200 bg-white mt-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 text-sm text-neutral-600 space-y-1.5">
-        <div className="font-bold text-neutral-900 text-base">{org.business_name}</div>
-        {org.address && <div>{org.address}</div>}
-        {org.tax_id && <div>เลขประจำตัวผู้เสียภาษี {org.tax_id}</div>}
-        <div className="flex flex-wrap gap-x-5 gap-y-1 pt-1">
-          {org.phone && <span>โทร {org.phone}</span>}
-          {org.email && <span>อีเมล {org.email}</span>}
-          {org.website && (
-            <a href={org.website} className="hover:underline" style={{ color: BRAND }}>
-              {org.website}
-            </a>
-          )}
+    <footer id="contact" className="text-white mt-16" style={{ background: NAVY }}>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-8">
+          <div>
+            <div className="font-extrabold text-xl">{org.business_name}</div>
+            <p className="mt-3 text-sm text-white/70 max-w-md leading-relaxed">
+              ผู้นำเข้าและจัดจำหน่ายสินค้าอุตสาหกรรม เครื่องมือ Tool พลาสติกวิศวกรรม และบริการงาน CNC ครบวงจร
+            </p>
+          </div>
+          <div>
+            <h3 className={underline}>ติดต่อเรา</h3>
+            <ul className="space-y-2 text-sm text-white/75">
+              <li>📞 โทร: 02-101-5587, 08-0016-1700</li>
+              <li>📱 Line ID: @jnac</li>
+              <li>📧 อีเมล: info@jnac.co.th</li>
+              {org.address && <li>🏢 {org.address}</li>}
+            </ul>
+          </div>
+          <div>
+            <h3 className={underline}>เมนูด่วน</h3>
+            <ul className="space-y-2 text-sm">
+              <li><Link href="/products" className="text-white/75 hover:text-white transition">ขอใบเสนอราคา (Quotation)</Link></li>
+              <li><a href={`${SITE}/widget`} target="_blank" rel="noopener noreferrer" className="text-white/75 hover:text-white transition">ศูนย์ความรู้ AIO / สอบถาม</a></li>
+              <li><Link href="/products" className="text-white/75 hover:text-white transition">ดูแคตตาล็อกสินค้า</Link></li>
+            </ul>
+          </div>
         </div>
-        <div className="text-xs text-neutral-400 pt-4">
-          © {org.business_name} · จำหน่ายวัสดุงานขัด ตัด เจียร เครื่องมือช่าง และพลาสติกวิศวกรรม
+        <div className="mt-10 pt-6 border-t border-white/10 text-center text-xs text-white/50">
+          © {org.business_name} · จำหน่ายวัสดุงานขัด ตัด เจียร เครื่องมือ Tool และพลาสติกวิศวกรรม — Optimized for AIO &amp; Industrial Customers
         </div>
       </div>
     </footer>
