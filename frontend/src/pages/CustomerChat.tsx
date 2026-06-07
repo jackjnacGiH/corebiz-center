@@ -216,6 +216,27 @@ export default function CustomerChat() {
         postSize(open);
     }, [open]);
 
+    // Let the host page open/close the widget remotely — e.g. the storefront's
+    // "ปรึกษาผู้เชี่ยวชาญ" / "เริ่มแชทกับเอย" buttons post a command into this
+    // iframe so the chat panel pops up in place. Also honour ?open=1 on load.
+    useEffect(() => {
+        function onCmd(e: MessageEvent) {
+            try {
+                if (!new URL(e.origin).hostname.endsWith('corebiz.online')) return;
+            } catch { return; }
+            const d = e.data as { type?: string; action?: string } | null;
+            if (!d || typeof d !== 'object' || d.type !== 'corebiz-widget-cmd') return;
+            if (d.action === 'open') setOpen(true);
+            else if (d.action === 'close') setOpen(false);
+            else if (d.action === 'toggle') setOpen((o) => !o);
+        }
+        window.addEventListener('message', onCmd);
+        try {
+            if (new URLSearchParams(window.location.search).get('open') === '1') setOpen(true);
+        } catch { /* ignore */ }
+        return () => window.removeEventListener('message', onCmd);
+    }, []);
+
     // Persist on every change
     useEffect(() => {
         saveHistory(turns);

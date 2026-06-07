@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getOrg, ld, faqLd, SITE, SHOP, breadcrumbLd } from "@/lib/seo";
+import { getOrg, ld, faqLd, SHOP, breadcrumbLd } from "@/lib/seo";
 import { Breadcrumb } from "@/components/ui";
+import OpenChatButton from "@/components/OpenChatButton";
 
 export const revalidate = 3600;
 
@@ -65,9 +66,9 @@ export default async function Knowledge() {
             <div className="font-bold text-lg">ถามผู้ช่วย AI “เอย”</div>
             <p className="text-sm text-white/80 mt-1">สอบถามสินค้า การเลือกใช้ ราคา และสต็อก ได้ตลอด 24 ชม.</p>
           </div>
-          <a href={`${SITE}/widget`} target="_blank" rel="noopener noreferrer" className="text-center rounded-full px-7 py-3 font-semibold text-white flex-shrink-0" style={{ background: BRAND }}>
+          <OpenChatButton className="text-center rounded-full px-7 py-3 font-semibold text-white flex-shrink-0" style={{ background: BRAND }}>
             เริ่มแชทกับเอย
-          </a>
+          </OpenChatButton>
         </div>
         <p className="mt-2 text-xs text-neutral-400">หรือกดปุ่มแชทมุมขวาล่างของหน้าจอได้ทุกหน้า</p>
 

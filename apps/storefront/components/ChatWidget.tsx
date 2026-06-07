@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // The public AI chat (เอย) served by the SPA — the very same floating widget
 // embedded on www.jnac.co.th. It renders its OWN bubble + panel and posts its
@@ -11,6 +11,7 @@ const WIDGET_SRC = "https://www.corebiz.online/widget?pos=br&offset=16";
 
 export default function ChatWidget() {
   const [open, setOpen] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
@@ -24,12 +25,26 @@ export default function ChatWidget() {
         setOpen(Boolean(d.open));
       }
     }
+    // Any page CTA can fire window event "corebiz:open-chat" to pop the chat
+    // open in place (instead of opening the full /widget page in a new tab).
+    function onOpenChat() {
+      setOpen(true);
+      iframeRef.current?.contentWindow?.postMessage(
+        { type: "corebiz-widget-cmd", action: "open" },
+        "*",
+      );
+    }
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    window.addEventListener("corebiz:open-chat", onOpenChat);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("corebiz:open-chat", onOpenChat);
+    };
   }, []);
 
   return (
     <iframe
+      ref={iframeRef}
       src={WIDGET_SRC}
       title="แชทกับเอย ผู้ช่วย AI"
       allow="clipboard-write"

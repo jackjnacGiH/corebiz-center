@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getOrg, SITE } from "@/lib/seo";
+import OpenChatButton from "@/components/OpenChatButton";
 
 export const revalidate = 300;
 
@@ -65,14 +66,11 @@ export default async function Home() {
               >
                 ดูแคตตาล็อกสินค้า
               </Link>
-              <a
-                href={`${SITE}/widget`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <OpenChatButton
                 className="text-center rounded-full px-8 py-3.5 font-semibold border-2 border-white text-white hover:bg-white transition hover:text-[#0C3C63]"
               >
                 ปรึกษาผู้เชี่ยวชาญ
-              </a>
+              </OpenChatButton>
             </div>
           </div>
         </div>
