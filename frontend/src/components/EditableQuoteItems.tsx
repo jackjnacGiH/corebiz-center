@@ -106,8 +106,8 @@ export default function EditableQuoteItems({
         <div className="text-[11px] text-neutral-500">{lines.length} รายการ</div>
       </div>
 
-      <div className="rounded-lg border border-neutral-200 bg-white overflow-hidden">
-        <table className="w-full text-[12px]">
+      <div className="rounded-lg border border-neutral-200 bg-white overflow-x-auto">
+        <table className="w-full min-w-[480px] text-[12px]">
           <thead className="bg-neutral-100 text-neutral-600">
             <tr>
               <th className="text-center font-semibold px-2 py-1.5 w-7">#</th>

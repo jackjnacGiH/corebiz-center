@@ -27,7 +27,7 @@ const Layout: React.FC = () => {
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
                 <SheetContent
                     side="left"
-                    className="p-0 w-[280px] sm:max-w-[280px]"
+                    className="p-0 w-[85vw] max-w-[320px] sm:w-[280px] sm:max-w-[280px]"
                     showCloseButton={false}
                 >
                     {/* Visually-hidden title for screen readers (radix requires it) */}

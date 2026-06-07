@@ -100,8 +100,8 @@ export default function QuoteDocument({
       </div>
 
       {/* ── Items ────────────────────────────────────────────── */}
-      <div className="mt-4 rounded-lg border border-neutral-200 overflow-hidden">
-        <table className="w-full text-[12px]">
+      <div className="mt-4 rounded-lg border border-neutral-200 overflow-x-auto">
+        <table className="w-full min-w-[520px] text-[12px]">
           <thead className="bg-neutral-100 text-neutral-600">
             <tr>
               <th className="text-center font-semibold px-2 py-2 w-9">#</th>

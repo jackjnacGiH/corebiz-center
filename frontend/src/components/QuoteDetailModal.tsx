@@ -188,7 +188,7 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
 
     return (
         <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
-            <DialogContent className="sm:max-w-4xl p-0 gap-0 max-h-[92vh] flex flex-col">
+            <DialogContent className="max-w-[calc(100vw-1.5rem)] sm:max-w-4xl p-0 gap-0 max-h-[92vh] flex flex-col">
                 <DialogHeader className="px-6 py-5 border-b border-neutral-200 bg-neutral-50">
                     <div className="flex items-center gap-4">
                         <div className="w-11 h-11 rounded-lg bg-amber-500 grid place-items-center flex-shrink-0">

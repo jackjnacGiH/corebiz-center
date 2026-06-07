@@ -336,7 +336,7 @@ const Dashboard = () => {
                         </div>
                     </CardHeader>
                     <CardContent className="px-3 pb-1">
-                        <div className="h-[280px] w-full">
+                        <div className="h-[200px] sm:h-[280px] w-full">
                             <ResponsiveContainer width="100%" height="100%">
                                 <AreaChart
                                     data={chartData}

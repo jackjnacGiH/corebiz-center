@@ -354,7 +354,7 @@ export default function CRM() {
             </div>
 
             {/* View toggle: customer list ↔ RFM segments ↔ retention tools */}
-            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start">
+            <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start overflow-x-auto max-w-full [&>button]:shrink-0">
                 <button
                     type="button"
                     onClick={() => setView('dashboard')}
