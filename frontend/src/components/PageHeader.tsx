@@ -60,7 +60,7 @@ export default function PageHeader({
                 /* On mobile the actions row wraps below the title and takes
                    full width so search inputs / buttons don't get truncated.
                    From md up it pins right of the title like before. */
-                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:flex-nowrap md:flex-shrink-0">
+                <div className="flex flex-wrap items-center gap-2 w-full md:flex-1 md:flex-nowrap md:justify-end">
                     {actions}
                 </div>
             )}

@@ -264,7 +264,7 @@ export default function CRM() {
                 icon={<Users size={20} />}
                 actions={
                     <>
-                        <div className="relative w-full sm:w-auto order-first sm:order-none">
+                        <div className="relative w-full md:flex-1 order-first md:order-none">
                             <Search
                                 size={14}
                                 className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
@@ -274,7 +274,7 @@ export default function CRM() {
                                 placeholder={t.crm.searchPlaceholder}
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                className="pl-9 w-full sm:w-80"
+                                className="pl-9 w-full"
                             />
                         </div>
                         <Button

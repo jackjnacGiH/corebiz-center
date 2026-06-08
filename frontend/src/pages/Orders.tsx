@@ -210,6 +210,19 @@ export default function Orders() {
                 icon={<ShoppingCart size={20} />}
                 actions={
                     <>
+                        <div className="relative w-full md:flex-1 order-first md:order-none">
+                            <Search
+                                size={14}
+                                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
+                            />
+                            <Input
+                                type="text"
+                                placeholder={t.orders.searchPlaceholder}
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                className="pl-9 w-full"
+                            />
+                        </div>
                         <Button
                             variant="outline"
                             size="sm"
@@ -220,19 +233,6 @@ export default function Orders() {
                             <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
                             Reload
                         </Button>
-                        <div className="relative w-full sm:w-auto">
-                            <Search
-                                size={14}
-                                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
-                            />
-                            <Input
-                                type="text"
-                                placeholder={t.orders.searchPlaceholder}
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="pl-9 w-full sm:w-64"
-                            />
-                        </div>
                     </>
                 }
             />
