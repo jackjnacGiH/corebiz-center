@@ -12,9 +12,12 @@ import {
     Handshake,
     Settings,
     Store,
+    UserCog,
 } from 'lucide-react';
 import { useLanguage } from '../../i18n';
 import { cn } from '@/lib/utils';
+import { useAuth } from '../../lib/AuthProvider';
+import { canManageUsers, canSeeSettings } from '../../lib/permissions';
 import QuickLinksMenu from './QuickLinksMenu';
 
 export interface SidebarProps {
@@ -32,6 +35,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     onItemClick,
 }) => {
     const { t } = useLanguage();
+    const { profile } = useAuth();
+    const role = profile?.role;
     const navigate = useNavigate();
 
     // When inside mobile Sheet, never render in collapsed form
@@ -52,6 +57,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         { name: t.nav.marketing, path: '/marketing', icon: <TrendingUp size={20} /> },
         { name: t.nav.affiliate, path: '/affiliate', icon: <Handshake size={20} /> },
         { name: t.nav.rag, path: '/rag', icon: <BrainCircuit size={20} /> },
+        ...(canManageUsers(role)
+            ? [{ name: t.nav.users, path: '/users', icon: <UserCog size={20} /> }]
+            : []),
     ];
 
     return (
@@ -102,17 +110,19 @@ const Sidebar: React.FC<SidebarProps> = ({
             </nav>
 
             {/* Footer */}
-            <div className="sidebar-footer">
-                <button
-                    type="button"
-                    onClick={goSettings}
-                    className={cn('settings-link', collapsed && 'settings-link--collapsed')}
-                    title={collapsed ? t.layout.systemSettings : undefined}
-                >
-                    <Settings size={18} />
-                    {!collapsed && <span>{t.layout.systemSettings}</span>}
-                </button>
-            </div>
+            {canSeeSettings(role) && (
+                <div className="sidebar-footer">
+                    <button
+                        type="button"
+                        onClick={goSettings}
+                        className={cn('settings-link', collapsed && 'settings-link--collapsed')}
+                        title={collapsed ? t.layout.systemSettings : undefined}
+                    >
+                        <Settings size={18} />
+                        {!collapsed && <span>{t.layout.systemSettings}</span>}
+                    </button>
+                </div>
+            )}
         </aside>
     );
 };

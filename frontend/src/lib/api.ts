@@ -6,6 +6,7 @@
  * to a plain Error if non-null.
  */
 import { supabase } from './supabase';
+import type { AppRole } from './supabase';
 import type {
   Product, ProductInsert, ProductUpdate,
   ProductGroup, ProductGroupInsert, ProductGroupUpdate,
@@ -3442,4 +3443,48 @@ export const quickLinkApi = {
       orderedIds.map((id, i) => db.from('quick_links').update({ sort_order: i }).eq('id', id)),
     );
   },
+};
+
+// =========================================================================
+// Users & roles (Admin RBAC) — all account ops go through the `admin-users`
+// edge function (owner/admin only; service-role server-side). The function
+// always replies HTTP 200 with { ok, error? }.
+// =========================================================================
+export interface AdminUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  phone: string | null;
+  role: AppRole;
+  is_active: boolean;
+  provider: string | null;
+  avatar_url: string | null;
+}
+
+async function callAdminUsers(action: string, payload: Record<string, unknown> = {}) {
+  const { data, error } = await supabase.functions.invoke('admin-users', {
+    body: { action, ...payload },
+  });
+  if (error) {
+    let msg = error.message;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { const ctx = await (error as any).context?.json?.(); if (ctx?.error) msg = ctx.error; } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = data as any;
+  if (d && d.ok === false) throw new Error(d.error || 'เกิดข้อผิดพลาด');
+  return d;
+}
+
+export const usersApi = {
+  list: (): Promise<AdminUser[]> => callAdminUsers('list').then((d) => (d.users ?? []) as AdminUser[]),
+  create: (p: { email: string; password: string; full_name?: string; phone?: string; role: AppRole }) =>
+    callAdminUsers('create', p),
+  update: (p: { id: string; full_name?: string; phone?: string; role?: AppRole }) =>
+    callAdminUsers('update', p),
+  setActive: (id: string, active: boolean) => callAdminUsers('set_active', { id, active }),
+  setPassword: (id: string, password: string) => callAdminUsers('set_password', { id, password }),
+  remove: (id: string) => callAdminUsers('delete', { id }),
+  transferOwner: (id: string) => callAdminUsers('transfer_owner', { id }),
 };

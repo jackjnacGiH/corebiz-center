@@ -44,6 +44,7 @@ export const translations = {
       affiliate: 'Affiliate',
       rag: 'Knowledge Base',
       ask: 'AI Admin Chat',
+      users: 'User Management',
       jnac: 'JNAC Admin Chat',
     },
     auth: {
@@ -365,6 +366,7 @@ export const translations = {
       affiliate: 'พาร์ทเนอร์',
       rag: 'Knowledge Base',
       ask: 'AI ผู้ช่วย',
+      users: 'จัดการผู้ใช้',
       jnac: 'แชทแอดมิน JNAC',
     },
     auth: {

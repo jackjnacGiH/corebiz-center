@@ -22,6 +22,7 @@ const SurveyPage = lazy(() => import('./pages/SurveyPage'));
 const ReferPage = lazy(() => import('./pages/ReferPage'));
 const Affiliate = lazy(() => import('./pages/Affiliate'));
 const Settings = lazy(() => import('./pages/Settings'));
+const Users = lazy(() => import('./pages/Users'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const AuthCallback = lazy(() => import('./pages/auth/AuthCallback'));
 const LineCallback = lazy(() => import('./pages/auth/LineCallback'));
@@ -69,7 +70,22 @@ function App() {
                 <Route path="affiliate" element={<Affiliate />} />
                 <Route path="rag" element={<OpenclawRAG />} />
                 <Route path="ask" element={<KnowledgeChat />} />
-                <Route path="settings" element={<Settings />} />
+                <Route
+                  path="settings"
+                  element={
+                    <ProtectedRoute roles={['owner', 'admin']}>
+                      <Settings />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="users"
+                  element={
+                    <ProtectedRoute roles={['owner', 'admin']}>
+                      <Users />
+                    </ProtectedRoute>
+                  }
+                />
               </Route>
             </Routes>
           </Suspense>
