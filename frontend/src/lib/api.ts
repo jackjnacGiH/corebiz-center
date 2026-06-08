@@ -385,13 +385,24 @@ export const inventorySyncApi = {
 // Customers
 // =========================================================================
 export const customersApi = {
+  /** Fetch ALL customers. PostgREST caps a single request at 1000 rows, so we
+   *  page through in batches — otherwise the list (and the KPI cards derived
+   *  from it) silently truncate at 1000. */
   async list(): Promise<Customer[]> {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .order('total_spent', { ascending: false });
-    if (error) throw error;
-    return data ?? [];
+    const PAGE = 1000;
+    const all: Customer[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .order('total_spent', { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      const batch = data ?? [];
+      all.push(...batch);
+      if (batch.length < PAGE) break;
+    }
+    return all;
   },
 
   async create(input: CustomerInsert): Promise<Customer> {
