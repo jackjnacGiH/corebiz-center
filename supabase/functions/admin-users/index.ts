@@ -23,7 +23,7 @@ const CORS = {
 };
 
 // Roles assignable in Phase 1 (the three that have full RLS data access).
-const ASSIGNABLE_ROLES = ["owner", "admin", "staff"];
+const ASSIGNABLE_ROLES = ["owner", "admin", "staff", "agent", "viewer"];
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -106,16 +106,28 @@ Deno.serve(async (req: Request) => {
       const full_name = String(body.full_name ?? "").trim() || null;
       const phone = String(body.phone ?? "").trim() || null;
       const password = String(body.password ?? "");
+      const mode = body.mode === "invite" ? "invite" : "password";
+      const redirectTo = String(body.redirectTo ?? "https://www.jnac.online/auth/callback");
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("กรุณากรอกอีเมลให้ถูกต้อง");
       if (!ASSIGNABLE_ROLES.includes(role)) return fail("สิทธิ์ (role) ไม่ถูกต้อง");
       if (role === "owner" && !isOwner) return fail("เฉพาะ Owner เท่านั้นที่กำหนดสิทธิ์ Owner ได้");
-      if (password.length < 8) return fail("รหัสผ่านเริ่มต้นต้องยาวอย่างน้อย 8 ตัวอักษร");
 
-      const { data: created, error: cErr } = await admin.auth.admin.createUser({
-        email, password, email_confirm: true, user_metadata: { full_name },
-      });
-      if (cErr || !created?.user) return fail(cErr?.message ?? "สร้างบัญชีไม่สำเร็จ");
-      const newId = created.user.id;
+      let newId: string;
+      if (mode === "invite") {
+        // Send an email invitation; the user sets their own password via the link.
+        const { data: inv, error: iErr } = await admin.auth.admin.inviteUserByEmail(email, {
+          data: { full_name }, redirectTo,
+        });
+        if (iErr || !inv?.user) return fail(iErr?.message ?? "ส่งคำเชิญไม่สำเร็จ (ตรวจการตั้งค่าอีเมลของระบบ)");
+        newId = inv.user.id;
+      } else {
+        if (password.length < 8) return fail("รหัสผ่านเริ่มต้นต้องยาวอย่างน้อย 8 ตัวอักษร");
+        const { data: created, error: cErr } = await admin.auth.admin.createUser({
+          email, password, email_confirm: true, user_metadata: { full_name },
+        });
+        if (cErr || !created?.user) return fail(cErr?.message ?? "สร้างบัญชีไม่สำเร็จ");
+        newId = created.user.id;
+      }
       // handle_new_user trigger already inserted a base profile row; set role/details.
       const { error: pErr } = await admin
         .from("profiles")

@@ -23,6 +23,7 @@ const ReferPage = lazy(() => import('./pages/ReferPage'));
 const Affiliate = lazy(() => import('./pages/Affiliate'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Users = lazy(() => import('./pages/Users'));
+const Audit = lazy(() => import('./pages/Audit'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const AuthCallback = lazy(() => import('./pages/auth/AuthCallback'));
 const LineCallback = lazy(() => import('./pages/auth/LineCallback'));
@@ -83,6 +84,14 @@ function App() {
                   element={
                     <ProtectedRoute roles={['owner', 'admin']}>
                       <Users />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="audit"
+                  element={
+                    <ProtectedRoute roles={['owner', 'admin']}>
+                      <Audit />
                     </ProtectedRoute>
                   }
                 />

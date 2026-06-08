@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  Plus, Pencil, Key, Trash2, Power, Crown, Loader2, RefreshCw, ShieldCheck, AlertCircle, CheckCircle2,
+  Plus, Pencil, Key, Trash2, Power, Crown, Loader2, RefreshCw, ShieldCheck, AlertCircle, CheckCircle2, ScrollText,
 } from 'lucide-react';
 import { usersApi, type AdminUser } from '@/lib/api';
 import { useAuth } from '@/lib/AuthProvider';
@@ -64,6 +65,7 @@ export default function Users() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [mode, setMode] = useState<'create' | 'edit'>('create');
+  const [createMode, setCreateMode] = useState<'password' | 'invite'>('password');
   const [form, setForm] = useState<Form>({ email: '', full_name: '', phone: '', role: 'staff', password: '' });
 
   const [pwOpen, setPwOpen] = useState(false);
@@ -96,6 +98,7 @@ export default function Users() {
 
   function openCreate() {
     setMode('create');
+    setCreateMode('password');
     setForm({ email: '', full_name: '', phone: '', role: 'staff', password: '' });
     setErr(null);
     setEditOpen(true);
@@ -114,10 +117,12 @@ export default function Users() {
     try {
       if (mode === 'create') {
         await usersApi.create({
-          email: form.email, password: form.password,
-          full_name: form.full_name || undefined, phone: form.phone || undefined, role: form.role,
+          email: form.email, role: form.role,
+          full_name: form.full_name || undefined, phone: form.phone || undefined,
+          mode: createMode,
+          ...(createMode === 'password' ? { password: form.password } : {}),
         });
-        flash('เพิ่มผู้ใช้เรียบร้อย');
+        flash(createMode === 'invite' ? 'ส่งคำเชิญทางอีเมลแล้ว' : 'เพิ่มผู้ใช้เรียบร้อย');
       } else {
         await usersApi.update({
           id: form.id!, full_name: form.full_name, phone: form.phone,
@@ -174,6 +179,7 @@ export default function Users() {
           <h1 className="text-xl sm:text-2xl font-bold text-neutral-900">จัดการผู้ใช้และสิทธิ์</h1>
         </div>
         <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm"><Link to="/audit"><ScrollText size={15} /> บันทึกการใช้งาน</Link></Button>
           <Button variant="outline" size="sm" onClick={() => load()} disabled={loading || busy}>
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> รีเฟรช
           </Button>
@@ -348,12 +354,33 @@ export default function Users() {
               {form.id === myId && <p className="text-xs text-neutral-400 mt-1">เปลี่ยนสิทธิ์ของตัวเองไม่ได้</p>}
             </div>
             {mode === 'create' && (
-              <div>
-                <Label htmlFor="u-pw">รหัสผ่านเริ่มต้น</Label>
-                <Input id="u-pw" type="text" required minLength={8} value={form.password}
-                  onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="อย่างน้อย 8 ตัวอักษร" />
-                <p className="text-xs text-neutral-400 mt-1">แจ้งรหัสนี้ให้ผู้ใช้ แล้วแนะนำให้เปลี่ยนภายหลัง</p>
-              </div>
+              <>
+                <div>
+                  <Label>วิธีตั้งรหัสผ่าน</Label>
+                  <div className="mt-1 inline-flex rounded-lg border border-neutral-200 p-0.5 text-sm">
+                    <button type="button" onClick={() => setCreateMode('password')}
+                      className={`px-3 py-1.5 rounded-md transition ${createMode === 'password' ? 'bg-neutral-900 text-white' : 'text-neutral-500'}`}>
+                      ตั้งรหัสผ่านเอง
+                    </button>
+                    <button type="button" onClick={() => setCreateMode('invite')}
+                      className={`px-3 py-1.5 rounded-md transition ${createMode === 'invite' ? 'bg-neutral-900 text-white' : 'text-neutral-500'}`}>
+                      ส่งคำเชิญทางอีเมล
+                    </button>
+                  </div>
+                </div>
+                {createMode === 'password' ? (
+                  <div>
+                    <Label htmlFor="u-pw">รหัสผ่านเริ่มต้น</Label>
+                    <Input id="u-pw" type="text" required minLength={8} value={form.password}
+                      onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="อย่างน้อย 8 ตัวอักษร" />
+                    <p className="text-xs text-neutral-400 mt-1">แจ้งรหัสนี้ให้ผู้ใช้ แล้วแนะนำให้เปลี่ยนภายหลัง</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-neutral-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                    ระบบจะส่งอีเมลคำเชิญให้ผู้ใช้ตั้งรหัสผ่านเอง (ต้องตั้งค่าอีเมลของระบบให้ส่งได้)
+                  </p>
+                )}
+              </>
             )}
             {err && <p className="text-sm text-red-600">{err}</p>}
             <DialogFooter>

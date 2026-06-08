@@ -112,8 +112,9 @@ export const productsApi = {
   },
 
   async remove(id: string): Promise<void> {
-    const { error } = await supabase.from('products').delete().eq('id', id);
+    const { data, error } = await supabase.from('products').delete().eq('id', id).select('id');
     if (error) throw error;
+    if (!data || data.length === 0) throw new Error('ไม่มีสิทธิ์ลบสินค้านี้ — เฉพาะ Owner/Admin');
   },
 
   /** Apply the same `patch` to many products in a single round trip. Used by
@@ -415,8 +416,9 @@ export const customersApi = {
   },
 
   async remove(id: string): Promise<void> {
-    const { error } = await supabase.from('customers').delete().eq('id', id);
+    const { data, error } = await supabase.from('customers').delete().eq('id', id).select('id');
     if (error) throw error;
+    if (!data || data.length === 0) throw new Error('ไม่มีสิทธิ์ลบลูกค้ารายนี้ — เฉพาะ Owner/Admin');
   },
 };
 
@@ -1678,8 +1680,9 @@ export const quoteRecordApi = {
 
   /** Permanently remove a quote (cascades to quote_items). */
   async remove(id: string): Promise<void> {
-    const { error } = await supabase.from('quotes').delete().eq('id', id);
+    const { data, error } = await supabase.from('quotes').delete().eq('id', id).select('id');
     if (error) throw error;
+    if (!data || data.length === 0) throw new Error('ไม่มีสิทธิ์ลบใบเสนอราคานี้ — เฉพาะ Owner/Admin');
   },
 
   /**
@@ -1826,8 +1829,9 @@ export const campaignsApi = {
   },
 
   async remove(id: string): Promise<void> {
-    const { error } = await supabase.from('campaigns').delete().eq('id', id);
+    const { data, error } = await supabase.from('campaigns').delete().eq('id', id).select('id');
     if (error) throw error;
+    if (!data || data.length === 0) throw new Error('ไม่มีสิทธิ์ลบแคมเปญนี้ — เฉพาะ Owner/Admin');
   },
 };
 
@@ -2885,8 +2889,9 @@ export const lineChannelsApi = {
   },
 
   async remove(id: string): Promise<void> {
-    const { error } = await supabase.from('line_channels').delete().eq('id', id);
+    const { data, error } = await supabase.from('line_channels').delete().eq('id', id).select('id');
     if (error) throw error;
+    if (!data || data.length === 0) throw new Error('ไม่มีสิทธิ์ลบช่องทาง LINE นี้ — เฉพาะ Owner/Admin');
   },
 
   /** Mark one channel active. Deactivates all others first (transactional
@@ -3479,12 +3484,43 @@ async function callAdminUsers(action: string, payload: Record<string, unknown> =
 
 export const usersApi = {
   list: (): Promise<AdminUser[]> => callAdminUsers('list').then((d) => (d.users ?? []) as AdminUser[]),
-  create: (p: { email: string; password: string; full_name?: string; phone?: string; role: AppRole }) =>
-    callAdminUsers('create', p),
+  create: (p: {
+    email: string; role: AppRole; full_name?: string; phone?: string;
+    mode?: 'password' | 'invite'; password?: string;
+  }) => callAdminUsers('create', p),
   update: (p: { id: string; full_name?: string; phone?: string; role?: AppRole }) =>
     callAdminUsers('update', p),
   setActive: (id: string, active: boolean) => callAdminUsers('set_active', { id, active }),
   setPassword: (id: string, password: string) => callAdminUsers('set_password', { id, password }),
   remove: (id: string) => callAdminUsers('delete', { id }),
   transferOwner: (id: string) => callAdminUsers('transfer_owner', { id }),
+};
+
+// =========================================================================
+// Audit log (RBAC Phase 2) — read-only view of user-management actions.
+// =========================================================================
+export interface AuditLog {
+  id: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  detail: any;
+  created_at: string;
+  actor: { email: string; full_name: string | null } | null;
+}
+
+export const auditApi = {
+  async list(limit = 200): Promise<AuditLog[]> {
+    // audit_logs is not in generated database.types — query untyped.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db
+      .from('audit_logs')
+      .select('id, action, target_type, target_id, detail, created_at, actor:profiles(email, full_name)')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []) as AuditLog[];
+  },
 };

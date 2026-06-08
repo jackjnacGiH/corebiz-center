@@ -24,7 +24,7 @@ export const supabase = createClient<Database>(
   }
 );
 
-export type AppRole = 'owner' | 'admin' | 'staff' | 'agent' | 'customer';
+export type AppRole = 'owner' | 'admin' | 'staff' | 'agent' | 'viewer' | 'customer';
 
 /**
  * Per-user toggles for which notification categories show in the bell.
