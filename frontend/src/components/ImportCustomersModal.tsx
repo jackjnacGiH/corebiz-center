@@ -106,45 +106,40 @@ export default function ImportCustomersModal({
 
     async function runImport() {
         if (!preview) return;
-        const codeToCustomer = new Map(
-            existingCustomers.filter((c) => c.code).map((c) => [c.code!, c]),
-        );
-
         setStage('running');
         setResults([]);
         setProgress({ done: 0, total: preview.valid.length });
 
+        // Bulk upsert in chunks (conflict on `code`) — fast + idempotent, so a
+        // re-run just fills in whatever is missing without duplicating.
         const localResults: RowResult[] = [];
-        for (const row of preview.valid) {
-            try {
-                const existing = row.code ? codeToCustomer.get(row.code) : undefined;
-                if (existing) {
-                    await customersApi.update(existing.id, row.customer);
+        const CHUNK = 500;
+        try {
+            for (let i = 0; i < preview.valid.length; i += CHUNK) {
+                const slice = preview.valid.slice(i, i + CHUNK);
+                await customersApi.bulkUpsert(slice.map((r) => r.customer));
+                for (const r of slice) {
                     localResults.push({
-                        line: row.line,
-                        code: row.code,
-                        name: row.customer.name,
-                        action: 'updated',
-                    });
-                } else {
-                    await customersApi.create(row.customer);
-                    localResults.push({
-                        line: row.line,
-                        code: row.code,
-                        name: row.customer.name,
-                        action: 'inserted',
+                        line: r.line,
+                        code: r.code,
+                        name: r.customer.name,
+                        action: r.code && preview.updates.has(r.code) ? 'updated' : 'inserted',
                     });
                 }
-            } catch (err) {
-                localResults.push({
-                    line: row.line,
-                    code: row.code,
-                    name: row.customer.name,
-                    action: 'failed',
-                    error: (err as Error).message,
+                setProgress({
+                    done: Math.min(preview.valid.length, i + slice.length),
+                    total: preview.valid.length,
                 });
+                setResults([...localResults]);
             }
-            setProgress((p) => ({ done: p.done + 1, total: p.total }));
+        } catch (err) {
+            localResults.push({
+                line: 0,
+                code: '',
+                name: '— เกิดข้อผิดพลาดระหว่างนำเข้า —',
+                action: 'failed',
+                error: (err as Error).message,
+            });
             setResults([...localResults]);
         }
 

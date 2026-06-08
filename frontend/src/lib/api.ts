@@ -415,6 +415,24 @@ export const customersApi = {
     return data;
   },
 
+  /** Bulk insert-or-update, conflict-keyed on `code` (idempotent — safe to
+   *  re-run). De-dupes codeful rows within the batch (last wins) so a repeated
+   *  code in one statement can't error; codeless rows always insert. */
+  async bulkUpsert(rows: CustomerInsert[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    const byCode = new Map<string, CustomerInsert>();
+    const codeless: CustomerInsert[] = [];
+    for (const r of rows) {
+      const code = (r.code ?? '').toString().trim();
+      if (code) byCode.set(code, r);
+      else codeless.push(r);
+    }
+    const batch = [...byCode.values(), ...codeless];
+    const { error } = await supabase.from('customers').upsert(batch, { onConflict: 'code' });
+    if (error) throw error;
+    return batch.length;
+  },
+
   async update(id: string, patch: CustomerUpdate): Promise<Customer> {
     const { data, error } = await supabase
       .from('customers')
