@@ -217,6 +217,41 @@ export function answerSummary(p: SProduct, orgName: string): string {
   return `${p.name_th} ${brand}เป็น${cat}คุณภาพจาก ${orgName} เหมาะสำหรับงานขัด เจียร ตัด ลอกสนิม และเก็บผิวชิ้นงานในอุตสาหกรรม ราคา ${formatTHB(effectivePrice(p))} ต่อ ${unit} (ยังไม่รวม VAT 7%) ${stock}${moq}.`;
 }
 
+/** Auto-built SEO meta keywords for a product — from its own name/brand/
+ *  category/group/type/tags + a few generic buying terms. No manual entry;
+ *  new products get this automatically. (Google ignores meta keywords, but we
+ *  emit it to match the classic 3-field SEO setup.) */
+export function seoKeywords(p: SProduct): string {
+  const raw = [
+    p.name_th,
+    p.name_en,
+    p.brand,
+    p.group_name,
+    p.category_name_th,
+    detectType(p.name_th),
+    ...(p.feature_tags ?? []),
+    ...(p.tags ?? []),
+    p.sku,
+    "JNAC",
+    "ราคา",
+    "ขายส่ง",
+    "พร้อมส่ง",
+  ]
+    .filter(Boolean)
+    .map((s) => String(s).trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of raw) {
+    const key = k.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(k);
+    if (out.length >= 15) break;
+  }
+  return out.join(", ");
+}
+
 export function featuresOf(p: SProduct): string[] {
   const out: string[] = [];
   if (p.brand) out.push(`แบรนด์: ${p.brand}`);

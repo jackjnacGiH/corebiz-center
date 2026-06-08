@@ -8,6 +8,7 @@ import {
   detailBullets,
   specRows,
   faqOf,
+  seoKeywords,
 } from "@/lib/products";
 import {
   getOrg,
@@ -50,6 +51,7 @@ export async function generateMetadata({
   return {
     title,
     description: desc,
+    keywords: seoKeywords(p),
     alternates: { canonical: `/shop/p/${encodeURIComponent(p.sku)}` },
     openGraph: {
       title,
