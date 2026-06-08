@@ -17,7 +17,7 @@ export default function BackToTop() {
 
     function onMsg(e: MessageEvent) {
       try {
-        if (!new URL(e.origin).hostname.endsWith("corebiz.online")) return;
+        if (!new URL(e.origin).hostname.endsWith("jnac.online")) return;
       } catch {
         return;
       }

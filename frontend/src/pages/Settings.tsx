@@ -757,7 +757,7 @@ export default function Settings() {
                                                 onChange={(e) =>
                                                     setOrgForm({ ...orgForm, website: e.target.value })
                                                 }
-                                                placeholder="https://www.corebiz.online"
+                                                placeholder="https://www.jnac.online"
                                                 disabled={savingOrg}
                                             />
                                         </div>

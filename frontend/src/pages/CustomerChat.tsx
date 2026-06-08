@@ -222,7 +222,7 @@ export default function CustomerChat() {
     useEffect(() => {
         function onCmd(e: MessageEvent) {
             try {
-                if (!new URL(e.origin).hostname.endsWith('corebiz.online')) return;
+                if (!new URL(e.origin).hostname.endsWith('jnac.online')) return;
             } catch { return; }
             const d = e.data as { type?: string; action?: string } | null;
             if (!d || typeof d !== 'object' || d.type !== 'corebiz-widget-cmd') return;

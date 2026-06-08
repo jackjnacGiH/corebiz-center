@@ -92,7 +92,7 @@ export default function Affiliate() {
     }, [agents]);
 
     async function copyLink(short: string) {
-        const url = `https://www.corebiz.online/ref/${short}`;
+        const url = `https://www.jnac.online/ref/${short}`;
         try {
             await navigator.clipboard.writeText(url);
             setCopiedCode(short);
