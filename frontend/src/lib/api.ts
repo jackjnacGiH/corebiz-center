@@ -396,6 +396,7 @@ export const customersApi = {
         .from('customers')
         .select('*')
         .order('total_spent', { ascending: false })
+        .order('id', { ascending: true }) // stable tiebreaker — avoids dup/missed rows across pages
         .range(from, from + PAGE - 1);
       if (error) throw error;
       const batch = data ?? [];

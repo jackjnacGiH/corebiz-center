@@ -2,9 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Bell,
-    Search,
     CircleHelp,
-    Command,
     LogOut,
     UserCircle,
     PanelLeft,
@@ -120,19 +118,6 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
                     {isMobile ? <Menu size={18} /> : <PanelLeft size={18} />}
                 </button>
 
-                <div className="header-search-container">
-                    <Search size={16} />
-                    <input
-                        type="text"
-                        placeholder={t.layout.searchPlaceholder}
-                        className="header-search-input"
-                    />
-                    {!isMobile && (
-                        <span className="search-shortcut">
-                            <Command size={12} /> K
-                        </span>
-                    )}
-                </div>
             </div>
 
             {/* Right: language, help, notifications, profile */}

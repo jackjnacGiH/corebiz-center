@@ -82,11 +82,16 @@ function typeMeta(t: string | null | undefined) {
     return t && t in TYPE_META ? TYPE_META[t as CustomerTypeKey] : TYPE_META.unspecified;
 }
 
+// Session-lived cache so re-entering CRM shows data instantly (then revalidates
+// in the background). Survives route changes; reset on full reload.
+let customersCache: Customer[] | null = null;
+let branchesCache: CustomerBranch[] | null = null;
+
 export default function CRM() {
     const { t } = useLanguage();
-    const [customers, setCustomers] = useState<Customer[]>([]);
-    const [branches, setBranches] = useState<CustomerBranch[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [customers, setCustomers] = useState<Customer[]>(() => customersCache ?? []);
+    const [branches, setBranches] = useState<CustomerBranch[]>(() => branchesCache ?? []);
+    const [loading, setLoading] = useState(customersCache === null);
     const [err, setErr] = useState<string | null>(null);
     const [search, setSearch] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -100,16 +105,17 @@ export default function CRM() {
     const [profileId, setProfileId] = useState<string | null>(null);
 
     async function load() {
-        setLoading(true);
         setErr(null);
+        // Cold load → show spinner. Warm (cached) → keep showing cached data
+        // while we revalidate silently in the background.
+        if (customersCache === null) setLoading(true);
         try {
-            // Fetch customers + branches in parallel. The branch list is small
-            // (one row per branch, typically tens) so loading it eagerly is
-            // cheaper than per-row lookups in the table.
             const [cs, bs] = await Promise.all([
                 customersApi.list(),
                 customerBranchesApi.listAll(),
             ]);
+            customersCache = cs;
+            branchesCache = bs;
             setCustomers(cs);
             setBranches(bs);
         } catch (e) {
@@ -258,6 +264,19 @@ export default function CRM() {
                 icon={<Users size={20} />}
                 actions={
                     <>
+                        <div className="relative w-full sm:w-auto order-first sm:order-none">
+                            <Search
+                                size={14}
+                                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
+                            />
+                            <Input
+                                type="text"
+                                placeholder={t.crm.searchPlaceholder}
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                className="pl-9 w-full sm:w-80"
+                            />
+                        </div>
                         <Button
                             variant="outline"
                             size="sm"
@@ -297,19 +316,6 @@ export default function CRM() {
                             <FileDown size={14} />
                             <span className="hidden md:inline">Export</span>
                         </Button>
-                        <div className="relative w-full sm:w-auto">
-                            <Search
-                                size={14}
-                                className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none"
-                            />
-                            <Input
-                                type="text"
-                                placeholder={t.crm.searchPlaceholder}
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="pl-9 w-full sm:w-64"
-                            />
-                        </div>
                         <Button
                             size="sm"
                             onClick={() => {
