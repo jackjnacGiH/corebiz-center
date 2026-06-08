@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getOrg, ld, faqLd, SITE, SHOP, breadcrumbLd } from "@/lib/seo";
+import { getOrg, ld, faqLd, SHOP, breadcrumbLd } from "@/lib/seo";
 import { Breadcrumb } from "@/components/ui";
+import OpenChatButton from "@/components/OpenChatButton";
 
 export const revalidate = 3600;
 
@@ -69,9 +70,9 @@ export default async function HowToOrder() {
           <Link href="/products" className="rounded-full px-7 py-3 font-semibold text-white shadow-md" style={{ background: BRAND }}>
             เริ่มเลือกสินค้า
           </Link>
-          <a href={`${SITE}/widget`} target="_blank" rel="noopener noreferrer" className="rounded-full px-7 py-3 font-semibold border-2" style={{ borderColor: NAVY, color: NAVY }}>
+          <OpenChatButton className="rounded-full px-7 py-3 font-semibold border-2" style={{ borderColor: NAVY, color: NAVY }}>
             แชทสอบถาม
-          </a>
+          </OpenChatButton>
         </div>
 
         <h2 className="mt-12 text-xl font-bold" style={{ color: NAVY }}>คำถามที่พบบ่อย</h2>
