@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getCategories, getProductsByCategory, getGroups, imagesOf } from "@/lib/products";
+import { getCategories, getProductsByCategory, getGroups, imagesOf, keywordsFromProducts } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
@@ -27,6 +27,7 @@ export async function generateMetadata({
   return {
     title: `${cat.name_th} – สินค้าทั้งหมด`,
     description: `รวมสินค้าหมวด ${cat.name_th} จาก JNAC ${products.length} รายการ พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — ขอใบเสนอราคาได้ทันที`,
+    keywords: keywordsFromProducts(products, [cat.name_th, cat.name_en || ""]),
     alternates: { canonical: `/shop/c/${encodeURIComponent(slug)}` },
   };
 }

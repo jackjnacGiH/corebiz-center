@@ -252,6 +252,43 @@ export function seoKeywords(p: SProduct): string {
   return out.join(", ");
 }
 
+/** Auto-built SEO keywords for a LISTING page (catalog / category / group) —
+ *  aggregates the brands, product types, categories and group names of the
+ *  products on that page, plus optional extra terms. */
+export function keywordsFromProducts(products: SProduct[], extra: string[] = []): string {
+  const brands = new Set<string>();
+  const types = new Set<string>();
+  const groups = new Set<string>();
+  const cats = new Set<string>();
+  for (const p of products) {
+    if (p.brand) brands.add(p.brand);
+    types.add(detectType(p.name_th));
+    if (p.group_name) groups.add(p.group_name);
+    if (p.category_name_th) cats.add(p.category_name_th);
+  }
+  const raw = [
+    ...extra,
+    ...cats,
+    ...types,
+    ...brands,
+    ...Array.from(groups).slice(0, 5),
+    "JNAC",
+    "ราคา",
+    "ขายส่ง",
+    "พร้อมส่ง",
+  ];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of raw.map((s) => String(s).trim()).filter(Boolean)) {
+    const key = k.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(k);
+    if (out.length >= 18) break;
+  }
+  return out.join(", ");
+}
+
 export function featuresOf(p: SProduct): string[] {
   const out: string[] = [];
   if (p.brand) out.push(`แบรนด์: ${p.brand}`);

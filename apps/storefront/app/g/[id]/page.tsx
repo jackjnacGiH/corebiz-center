@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getGroups, getGroupById, getProductsByGroup } from "@/lib/products";
+import { getGroups, getGroupById, getProductsByGroup, keywordsFromProducts } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
 import { ProductCard, Breadcrumb } from "@/components/ui";
 import SearchBox from "@/components/SearchBox";
@@ -28,6 +28,7 @@ export async function generateMetadata({
   return {
     title: `${group.name} – สินค้าทั้งหมดในกลุ่ม`,
     description: desc.slice(0, 155),
+    keywords: keywordsFromProducts(products, [group.name]),
     alternates: { canonical: `/shop/g/${encodeURIComponent(group.id)}` },
   };
 }
