@@ -88,7 +88,7 @@ export function QuotationDocument({ data }: { data: QuoteData }) {
           <View>
             <Text style={styles.brand}>CoreBiz Center</Text>
             <Text style={styles.brandSub}>Unified Commerce Platform</Text>
-            <Text style={styles.brandSub}>www.corebiz.online</Text>
+            <Text style={styles.brandSub}>www.jnac.online</Text>
           </View>
           <View style={styles.docTitleBox}>
             <Text style={styles.docTitle}>{title}</Text>

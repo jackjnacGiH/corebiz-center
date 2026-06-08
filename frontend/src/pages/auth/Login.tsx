@@ -108,7 +108,7 @@ export default function Login() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full h-12 bg-neutral-50 border border-neutral-200 rounded-lg pl-12 pr-4 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition"
-                  placeholder="you@corebiz.online"
+                  placeholder="you@jnac.online"
                 />
               </div>
             </div>

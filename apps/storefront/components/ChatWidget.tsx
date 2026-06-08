@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 // open/closed state to the host so we only resize the transparent iframe:
 // a small box around the bubble when collapsed (so it doesn't block page
 // clicks), full size when open. No custom wrapper → a single (purple) widget.
-const WIDGET_SRC = "https://www.corebiz.online/widget?pos=br&offset=16";
+const WIDGET_SRC = "https://www.jnac.online/widget?pos=br&offset=16";
 
 export default function ChatWidget() {
   const [open, setOpen] = useState(false);
@@ -16,7 +16,7 @@ export default function ChatWidget() {
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       try {
-        if (!new URL(e.origin).hostname.endsWith("corebiz.online")) return;
+        if (!new URL(e.origin).hostname.endsWith("jnac.online")) return;
       } catch {
         return;
       }

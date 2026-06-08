@@ -2,7 +2,7 @@ import { supabase } from "./supabase";
 import { effectivePrice } from "./format";
 import type { SProduct } from "./products";
 
-export const SITE = "https://www.corebiz.online";
+export const SITE = "https://www.jnac.online";
 export const SHOP = `${SITE}/shop`;
 
 export interface OrgInfo {

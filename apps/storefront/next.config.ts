@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-// Mounted under /shop on corebiz.online via Vercel experimentalServices.
+// Mounted under /shop on jnac.online via Vercel experimentalServices.
 const basePath = process.env.SHOP_BASE_PATH ?? "/shop";
 
 const nextConfig: NextConfig = {
