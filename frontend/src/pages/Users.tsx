@@ -24,6 +24,31 @@ const roleBadge: Record<string, string> = {
   customer: 'bg-neutral-100 text-neutral-600 border-neutral-200',
 };
 
+// --- Role permission guide (reference table shown on the page) ---
+type Cell = 'full' | 'limited' | 'edit' | 'view' | 'none';
+const CELL: Record<Cell, { label: string; cls: string }> = {
+  full: { label: 'จัดการได้เต็ม', cls: 'bg-green-100 text-green-700' },
+  limited: { label: 'จัดการได้ (ยกเว้น Owner)', cls: 'bg-green-100 text-green-700' },
+  edit: { label: 'เพิ่ม / แก้ไข', cls: 'bg-blue-100 text-blue-700' },
+  view: { label: 'ดูอย่างเดียว', cls: 'bg-slate-100 text-slate-600' },
+  none: { label: 'ไม่เห็นเมนู', cls: 'bg-red-50 text-red-500' },
+};
+const MATRIX: { menu: string; owner: Cell; admin: Cell; staff: Cell }[] = [
+  { menu: 'แดชบอร์ด', owner: 'full', admin: 'full', staff: 'view' },
+  { menu: 'รายการสินค้าขาย', owner: 'full', admin: 'full', staff: 'edit' },
+  { menu: 'คลังสินค้า', owner: 'full', admin: 'full', staff: 'edit' },
+  { menu: 'คำสั่งซื้อ', owner: 'full', admin: 'full', staff: 'edit' },
+  { menu: 'ระบบลูกค้า (CRM)', owner: 'full', admin: 'full', staff: 'edit' },
+  { menu: 'แชทรวมช่องทาง', owner: 'full', admin: 'full', staff: 'edit' },
+  { menu: 'การตลาด / พาร์ทเนอร์', owner: 'full', admin: 'full', staff: 'edit' },
+  { menu: 'Knowledge Base', owner: 'full', admin: 'full', staff: 'edit' },
+  { menu: 'ตั้งค่า (Settings)', owner: 'full', admin: 'full', staff: 'none' },
+  { menu: 'จัดการผู้ใช้', owner: 'full', admin: 'limited', staff: 'none' },
+];
+function PermCell({ v }: { v: Cell }) {
+  return <span className={`inline-block rounded px-2 py-0.5 text-[11px] font-medium ${CELL[v].cls}`}>{CELL[v].label}</span>;
+}
+
 export default function Users() {
   const { profile } = useAuth();
   const { language } = useLanguage();
@@ -247,6 +272,45 @@ export default function Users() {
           </table>
         </div>
       </div>
+
+      {/* Role permission guide */}
+      <details className="mt-5 rounded-xl border border-neutral-200 bg-white overflow-hidden group">
+        <summary className="cursor-pointer list-none select-none px-4 py-3 flex items-center justify-between hover:bg-neutral-50">
+          <span className="flex items-center gap-2 font-semibold text-neutral-800">
+            <ShieldCheck size={16} className="text-blue-600" /> คู่มือสิทธิ์ตามบทบาท (Owner / Admin / Staff)
+          </span>
+          <span className="text-xs text-neutral-400 group-open:hidden">แตะเพื่อดู ▾</span>
+          <span className="text-xs text-neutral-400 hidden group-open:inline">ซ่อน ▴</span>
+        </summary>
+        <div className="border-t border-neutral-100 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-neutral-50 text-neutral-500 text-xs">
+              <tr>
+                <th className="text-left font-medium px-4 py-2.5">เมนู / โมดูล</th>
+                <th className="text-left font-medium px-4 py-2.5">👑 Owner</th>
+                <th className="text-left font-medium px-4 py-2.5">Admin</th>
+                <th className="text-left font-medium px-4 py-2.5">Staff</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {MATRIX.map((r) => (
+                <tr key={r.menu}>
+                  <td className="px-4 py-2.5 text-neutral-700">{r.menu}</td>
+                  <td className="px-4 py-2.5"><PermCell v={r.owner} /></td>
+                  <td className="px-4 py-2.5"><PermCell v={r.admin} /></td>
+                  <td className="px-4 py-2.5"><PermCell v={r.staff} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-3 text-xs text-neutral-500 bg-neutral-50/60 leading-relaxed">
+            <p>• <b>Owner</b> ทำได้ทุกอย่าง รวมจัดการผู้ใช้ ตั้งค่า ลบข้อมูล และโอนความเป็นเจ้าของ</p>
+            <p>• <b>Admin</b> เหมือน Owner แต่จัดการบัญชี Owner ไม่ได้</p>
+            <p>• <b>Staff</b> ใช้งานเมนูปฏิบัติงานได้ แต่ไม่เห็น “ตั้งค่า” และ “จัดการผู้ใช้”</p>
+            <p className="mt-1.5 text-neutral-400">หมายเหตุ: การซ่อนเมนู “ตั้งค่า/จัดการผู้ใช้” และการจัดการผู้ใช้ บังคับจริงที่ระบบหลังบ้าน · การจำกัด “ลบ” ของ Staff รายเมนู และบทบาท Agent/Viewer จะเพิ่มใน Phase 2</p>
+          </div>
+        </div>
+      </details>
 
       {/* Add / Edit dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
