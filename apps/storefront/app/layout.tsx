@@ -3,6 +3,7 @@ import "./globals.css";
 import { getOrg, organizationLd, localBusinessLd, ld, SITE, SHOP } from "@/lib/seo";
 import { Nav, Footer } from "@/components/ui";
 import ChatWidget from "@/components/ChatWidget";
+import BackToTop from "@/components/BackToTop";
 import { CartProvider } from "@/components/cart/CartProvider";
 import CartDrawer from "@/components/cart/CartDrawer";
 
@@ -42,6 +43,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <CartDrawer />
         </CartProvider>
         <ChatWidget />
+        <BackToTop />
       </body>
     </html>
   );
