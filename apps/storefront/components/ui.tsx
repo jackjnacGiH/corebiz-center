@@ -56,7 +56,7 @@ export function ProductCard({ p }: { p: SProduct }) {
         </div>
         <div className="p-3 space-y-1.5">
           <div className="text-[11px] text-neutral-400 font-mono">{p.sku}</div>
-          <h3 className="text-sm text-neutral-800 leading-snug line-clamp-2 min-h-[2.5rem]">
+          <h3 className="text-xs sm:text-sm text-neutral-800 leading-snug line-clamp-2 min-h-[2.25rem] sm:min-h-[2.5rem]">
             {p.name_th}
           </h3>
           <Price p={p} />
@@ -120,7 +120,7 @@ export function GroupCard({
         </span>
       </div>
       <div className="p-3 space-y-1.5">
-        <h3 className="text-sm font-semibold text-neutral-800 leading-snug line-clamp-2 min-h-[2.5rem]">
+        <h3 className="text-xs sm:text-sm font-semibold text-neutral-800 leading-snug line-clamp-2 min-h-[2.25rem] sm:min-h-[2.5rem]">
           {name}
         </h3>
         {priceLabel && (
