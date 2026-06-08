@@ -10,7 +10,6 @@ import {
     BrainCircuit,
     Truck,
     Handshake,
-    Bot,
     Settings,
     Store,
 } from 'lucide-react';
@@ -53,7 +52,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         { name: t.nav.marketing, path: '/marketing', icon: <TrendingUp size={20} /> },
         { name: t.nav.affiliate, path: '/affiliate', icon: <Handshake size={20} /> },
         { name: t.nav.rag, path: '/rag', icon: <BrainCircuit size={20} /> },
-        { name: t.nav.ask, path: '/ask', icon: <Bot size={20} /> },
     ];
 
     return (
