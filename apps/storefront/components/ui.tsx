@@ -306,7 +306,7 @@ export function Footer({ org }: { org: OrgInfo }) {
             <ul className="space-y-2 text-sm text-white/75">
               <li>📞 โทร: 02-101-5587, 08-0016-1700</li>
               <li>📱 Line ID: @jnac</li>
-              <li>📧 อีเมล: info@jnac.co.th</li>
+              <li>📧 อีเมล: info@jnac.co.th, jnac.co.th@gmail.com</li>
               {org.address && <li>🏢 {org.address}</li>}
             </ul>
             <div className="mt-4 inline-block rounded bg-white p-[3px] shadow-sm">
