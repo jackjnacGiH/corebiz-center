@@ -165,6 +165,15 @@ export default async function ProductPage({
               {p.unit && <span className="text-sm text-neutral-400">/ {p.unit}</span>}
             </div>
             <p className="mt-1 text-xs text-neutral-400">ยังไม่รวมภาษีมูลค่าเพิ่ม 7%</p>
+            <p className="mt-2 text-sm font-medium">
+              {p.in_stock ? (
+                <span className="text-green-700">
+                  ● พร้อมขาย {p.stock_qty.toLocaleString("en-US")} {p.unit ?? "ชิ้น"}
+                </span>
+              ) : (
+                <span className="text-amber-700">✦ สั่งผลิต (ผลิตตามคำสั่งซื้อ)</span>
+              )}
+            </p>
 
             {/* Answer-first (AEO) */}
             <div

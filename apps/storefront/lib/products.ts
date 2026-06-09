@@ -27,6 +27,7 @@ export interface SProduct {
   group_id: string | null;
   group_name: string | null;
   in_stock: boolean;
+  stock_qty: number;
 }
 
 export interface SCategory {

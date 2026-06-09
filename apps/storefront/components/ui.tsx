@@ -60,7 +60,14 @@ export function ProductCard({ p }: { p: SProduct }) {
             {p.name_th}
           </h3>
           <Price p={p} />
-          <StockBadge inStock={p.in_stock} />
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <StockBadge inStock={p.in_stock} />
+            {p.in_stock && p.stock_qty > 0 && (
+              <span className="text-[11px] text-neutral-500">
+                พร้อมขาย {p.stock_qty.toLocaleString("en-US")} {p.unit ?? "ชิ้น"}
+              </span>
+            )}
+          </div>
         </div>
       </Link>
       <CardAddButton
