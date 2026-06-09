@@ -135,7 +135,7 @@ export function GroupCard({
             {priceLabel}
           </div>
         )}
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
           <StockBadge inStock={inStock} />
           <span className="text-[11px] text-neutral-400 whitespace-nowrap">{count} รายการ</span>
         </div>
