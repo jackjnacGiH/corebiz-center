@@ -296,15 +296,25 @@ export default function OrderDetailModal({
                 </div>
             </DialogContent>
 
-            {/* Print isolation: when printing, show ONLY #printable-doc (the บิล).
-                position:fixed escapes the dialog's overflow/scroll clipping. */}
+            {/* Print isolation: show ONLY #printable-doc (the บิล), pinned to the
+                top of the paper. The Radix dialog centers itself with
+                translate(-50%,-50%); that transform would make a positioned child
+                anchor to the dialog (page middle), so we neutralize it in print. */}
             <style>{`
                 @media print {
                     body * { visibility: hidden !important; }
                     #printable-doc, #printable-doc * { visibility: visible !important; }
+                    [role="dialog"] {
+                        position: static !important;
+                        transform: none !important;
+                        inset: auto !important;
+                        max-height: none !important;
+                        overflow: visible !important;
+                    }
                     #printable-doc {
-                        position: fixed !important;
-                        left: 0; top: 0; width: 100%;
+                        position: absolute !important;
+                        top: 0 !important; left: 0 !important;
+                        width: 100% !important;
                         margin: 0 !important; padding: 0 !important;
                         background: #fff !important;
                     }
