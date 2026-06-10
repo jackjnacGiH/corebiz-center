@@ -185,12 +185,12 @@ export default function QuoteDocument({
         <div className="doc-signatures mt-10 grid grid-cols-2 gap-12 text-[11px] text-neutral-700">
           {[{ company: customerName, role: sigRoles.left }, { company: sellerName, role: sigRoles.right }].map((b, i) => (
             <div key={i}>
-              <div className="text-center">ในนาม {b.company}</div>
+              <div>ในนาม {b.company}</div>
               <div className="mt-14 flex items-end gap-4">
-                <div className="flex-1 text-center">
+                <div className="flex-1 text-left">
                   <div className="border-t border-neutral-400 pt-1">{b.role}</div>
                 </div>
-                <div className="w-24 text-center">
+                <div className="w-24 text-left">
                   <div className="border-t border-neutral-400 pt-1">วันที่</div>
                 </div>
               </div>
