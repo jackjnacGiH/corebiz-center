@@ -24,6 +24,7 @@ const Affiliate = lazy(() => import('./pages/Affiliate'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Users = lazy(() => import('./pages/Users'));
 const Audit = lazy(() => import('./pages/Audit'));
+const AiAgent = lazy(() => import('./pages/AiAgent'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const AuthCallback = lazy(() => import('./pages/auth/AuthCallback'));
 const LineCallback = lazy(() => import('./pages/auth/LineCallback'));
@@ -76,6 +77,14 @@ function App() {
                   element={
                     <ProtectedRoute roles={['owner', 'admin']}>
                       <Settings />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="agent"
+                  element={
+                    <ProtectedRoute roles={['owner', 'admin']}>
+                      <AiAgent />
                     </ProtectedRoute>
                   }
                 />

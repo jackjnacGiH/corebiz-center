@@ -13,6 +13,7 @@ import {
     Settings,
     Store,
     UserCog,
+    Bot,
 } from 'lucide-react';
 import { useLanguage } from '../../i18n';
 import { cn } from '@/lib/utils';
@@ -57,6 +58,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         { name: t.nav.marketing, path: '/marketing', icon: <TrendingUp size={20} /> },
         { name: t.nav.affiliate, path: '/affiliate', icon: <Handshake size={20} /> },
         { name: t.nav.rag, path: '/rag', icon: <BrainCircuit size={20} /> },
+        ...(canManageUsers(role)
+            ? [{ name: t.nav.aiAgent, path: '/agent', icon: <Bot size={20} /> }]
+            : []),
         ...(canManageUsers(role)
             ? [{ name: t.nav.users, path: '/users', icon: <UserCog size={20} /> }]
             : []),

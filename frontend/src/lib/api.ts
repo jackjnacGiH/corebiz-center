@@ -3554,3 +3554,94 @@ export const auditApi = {
     return (data ?? []) as AuditLog[];
   },
 };
+
+// =========================================================================
+// AI Agent — task queue (human-in-the-loop). Agents propose; staff approve.
+// =========================================================================
+export type AgentCategory = 'sales' | 'ops' | 'content' | 'seo';
+export type AgentTaskStatus =
+  | 'proposed' | 'approved' | 'rejected' | 'executed' | 'failed' | 'dismissed' | 'snoozed';
+
+export interface AgentTask {
+  id: string;
+  category: AgentCategory;
+  kind: string;
+  action_kind: string;
+  title: string;
+  summary: string | null;
+  recommendation: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: any;
+  status: AgentTaskStatus;
+  requires_approval: boolean;
+  priority: number;
+  related_type: string | null;
+  related_id: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export type AgentTaskView = 'active' | 'snoozed' | 'history';
+
+export const aiAgentApi = {
+  async list(view: AgentTaskView = 'active'): Promise<AgentTask[]> {
+    // agent_tasks is not in generated database.types — query untyped.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const cols =
+      'id,category,kind,action_kind,title,summary,recommendation,payload,status,requires_approval,priority,related_type,related_id,reviewed_at,created_at';
+    const order = (q: any) =>
+      q.order('priority', { ascending: true }).order('created_at', { ascending: false }).limit(500);
+    const nowIso = new Date().toISOString();
+
+    if (view === 'snoozed') {
+      const { data, error } = await order(
+        db.from('agent_tasks').select(cols).eq('status', 'snoozed').gt('snooze_until', nowIso),
+      );
+      if (error) throw error;
+      return (data ?? []) as AgentTask[];
+    }
+    if (view === 'history') {
+      const { data, error } = await order(
+        db.from('agent_tasks').select(cols).in('status', ['approved', 'rejected', 'dismissed', 'executed', 'failed']),
+      );
+      if (error) throw error;
+      return (data ?? []) as AgentTask[];
+    }
+    // active = open proposals + snoozed tasks whose snooze window elapsed
+    const [proposed, dueSnoozed] = await Promise.all([
+      order(db.from('agent_tasks').select(cols).eq('status', 'proposed')),
+      order(db.from('agent_tasks').select(cols).eq('status', 'snoozed').lte('snooze_until', nowIso)),
+    ]);
+    if (proposed.error) throw proposed.error;
+    if (dueSnoozed.error) throw dueSnoozed.error;
+    const merged = [...(proposed.data ?? []), ...(dueSnoozed.data ?? [])] as AgentTask[];
+    merged.sort((a, b) => a.priority - b.priority || (a.created_at < b.created_at ? 1 : -1));
+    return merged;
+  },
+
+  async setStatus(id: string, status: 'approved' | 'rejected' | 'dismissed'): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { error } = await db.from('agent_tasks').update({ status }).eq('id', id);
+    if (error) throw error;
+  },
+
+  async snooze(id: string, days = 3): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const until = new Date(Date.now() + days * 86400000).toISOString();
+    const { error } = await db
+      .from('agent_tasks')
+      .update({ status: 'snoozed', snooze_until: until })
+      .eq('id', id);
+    if (error) throw error;
+  },
+
+  async runScan(): Promise<{ ok: boolean; tasks_touched: number; low_stock?: number; oos?: number }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any).rpc('agent_run_ops_scan');
+    if (error) throw error;
+    return data;
+  },
+};
