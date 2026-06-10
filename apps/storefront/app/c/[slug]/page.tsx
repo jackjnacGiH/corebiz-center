@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getCategories, getProductsByCategory, getGroups, imagesOf, keywordsFromProducts } from "@/lib/products";
+import { getCategories, getProductsByCategory, getGroups, imagesOf, keywordsFromProducts, collectionArticle } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
+import CollectionArticle from "@/components/CollectionArticle";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
 import SearchBox from "@/components/SearchBox";
@@ -118,6 +119,16 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
         </div>
         {products.length === 0 && (
           <p className="mt-10 text-center text-neutral-400">ยังไม่มีสินค้าในหมวดนี้</p>
+        )}
+
+        {products.length > 0 && (
+          <CollectionArticle
+            title={cat.name_th}
+            article={collectionArticle(cat.name_th, "category", products, org)}
+            url={categoryUrl(slug)}
+            orgName={org.business_name}
+            logoUrl={org.logo_url}
+          />
         )}
       </main>
     </>

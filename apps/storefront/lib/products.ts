@@ -453,3 +453,87 @@ export function productArticle(
     },
   ];
 }
+
+/** Pick the most common values of a key across products (for collection copy). */
+function topValues(values: (string | null | undefined)[], limit = 4): string[] {
+  const counts = new Map<string, number>();
+  for (const v of values) {
+    const s = (v || "").trim();
+    if (!s) continue;
+    counts.set(s, (counts.get(s) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map((e) => e[0]);
+}
+
+/**
+ * Auto SEO/AEO article for a COLLECTION page (category or product group).
+ * Composed from the real products inside the collection — types, brands,
+ * materials, price range, stock — so it is factual and unique per page, and
+ * regenerates automatically as the catalog changes. ~400+ words.
+ */
+export function collectionArticle(
+  name: string,
+  kind: "category" | "group",
+  products: SProduct[],
+  org: OrgInfo,
+): { h: string; body: string[] }[] {
+  const count = products.length;
+  const kindWord = kind === "category" ? "หมวดหมู่" : "กลุ่มสินค้า";
+  const types = topValues(products.map((p) => detectType(p.name_th)), 4);
+  const brands = topValues(products.map((p) => p.brand), 5);
+  const mats = topValues(products.flatMap((p) => p.feature_tags ?? []), 6);
+  const inStock = products.filter((p) => p.in_stock).length;
+  const prices = products.map((p) => effectivePrice(p)).filter((n) => n > 0);
+  const lo = prices.length ? formatTHB(Math.min(...prices)) : "";
+  const hi = prices.length ? formatTHB(Math.max(...prices)) : "";
+  const typeText = types.length ? types.join(" · ") : "วัสดุงานขัด เจียร ตัด";
+  const brandText = brands.length ? brands.join(", ") : "หลากหลายแบรนด์ชั้นนำ";
+  const matText = mats.length ? mats.join(", ") : "เหล็ก สเตนเลส อะลูมิเนียม ไม้ และพลาสติก";
+
+  // type-aware selection guidance for the collection
+  let howto: string;
+  if (types.some((t) => /กระดาษทราย|จานทราย/.test(t))) {
+    howto = `หัวใจของการเลือกสินค้าใน${kindWord} ${name} คือการเลือก "เบอร์ความหยาบ (#)" ให้ตรงกับขั้นตอนงาน — เบอร์น้อย (#40–#80) เม็ดหยาบ ขัด/ลอกผิวได้เร็ว เหมาะกับงานลบครีบ ลอกสีและสนิม ส่วนเบอร์มาก (#240 ขึ้นไป) เม็ดละเอียด เหมาะกับการเก็บผิวให้เรียบก่อนทำสีหรือขัดเงา แนะนำให้ไล่จากหยาบไปละเอียดทีละสเต็ปเพื่อรอยขัดที่สม่ำเสมอและประหยัดวัสดุ`;
+  } else if (types.some((t) => /ใบตัด/.test(t))) {
+    howto = `เมื่อเลือกใบตัดใน${kindWord} ${name} ให้ดูความหนาและขนาดเส้นผ่านศูนย์กลางให้เหมาะกับเครื่องและชิ้นงาน ใบบางตัดเร็วและสูญเสียเนื้อวัสดุน้อย เหมาะกับงานละเอียด ส่วนใบหนาทนทานกว่าเหมาะกับงานหนัก และต้องตรวจสอบความเร็วรอบสูงสุด (Max RPM) ให้สัมพันธ์กับเครื่องมือทุกครั้งเพื่อความปลอดภัย`;
+  } else if (types.some((t) => /ใบเจียร|หินเจียร/.test(t))) {
+    howto = `การเลือกใบเจียร/หินเจียรใน${kindWord} ${name} ควรพิจารณาชนิดวัสดุที่จะเจียร (เหล็ก สเตนเลส หรืออื่น ๆ) ความหนา และความเร็วรอบที่รองรับ เพื่อให้ลบรอยเชื่อมและเก็บผิวได้เรียบเนียนโดยไม่เกิดความร้อนสะสมที่ทำให้ชิ้นงานไหม้`;
+  } else if (types.some((t) => /ใยขัด|สก๊อตไบร์ท/.test(t))) {
+    howto = `วัสดุใยขัดสังเคราะห์ (สก๊อตไบร์ท) ใน${kindWord} ${name} เลือกตามระดับความหยาบของใย — หยาบสำหรับลอกคราบและสนิม ละเอียดสำหรับสร้างลายเส้น (แฮร์ไลน์) และปัดเงาสแตนเลส ควรคุมแรงกดและความเร็วให้พอดีเพื่อไม่ให้ผิวไหม้หรือเปลี่ยนสี`;
+  } else {
+    howto = `การเลือกสินค้าใน${kindWord} ${name} ควรพิจารณาชนิดวัสดุของชิ้นงาน ขั้นตอนงาน (ลอก/ขัดหยาบ หรือเก็บผิวละเอียด) และความเร็วรอบของเครื่องมือ เพื่อให้ได้ผลงานเรียบเนียน ปลอดภัย และคุ้มค่าที่สุด`;
+  }
+
+  return [
+    {
+      h: `${name} — รวมสินค้าอะไรบ้าง`,
+      body: [
+        `${name} เป็น${kindWord}สินค้างานขัด เจียร ตัด ของ ${org.business_name} ที่รวบรวมไว้ ${count} รายการ ครอบคลุม ${typeText} จากแบรนด์ ${brandText} เหมาะสำหรับช่างมืออาชีพ โรงงานอุตสาหกรรม และงานซ่อมบำรุง ${
+          inStock > 0 ? `ในจำนวนนี้มีสินค้าพร้อมส่งทันที ${inStock} รายการ ` : ""
+        }${lo && hi ? `ช่วงราคาเริ่มต้นประมาณ ${lo}–${hi} (ยังไม่รวมภาษีมูลค่าเพิ่ม 7%) ` : ""}สั่งซื้อได้ทั้งปลีกและส่ง พร้อมขอใบเสนอราคาออนไลน์ได้ทันที`,
+      ],
+    },
+    {
+      h: `วิธีเลือก ${name} ให้เหมาะกับงาน`,
+      body: [howto],
+    },
+    {
+      h: `${name} ใช้กับงานและวัสดุอะไรได้บ้าง`,
+      body: [
+        `สินค้าใน ${name} เหมาะกับงานบนวัสดุหลากหลาย เช่น ${matText} ครอบคลุมตั้งแต่การลบครีบ ลอกสนิมและสีเก่า ขัดรอยเชื่อม สร้างลายผิว ไปจนถึงการเก็บผิวขั้นสุดท้ายก่อนทำสีหรือเคลือบผิว การเลือกชนิดและความหยาบให้ตรงกับเนื้อวัสดุจะช่วยให้ผลงานออกมาดีและยืดอายุการใช้งานของวัสดุขัด หากไม่แน่ใจว่าควรใช้รุ่นใด ทีมผู้เชี่ยวชาญของ ${org.business_name} ยินดีให้คำแนะนำให้เหมาะกับงานและงบประมาณของคุณ`,
+      ],
+    },
+    {
+      h: `ทำไมต้องเลือก ${name} กับ ${org.business_name}`,
+      body: [
+        `${org.business_name} คัดสรรสินค้าใน ${name} ที่ผลิตได้มาตรฐานอุตสาหกรรม ทนแรงกดและรอบสูง ใช้งานได้ยาวนานและคุ้มค่า เรามีสต็อกรองรับการสั่งซื้อจำนวนมากสำหรับโรงงานและงานผลิต พร้อมราคาขายส่ง บริการจัดส่งทั่วประเทศ และทีมงานที่ให้คำปรึกษาเชิงเทคนิคเพื่อช่วยเลือกสินค้าให้ตรงกับงานของคุณจริง ๆ`,
+      ],
+    },
+    {
+      h: `สั่งซื้อและขอใบเสนอราคา ${name}`,
+      body: [
+        `เลือกสินค้าที่ต้องการใน ${name} กด "หยิบใส่ตะกร้า" แล้วส่งคำขอใบเสนอราคาผ่านเว็บไซต์ได้ทันที ทีมงาน ${org.business_name} จะติดต่อกลับเพื่อยืนยันราคา จำนวน และการจัดส่ง รองรับทั้งลูกค้าปลีกและลูกค้าโครงการ/โรงงานที่ต้องการสั่งซื้อจำนวนมาก${org.phone ? ` สอบถามเพิ่มเติม โทร ${org.phone}` : ""}`,
+      ],
+    },
+  ];
+}

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getGroups, getGroupById, getProductsByGroup, keywordsFromProducts } from "@/lib/products";
+import { getGroups, getGroupById, getProductsByGroup, keywordsFromProducts, collectionArticle } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
+import CollectionArticle from "@/components/CollectionArticle";
 import { ProductCard, Breadcrumb } from "@/components/ui";
 import SearchBox from "@/components/SearchBox";
 
@@ -71,6 +72,16 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
         </div>
         {products.length === 0 && (
           <p className="mt-10 text-center text-neutral-400">ยังไม่มีสินค้าในกลุ่มนี้</p>
+        )}
+
+        {products.length > 0 && (
+          <CollectionArticle
+            title={group.name}
+            article={collectionArticle(group.name, "group", products, org)}
+            url={groupUrl(group.id)}
+            orgName={org.business_name}
+            logoUrl={org.logo_url}
+          />
         )}
       </main>
     </>
