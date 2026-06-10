@@ -9,6 +9,7 @@ import {
   specRows,
   faqOf,
   seoKeywords,
+  productArticle,
 } from "@/lib/products";
 import {
   getOrg,
@@ -78,6 +79,8 @@ export default async function ProductPage({
   const details = detailBullets(p);
   const specs = specRows(p);
   const faqs = faqOf(p, org);
+  const article = productArticle(p, org);
+  const articleBody = article.flatMap((s) => [s.h, ...s.body]).join(" ");
 
   // Prefer the product group for the breadcrumb (matches the shop's group-first
   // navigation), falling back to the category.
@@ -104,6 +107,24 @@ export default async function ProductPage({
       <script type="application/ld+json" dangerouslySetInnerHTML={ld(productLd(p, org))} />
       <script type="application/ld+json" dangerouslySetInnerHTML={ld(faqLd(faqs))} />
       <script type="application/ld+json" dangerouslySetInnerHTML={ld(breadcrumbLd(crumbLdItems))} />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={ld({
+          "@context": "https://schema.org",
+          "@type": "Article",
+          headline: `${p.name_th}: คู่มือการเลือกและใช้งาน`,
+          about: p.name_th,
+          inLanguage: "th-TH",
+          articleBody,
+          author: { "@type": "Organization", name: org.business_name },
+          publisher: {
+            "@type": "Organization",
+            name: org.business_name,
+            ...(org.logo_url ? { logo: { "@type": "ImageObject", url: org.logo_url } } : {}),
+          },
+          mainEntityOfPage: productUrl(p.sku),
+        })}
+      />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         <Breadcrumb items={crumbItems} />
@@ -259,6 +280,25 @@ export default async function ProductPage({
               </div>
             ))}
           </div>
+        </section>
+
+        {/* In-depth article (SEO / AEO) — auto-composed from product data */}
+        <section className="mt-16 max-w-3xl">
+          <h2 className="text-2xl font-bold text-neutral-900 mb-6">
+            เจาะลึก {p.name_th}: ความรู้และการใช้งาน
+          </h2>
+          <article className="space-y-6">
+            {article.map((s, i) => (
+              <div key={i}>
+                <h3 className="text-lg font-bold text-neutral-900 mb-2">{s.h}</h3>
+                {s.body.map((para, j) => (
+                  <p key={j} className="text-sm text-neutral-600 leading-relaxed mb-2">
+                    {para}
+                  </p>
+                ))}
+              </div>
+            ))}
+          </article>
         </section>
       </main>
     </>
