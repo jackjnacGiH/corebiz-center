@@ -17,7 +17,6 @@ import {
     XCircle,
     Loader2,
     AlertCircle,
-    Printer,
 } from 'lucide-react';
 import { quoteRecordApi, orgSettingsApi, productsApi, tierApi, type QuoteListItem, type QuoteItem, type ProductWithInventory } from '../lib/api';
 import {
@@ -30,7 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
-import { printElement } from '../lib/print';
+import PrintMenu from './PrintMenu';
 import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
 
 interface Props {
@@ -285,6 +284,7 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                             total={Number(quote.total)}
                             note={quote.notes}
                             format={formatTHB}
+                            showSignature
                         />
                         </div>
                     )}
@@ -293,14 +293,10 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                 {/* Action footer (hidden while editing items — the editor has its own buttons) */}
                 {!editing && (
                 <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex flex-wrap gap-2 justify-end">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => printElement('printable-doc', quote?.code ? `ใบเสนอราคา ${quote.code}` : 'ใบเสนอราคา')}
-                        className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 gap-1.5 mr-auto"
-                    >
-                        <Printer size={14} /> พิมพ์
-                    </Button>
+                    <PrintMenu
+                        title={quote?.code ? `ใบเสนอราคา ${quote.code}` : 'ใบเสนอราคา'}
+                        className="mr-auto"
+                    />
                     <Button type="button" variant="outline" onClick={onClose}>
                         ปิด
                     </Button>

@@ -34,7 +34,7 @@ function formatQty(n: number): string {
 export default function QuoteDocument({
   org, title = 'ใบเสนอราคา', code, dateLabel, customerName, customerAddress, customerTaxId,
   contactName, contactPhone, items, subtotal, discount = 0, discountLabel,
-  net, vat, total, note, editableNote, format,
+  net, vat, total, note, editableNote, format, showSignature = false,
 }: {
   org: OrgInfo | null;
   title?: string;
@@ -55,6 +55,8 @@ export default function QuoteDocument({
   note?: string | null;
   editableNote?: { value: string; onChange: (s: string) => void };
   format: (n: number) => string;
+  /** Show signature blocks (ลงชื่อ/วันที่) at the bottom — for printed docs. */
+  showSignature?: boolean;
 }) {
   return (
     <div className="text-neutral-800">
@@ -80,6 +82,8 @@ export default function QuoteDocument({
         </div>
         <div className="text-right flex-shrink-0">
           <div className="text-2xl font-extrabold text-neutral-800">{title}</div>
+          {/* Filled + shown at print time (ต้นฉบับ/สำเนา) by lib/print.ts */}
+          <div className="doc-copy-label text-sm font-bold text-rose-600" style={{ display: 'none' }} />
           <div className="mt-2 text-[11px] text-neutral-600 space-y-0.5 min-w-[160px]">
             <div className="flex justify-between gap-4"><span className="text-neutral-400">เลขที่</span><span className="font-mono font-medium">{code ?? '(ออกเมื่อบันทึก)'}</span></div>
             <div className="flex justify-between gap-4"><span className="text-neutral-400">วันที่</span><span className="font-medium">{dateLabel}</span></div>
@@ -160,6 +164,21 @@ export default function QuoteDocument({
           </div>
         </div>
       </div>
+
+      {/* ── Signatures (printed docs) ────────────────────────── */}
+      {showSignature && (
+        <div className="mt-10 grid grid-cols-2 gap-10 text-[11px] text-neutral-700">
+          {['ผู้ส่งสินค้า / ผู้มีอำนาจลงนาม', 'ผู้รับสินค้า / ลูกค้า'].map((role, i) => (
+            <div key={i} className="text-center">
+              <div className="h-12" aria-hidden="true" />
+              <div>ลงชื่อ ............................................</div>
+              <div className="mt-1.5">( ............................................ )</div>
+              <div className="mt-1.5 font-semibold text-neutral-800">{role}</div>
+              <div className="mt-1.5">วันที่ ........../.........../..........</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

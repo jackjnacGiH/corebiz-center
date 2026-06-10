@@ -8,7 +8,15 @@
  * Cloning the element into a fresh window (with the app's stylesheets copied in)
  * sidesteps all of that: the document flows from the top and paginates normally.
  */
-export function printElement(elementId: string, docTitle = 'เอกสาร'): void {
+export function printElement(
+  elementId: string,
+  opts: { title?: string; copies?: string[] } = {},
+): void {
+  const { title = 'เอกสาร' } = opts;
+  // Labels to stamp on each printed copy. Empty string = no label. Each entry
+  // prints on its own page (e.g. ['ต้นฉบับ','สำเนา'] → 2 pages).
+  const copies = opts.copies && opts.copies.length ? opts.copies : [''];
+
   const node = document.getElementById(elementId);
   if (!node) return;
 
@@ -17,6 +25,23 @@ export function printElement(elementId: string, docTitle = 'เอกสาร')
     window.alert('เบราว์เซอร์บล็อกหน้าต่างพิมพ์ — กรุณาอนุญาต pop-up ของเว็บนี้ แล้วลองใหม่อีกครั้งค่ะ');
     return;
   }
+
+  // Build one section per copy: clone the node, fill its .doc-copy-label with
+  // ต้นฉบับ/สำเนา, and page-break between copies.
+  const sections = copies
+    .map((label, i) => {
+      const clone = node.cloneNode(true) as HTMLElement;
+      const lbl = clone.querySelector('.doc-copy-label') as HTMLElement | null;
+      if (lbl) {
+        if (label) { lbl.textContent = `(${label})`; lbl.style.display = ''; }
+        else { lbl.style.display = 'none'; }
+      }
+      const brk = i < copies.length - 1
+        ? ' style="page-break-after:always;break-after:page;"'
+        : '';
+      return `<div${brk}>${clone.outerHTML}</div>`;
+    })
+    .join('');
 
   // Copy every stylesheet/link so the cloned document looks identical (Tailwind,
   // fonts, etc.). Same-origin links re-resolve fine in the new window.
@@ -30,11 +55,11 @@ export function printElement(elementId: string, docTitle = 'เอกสาร')
     // <base> so the copied (relative) stylesheet/image URLs resolve against the
     // app origin inside the about:blank popup.
     `<base href="${document.baseURI}">` +
-    `<title>${docTitle}</title>${head}` +
+    `<title>${title}</title>${head}` +
     `<style>@page{size:A4;margin:12mm}` +
     `html,body{margin:0;padding:0;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}` +
     `#print-root{padding:0}</style>` +
-    `</head><body><div id="print-root">${node.outerHTML}</div></body></html>`,
+    `</head><body><div id="print-root">${sections}</div></body></html>`,
   );
   win.document.close();
 

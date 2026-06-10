@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ShoppingBag, Loader2, Pencil, Printer } from 'lucide-react';
+import { ShoppingBag, Loader2, Pencil } from 'lucide-react';
 import { ordersApi, orgSettingsApi, productsApi, tierApi, type OrderWithCustomer, type ProductWithInventory } from '../lib/api';
 import type { OrderItem } from '../lib/database.types';
 import {
@@ -11,7 +11,7 @@ import {
 import { cn } from '@/lib/utils';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
 import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
-import { printElement } from '../lib/print';
+import PrintMenu from './PrintMenu';
 
 interface Props {
     isOpen: boolean;
@@ -170,14 +170,7 @@ export default function OrderDetailModal({
                             </p>
                         </div>
                         {order && !editing && (
-                            <button
-                                type="button"
-                                onClick={() => printElement('printable-doc', docTitle)}
-                                title="พิมพ์เอกสาร (หรือบันทึกเป็น PDF)"
-                                className="no-print inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-indigo-300 text-indigo-700 text-xs font-semibold hover:bg-indigo-50 flex-shrink-0"
-                            >
-                                <Printer size={14} /> พิมพ์
-                            </button>
+                            <PrintMenu title={docTitle} className="flex-shrink-0" />
                         )}
                         {order && (
                             <span className={cn('px-3 py-1.5 rounded-md text-xs font-bold border flex-shrink-0', STATUS_STYLES[order.status as OrderStatus] ?? STATUS_STYLES.pending)}>
@@ -289,6 +282,7 @@ export default function OrderDetailModal({
                                     total={Number(order.total)}
                                     note={order.notes}
                                     format={formatTHB}
+                                    showSignature
                                 />
                                 </div>
                             )}
