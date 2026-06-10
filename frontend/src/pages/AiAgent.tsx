@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Bot, Loader2, RefreshCw, ScanLine, AlertCircle, CheckCircle2,
   Check, X, Clock, ChevronDown, ChevronUp, ExternalLink, AlertTriangle,
-  ShoppingCart, Package, Truck, MessageSquare, FileText, PackageX,
+  ShoppingCart, Package, Truck, MessageSquare, FileText, PackageX, UserPlus,
 } from 'lucide-react';
 import { aiAgentApi, type AgentTask, type AgentTaskView, type AgentCategory } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,8 @@ const KIND_LABEL: Record<string, string> = {
   'ops.daily_report': 'สรุปรายวัน',
   'sales.quote_convert': 'ปิดการขาย',
   'sales.quote_followup': 'ตามใบเสนอราคา',
+  'sales.quote_request': 'ขอใบเสนอราคา (จากบอท)',
+  'sales.lead': 'Lead จากบอท',
   'sales.abandoned_cart': 'ตะกร้าค้าง',
   'sales.unanswered_chat': 'แชทรอตอบ',
 };
@@ -51,7 +53,9 @@ function kindIcon(t: AgentTask) {
     case 'ops.outstanding_payment': return <Truck size={18} />;
     case 'ops.daily_report': return <FileText size={18} />;
     case 'sales.quote_convert':
-    case 'sales.quote_followup': return <ShoppingCart size={18} />;
+    case 'sales.quote_followup':
+    case 'sales.quote_request': return <ShoppingCart size={18} />;
+    case 'sales.lead': return <UserPlus size={18} />;
     case 'sales.unanswered_chat': return <MessageSquare size={18} />;
     default: return <Package size={18} />;
   }
