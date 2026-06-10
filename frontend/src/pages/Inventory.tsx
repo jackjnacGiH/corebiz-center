@@ -811,6 +811,7 @@ export default function Inventory() {
       <BulkEditProductsModal
         isOpen={bulkEditOpen}
         selectedProducts={selectedProducts}
+        categories={categories}
         onClose={() => setBulkEditOpen(false)}
         onSave={handleBulkEditSave}
       />

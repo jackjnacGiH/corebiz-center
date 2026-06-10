@@ -29,6 +29,8 @@ import {
     FileText,
     Languages,
     Sparkles,
+    Building2,
+    FolderTree,
 } from 'lucide-react';
 import {
     Dialog,
@@ -43,11 +45,13 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { FEATURE_TAG_NONE, FEATURE_TAG_OPTIONS } from './ProductModal';
 import type { ProductWithInventory } from '../lib/api';
-import type { ProductUpdate } from '../lib/database.types';
+import type { ProductUpdate, Category } from '../lib/database.types';
 
 interface BulkEditValues {
     name_th: string;
     name_en: string;
+    brand: string;
+    category_id: string;
     cost: number;
     price: number;
     discount_value: number;
@@ -67,6 +71,8 @@ type EnabledMap = { [K in keyof BulkEditValues]?: boolean };
 interface BulkEditProductsModalProps {
     isOpen: boolean;
     selectedProducts: ProductWithInventory[];
+    /** Category options for the หมวดหมู่ dropdown. */
+    categories: Category[];
     onClose: () => void;
     /** Caller persists the patch (e.g. productsApi.bulkUpdate(ids, patch)).
      *  Resolves with the row count actually updated. */
@@ -76,6 +82,7 @@ interface BulkEditProductsModalProps {
 export default function BulkEditProductsModal({
     isOpen,
     selectedProducts,
+    categories,
     onClose,
     onSave,
 }: BulkEditProductsModalProps) {
@@ -85,6 +92,8 @@ export default function BulkEditProductsModal({
     const [values, setValues] = useState<BulkEditValues>({
         name_th: '',
         name_en: '',
+        brand: '',
+        category_id: '',
         cost: 0,
         price: 0,
         discount_value: 0,
@@ -102,6 +111,12 @@ export default function BulkEditProductsModal({
     const anyFieldEnabled = useMemo(
         () => Object.values(enabled).some(Boolean),
         [enabled],
+    );
+
+    // Distinct brands across the selected rows — drives the brand autocomplete.
+    const brandOptions = useMemo(
+        () => [...new Set(selectedProducts.map((p) => p.brand).filter((b): b is string => !!b))].sort(),
+        [selectedProducts],
     );
 
     if (!isOpen) return null;
@@ -137,6 +152,8 @@ export default function BulkEditProductsModal({
         const patch: ProductUpdate = {};
         if (enabled.name_th) patch.name_th = values.name_th;
         if (enabled.name_en) patch.name_en = values.name_en || null;
+        if (enabled.brand) patch.brand = values.brand || null;
+        if (enabled.category_id) patch.category_id = values.category_id || null;
         if (enabled.cost) patch.cost = values.cost;
         if (enabled.price) patch.price = values.price;
         if (enabled.discount_value || enabled.discount_type) {
@@ -235,6 +252,50 @@ export default function BulkEditProductsModal({
                             placeholder="e.g. MIRKA GOLD Velcro Sanding Disc 5"
                             disabled={!enabled.name_en}
                         />
+                    </FieldGroup>
+
+                    {/* ────── แบรนด์ ────── */}
+                    <FieldGroup
+                        icon={<Building2 size={14} />}
+                        title="แบรนด์ (Brand)"
+                        enabled={!!enabled.brand}
+                        onToggle={() => toggle('brand')}
+                    >
+                        <Input
+                            value={values.brand}
+                            onChange={(e) => setVal('brand', e.target.value)}
+                            placeholder="เช่น MIRKA, DEERFOS, JNAC"
+                            disabled={!enabled.brand}
+                            list="bulk-brand-options"
+                        />
+                        <datalist id="bulk-brand-options">
+                            {brandOptions.map((b) => (
+                                <option key={b} value={b} />
+                            ))}
+                        </datalist>
+                    </FieldGroup>
+
+                    {/* ────── หมวดหมู่ ────── */}
+                    <FieldGroup
+                        icon={<FolderTree size={14} />}
+                        title="หมวดหมู่ (Category)"
+                        enabled={!!enabled.category_id}
+                        onToggle={() => toggle('category_id')}
+                        hint="เลือกหมวดหมู่ที่จะตั้งให้ทุกรายการที่เลือก (เว้นว่าง = ล้างหมวดหมู่)"
+                    >
+                        <select
+                            value={values.category_id}
+                            onChange={(e) => setVal('category_id', e.target.value)}
+                            disabled={!enabled.category_id}
+                            className="w-full h-9 px-3 border border-neutral-300 rounded-md text-sm bg-white disabled:bg-slate-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                        >
+                            <option value="">— ไม่มีหมวดหมู่ —</option>
+                            {categories.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                    {c.name_th}
+                                </option>
+                            ))}
+                        </select>
                     </FieldGroup>
 
                     {/* ────── ราคา ────── */}
