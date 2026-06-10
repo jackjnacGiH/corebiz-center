@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
+import { printElement } from '../lib/print';
 import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
 
 interface Props {
@@ -295,7 +296,7 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                     <Button
                         type="button"
                         variant="outline"
-                        onClick={() => window.print()}
+                        onClick={() => printElement('printable-doc', quote?.code ? `ใบเสนอราคา ${quote.code}` : 'ใบเสนอราคา')}
                         className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 gap-1.5 mr-auto"
                     >
                         <Printer size={14} /> พิมพ์
@@ -352,27 +353,6 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                 </div>
                 )}
             </DialogContent>
-
-            {/* Print isolation: print ONLY #printable-doc, pinned to the top of the
-                paper (neutralize the dialog's centering transform in print). */}
-            <style>{`
-                @media print {
-                    body * { visibility: hidden !important; }
-                    #printable-doc, #printable-doc * { visibility: visible !important; }
-                    /* Remove the dialog's centering transform so the position:fixed
-                       document anchors to the page top-left, not the dialog box. */
-                    [data-slot="dialog-content"], [role="dialog"] { transform: none !important; animation: none !important; }
-                    #printable-doc {
-                        position: fixed !important;
-                        top: 0 !important; left: 0 !important;
-                        width: 100% !important;
-                        margin: 0 !important; padding: 0 !important;
-                        background: #fff !important;
-                    }
-                    .no-print { display: none !important; }
-                }
-                @page { size: A4; margin: 12mm; }
-            `}</style>
         </Dialog>
     );
 }

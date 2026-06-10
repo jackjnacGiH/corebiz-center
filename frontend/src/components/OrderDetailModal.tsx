@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
 import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
+import { printElement } from '../lib/print';
 
 interface Props {
     isOpen: boolean;
@@ -171,7 +172,7 @@ export default function OrderDetailModal({
                         {order && !editing && (
                             <button
                                 type="button"
-                                onClick={() => window.print()}
+                                onClick={() => printElement('printable-doc', docTitle)}
                                 title="พิมพ์เอกสาร (หรือบันทึกเป็น PDF)"
                                 className="no-print inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-indigo-300 text-indigo-700 text-xs font-semibold hover:bg-indigo-50 flex-shrink-0"
                             >
@@ -295,31 +296,6 @@ export default function OrderDetailModal({
                     )}
                 </div>
             </DialogContent>
-
-            {/* Print isolation: show ONLY #printable-doc (the บิล), pinned to the
-                top of the paper. The Radix dialog centers itself with
-                translate(-50%,-50%); that transform would make a positioned child
-                anchor to the dialog (page middle), so we neutralize it in print. */}
-            <style>{`
-                @media print {
-                    body * { visibility: hidden !important; }
-                    #printable-doc, #printable-doc * { visibility: visible !important; }
-                    /* The Radix dialog centers itself with translate(-50%,-50%).
-                       A transform creates a containing block, so a position:fixed
-                       child anchors to the dialog (page middle) instead of the page.
-                       Remove ONLY the transform so the doc pins to the page top-left. */
-                    [data-slot="dialog-content"], [role="dialog"] { transform: none !important; animation: none !important; }
-                    #printable-doc {
-                        position: fixed !important;
-                        top: 0 !important; left: 0 !important;
-                        width: 100% !important;
-                        margin: 0 !important; padding: 0 !important;
-                        background: #fff !important;
-                    }
-                    .no-print { display: none !important; }
-                }
-                @page { size: A4; margin: 12mm; }
-            `}</style>
         </Dialog>
     );
 }
