@@ -135,7 +135,10 @@ export default function QuoteDocument({
                 <td className="px-2 py-2 text-center text-neutral-400 tabular-nums">{i + 1}</td>
                 <td className="px-2 py-2">
                   <div className="text-neutral-800 leading-snug">{l.name}</div>
-                  <div className="text-[10px] text-neutral-400 font-mono">{l.sku}{(l.lineDisc ?? 0) > 0 ? ` · ลด ${format(l.lineDisc as number)}` : ''}</div>
+                  <div className="mt-0.5 text-[11px] text-neutral-500 font-mono">
+                    <span className="text-[13px] font-bold text-neutral-700 tracking-wide">{l.sku}</span>
+                    {(l.lineDisc ?? 0) > 0 ? ` · ลด ${format(l.lineDisc as number)}` : ''}
+                  </div>
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap">
                   {formatQty(l.qty)}{l.unitLabel ? <span className="text-neutral-400"> {l.unitLabel}</span> : ''}
@@ -187,10 +190,10 @@ export default function QuoteDocument({
             <div key={i}>
               <div>ในนาม {b.company}</div>
               <div className="mt-14 flex items-end gap-4">
-                <div className="flex-1 text-left">
+                <div className="flex-1 text-center">
                   <div className="border-t border-neutral-400 pt-1">{b.role}</div>
                 </div>
-                <div className="w-24 text-left">
+                <div className="w-24 text-center">
                   <div className="border-t border-neutral-400 pt-1">วันที่</div>
                 </div>
               </div>
