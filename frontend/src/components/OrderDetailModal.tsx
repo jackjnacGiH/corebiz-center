@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ShoppingBag, Loader2, Pencil } from 'lucide-react';
+import { ShoppingBag, Loader2, Pencil, Printer } from 'lucide-react';
 import { ordersApi, orgSettingsApi, productsApi, tierApi, type OrderWithCustomer, type ProductWithInventory } from '../lib/api';
 import type { OrderItem } from '../lib/database.types';
 import {
@@ -168,6 +168,16 @@ export default function OrderDetailModal({
                                 {order?.code ?? 'Loading...'}
                             </p>
                         </div>
+                        {order && !editing && (
+                            <button
+                                type="button"
+                                onClick={() => window.print()}
+                                title="พิมพ์เอกสาร (หรือบันทึกเป็น PDF)"
+                                className="no-print inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-indigo-300 text-indigo-700 text-xs font-semibold hover:bg-indigo-50 flex-shrink-0"
+                            >
+                                <Printer size={14} /> พิมพ์
+                            </button>
+                        )}
                         {order && (
                             <span className={cn('px-3 py-1.5 rounded-md text-xs font-bold border flex-shrink-0', STATUS_STYLES[order.status as OrderStatus] ?? STATUS_STYLES.pending)}>
                                 {STATUS_LABELS[order.status as OrderStatus] ?? order.status}
@@ -250,7 +260,9 @@ export default function OrderDetailModal({
                                     busy={savingItems}
                                 />
                             ) : (
-                                /* Same document layout as the quotation — title + SO-/DN- code differ */
+                                /* Same document layout as the quotation — title + SO-/DN- code differ.
+                                   #printable-doc is isolated by the print stylesheet below. */
+                                <div id="printable-doc">
                                 <QuoteDocument
                                     org={org}
                                     title={docTitle}
@@ -277,11 +289,29 @@ export default function OrderDetailModal({
                                     note={order.notes}
                                     format={formatTHB}
                                 />
+                                </div>
                             )}
                         </>
                     )}
                 </div>
             </DialogContent>
+
+            {/* Print isolation: when printing, show ONLY #printable-doc (the บิล).
+                position:fixed escapes the dialog's overflow/scroll clipping. */}
+            <style>{`
+                @media print {
+                    body * { visibility: hidden !important; }
+                    #printable-doc, #printable-doc * { visibility: visible !important; }
+                    #printable-doc {
+                        position: fixed !important;
+                        left: 0; top: 0; width: 100%;
+                        margin: 0 !important; padding: 0 !important;
+                        background: #fff !important;
+                    }
+                    .no-print { display: none !important; }
+                }
+                @page { size: A4; margin: 12mm; }
+            `}</style>
         </Dialog>
     );
 }

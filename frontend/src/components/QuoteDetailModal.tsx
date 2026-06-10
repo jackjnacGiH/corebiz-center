@@ -17,6 +17,7 @@ import {
     XCircle,
     Loader2,
     AlertCircle,
+    Printer,
 } from 'lucide-react';
 import { quoteRecordApi, orgSettingsApi, productsApi, tierApi, type QuoteListItem, type QuoteItem, type ProductWithInventory } from '../lib/api';
 import {
@@ -259,6 +260,7 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                     )}
 
                     {quote && !editing && (
+                        <div id="printable-doc">
                         <QuoteDocument
                             org={org}
                             code={quote.code}
@@ -283,12 +285,21 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                             note={quote.notes}
                             format={formatTHB}
                         />
+                        </div>
                     )}
                 </div>
 
                 {/* Action footer (hidden while editing items — the editor has its own buttons) */}
                 {!editing && (
                 <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex flex-wrap gap-2 justify-end">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => window.print()}
+                        className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 gap-1.5 mr-auto"
+                    >
+                        <Printer size={14} /> พิมพ์
+                    </Button>
                     <Button type="button" variant="outline" onClick={onClose}>
                         ปิด
                     </Button>
@@ -341,6 +352,22 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                 </div>
                 )}
             </DialogContent>
+
+            {/* Print isolation: print ONLY the document (#printable-doc). */}
+            <style>{`
+                @media print {
+                    body * { visibility: hidden !important; }
+                    #printable-doc, #printable-doc * { visibility: visible !important; }
+                    #printable-doc {
+                        position: fixed !important;
+                        left: 0; top: 0; width: 100%;
+                        margin: 0 !important; padding: 0 !important;
+                        background: #fff !important;
+                    }
+                    .no-print { display: none !important; }
+                }
+                @page { size: A4; margin: 12mm; }
+            `}</style>
         </Dialog>
     );
 }
