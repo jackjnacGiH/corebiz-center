@@ -359,15 +359,11 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                 @media print {
                     body * { visibility: hidden !important; }
                     #printable-doc, #printable-doc * { visibility: visible !important; }
-                    [role="dialog"] {
-                        position: static !important;
-                        transform: none !important;
-                        inset: auto !important;
-                        max-height: none !important;
-                        overflow: visible !important;
-                    }
+                    /* Remove the dialog's centering transform so the position:fixed
+                       document anchors to the page top-left, not the dialog box. */
+                    [data-slot="dialog-content"], [role="dialog"] { transform: none !important; animation: none !important; }
                     #printable-doc {
-                        position: absolute !important;
+                        position: fixed !important;
                         top: 0 !important; left: 0 !important;
                         width: 100% !important;
                         margin: 0 !important; padding: 0 !important;

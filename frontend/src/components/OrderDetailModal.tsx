@@ -304,15 +304,13 @@ export default function OrderDetailModal({
                 @media print {
                     body * { visibility: hidden !important; }
                     #printable-doc, #printable-doc * { visibility: visible !important; }
-                    [role="dialog"] {
-                        position: static !important;
-                        transform: none !important;
-                        inset: auto !important;
-                        max-height: none !important;
-                        overflow: visible !important;
-                    }
+                    /* The Radix dialog centers itself with translate(-50%,-50%).
+                       A transform creates a containing block, so a position:fixed
+                       child anchors to the dialog (page middle) instead of the page.
+                       Remove ONLY the transform so the doc pins to the page top-left. */
+                    [data-slot="dialog-content"], [role="dialog"] { transform: none !important; animation: none !important; }
                     #printable-doc {
-                        position: absolute !important;
+                        position: fixed !important;
                         top: 0 !important; left: 0 !important;
                         width: 100% !important;
                         margin: 0 !important; padding: 0 !important;
