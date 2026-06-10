@@ -58,7 +58,11 @@ export function printElement(
     `<title>${title}</title>${head}` +
     `<style>@page{size:A4;margin:12mm}` +
     `html,body{margin:0;padding:0;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}` +
-    `#print-root{padding:0}</style>` +
+    `#print-root{padding:0}` +
+    // Fill the printable A4 height (297 − 12·2 = 273mm; 270 leaves a hair so no
+    // blank trailing page) and push the signature block to the very bottom.
+    `.qd-root{display:flex;flex-direction:column;min-height:270mm}` +
+    `.doc-signatures{margin-top:auto;padding-top:8mm}</style>` +
     `</head><body><div id="print-root">${sections}</div></body></html>`,
   );
   win.document.close();

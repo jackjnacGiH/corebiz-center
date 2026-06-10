@@ -26,6 +26,18 @@ function formatQty(n: number): string {
   return new Intl.NumberFormat('th-TH', { maximumFractionDigits: 0 }).format(n);
 }
 
+/** Signature roles depend on the document type (driven by its title). */
+function signatureRoles(title: string): { left: string; right: string } {
+  const t = title || '';
+  if (t.includes('เสนอราคา')) return { left: 'ผู้สั่งซื้อ', right: 'ผู้เสนอราคา' };
+  if (t.includes('ส่งของ')) return { left: 'ผู้รับสินค้า', right: 'ผู้ส่งสินค้า' };
+  if (t.includes('สรุป') || t.includes('จัดส่ง')) return { left: 'ผู้บันทึก', right: 'ผู้อนุมัติ' };
+  if (t.includes('คืน')) return { left: 'ผู้บันทึก', right: 'ผู้อนุมัติ' };
+  if (t.includes('ยกเลิก')) return { left: 'ผู้บันทึก', right: 'ผู้อนุมัติ' };
+  if (t.includes('สั่งขาย')) return { left: 'ผู้สั่งขาย', right: 'ผู้อนุมัติ' };
+  return { left: 'ผู้สั่งซื้อ', right: 'ผู้เสนอราคา' };
+}
+
 /**
  * Shared quotation document layout (JNAC company header + bill-to + numbered
  * line items + totals + note). Used by both the live cart preview and the
@@ -58,8 +70,10 @@ export default function QuoteDocument({
   /** Show signature blocks (ลงชื่อ/วันที่) at the bottom — for printed docs. */
   showSignature?: boolean;
 }) {
+  const sigRoles = signatureRoles(title);
+  const sellerName = org?.business_name ?? 'บริษัท เจ แนค (ประเทศไทย) จำกัด';
   return (
-    <div className="text-neutral-800">
+    <div className="qd-root text-neutral-800">
       {/* ── Company header (seller) ─────────────────────────── */}
       <div className="flex items-start justify-between gap-6 border-b-2 border-[#1696F4] pb-4">
         <div className="flex items-start gap-3 min-w-0">
@@ -165,16 +179,21 @@ export default function QuoteDocument({
         </div>
       </div>
 
-      {/* ── Signatures (printed docs) ────────────────────────── */}
+      {/* ── Signatures (printed docs) — pinned to the bottom of the page in
+            print (lib/print.ts pushes .doc-signatures down via margin-top). ── */}
       {showSignature && (
-        <div className="mt-10 grid grid-cols-2 gap-10 text-[11px] text-neutral-700">
-          {['ผู้ส่งสินค้า / ผู้มีอำนาจลงนาม', 'ผู้รับสินค้า / ลูกค้า'].map((role, i) => (
-            <div key={i} className="text-center">
-              <div className="h-12" aria-hidden="true" />
-              <div>ลงชื่อ ............................................</div>
-              <div className="mt-1.5">( ............................................ )</div>
-              <div className="mt-1.5 font-semibold text-neutral-800">{role}</div>
-              <div className="mt-1.5">วันที่ ........../.........../..........</div>
+        <div className="doc-signatures mt-10 grid grid-cols-2 gap-12 text-[11px] text-neutral-700">
+          {[{ company: customerName, role: sigRoles.left }, { company: sellerName, role: sigRoles.right }].map((b, i) => (
+            <div key={i}>
+              <div className="text-center">ในนาม {b.company}</div>
+              <div className="mt-14 flex items-end gap-4">
+                <div className="flex-1 text-center">
+                  <div className="border-t border-neutral-400 pt-1">{b.role}</div>
+                </div>
+                <div className="w-24 text-center">
+                  <div className="border-t border-neutral-400 pt-1">วันที่</div>
+                </div>
+              </div>
             </div>
           ))}
         </div>
