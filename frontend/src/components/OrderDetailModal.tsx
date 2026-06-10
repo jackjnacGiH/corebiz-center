@@ -138,10 +138,17 @@ export default function OrderDetailModal({
         }
     }
 
-    // Once shipped/delivered the document becomes a delivery note (ใบส่งของ)
-    // with the same running number, prefix swapped to DN-.
+    // Once พร้อมส่ง/จัดส่งแล้ว (shipped/delivered) the document becomes a
+    // delivery note (ใบส่งของ) with the same running number, prefix → DN-.
     const isDelivery = order?.status === 'shipped' || order?.status === 'delivered';
-    const docTitle = isDelivery ? 'ใบส่งของ' : 'ใบสั่งขาย';
+    // Per-status document titles (override the default delivery/sales-order title).
+    const DOC_TITLES: Partial<Record<OrderStatus, string>> = {
+        delivered: 'ใบสรุป จัดส่งแล้ว',
+        cancelled: 'ใบยกเลิก',
+        returned: 'ใบคืน',
+    };
+    const docTitle = (order && DOC_TITLES[order.status as OrderStatus])
+        || (isDelivery ? 'ใบส่งของ' : 'ใบสั่งขาย');
     const docCode = order ? (isDelivery ? order.code.replace(/^(SO|ORD|QT)-/, 'DN-') : order.code) : '';
 
     return (
