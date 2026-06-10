@@ -35,8 +35,8 @@ const TIER_CHIP: Record<string, string> = {
 const ORDER_STATUS: Record<string, { label: string; chip: string }> = {
     pending:    { label: 'รอดำเนินการ',  chip: 'bg-amber-100 text-amber-700' },
     processing: { label: 'กำลังเตรียม',   chip: 'bg-blue-100 text-blue-700' },
-    shipped:    { label: 'จัดส่งแล้ว',    chip: 'bg-sky-100 text-sky-700' },
-    delivered:  { label: 'ส่งถึงแล้ว',    chip: 'bg-emerald-100 text-emerald-700' },
+    shipped:    { label: 'พร้อมส่ง',      chip: 'bg-sky-100 text-sky-700' },
+    delivered:  { label: 'จัดส่งแล้ว',    chip: 'bg-emerald-100 text-emerald-700' },
     completed:  { label: 'สำเร็จ',        chip: 'bg-emerald-100 text-emerald-700' },
     cancelled:  { label: 'ยกเลิก',        chip: 'bg-rose-100 text-rose-700' },
     returned:   { label: 'คืนสินค้า',     chip: 'bg-zinc-100 text-zinc-600' },

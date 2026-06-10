@@ -24,8 +24,8 @@ type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancell
 const STATUS_LABELS: Record<OrderStatus, string> = {
     pending:    'รอดำเนินการ',
     processing: 'กำลังเตรียม',
-    shipped:    'จัดส่งแล้ว',
-    delivered:  'รับสินค้าแล้ว',
+    shipped:    'พร้อมส่ง',
+    delivered:  'จัดส่งแล้ว',
     cancelled:  'ยกเลิก',
     returned:   'คืนสินค้า',
 };
@@ -217,7 +217,7 @@ export default function OrderDetailModal({
 
                             {/* Edit items — only while the document is still a quote /
                                 sales order being prepared (รอดำเนินการ / กำลังเตรียม).
-                                Once จัดส่งแล้ว / รับสินค้าแล้ว / ยกเลิก / คืนสินค้า it's locked. */}
+                                Once พร้อมส่ง / จัดส่งแล้ว / ยกเลิก / คืนสินค้า it's locked. */}
                             {!editing && (order.status === 'pending' || order.status === 'processing') && (
                                 <div className="flex justify-end">
                                     <button type="button" onClick={() => void enterEdit()} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-indigo-200 text-indigo-700 text-xs font-semibold hover:bg-indigo-50">

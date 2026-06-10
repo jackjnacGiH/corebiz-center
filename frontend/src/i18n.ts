@@ -163,8 +163,8 @@ export const translations = {
       status: {
         pending: 'Pending',
         processing: 'Processing',
-        shipped: 'Shipped',
-        delivered: 'Delivered',
+        shipped: 'Ready to ship',
+        delivered: 'Shipped',
         cancelled: 'Cancelled',
         returned: 'Returned',
       },
@@ -486,8 +486,8 @@ export const translations = {
       status: {
         pending: 'รอดำเนินการ',
         processing: 'กำลังเตรียม',
-        shipped: 'จัดส่งแล้ว',
-        delivered: 'รับสินค้าแล้ว',
+        shipped: 'พร้อมส่ง',
+        delivered: 'จัดส่งแล้ว',
         cancelled: 'ยกเลิก',
         returned: 'คืนสินค้า',
       },
