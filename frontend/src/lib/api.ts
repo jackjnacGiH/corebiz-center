@@ -2140,6 +2140,9 @@ export const knowledgeChatApi = {
        *    - 'line'    → LINE webhook auto-reply
        *    - 'default' → admin testing in KnowledgeChat (or omit) */
       channel?: 'default' | 'line' | 'web' | null;
+      /** Optional images for the bot to "see" (Gemini multimodal). Each is a
+       *  base64 payload (no data: prefix) + mime type. */
+      images?: Array<{ mimeType: string; data: string }>;
     },
     onEvent: (event: RagChatEvent) => void,
   ): Promise<RagChatResponse> {
@@ -2171,6 +2174,7 @@ export const knowledgeChatApi = {
         session_id: input.sessionId ?? null,
         display_name: input.displayName ?? null,
         channel: input.channel ?? 'default',
+        images: input.images ?? [],
       }),
     });
 

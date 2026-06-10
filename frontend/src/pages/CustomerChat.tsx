@@ -23,6 +23,7 @@ import {
     X,
     RefreshCw,
     MessageCircle,
+    ImagePlus,
 } from 'lucide-react';
 import {
     knowledgeChatApi,
@@ -36,6 +37,14 @@ interface ChatTurn {
     content: string;
     streaming?: boolean;
     error?: boolean;
+    /** data: URL of an image the visitor attached (shown in their bubble) */
+    image?: string;
+}
+
+interface PendingImage {
+    dataUrl: string;   // for preview + bubble
+    mimeType: string;
+    data: string;      // base64, no prefix — sent to rag-chat
 }
 
 const STORAGE_KEY = 'jnac_customer_chat_v1';
@@ -190,6 +199,25 @@ export default function CustomerChat() {
             : [{ id: 'welcome', role: 'assistant', content: WELCOME_MESSAGE }];
     });
     const [input, setInput] = useState('');
+    const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    function onPickImage(file: File | null | undefined) {
+        if (!file) return;
+        if (!file.type.startsWith('image/')) return;
+        if (file.size > 5 * 1024 * 1024) {
+            window.alert('ไฟล์รูปใหญ่เกินไป (สูงสุด 5MB) ครับ');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const dataUrl = String(reader.result || '');
+            const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (!m) return;
+            setPendingImage({ dataUrl, mimeType: m[1], data: m[2] });
+        };
+        reader.readAsDataURL(file);
+    }
     const [loading, setLoading] = useState(false);
     /** DB id of the persisted chat_conversations row (received from the
      *  Edge Function after the first message). Used to scope the
@@ -297,13 +325,14 @@ export default function CustomerChat() {
         });
     }, [turns, open, loading]);
 
-    async function ask(question: string) {
-        if (!question.trim() || loading) return;
+    async function ask(question: string, image?: PendingImage | null) {
+        if ((!question.trim() && !image) || loading) return;
 
         const userTurn: ChatTurn = {
             id: `u-${Date.now()}`,
             role: 'user',
             content: question,
+            image: image?.dataUrl,
         };
         const assistantId = `a-${Date.now()}`;
         const placeholderTurn: ChatTurn = {
@@ -344,6 +373,7 @@ export default function CustomerChat() {
                     displayName: `Visitor #${sessionIdRef.current.slice(0, 6)}`,
                     // Use the 'web' persona (Settings → AI Persona → Web Widget)
                     channel: 'web',
+                    images: image ? [{ mimeType: image.mimeType, data: image.data }] : undefined,
                 },
                 (event) => {
                     if (event.type === 'paused') {
@@ -403,7 +433,10 @@ export default function CustomerChat() {
 
     function handleSubmit(e: FormEvent) {
         e.preventDefault();
-        void ask(input.trim());
+        const img = pendingImage;
+        if (!input.trim() && !img) return;
+        setPendingImage(null);
+        void ask(input.trim(), img);
     }
 
     function resetChat() {
@@ -487,6 +520,14 @@ export default function CustomerChat() {
                                                 : 'bg-white text-neutral-900 border border-neutral-200 rounded-tl-sm'
                                     }`}
                                 >
+                                    {t.image && (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={t.image}
+                                            alt="รูปที่ส่ง"
+                                            className="rounded-lg mb-1.5 max-h-40 w-auto object-contain"
+                                        />
+                                    )}
                                     {renderMessageContent(t.content)}
                                     {t.streaming && t.content.length === 0 && (
                                         // Messenger-style typing indicator — three bouncing dots
@@ -520,20 +561,59 @@ export default function CustomerChat() {
                         ))}
                     </div>
 
+                    {/* Pending image preview */}
+                    {pendingImage && (
+                        <div className="px-3 pt-2 bg-white flex items-center gap-2">
+                            <div className="relative">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={pendingImage.dataUrl}
+                                    alt="รูปที่จะส่ง"
+                                    className="h-14 w-14 rounded-lg object-cover border border-neutral-200"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setPendingImage(null)}
+                                    className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-neutral-800 text-white grid place-items-center"
+                                    aria-label="ลบรูป"
+                                >
+                                    <X size={12} />
+                                </button>
+                            </div>
+                            <span className="text-xs text-neutral-500">แนบรูปแล้ว — กดส่งเพื่อให้ผู้ช่วยดูรูป</span>
+                        </div>
+                    )}
+
                     {/* Input */}
                     <form onSubmit={handleSubmit} className="border-t border-neutral-200 p-3 flex gap-2 bg-white">
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => { onPickImage(e.target.files?.[0]); e.target.value = ''; }}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={loading}
+                            title="ส่งรูปภาพ"
+                            className="h-9 w-9 flex-shrink-0 rounded-lg border border-neutral-200 bg-neutral-50 text-neutral-500 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 flex items-center justify-center transition"
+                        >
+                            <ImagePlus size={16} />
+                        </button>
                         <input
                             type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
-                            placeholder="พิมพ์คำถาม..."
+                            placeholder={pendingImage ? 'เพิ่มข้อความ (ถ้ามี)...' : 'พิมพ์คำถาม...'}
                             disabled={loading}
                             className="flex-1 h-9 rounded-lg border border-neutral-200 bg-neutral-50 px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
                             autoFocus
                         />
                         <button
                             type="submit"
-                            disabled={loading || !input.trim()}
+                            disabled={loading || (!input.trim() && !pendingImage)}
                             className="h-9 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 flex items-center justify-center transition"
                         >
                             {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
