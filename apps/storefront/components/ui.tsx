@@ -333,20 +333,7 @@ export function Footer({ org }: { org: OrgInfo }) {
               <li>📞 โทร: 02-101-5587, 08-0016-1700</li>
               <li>📱 Line ID: @jnac</li>
               <li>📧 อีเมล: info@jnac.co.th, jnac.co.th@gmail.com</li>
-              {org.address && (
-                <li>
-                  🏢{" "}
-                  <a
-                    href={MAP_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="เปิดแผนที่ Google Maps"
-                    className="underline decoration-white/30 underline-offset-2 hover:text-white transition"
-                  >
-                    {org.address}
-                  </a>
-                </li>
-              )}
+              {org.address && <li>🏢 {org.address}</li>}
               <li>
                 <a
                   href={MAP_URL}
