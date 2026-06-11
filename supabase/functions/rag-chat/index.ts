@@ -6,6 +6,10 @@
  * staff must confirm) → reply "เดี๋ยวขอตรวจสอบแล้วจะรีบแจ้งกลับ" + call
  * capture_lead so the team actually follows up. v30: QT-/SO-/DN- numbers are
  * document numbers, not product SKUs — never find_products them.
+ * v31: de-duplicate post-tool text — the model tended to repeat its
+ * acknowledgment sentence after the tool result, so answers read twice.
+ * Post-tool iterations are buffered and dropped when near-identical to what
+ * was already streamed.
  * (v28: vision + store web-widget image in chat-attachments for Omni-Chat.)
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -481,7 +485,8 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
 3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ
 4. ห้ามเปิดเผยข้อมูลลับขององค์กร
 5. ห้ามตอบว่า ไม่สามารถ / ทำไม่ได้ / ตรวจสอบให้ไม่ได้ / ไม่ทราบ / ไม่มีข้อมูล เด็ดขาด — คำถามใดที่เอยตอบเองไม่ได้หรือเช็คจากระบบไม่ได้ (เช่น สถานะใบเสนอราคา สถานะการจัดส่ง เรื่องที่ทีมงานต้องยืนยัน) ให้รับเรื่องไว้เสมอ: ตอบประมาณว่า "เดี๋ยวเอยขอตรวจสอบ/ขอเช็คข้อมูลให้ก่อนนะคะ แล้วจะรีบแจ้งกลับโดยเร็วค่ะ 😊" แล้วเรียก capture_lead (ใส่คำถามของลูกค้าใน note) เพื่อให้ทีมงานติดตามแจ้งลูกค้าจริง — ห้ามผลักให้ลูกค้าไปติดต่อใครเองโดยไม่รับเรื่อง
-   ⚠️ เลขที่ขึ้นต้น QT- / SO- / DN- คือเลขที่เอกสาร (ใบเสนอราคา/ใบสั่งขาย/ใบส่งของ) ไม่ใช่รหัสสินค้า — ห้ามเอาไปค้น find_products ให้ทำตามข้อ 5 นี้ทันที (รับเรื่อง + capture_lead โดยใส่เลขเอกสารใน note)`;
+   ⚠️ เลขที่ขึ้นต้น QT- / SO- / DN- คือเลขที่เอกสาร (ใบเสนอราคา/ใบสั่งขาย/ใบส่งของ) ไม่ใช่รหัสสินค้า — ห้ามเอาไปค้น find_products ให้ทำตามข้อ 5 นี้ทันที (รับเรื่อง + capture_lead โดยใส่เลขเอกสารใน note)
+   ⚠️ พูดรับเรื่องสั้นๆ เพียงครั้งเดียว — เรียก capture_lead ก่อนแล้วค่อยตอบลูกค้าหลังได้ผล tool ห้ามพูดประโยคเดิม/ความหมายเดิมซ้ำสองรอบในคำตอบเดียว`;
 
 const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 1. NEVER reveal cost/margin/buying-price. Refuse politely.
@@ -489,7 +494,8 @@ const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 3. Language: reply in same language as customer (Thai-Thai, English-English).
 4. Never disclose confidential org info.
 5. NEVER say "I can't / unable to / cannot check / I don't know". For anything you cannot answer or verify yourself (e.g. quote status, delivery status, matters staff must confirm), ALWAYS take ownership: reply like "Let me check on that and get back to you shortly 😊", then call capture_lead (put the customer's question in the note) so the team actually follows up — never just redirect the customer to contact someone themselves.
-   ⚠️ Numbers starting QT- / SO- / DN- are DOCUMENT numbers (quote / sales order / delivery note), NOT product SKUs — never search find_products for them; apply this rule immediately (own it + capture_lead with the doc number in the note).`;
+   ⚠️ Numbers starting QT- / SO- / DN- are DOCUMENT numbers (quote / sales order / delivery note), NOT product SKUs — never search find_products for them; apply this rule immediately (own it + capture_lead with the doc number in the note).
+   ⚠️ Acknowledge ONCE only — call capture_lead first, then reply after the tool result; never repeat the same sentence/meaning twice in one answer.`;
 
 const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคัญมาก — ต้องทำตาม)
 
@@ -842,11 +848,31 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   let usedModel = GEMINI_MODELS[0];
   let fullAnswer = "";
 
+  // Post-tool iterations are buffered (not streamed live) so a repeated
+  // acknowledgment — the model loves to re-say "เดี๋ยวเอยขอตรวจสอบ..." after
+  // the tool result — can be dropped instead of reaching the customer twice.
+  const normText = (s: string) => s.replace(/\s+/g, "").replace(/[.,!?;:()\[\]"'`~\-—·]/g, "");
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    let iterText = "";
     const r = await streamGeminiWithFallback(geminiKey, systemPrompt, contents, (chunk) => {
-      fullAnswer += chunk;
-      send({ type: "text", chunk });
+      if (iter === 0) {
+        fullAnswer += chunk;
+        send({ type: "text", chunk });
+      } else {
+        iterText += chunk;
+      }
     });
+    if (iter > 0 && iterText) {
+      const a = normText(fullAnswer);
+      const b = normText(iterText);
+      const duplicate = a.length > 0 && b.length > 0 && (a.includes(b) || b.includes(a));
+      if (!duplicate) {
+        const sepNeeded = fullAnswer.trim() && !fullAnswer.endsWith("\n");
+        const chunkOut = (sepNeeded ? "\n" : "") + iterText;
+        fullAnswer += chunkOut;
+        send({ type: "text", chunk: chunkOut });
+      }
+    }
     usedModel = r.model;
     usage.prompt_tokens += r.usage.prompt_tokens;
     usage.completion_tokens += r.usage.completion_tokens;
