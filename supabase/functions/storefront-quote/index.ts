@@ -1,9 +1,14 @@
 /**
- * storefront-quote — public (anon) endpoint that turns a storefront cart into a
- * Quote (รอดำเนินการ) in Order Management, so the existing quote → approve →
+ * storefront-quote v2 — public (anon) endpoint that turns a storefront cart
+ * into a Quote (draft) in Order Management, so the existing quote → approve →
  * sales-order flow handles it. Prices are recomputed server-side from the DB
- * (never trust the client). Customer contact is stored in the quote notes for
- * staff follow-up (anonymous web shopper → no customer_id).
+ * (never trust the client). Customer contact is stored in the quote notes.
+ *
+ * v2: logged-in members send their own JWT — the quote is then attached to
+ * their linked CRM customer (verified or pending link; pending stays hidden
+ * from the portal but staff see it under the right company), and a VERIFIED
+ * member's tier discount (tier_benefits.discount_percent) is applied
+ * automatically. Anonymous shoppers behave exactly as before.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -66,6 +71,49 @@ Deno.serve(async (req: Request) => {
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
 
+  // ── Member resolution (optional) ──────────────────────────────────────────
+  // The storefront sends the logged-in user's JWT instead of the anon key.
+  // Verified link → attach customer + tier discount. Pending link → attach
+  // customer only (back office records it under the right company; the portal
+  // keeps it hidden until Owner/Admin approve).
+  let customerId: string | null = null;
+  let tierLabel: string | null = null;
+  let discountPct = 0;
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  if (token) {
+    const { data: u } = await admin.auth.getUser(token).catch(() => ({ data: null }));
+    const uid = u?.user?.id;
+    if (uid) {
+      const { data: cc } = await admin
+        .from("customer_contacts")
+        .select("customer_id, verified")
+        .eq("user_id", uid)
+        .maybeSingle();
+      let verified = false;
+      if (cc) {
+        customerId = cc.customer_id as string;
+        verified = Boolean(cc.verified);
+      } else {
+        const { data: c } = await admin
+          .from("customers").select("id").eq("user_id", uid).maybeSingle();
+        if (c) { customerId = c.id as string; verified = true; }
+      }
+      if (customerId && verified) {
+        const { data: cust } = await admin
+          .from("customers").select("tier").eq("id", customerId).maybeSingle();
+        if (cust?.tier) {
+          const { data: ben } = await admin
+            .from("tier_benefits")
+            .select("label, discount_percent")
+            .eq("tier", cust.tier)
+            .maybeSingle();
+          discountPct = Number(ben?.discount_percent ?? 0);
+          tierLabel = (ben?.label as string | undefined) ?? null;
+        }
+      }
+    }
+  }
+
   const { data: products, error: pErr } = await admin
     .from("products")
     .select("id, sku, name_th, unit, price, discount_value, discount_type")
@@ -89,22 +137,29 @@ Deno.serve(async (req: Request) => {
   if (rows.length === 0) return json({ ok: false, error: "ไม่พบสินค้าที่เลือกในระบบ" }, 400);
 
   subtotal = r2(subtotal);
-  const vat = r2(subtotal * VAT_RATE);
-  const total = r2(subtotal + vat);
+  // Verified member → tier discount applied up-front (staff still confirm the
+  // final price before sending, as the storefront tells the customer).
+  const discount = discountPct > 0 ? r2((subtotal * discountPct) / 100) : 0;
+  const net = r2(subtotal - discount);
+  const vat = r2(net * VAT_RATE);
+  const total = r2(net + vat);
 
   const notes =
-    "📥 คำขอใบเสนอราคาจากหน้าร้านออนไลน์ (corebiz.online/shop)\n" +
+    "📥 คำขอใบเสนอราคาจากหน้าร้านออนไลน์ (www.jnac.online)\n" +
     `ชื่อผู้ติดต่อ: ${name}\n` +
     `โทร: ${phone}` +
     (contact.email ? `\nอีเมล: ${String(contact.email).trim()}` : "") +
     (contact.company ? `\nบริษัท/ร้าน: ${String(contact.company).trim()}` : "") +
+    (customerId
+      ? `\nสมาชิก: ✓ ผูกกับลูกค้าในระบบ${tierLabel ? ` (Tier ${tierLabel}${discountPct > 0 ? `, ส่วนลดสมาชิก ${discountPct}%` : ""})` : " (รอยืนยันตัวตน)"}`
+      : "") +
     (contact.note ? `\nหมายเหตุ: ${String(contact.note).trim().slice(0, 500)}` : "");
 
   const validUntil = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
 
   const { data: quote, error: qErr } = await admin
     .from("quotes")
-    .insert({ customer_id: null, status: "draft", subtotal, discount: 0, vat, total, valid_until: validUntil, notes })
+    .insert({ customer_id: customerId, status: "draft", subtotal, discount, vat, total, valid_until: validUntil, notes })
     .select("id, code")
     .single();
   if (qErr) return json({ ok: false, error: qErr.message }, 500);

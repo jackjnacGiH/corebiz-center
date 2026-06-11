@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCart } from "./CartProvider";
 import { formatTHB } from "@/lib/format";
+import { supabaseBrowser, getPortalProfile } from "@/lib/supabase-browser";
 
 const BRAND = "#1696F4";
 const FN_URL = "https://owoedccmuqnzdtxvywgt.supabase.co/functions/v1/storefront-quote";
@@ -19,6 +20,37 @@ export default function CartDrawer() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [doneCode, setDoneCode] = useState<string | null>(null);
+  const [member, setMember] = useState(false);
+  const [memberPct, setMemberPct] = useState(0);
+  const [memberTier, setMemberTier] = useState("");
+
+  // Logged-in member → prefill the contact form from their portal profile
+  // (only fields still empty, so anything they typed is never overwritten).
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void (async () => {
+      const p = await getPortalProfile();
+      if (!live) return;
+      if (p) {
+        setMember(true);
+        setMemberPct(p.pending_verification ? 0 : Number(p.discount_percent) || 0);
+        setMemberTier(p.tier_label ?? "");
+        setName((v) => v || p.contact_name || "");
+        setPhone((v) => v || p.contact_phone || p.phone || "");
+        setCompany((v) => v || p.name || "");
+        setEmail((v) => v || p.email || "");
+      } else {
+        // Logged in but not registered yet → at least fill from the login.
+        const { data: sess } = await supabaseBrowser().auth.getSession();
+        const u = sess.session?.user;
+        if (!live || !u) return;
+        setEmail((v) => v || u.email || "");
+        setName((v) => v || (u.user_metadata?.full_name as string | undefined) || "");
+      }
+    })();
+    return () => { live = false; };
+  }, [open]);
 
   const vat = Math.round(subtotal * 0.07 * 100) / 100;
   const total = subtotal + vat;
@@ -31,9 +63,13 @@ export default function CartDrawer() {
     }
     setBusy(true);
     try {
+      // Members send their own JWT so the quote is linked to their CRM
+      // customer (and their tier discount is applied server-side).
+      const { data: sess } = await supabaseBrowser().auth.getSession();
+      const bearer = sess.session?.access_token ?? ANON;
       const res = await fetch(FN_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
+        headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${bearer}` },
         body: JSON.stringify({
           items: items.map((i) => ({ sku: i.sku, qty: i.qty })),
           contact: { name, phone, email, company, note },
@@ -141,6 +177,11 @@ export default function CartDrawer() {
               {/* Contact form */}
               <div className="rounded-xl border border-neutral-200 bg-white p-3 space-y-2.5 mt-2">
                 <div className="text-sm font-bold text-neutral-800">ข้อมูลติดต่อ (เพื่อออกใบเสนอราคา)</div>
+                {member && (
+                  <p className="rounded-md bg-emerald-50 border border-emerald-100 px-2.5 py-1.5 text-[11px] text-emerald-700">
+                    ✓ ดึงข้อมูลจากบัญชีสมาชิกของคุณแล้ว (แก้ไขได้) — ใบเสนอราคานี้จะบันทึกเข้าประวัติบัญชีของคุณ
+                  </p>
+                )}
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="ชื่อผู้ติดต่อ *" className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-[#1696F4]" />
                 <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="เบอร์โทร *" className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-[#1696F4]" />
                 <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="บริษัท / ร้าน (ถ้ามี)" className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-[#1696F4]" />
@@ -163,6 +204,11 @@ export default function CartDrawer() {
             <div className="flex justify-between font-bold text-neutral-900">
               <span>ยอดสุทธิ (ประมาณ)</span><span className="tabular-nums" style={{ color: BRAND }}>{formatTHB(total)}</span>
             </div>
+            {memberPct > 0 && (
+              <p className="text-[11px] text-emerald-700 text-center">
+                🏅 สมาชิก {memberTier}: ส่วนลด {memberPct}% จะถูกหักให้ในใบเสนอราคาอัตโนมัติ
+              </p>
+            )}
             <button
               type="button"
               onClick={submit}
