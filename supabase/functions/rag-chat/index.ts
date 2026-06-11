@@ -1,19 +1,12 @@
 /**
- * rag-chat v25 — three-level bot pause (per-chat, per-channel, global)
+ * rag-chat v30 — never refuse: "can't answer/check" → take ownership + follow up
  *
- * Before generating any LLM reply, check three boolean flags:
- *   1. org_settings.bot_enabled        — global kill-switch
- *   2. ai_personas[channel].bot_enabled — per-channel pause (LINE / web / ...)
- *   3. chat_conversations[id].bot_enabled — per-conversation pause
- *
- * If ANY is false: emit `{type:'paused'}` SSE event (widget removes its
- * placeholder bubble) and a `done` event with no text. The customer message
- * is still saved (it was inserted before handleQuery ran) so admin sees it
- * in the inbox and can reply manually. Each flag cached 30s in memory.
- *
- * v25: never say "ไม่พบ/ไม่มี" — out-of-stock & not-found pivot to suggesting
- * nearby products / made-to-order / forwarding to Khun Cherry (TOOLING_GUIDE
- * rules 4-6 + reworded find_products fuzzy note).
+ * v29/v30: SAFETY rule 5 — the bot must never say "ไม่สามารถ / ทำไม่ได้ / ไม่ทราบ".
+ * Anything it can't answer or verify itself (quote status, delivery, matters
+ * staff must confirm) → reply "เดี๋ยวขอตรวจสอบแล้วจะรีบแจ้งกลับ" + call
+ * capture_lead so the team actually follows up. v30: QT-/SO-/DN- numbers are
+ * document numbers, not product SKUs — never find_products them.
+ * (v28: vision + store web-widget image in chat-attachments for Omni-Chat.)
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -45,14 +38,35 @@ interface KeywordRow { canonical: string; aliases: string[]; }
 interface RewritePair { alias: string; canonical: string; }
 let keywordCache: { pairs: RewritePair[]; expires: number } | null = null;
 
-// Bot flag caches (per scope). Conversation flags keyed by conv id.
 let globalBotCache: { enabled: boolean; expires: number } | null = null;
 const channelBotCache = new Map<string, { enabled: boolean; expires: number }>();
 const convBotCache = new Map<string, { enabled: boolean; expires: number }>();
 
 type Lang = "th" | "en";
+type ImagePart = { mimeType: string; data: string };
 function detectLanguage(s: string): Lang {
   return /[฀-๿]/.test(s) ? "th" : "en";
+}
+
+function normalizeImages(raw: unknown): ImagePart[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ImagePart[] = [];
+  for (const it of raw.slice(0, 4)) {
+    if (!it) continue;
+    if (typeof it === "string") {
+      const m = it.match(/^data:([^;]+);base64,(.+)$/);
+      if (m) out.push({ mimeType: m[1], data: m[2] });
+      continue;
+    }
+    const o = it as Record<string, unknown>;
+    let data = typeof o.data === "string" ? o.data : "";
+    let mimeType = typeof o.mimeType === "string" ? o.mimeType
+      : (typeof o.mime_type === "string" ? o.mime_type : "image/jpeg");
+    const m = data.match(/^data:([^;]+);base64,(.+)$/);
+    if (m) { mimeType = m[1]; data = m[2]; }
+    if (data) out.push({ mimeType, data });
+  }
+  return out;
 }
 
 const MSG = {
@@ -61,7 +75,7 @@ const MSG = {
     noAnswer: "ขออภัย ยังไม่สามารถตอบคำถามนี้ได้ รบกวนลองพิมพ์ใหม่อีกครั้งหรือติดต่อทีมงานครับ",
     geminiKeyMissing: "GEMINI_API_KEY ยังไม่ได้ตั้ง",
     openaiKeyMissing: "OPENAI_API_KEY ยังไม่ได้ตั้ง",
-    queryRequired: "กรุณาพิมพ์คำถาม",
+    queryRequired: "กรุณาพิมพ์คำถาม หรือส่งรูป",
     invalidJson: "รูปแบบคำขอไม่ถูกต้อง",
     aiBusy: "ขณะนี้ระบบ AI มีผู้ใช้งานเยอะ ลองถามใหม่อีกสักครู่นะคะ",
     maxIterations: "ขออภัย ระบบประมวลผลยาวเกินไป",
@@ -71,7 +85,7 @@ const MSG = {
     noAnswer: "Sorry, I couldn't generate an answer for that. Please try rephrasing or contact our team.",
     geminiKeyMissing: "GEMINI_API_KEY is not configured",
     openaiKeyMissing: "OPENAI_API_KEY is not configured",
-    queryRequired: "Please enter a question",
+    queryRequired: "Please enter a question or send an image",
     invalidJson: "Invalid request format",
     aiBusy: "The AI service is busy right now.",
     maxIterations: "Sorry, the request took too long.",
@@ -126,13 +140,13 @@ function shouldSkipRAG(query: string): boolean {
 const TOOL_DEFINITIONS = [
   {
     functionDeclarations: [
-      { name: "find_products", description: "Search products. Multi-word AND on (sku, name_th, name_en, brand). Stop-words are stripped server-side. Each result includes min_order_qty. Query is auto-rewritten using keyword_synonyms before search (alias → canonical). If result contains clarification_candidates the customer used an unrecognised name — ask which product they mean.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+      { name: "find_products", description: "Search products. Multi-word AND on (sku, name_th, name_en, brand). Stop-words are stripped server-side. Each result includes min_order_qty. Query is auto-rewritten using keyword_synonyms before search (alias to canonical). If result contains clarification_candidates the customer used an unrecognised name — ask which product they mean.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
       { name: "get_product_detail", description: "Full product detail by SKU, including min_order_qty.", parameters: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"] } },
       { name: "list_product_groups", description: "All product groups.", parameters: { type: "object", properties: {} } },
       { name: "get_group_members", description: "SKUs in a product group.", parameters: { type: "object", properties: { group_name: { type: "string" } }, required: ["group_name"] } },
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
-      { name: "capture_lead", description: "Save a SALES LEAD for the JNAC sales team to follow up. Call this ONCE per conversation when a customer shows clear buying intent, asks to be contacted, leaves a phone/contact, or asks about buying in quantity. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category the customer is interested in" }, note: { type: "string", description: "short Thai summary of the request" } }, required: ["interest"] } },
-      { name: "request_quote", description: "Forward a QUOTATION request (ขอใบเสนอราคา) to the JNAC sales team when the customer wants a price quote for specific items/quantities. It does NOT create or send a quote — staff confirm price and contact the customer. Use this instead of inventing prices for bulk orders.", parameters: { type: "object", properties: { items: { type: "string", description: "items and quantities, e.g. 'SKU 2020000986 x100, จานทราย 4นิ้ว x50'" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
+      { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer shows buying intent, asks to be contacted, OR asks anything the bot cannot answer/verify itself (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
+      { name: "request_quote", description: "Forward a QUOTATION request to the JNAC sales team when the customer wants a price quote for specific items/quantities. It does NOT create or send a quote — staff confirm price and contact the customer. Use this instead of inventing prices for bulk orders.", parameters: { type: "object", properties: { items: { type: "string", description: "items and quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
     ],
   },
 ];
@@ -146,12 +160,25 @@ function computeEffectivePrice(p: { price: unknown; discount_value: unknown; dis
   const off = p.discount_type === "percent" ? (base * val) / 100 : val;
   return { effective: Math.max(0, base - off), discounted: true };
 }
-function escapeLike(s: string): string { return s.replace(/[%_]/g, (m) => `\${m}`); }
+function escapeLike(s: string): string { return s.replace(/[%_]/g, (m) => "\\" + m); }
 function escapeRegex(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
-// ─── Bot pause flags (migration 0014) ────────────────────────────────────────────────────────
-// Each fetch caches 30s. Missing column or row → treat as enabled (back-
-// compat with rows created before the migration).
+async function uploadImageToStorage(admin: SupabaseClient, conversationId: string, mimeType: string, base64: string): Promise<string | null> {
+  try {
+    const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : mimeType.includes("gif") ? "gif" : "jpg";
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const path = `${conversationId}/${Date.now()}-web.${ext}`;
+    const { error } = await admin.storage.from("chat-attachments").upload(path, bytes, { contentType: mimeType, upsert: false });
+    if (error) { console.warn("storage upload failed:", error.message); return null; }
+    const { data } = admin.storage.from("chat-attachments").getPublicUrl(path);
+    return data?.publicUrl ?? null;
+  } catch (e) {
+    console.warn("uploadImageToStorage error:", (e as Error).message);
+    return null;
+  }
+}
 
 async function isGlobalBotEnabled(admin: SupabaseClient): Promise<boolean> {
   const now = Date.now();
@@ -273,7 +300,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
         synonym_rewrites: applied.length > 0 ? applied : undefined,
         tokens, count: 0, products: [],
         clarification_candidates: fuzzy.map((r) => ({ sku: r.sku, name_th: r.name_th, name_en: r.name_en ?? null })),
-        note: "มีสินค้าชื่อใกล้เคียงในระบบ ห้ามใช้คำว่า 'ไม่พบ' หรือ 'ไม่มี' เด็ดขาด — ให้แนะนำสินค้าใกล้เคียงเหล่านี้ให้ลูกค้าเลือก แล้วถามว่าสนใจตัวไหน ถ้าลูกค้ายืนยันว่าต้องการตัวที่พิมพ์มาเป๊ะ ให้เสนอสั่งผลิตและส่งให้คุณเชอร์รี่เช็คเวลาผลิต",
+        note: "มีสินค้าชื่อใกล้เคียงในระบบ ห้ามใช้คำว่า ไม่พบ หรือ ไม่มี เด็ดขาด — ให้แนะนำสินค้าใกล้เคียงเหล่านี้ให้ลูกค้าเลือก แล้วถามว่าสนใจตัวไหน ถ้าลูกค้ายืนยันว่าต้องการตัวที่พิมพ์มาเป๊ะ ให้เสนอสั่งผลิตและส่งให้คุณเชอร์รี่เช็คเวลาผลิต",
       };
     }
   } catch (_e) { /* fuzzy unavailable */ }
@@ -284,7 +311,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
     tokens,
     stripped: rawTokens.length !== tokens.length ? rawTokens.filter((t) => !tokens.includes(t)) : [],
     count: 0, products: [],
-    note: "ค้นแล้วยังไม่เจอสินค้าที่ตรง และไม่มีตัวใกล้เคียง — ห้ามตอบว่า 'ไม่พบ/ไม่มี' ให้บอกว่าจะส่งให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิตหรือจัดหาให้ได้ไหม แล้วแจ้งกลับ",
+    note: "ค้นแล้วยังไม่เจอสินค้าที่ตรง และไม่มีตัวใกล้เคียง — ห้ามตอบว่า ไม่พบ/ไม่มี ให้บอกว่าจะส่งให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิตหรือจัดหาให้ได้ไหม แล้วแจ้งกลับ",
   };
 }
 
@@ -375,8 +402,6 @@ async function dispatchTool(
 
 const cleanStr = (v: unknown) => { const t = (v == null ? "" : String(v)).trim(); return t || null; };
 
-/** Bot tool: save a sales lead into the AI Agent queue (human-in-the-loop).
- *  Never messages the customer — just notifies the sales team. */
 async function captureLead(
   admin: SupabaseClient,
   args: Record<string, unknown>,
@@ -404,7 +429,6 @@ async function captureLead(
   return { ok: true, saved: true, message: "บันทึกข้อมูลแล้ว ทีมงานขายจะติดต่อกลับโดยเร็ว" };
 }
 
-/** Bot tool: forward a quotation request to the sales team (human-in-the-loop). */
 async function requestQuote(
   admin: SupabaseClient,
   args: Record<string, unknown>,
@@ -454,111 +478,66 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
 
 1. ห้ามเปิดเผยข้อมูล cost / ราคาทุน / margin / ราคาซื้อ ของบริษัทโดยเด็ดขาด — ถ้าลูกค้าถาม ให้ปฏิเสธ
 2. ห้าม fabricate ข้อมูลใดๆ — ที่อยู่/เบอร์โทร/email/บัญชี/แผนที่/ราคา/จำนวนขั้นต่ำ ต้องมาจาก [context]/tools เท่านั้น ถ้าไม่มี ส่งให้เจ้าหน้าที่
-3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ (ไทย↔ไทย, English↔English)
-4. ห้ามเปิดเผยข้อมูลลับขององค์กร`;
+3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ
+4. ห้ามเปิดเผยข้อมูลลับขององค์กร
+5. ห้ามตอบว่า ไม่สามารถ / ทำไม่ได้ / ตรวจสอบให้ไม่ได้ / ไม่ทราบ / ไม่มีข้อมูล เด็ดขาด — คำถามใดที่เอยตอบเองไม่ได้หรือเช็คจากระบบไม่ได้ (เช่น สถานะใบเสนอราคา สถานะการจัดส่ง เรื่องที่ทีมงานต้องยืนยัน) ให้รับเรื่องไว้เสมอ: ตอบประมาณว่า "เดี๋ยวเอยขอตรวจสอบ/ขอเช็คข้อมูลให้ก่อนนะคะ แล้วจะรีบแจ้งกลับโดยเร็วค่ะ 😊" แล้วเรียก capture_lead (ใส่คำถามของลูกค้าใน note) เพื่อให้ทีมงานติดตามแจ้งลูกค้าจริง — ห้ามผลักให้ลูกค้าไปติดต่อใครเองโดยไม่รับเรื่อง
+   ⚠️ เลขที่ขึ้นต้น QT- / SO- / DN- คือเลขที่เอกสาร (ใบเสนอราคา/ใบสั่งขาย/ใบส่งของ) ไม่ใช่รหัสสินค้า — ห้ามเอาไปค้น find_products ให้ทำตามข้อ 5 นี้ทันที (รับเรื่อง + capture_lead โดยใส่เลขเอกสารใน note)`;
 
 const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 1. NEVER reveal cost/margin/buying-price. Refuse politely.
 2. NEVER fabricate factual data (address/phone/email/bank/map/price/MOQ). If missing, escalate to staff.
-3. Language: reply in same language as customer (Thai↔Thai, English↔English).
-4. Never disclose confidential org info.`;
+3. Language: reply in same language as customer (Thai-Thai, English-English).
+4. Never disclose confidential org info.
+5. NEVER say "I can't / unable to / cannot check / I don't know". For anything you cannot answer or verify yourself (e.g. quote status, delivery status, matters staff must confirm), ALWAYS take ownership: reply like "Let me check on that and get back to you shortly 😊", then call capture_lead (put the customer's question in the note) so the team actually follows up — never just redirect the customer to contact someone themselves.
+   ⚠️ Numbers starting QT- / SO- / DN- are DOCUMENT numbers (quote / sales order / delivery note), NOT product SKUs — never search find_products for them; apply this rule immediately (own it + capture_lead with the doc number in the note).`;
 
 const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคัญมาก — ต้องทำตาม)
 
-1️⃣ ลูกค้าถามสินค้าเฉพาะ (มีชื่อ/รหัส/เบอร์) → เรียก find_products ทันที
-   → ห้ามตอบว่า "ไม่พบ" ก่อนเรียก tool ต้องค้นจริงก่อน
+1. ลูกค้าถามสินค้าเฉพาะ (มีชื่อ/รหัส/เบอร์) → เรียก find_products ทันที (ห้ามตอบว่า ไม่พบ ก่อนเรียก tool) — ยกเว้นเลข QT-/SO-/DN- ซึ่งเป็นเลขเอกสาร ให้ใช้ SAFETY ข้อ 5
+2. คำถามกว้างๆ → เรียก list_product_groups หรือ list_categories ก่อน
+3. ถ้าพูดว่า เดี๋ยวเช็คให้ → ต้อง CALL TOOL จริงใน reply เดียวกัน
 
-2️⃣ คำถามกว้างๆ ("มีอะไรบ้าง", "ขายอะไร") → เรียก list_product_groups หรือ list_categories ก่อน
+🚫 ห้ามเด็ดขาด: อย่าขึ้นต้นหรือพูดลอยๆ ว่า ไม่พบ, ไม่มี, ไม่มีในระบบ, หาไม่เจอ, สินค้าหมด — ให้เปลี่ยนเป็น แนะนำสินค้าใกล้เคียง / เสนอสั่งผลิต / ส่งให้คุณเชอร์รี่ แทนเสมอ
 
-3️⃣ ถ้าพูดว่า "เดี๋ยวเช็คให้" → ต้อง CALL TOOL จริงใน reply เดียวกัน ไม่ใช่แค่พูด
+4. Tool คืน 0 ผล + ไม่มี clarification_candidates → ห้ามบอกว่า ไม่มี/ไม่พบ ให้บอกว่าขอให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิต/จัดหาได้ไหม แล้วแจ้งกลับ
+5. Tool คืน clarification_candidates → ห้ามขึ้นต้นด้วย ไม่พบ/ไม่มี ให้แนะนำสินค้าใกล้เคียงที่เจอเสมอ แล้วถามว่าสนใจตัวไหน
+6. เจอสินค้าแต่ in_stock=false → เสนอสั่งผลิตเสมอ ไม่ใช่ตอบแค่ หมด
+7. query: ใส่เฉพาะตัวระบุสินค้า (ชื่อ/SKU/ขนาด)
 
-🚫 ห้ามเด็ดขาด: อย่าขึ้นต้นหรือพูดลอยๆ ว่า "ไม่พบ", "ไม่มี", "ไม่มีในระบบ", "หาไม่เจอ", "สินค้าหมด" ในทุกกรณีด้านล่าง — ให้เปลี่ยนเป็น แนะนำสินค้าใกล้เคียง / เสนอสั่งผลิต / ส่งให้คุณเชอร์รี่ แทนเสมอ
+📷 ถ้าลูกค้าส่งรูปมา → ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ ถ้าเป็นสินค้างานขัด/เจียร/ตัด ให้ระบุชนิด/เบอร์ที่เห็น แล้วเรียก find_products ค้นสินค้าที่ใกล้เคียงให้ — ห้ามเดาราคา/สเป็กจากรูปเอง
 
-4️⃣ Tool คืน 0 ผล + ไม่มี clarification_candidates (ไม่มีตัวใกล้เคียงเลย)
-   → ❌ ห้ามบอกว่า "ไม่มี / ไม่พบ"
-   → ✅ ตอบว่า "สินค้า [ชื่อสินค้า] นี้ เอยขอให้คุณเชอร์รี่ตรวจสอบเพิ่มเติมก่อนนะคะ ว่าสั่งผลิตหรือจัดหาให้ได้ไหม เดี๋ยวเอยแจ้งกลับอีกทีนะคะ 😊"
-
-5️⃣ Tool คืน clarification_candidates หรือเจอสินค้ารุ่น/ขนาดใกล้เคียง (ไม่ตรงเป๊ะ)
-   → ❌ ห้ามขึ้นต้นด้วย "ไม่พบ / ไม่มี" เด็ดขาด
-   → ✅ แนะนำสินค้าใกล้เคียงที่เจอ "เสมอ" เช่น "เอยมีรุ่นใกล้เคียงให้เลือกค่ะ ✨" แล้วลิสต์ชื่อทุกตัว
-   → ถามว่าลูกค้าสนใจตัวไหน เช่น "สนใจตัวไหนไหมคะ?"
-   → ถ้าลูกค้ายืนยันว่าต้องการตัวที่พิมพ์มาเป๊ะ (ที่ไม่มีในลิสต์) → เสนอสั่งผลิต + ส่งให้คุณเชอร์รี่เช็คเวลาผลิต
-
-6️⃣ เจอสินค้าแต่ in_stock = false / stock = 0 (สินค้าหมดสต็อก)
-   → ❌ ห้ามตอบแค่ "หมดค่ะ"
-   → ✅ เสนอสั่งผลิตเสมอ: "ตอนนี้ [ชื่อสินค้า] หมดสต็อกอยู่ค่ะ 😔 แต่เอยสั่งผลิตให้ได้นะคะ ✨ เดี๋ยวขอเช็คเวลาผลิตกับคุณเชอร์รี่ก่อนนะคะ"
-
-7️⃣ query: ใส่เฉพาะตัวระบุสินค้า (ชื่อ/SKU/ขนาด) — อย่าใส่คำสุภาพ/คำถาม
-
-📦 ช่องข้อมูลจาก tool (ใช้ตอนตอบลูกค้า)
-• stock = จำนวนในสต็อก (0 = สินค้าหมด)
-• in_stock = true/false
-• min_order_qty = จำนวนขั้นต่ำในการสั่งซื้อ — ใช้ค่านี้เสมอ อย่าเดาจาก description!
-• unit = หน่วยนับ (ไปคู่กับ min_order_qty)
-
-🧠 อ่านบริบท / HISTORY
-• ดูประวัติสนทนา — ทักทายไปแล้ว ห้ามทักซ้ำ
-• ลูกค้าขอบคุณ/ลา → ตอบสั้นๆ ปิดบทสนทนา
-• "อันนั้น" = สินค้าที่เพิ่งคุย
-
-📖 อ่าน [context]
-• ![alt](url) → คัดลอก verbatim
-• links → ใส่ในคำตอบ
-
+📦 ช่องข้อมูลจาก tool: stock (0=หมด), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
+🧠 อ่านประวัติ: ทักทายแล้วห้ามทักซ้ำ; อันนั้น = สินค้าที่เพิ่งคุย
 🖼️ รูปสินค้า: ใช้ image_thumb เป็น ![ชื่อ SKU](url)
 
 🤝 เก็บ LEAD / ใบเสนอราคา (สำคัญมาก — โอกาสปิดการขาย)
-• ลูกค้าสนใจซื้อจริง / ขอใบเสนอราคา / ถามซื้อจำนวนมาก / ฝากเบอร์ / ขอให้ติดต่อกลับ → เรียก capture_lead ทันที (ถ้าระบุรายการ+จำนวนชัดเจน ให้เรียก request_quote)
-• tool เหล่านี้ "ไม่ได้" ส่งข้อความหาลูกค้า แค่แจ้งทีมขาย JNAC ภายใน — แล้วบอกลูกค้าสุภาพๆ ว่า "ทีมงานจะติดต่อกลับโดยเร็วค่ะ"
-• เรียก capture_lead แค่ครั้งเดียวต่อบทสนทนาก็พอ
-• ห้ามสัญญาราคาพิเศษ/ส่วนลดเองถ้าไม่มีข้อมูลจริง — ให้ทีมขายเป็นผู้ยืนยัน`;
+• ลูกค้าสนใจซื้อจริง / ขอใบเสนอราคา / ถามซื้อจำนวนมาก / ฝากเบอร์ / ขอให้ติดต่อกลับ / ถามสิ่งที่เอยตอบไม่ได้ → เรียก capture_lead ทันที (ถ้าระบุรายการ+จำนวนชัดเจน ให้เรียก request_quote)
+• tool เหล่านี้ ไม่ได้ ส่งข้อความหาลูกค้า แค่แจ้งทีมขาย JNAC ภายใน — แล้วบอกลูกค้าสุภาพๆ ว่า ทีมงานจะติดต่อกลับโดยเร็วค่ะ
+• เรียก capture_lead แค่ครั้งเดียวต่อบทสนทนา
+• ห้ามสัญญาราคาพิเศษ/ส่วนลดเองถ้าไม่มีข้อมูลจริง`;
 
 const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
+1. Specific product → call find_products FIRST. Never say not available before calling. (Exception: QT-/SO-/DN- numbers are document numbers — use SAFETY rule 5.)
+2. Broad question → call list_product_groups / list_categories first.
+3. If you say let me check → you MUST call a tool in the SAME reply.
+🚫 NEVER bluntly say not found / out of stock — pivot to similar items / made-to-order / Khun Cherry.
+4. 0 results + no candidates → offer made-to-order via Khun Cherry.
+5. clarification_candidates → recommend the similar items, ask which they want.
+6. in_stock=false → offer made-to-order, never just out of stock.
+7. query: pass ONLY product identifier.
+📷 If the customer sends an IMAGE → look at it, describe what you see (sanding/cutting/grinding item, label, workpiece), then call find_products for the closest matching product. Never invent price/specs from a photo.
+📦 Fields: stock (0=oos), in_stock, min_order_qty (always use), unit.
 
-1️⃣ Specific product (name/model/SKU) → call find_products FIRST. Never say "not available" before calling.
-2️⃣ Broad question ("what do you have") → call list_product_groups / list_categories first.
-3️⃣ If you say "let me check" → you MUST call a tool in the SAME reply.
-
-🚫 NEVER open with or bluntly say "not found / not available / we don't have it / out of stock" in any case below — always pivot to suggesting similar items / made-to-order / forwarding to Khun Cherry.
-
-4️⃣ Tool returns 0 results + no clarification_candidates (no close matches)
-   → Don't say "not found". Say: "Let me have Khun Cherry check whether we can make-to-order or source [product] — I'll get back to you 😊"
-5️⃣ Tool returns clarification_candidates / close-but-not-exact matches
-   → ❌ Never open with "not found".
-   → ✅ ALWAYS recommend the similar items found ("I have similar options ✨"), list them all, ask which they want.
-   → If the customer confirms the exact item they typed (not in the list) → offer made-to-order + forward to Khun Cherry for lead time.
-6️⃣ Found but in_stock = false / stock = 0 → never just "out of stock". Offer made-to-order: "It's out of stock now, but I can make it to order — let me check the lead time with Khun Cherry."
-7️⃣ query: pass ONLY product identifier. Skip politeness/intent words.
-
-📦 Tool fields:
-• stock = qty in stock (0 = out of stock)
-• in_stock = boolean
-• min_order_qty = MOQ — ALWAYS use this for the MOQ line, never guess from description
-• unit = goes with min_order_qty
-
-🧠 Read history: don't greet twice. "that one" = product just discussed.
-📖 Context ![alt](url) → copy verbatim.
-🖼️ Product images: image_thumb as ![name SKU](url)
-
-🤝 CAPTURE LEADS / QUOTES (important — sales opportunity)
-• Customer shows real buying intent / asks for a quote / asks about bulk / leaves a phone / asks to be contacted → call capture_lead immediately (use request_quote if they list specific items + quantities).
-• These tools do NOT message the customer — they only notify the internal JNAC sales team. Then politely tell the customer the team will follow up shortly.
-• Call capture_lead only ONCE per conversation.
-• Never promise special prices/discounts yourself without real data — let the sales team confirm.`;
+🤝 CAPTURE LEADS / QUOTES (sales opportunity)
+• Buying intent / asks for a quote / bulk / leaves a phone / asks to be contacted / asks anything you cannot answer → call capture_lead (use request_quote if specific items + quantities).
+• These tools do NOT message the customer — they notify the internal JNAC sales team. Then tell the customer the team will follow up shortly.
+• Call capture_lead only ONCE per conversation. Never promise special prices yourself.`;
 
 function buildSystemPrompt(persona: string, contextText: string | null, lang: Lang): string {
   const safety  = lang === "th" ? SAFETY_RULES_TH  : SAFETY_RULES_EN;
   const tooling = lang === "th" ? TOOLING_GUIDE_TH : TOOLING_GUIDE_EN;
   const ctx = contextText ? `\n\n[knowledge base context]\n${contextText}` : "";
-  return `${safety}
-
-══════════════════════════════════════════════════
-👤 PERSONA (configurable per-channel via Settings → AI Persona)
-══════════════════════════════════════════════════
-${persona}
-
-══════════════════════════════════════════════════
-${tooling}${ctx}`;
+  return `${safety}\n\n==========\n👤 PERSONA\n==========\n${persona}\n\n==========\n${tooling}${ctx}`;
 }
 
 interface GeminiStreamResult { fullText: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }>; allParts: unknown[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; model: string; }
@@ -672,9 +651,9 @@ async function upsertLivechatConversation(admin: SupabaseClient, sessionId: stri
   return (inserted as { id: string }).id;
 }
 
-async function saveMessage(admin: SupabaseClient, conversationId: string, senderType: "customer" | "agent" | "bot" | "system", content: string, metadata: Record<string, unknown> = {}) {
+async function saveMessage(admin: SupabaseClient, conversationId: string, senderType: "customer" | "agent" | "bot" | "system", content: string, metadata: Record<string, unknown> = {}, contentType: string = "text") {
   const { error } = await admin.from("chat_messages").insert({
-    conversation_id: conversationId, sender_type: senderType, content, content_type: "text", metadata,
+    conversation_id: conversationId, sender_type: senderType, content, content_type: contentType, metadata,
   });
   if (error) { console.warn("chat msg insert failed:", error.message); return; }
   const preview = content.slice(0, 140);
@@ -698,6 +677,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const query = String(body.query ?? "").trim();
+  const images = normalizeImages(body.images);
   const history = (body.history ?? []) as Array<{ role: string; content: string }>;
   const match_count = Number(body.match_count ?? DEFAULT_MATCH_COUNT);
   const matchThreshold = Number(body.match_threshold ?? DEFAULT_MATCH_THRESHOLD);
@@ -708,11 +688,20 @@ Deno.serve(async (req: Request) => {
   const channelRaw = typeof body.channel === "string" ? body.channel.toLowerCase() : "default";
   const channel = ALLOWED_CHANNELS.has(channelRaw) ? channelRaw : "default";
 
-  if (!query) return new Response(JSON.stringify({ error: MSG[lang].queryRequired }), { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+  if (!query && images.length === 0) return new Response(JSON.stringify({ error: MSG[lang].queryRequired }), { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 
   let conversationId: string | null = null;
   if (sessionId) conversationId = await upsertLivechatConversation(admin, sessionId, displayName);
-  if (conversationId) await saveMessage(admin, conversationId, "customer", query, { lang });
+  if (conversationId) {
+    if (images.length > 0) {
+      const url = await uploadImageToStorage(admin, conversationId, images[0].mimeType, images[0].data);
+      const md = url ? `![image](${url})` : "";
+      const custContent = [query, md].filter(Boolean).join("\n") || "[รูปภาพ]";
+      await saveMessage(admin, conversationId, "customer", custContent, { lang, image_url: url }, "image");
+    } else {
+      await saveMessage(admin, conversationId, "customer", query, { lang });
+    }
+  }
 
   if (wantStream) {
     const stream = new ReadableStream({
@@ -721,7 +710,7 @@ Deno.serve(async (req: Request) => {
         const send = (event: Record<string, unknown>) => {
           try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); } catch (_e) { /* closed */ }
         };
-        try { await handleQuery(admin, query, history, match_count, matchThreshold, lang, channel, conversationId, send); }
+        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, send); }
         catch (e) {
           const msg = (e as Error).message ?? String(e);
           const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -733,7 +722,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const events: Array<Record<string, unknown>> = [];
-  try { await handleQuery(admin, query, history, match_count, matchThreshold, lang, channel, conversationId, (e) => events.push(e)); }
+  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, (e) => events.push(e)); }
   catch (e) {
     const msg = (e as Error).message ?? String(e);
     const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -766,11 +755,7 @@ Deno.serve(async (req: Request) => {
   }), { status: errEv ? 500 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 });
 
-async function handleQuery(admin: SupabaseClient, query: string, history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, send: (event: Record<string, unknown>) => void) {
-  // ─── Bot pause guard (3-level) ─────────────────────────────────────────────────────────
-  // Customer message has already been saved in chat_messages above. Just
-  // skip the LLM call (and any cost) when any flag is off. Widget filters
-  // its placeholder bubble out on the `paused` event.
+async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, send: (event: Record<string, unknown>) => void) {
   const [globalOn, channelOn, convOn] = await Promise.all([
     isGlobalBotEnabled(admin),
     isChannelBotEnabled(admin, channel),
@@ -805,7 +790,7 @@ async function handleQuery(admin: SupabaseClient, query: string, history: Array<
   let expandedRows: Array<{ source_path: string; chunk_index: number; title: string | null; content: string }> = [];
   let contextText: string | null = null;
 
-  if (!shouldSkipRAG(query)) {
+  if (query && images.length === 0 && !shouldSkipRAG(query)) {
     const t0 = Date.now();
     const queryEmbedding = await embedQueryOpenAI(openaiKey, query);
     embed_ms = Date.now() - t0;
@@ -835,20 +820,22 @@ async function handleQuery(admin: SupabaseClient, query: string, history: Array<
       let i = 1;
       for (const [sp, rows] of bySource) {
         const title = rows[0]?.title ? " — " + rows[0].title : "";
-        const body = rows.map((r) => r.content).join("\n\n");
-        blocks.push(`[ที่มา ${i}: ${sp}${title}]\n${body}`); i++;
+        const bodyTxt = rows.map((r) => r.content).join("\n\n");
+        blocks.push(`[ที่มา ${i}: ${sp}${title}]\n${bodyTxt}`); i++;
       }
       contextText = blocks.join("\n\n---\n\n");
     }
   } else {
-    send({ type: "status", message: "rag_skipped_product_query" });
+    send({ type: "status", message: images.length > 0 ? "vision" : "rag_skipped_product_query" });
   }
 
   const systemPrompt = buildSystemPrompt(persona, contextText, lang);
   const t2 = Date.now();
+  const userParts: Array<Record<string, unknown>> = [{ text: query || "ลูกค้าส่งรูปภาพนี้มา ช่วยดูรูปแล้วบอกว่าเป็นสินค้า/งานอะไร และช่วยแนะนำสินค้าที่เกี่ยวข้อง" }];
+  for (const im of images) userParts.push({ inlineData: { mimeType: im.mimeType, data: im.data } });
   const contents: unknown[] = [
     ...history.map((h) => ({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.content }] })),
-    { role: "user", parts: [{ text: query }] },
+    { role: "user", parts: userParts },
   ];
   const usage = zeroTokens();
   const allToolCalls: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }> = [];
