@@ -67,6 +67,33 @@ export interface RegisterInput {
  * (tier 'general') is created. Returns the customer id, or throws a coded
  * error: 'tax_id_invalid' | 'contact_name_required' | 'unauthorized'.
  */
+export interface UpdateProfileInput {
+  contact_name: string;
+  contact_phone: string;
+  company_name?: string;
+  company_phone?: string;
+  billing_address?: string;
+  shipping_address?: string;
+}
+
+/**
+ * Edit my own info. Contact name/mobile are per-login; company fields update
+ * the CRM customer row only when the link is verified (a pending contact only
+ * edits its own claimed data). tax_id / email are not editable from the portal.
+ */
+export async function updateMyCustomer(input: UpdateProfileInput): Promise<void> {
+  const sb = supabaseBrowser();
+  const { error } = await sb.rpc("update_my_customer", {
+    p_contact_name: input.contact_name,
+    p_contact_phone: input.contact_phone,
+    p_company_name: input.company_name ?? null,
+    p_company_phone: input.company_phone ?? null,
+    p_billing_address: input.billing_address ?? null,
+    p_shipping_address: input.shipping_address ?? null,
+  });
+  if (error) throw new Error(error.message || "update_failed");
+}
+
 export async function registerMyCustomer(input: RegisterInput): Promise<string> {
   const sb = supabaseBrowser();
   const { data, error } = await sb.rpc("register_my_customer", {

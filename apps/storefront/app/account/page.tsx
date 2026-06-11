@@ -13,8 +13,10 @@ import {
   supabaseBrowser,
   getPortalProfile,
   registerMyCustomer,
+  updateMyCustomer,
   type PortalProfile,
 } from "@/lib/supabase-browser";
+import ThaiAddressInput from "@/components/ThaiAddressInput";
 
 const BRAND = "#1696F4";
 
@@ -81,6 +83,7 @@ export default function AccountPage() {
   const [orders, setOrders] = useState<DocRow[]>([]);
   const [quotes, setQuotes] = useState<DocRow[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
+  const [editingProfile, setEditingProfile] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -202,7 +205,25 @@ export default function AccountPage() {
 
           {/* ── Company info ── */}
           <section className="rounded-2xl border border-neutral-200 bg-white p-6">
-            <h2 className="font-bold text-neutral-900 mb-4">ข้อมูลบริษัท / ผู้ติดต่อ</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-bold text-neutral-900">ข้อมูลบริษัท / ผู้ติดต่อ</h2>
+              {!editingProfile && (
+                <button
+                  type="button"
+                  onClick={() => setEditingProfile(true)}
+                  className="rounded-lg border border-sky-200 px-3.5 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 transition"
+                >
+                  ✏️ แก้ไขข้อมูล
+                </button>
+              )}
+            </div>
+            {editingProfile ? (
+              <EditProfileForm
+                profile={profile}
+                onDone={() => { setEditingProfile(false); refresh(); }}
+                onCancel={() => setEditingProfile(false)}
+              />
+            ) : (
             <dl className="grid sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
               <div><dt className="text-neutral-400 text-xs">ชื่อ</dt><dd className="text-neutral-800 font-medium">{profile.name}</dd></div>
               {profile.contact_name && (
@@ -224,7 +245,12 @@ export default function AccountPage() {
                 <div className="sm:col-span-2"><dt className="text-neutral-400 text-xs">ที่อยู่จัดส่ง</dt><dd className="text-neutral-800">{formatAddress(profile.shipping_address)}</dd></div>
               )}
             </dl>
-            <p className="mt-4 text-xs text-neutral-400">ต้องการแก้ไขข้อมูล? ติดต่อทีมงาน โทร 02-101-5587 หรือ LINE @jnac</p>
+            )}
+            {!editingProfile && (
+              <p className="mt-4 text-xs text-neutral-400">
+                แก้ไขเลขประจำตัวผู้เสียภาษี/อีเมล: ติดต่อทีมงาน โทร 02-101-5587 หรือ LINE @jnac
+              </p>
+            )}
           </section>
 
           <DocSection title="ใบเสนอราคาของฉัน" rows={quotes} statusMap={QUOTE_STATUS} rpcItems="my_quote_items" paramName="p_quote_id" />
@@ -238,6 +264,113 @@ export default function AccountPage() {
         </div>
       )}
     </main>
+  );
+}
+
+// ── Edit my info (contact per-login; company fields when link is verified) ──
+function EditProfileForm({
+  profile, onDone, onCancel,
+}: {
+  profile: PortalProfile;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [contactName, setContactName] = useState(profile.contact_name ?? "");
+  const [contactPhone, setContactPhone] = useState(profile.contact_phone ?? "");
+  const [companyName, setCompanyName] = useState(profile.name ?? "");
+  const [companyPhone, setCompanyPhone] = useState(profile.phone ?? "");
+  const [billing, setBilling] = useState(formatAddress(profile.billing_address));
+  const [shipping, setShipping] = useState(formatAddress(profile.shipping_address));
+  const [sameShip, setSameShip] = useState(
+    formatAddress(profile.shipping_address) === formatAddress(profile.billing_address),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!contactName.trim()) { setError("กรุณากรอกชื่อผู้ติดต่อ"); return; }
+    if (!contactPhone.trim()) { setError("กรุณากรอกเบอร์มือถือ"); return; }
+    setSaving(true);
+    try {
+      await updateMyCustomer({
+        contact_name: contactName.trim(),
+        contact_phone: contactPhone.trim(),
+        company_name: companyName.trim() || undefined,
+        company_phone: companyPhone.trim() || undefined,
+        billing_address: billing.trim() || undefined,
+        shipping_address: (sameShip ? billing : shipping).trim() || undefined,
+      });
+      onDone();
+    } catch {
+      setError("บันทึกไม่สำเร็จ กรุณาลองใหม่ หรือติดต่อทีมงาน โทร 02-101-5587 / LINE @jnac");
+      setSaving(false);
+    }
+  }
+
+  const field = "w-full rounded-lg border border-neutral-300 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-200 focus:border-sky-400";
+  const label = "block text-xs font-semibold text-neutral-600 mb-1.5";
+
+  return (
+    <form onSubmit={submit} className="grid sm:grid-cols-2 gap-x-6 gap-y-4">
+      {profile.pending_verification && (
+        <p className="sm:col-span-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-800">
+          บัญชีอยู่ระหว่างตรวจสอบ — การแก้ไขนี้จะอัปเดตเฉพาะข้อมูลที่คุณกรอกไว้
+          (ข้อมูลบริษัทในระบบจะปรับโดยทีมงานหลังการอนุมัติ)
+        </p>
+      )}
+      <div>
+        <label className={label}>ชื่อผู้ติดต่อ *</label>
+        <input className={field} value={contactName} onChange={(e) => setContactName(e.target.value)} required />
+      </div>
+      <div>
+        <label className={label}>เบอร์มือถือ (ผู้ติดต่อ) *</label>
+        <input className={field} type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} required />
+      </div>
+      <div>
+        <label className={label}>ชื่อบริษัท / ร้านค้า</label>
+        <input className={field} value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+      </div>
+      <div>
+        <label className={label}>โทรศัพท์บริษัท</label>
+        <input className={field} type="tel" value={companyPhone} onChange={(e) => setCompanyPhone(e.target.value)} />
+      </div>
+      <div className="sm:col-span-2">
+        <label className={label}>ที่อยู่ออกใบกำกับ</label>
+        <ThaiAddressInput value={billing} onChange={setBilling} />
+      </div>
+      <div className="sm:col-span-2">
+        <label className="inline-flex items-center gap-2 text-xs text-neutral-600">
+          <input type="checkbox" checked={sameShip} onChange={(e) => setSameShip(e.target.checked)} />
+          ที่อยู่จัดส่งเดียวกับที่อยู่ออกใบกำกับ
+        </label>
+      </div>
+      {!sameShip && (
+        <div className="sm:col-span-2">
+          <label className={label}>ที่อยู่จัดส่ง</label>
+          <ThaiAddressInput value={shipping} onChange={setShipping} />
+        </div>
+      )}
+
+      {error && (
+        <p className="sm:col-span-2 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2.5 text-sm text-rose-700">
+          {error}
+        </p>
+      )}
+
+      <div className="sm:col-span-2 flex justify-end gap-2 pt-1">
+        <button type="button" onClick={onCancel}
+                className="rounded-lg border border-neutral-300 px-5 py-2.5 text-sm font-semibold text-neutral-600 hover:bg-neutral-50 transition">
+          ยกเลิก
+        </button>
+        <button type="submit" disabled={saving}
+                className="rounded-lg px-6 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                style={{ background: BRAND }}>
+          {saving ? "กำลังบันทึก..." : "บันทึก"}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -332,8 +465,7 @@ function RegisterForm({
         </div>
         <div className="sm:col-span-2">
           <label className={label}>ที่อยู่ออกใบกำกับ / จัดส่ง *</label>
-          <textarea className={field} rows={3} value={address} onChange={(e) => setAddress(e.target.value)}
-                    placeholder="เลขที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด รหัสไปรษณีย์" required />
+          <ThaiAddressInput value={address} onChange={setAddress} required />
         </div>
 
         {error && (
