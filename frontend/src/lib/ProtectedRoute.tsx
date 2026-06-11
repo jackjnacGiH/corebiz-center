@@ -9,6 +9,11 @@ interface Props {
   roles?: AppRole[];
 }
 
+/** Back-office roles. Anyone else (e.g. role 'customer') is shop-only: their
+ *  account exists to drive customer-tier (Tier) benefits on the storefront —
+ *  the /center admin app stays off-limits even when logged in. */
+const STAFF_ROLES: AppRole[] = ['owner', 'admin', 'staff', 'agent', 'viewer'];
+
 export default function ProtectedRoute({ children, roles }: Props) {
   const { session, profile, loading } = useAuth();
   const location = useLocation();
@@ -27,6 +32,13 @@ export default function ProtectedRoute({ children, roles }: Props) {
 
   if (!profile?.is_active) {
     return <Navigate to="/login?error=inactive" replace />;
+  }
+
+  if (!STAFF_ROLES.includes(profile.role)) {
+    // Customer (or unknown role): send to the storefront at the site root.
+    // Full-page redirect — Navigate can't escape the /center router basename.
+    window.location.replace('/');
+    return null;
   }
 
   if (roles && !roles.includes(profile.role)) {
