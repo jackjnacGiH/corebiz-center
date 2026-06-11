@@ -26,6 +26,7 @@ import { effectivePrice, formatTHB } from "@/lib/format";
 import { Breadcrumb, StockBadge } from "@/components/ui";
 import AddToCartButton from "@/components/cart/AddToCartButton";
 import SearchBox from "@/components/SearchBox";
+import TierPrice from "@/components/TierPrice";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -195,6 +196,9 @@ export default async function ProductPage({
                 <span className="text-amber-700">✦ สั่งผลิต (ผลิตตามคำสั่งซื้อ)</span>
               )}
             </p>
+
+            {/* Member price by customer tier (client-side; guests see nothing) */}
+            <TierPrice price={effectivePrice(p)} />
 
             {/* Answer-first (AEO) */}
             <div
