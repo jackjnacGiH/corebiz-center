@@ -340,7 +340,10 @@ function QuoteDocModal({
         </div>
         {/* document */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-8 bg-neutral-100/60">
-          <div id="portal-quote-doc" className="bg-white rounded-xl border border-neutral-200 p-5 sm:p-8 max-w-3xl mx-auto">
+          {/* The print target is the inner unpadded div — printing the padded
+              card pushes the doc past one A4 page (signatures spill to p.2). */}
+          <div className="bg-white rounded-xl border border-neutral-200 p-5 sm:p-8 max-w-3xl mx-auto">
+            <div id="portal-quote-doc">
             <QuoteDoc
               org={org}
               code={quote.code}
@@ -358,6 +361,7 @@ function QuoteDocModal({
               total={Number(quote.total)}
               note={quote.valid_until ? `ยืนราคาถึงวันที่ ${fmtFull(quote.valid_until)}` : null}
             />
+            </div>
           </div>
         </div>
         {/* footer */}
