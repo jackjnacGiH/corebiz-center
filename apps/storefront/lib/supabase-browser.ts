@@ -40,6 +40,38 @@ export interface PortalProfile {
   loyalty_points: number;
   total_spent: number;
   total_orders: number;
+  /** This login's contact person (per-user; a company can have many). */
+  contact_name: string | null;
+  contact_phone: string | null;
+}
+
+// ── Self-registration ────────────────────────────────────────────────────────
+export interface RegisterInput {
+  contact_name: string;
+  tax_id: string;
+  phone: string;
+  address: string;
+  company_name?: string;
+}
+
+/**
+ * Register / link the logged-in user to a CRM customer by 13-digit tax id.
+ * If the tax id matches an existing customer, this login is attached as a
+ * contact and that customer's tier + history apply; otherwise a new customer
+ * (tier 'general') is created. Returns the customer id, or throws a coded
+ * error: 'tax_id_invalid' | 'contact_name_required' | 'unauthorized'.
+ */
+export async function registerMyCustomer(input: RegisterInput): Promise<string> {
+  const sb = supabaseBrowser();
+  const { data, error } = await sb.rpc("register_my_customer", {
+    p_contact_name: input.contact_name,
+    p_tax_id: input.tax_id,
+    p_phone: input.phone,
+    p_address: input.address,
+    p_company_name: input.company_name ?? null,
+  });
+  if (error) throw new Error(error.message || "register_failed");
+  return data as string;
 }
 
 // One in-flight/shared lookup per page load — TierPrice on product pages and

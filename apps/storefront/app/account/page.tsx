@@ -9,7 +9,12 @@
  * security-definer RPCs from migration 0049 (safe columns, own rows only).
  */
 import { useCallback, useEffect, useState } from "react";
-import { supabaseBrowser, getPortalProfile, type PortalProfile } from "@/lib/supabase-browser";
+import {
+  supabaseBrowser,
+  getPortalProfile,
+  registerMyCustomer,
+  type PortalProfile,
+} from "@/lib/supabase-browser";
 
 const BRAND = "#1696F4";
 
@@ -75,10 +80,12 @@ export default function AccountPage() {
   const [profile, setProfile] = useState<PortalProfile | null>(null);
   const [orders, setOrders] = useState<DocRow[]>([]);
   const [quotes, setQuotes] = useState<DocRow[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
+      setLoading(true);
       const sb = supabaseBrowser();
       const { data: sess } = await sb.auth.getSession();
       if (!mounted) return;
@@ -101,7 +108,9 @@ export default function AccountPage() {
       setLoading(false);
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [reloadKey]);
+
+  const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
 
   async function signOut() {
     await supabaseBrowser().auth.signOut();
@@ -128,19 +137,9 @@ export default function AccountPage() {
         </div>
       )}
 
-      {/* Logged in but not linked to a CRM customer */}
+      {/* Logged in but not linked to a CRM customer → self-registration */}
       {!loading && hasSession && !profile && (
-        <div className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-8">
-          <h2 className="font-bold text-amber-900">ยังไม่พบข้อมูลลูกค้าที่ผูกกับบัญชีนี้</h2>
-          <p className="mt-2 text-sm text-amber-800 leading-relaxed">
-            อีเมลที่เข้าสู่ระบบ ({userEmail ?? "-"}) ยังไม่ตรงกับข้อมูลลูกค้าในระบบของเรา
-            หากคุณเป็นลูกค้า JNAC อยู่แล้ว กรุณาติดต่อทีมงานเพื่อผูกบัญชี — โทร 02-101-5587
-            หรือ LINE <b>@jnac</b> แจ้งอีเมลนี้ได้เลยครับ
-          </p>
-          <button onClick={signOut} className="mt-4 text-sm text-amber-700 underline underline-offset-2">
-            ออกจากระบบ
-          </button>
-        </div>
+        <RegisterForm userEmail={userEmail} onDone={refresh} onSignOut={signOut} />
       )}
 
       {!loading && profile && (
@@ -188,6 +187,15 @@ export default function AccountPage() {
             <h2 className="font-bold text-neutral-900 mb-4">ข้อมูลบริษัท / ผู้ติดต่อ</h2>
             <dl className="grid sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
               <div><dt className="text-neutral-400 text-xs">ชื่อ</dt><dd className="text-neutral-800 font-medium">{profile.name}</dd></div>
+              {profile.contact_name && (
+                <div>
+                  <dt className="text-neutral-400 text-xs">ผู้ติดต่อ (บัญชีนี้)</dt>
+                  <dd className="text-neutral-800 font-medium">
+                    {profile.contact_name}
+                    {profile.contact_phone && <span className="text-neutral-500 font-normal"> · {profile.contact_phone}</span>}
+                  </dd>
+                </div>
+              )}
               {profile.tax_id && <div><dt className="text-neutral-400 text-xs">เลขประจำตัวผู้เสียภาษี</dt><dd className="text-neutral-800 font-medium font-mono">{profile.tax_id}</dd></div>}
               {profile.phone && <div><dt className="text-neutral-400 text-xs">โทรศัพท์</dt><dd className="text-neutral-800 font-medium">{profile.phone}</dd></div>}
               {profile.email && <div><dt className="text-neutral-400 text-xs">อีเมล</dt><dd className="text-neutral-800 font-medium">{profile.email}</dd></div>}
@@ -212,6 +220,125 @@ export default function AccountPage() {
         </div>
       )}
     </main>
+  );
+}
+
+// ── Self-registration form (login not yet linked to a CRM customer) ─────────
+// Boss's design: the 13-digit tax id doubles as the customer code. If it
+// matches an existing CRM customer, this login joins that company (its tier,
+// history, address and phone apply) — only the contact NAME + MOBILE are kept
+// per login, because one company can have many contact people. No match → a
+// new customer is created at tier "general".
+function RegisterForm({
+  userEmail, onDone, onSignOut,
+}: {
+  userEmail: string | null;
+  onDone: () => void;
+  onSignOut: () => void;
+}) {
+  const [contactName, setContactName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [taxId, setTaxId] = useState("");
+  const [address, setAddress] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const taxDigits = taxId.replace(/\D/g, "");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!contactName.trim()) { setError("กรุณากรอกชื่อผู้ติดต่อ"); return; }
+    if (taxDigits.length !== 13) { setError("เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก"); return; }
+    if (!phone.trim()) { setError("กรุณากรอกเบอร์มือถือ"); return; }
+    if (!address.trim()) { setError("กรุณากรอกที่อยู่สำหรับออกใบกำกับ/จัดส่ง"); return; }
+    setSaving(true);
+    try {
+      await registerMyCustomer({
+        contact_name: contactName.trim(),
+        tax_id: taxDigits,
+        phone: phone.trim(),
+        address: address.trim(),
+        company_name: companyName.trim() || undefined,
+      });
+      onDone();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      setError(
+        msg.includes("tax_id_invalid")
+          ? "เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง (ต้องเป็นตัวเลข 13 หลัก)"
+          : "บันทึกไม่สำเร็จ กรุณาลองใหม่ หรือติดต่อทีมงาน โทร 02-101-5587 / LINE @jnac",
+      );
+      setSaving(false);
+    }
+  }
+
+  const field = "w-full rounded-lg border border-neutral-300 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-200 focus:border-sky-400";
+  const label = "block text-xs font-semibold text-neutral-600 mb-1.5";
+
+  return (
+    <div className="mt-8 rounded-2xl border border-neutral-200 bg-white p-6 sm:p-8">
+      <h2 className="font-bold text-neutral-900 text-lg">ลงทะเบียนข้อมูลลูกค้า</h2>
+      <p className="mt-1.5 text-sm text-neutral-500 leading-relaxed">
+        บัญชี {userEmail ?? "-"} ยังไม่ผูกกับข้อมูลลูกค้าในระบบ
+        กรอกข้อมูลด้านล่างเพื่อเริ่มใช้งาน — หากเลขประจำตัวผู้เสียภาษีตรงกับลูกค้า JNAC เดิม
+        ระบบจะดึงระดับสมาชิก (Tier) และประวัติการซื้อขายของบริษัทคุณมาให้อัตโนมัติ
+      </p>
+
+      <form onSubmit={submit} className="mt-6 grid sm:grid-cols-2 gap-x-6 gap-y-4">
+        <div>
+          <label className={label}>ชื่อผู้ติดต่อ *</label>
+          <input className={field} value={contactName} onChange={(e) => setContactName(e.target.value)}
+                 placeholder="เช่น คุณสมชาย (ฝ่ายจัดซื้อ)" required />
+        </div>
+        <div>
+          <label className={label}>เบอร์มือถือ *</label>
+          <input className={field} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
+                 placeholder="08x-xxx-xxxx" required />
+        </div>
+        <div>
+          <label className={label}>เลขประจำตัวผู้เสียภาษี 13 หลัก *</label>
+          <input className={field} inputMode="numeric" value={taxId} onChange={(e) => setTaxId(e.target.value)}
+                 placeholder="0-0000-00000-00-0" required />
+          {taxId && taxDigits.length !== 13 && (
+            <p className="mt-1 text-[11px] text-amber-600">กรอกแล้ว {taxDigits.length}/13 หลัก</p>
+          )}
+        </div>
+        <div>
+          <label className={label}>ชื่อบริษัท / ร้านค้า (ถ้ามี)</label>
+          <input className={field} value={companyName} onChange={(e) => setCompanyName(e.target.value)}
+                 placeholder="เช่น บริษัท ตัวอย่าง จำกัด" />
+        </div>
+        <div className="sm:col-span-2">
+          <label className={label}>ที่อยู่ออกใบกำกับ / จัดส่ง *</label>
+          <textarea className={field} rows={3} value={address} onChange={(e) => setAddress(e.target.value)}
+                    placeholder="เลขที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด รหัสไปรษณีย์" required />
+        </div>
+
+        {error && (
+          <p className="sm:col-span-2 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2.5 text-sm text-rose-700">
+            {error}
+          </p>
+        )}
+
+        <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-3 pt-1">
+          <button type="button" onClick={onSignOut}
+                  className="text-sm text-neutral-400 hover:text-neutral-600 underline underline-offset-2">
+            ออกจากระบบ
+          </button>
+          <button type="submit" disabled={saving}
+                  className="rounded-lg px-7 py-3 font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                  style={{ background: BRAND }}>
+            {saving ? "กำลังบันทึก..." : "ลงทะเบียน"}
+          </button>
+        </div>
+      </form>
+
+      <p className="mt-4 text-xs text-neutral-400">
+        ติดปัญหา? ติดต่อทีมงาน โทร 02-101-5587 หรือ LINE <b>@jnac</b>
+      </p>
+    </div>
   );
 }
 
