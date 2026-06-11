@@ -14,6 +14,7 @@ export type RealtimeTable =
   | 'inventory_sync_logs'
   | 'customers'
   | 'customer_branches'
+  | 'customer_contacts'
   | 'products'
   | 'product_groups'
   | 'quotes'

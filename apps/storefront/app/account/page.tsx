@@ -144,6 +144,24 @@ export default function AccountPage() {
 
       {!loading && profile && (
         <div className="mt-8 space-y-6">
+          {/* ── Pending verification notice ── */}
+          {profile.pending_verification && (
+            <section className="rounded-2xl border border-amber-300 bg-amber-50 p-6">
+              <h2 className="font-bold text-amber-900">⏳ รอการยืนยันตัวตน</h2>
+              <p className="mt-2 text-sm text-amber-800 leading-relaxed">
+                เลขประจำตัวผู้เสียภาษีของคุณตรงกับลูกค้าที่มีข้อมูลอยู่ในระบบ JNAC แล้ว
+                เพื่อความปลอดภัยของข้อมูลบริษัท เจ้าหน้าที่จะติดต่อคุณ
+                {profile.contact_phone ? ` (${profile.contact_phone})` : ""} เพื่อขอเอกสารยืนยัน
+                เช่น หนังสือรับรองบริษัท หรือ ภพ.20
+              </p>
+              <p className="mt-2 text-sm text-amber-800 leading-relaxed">
+                ระหว่างนี้คุณใช้งานได้ในระดับสมาชิกทั่วไปก่อน — หลังการอนุมัติ
+                คุณจะเห็นระดับสมาชิก ส่วนลด และประวัติการสั่งซื้อทั้งหมดของบริษัทที่หน้านี้ทันที
+                (สอบถาม: โทร 02-101-5587 หรือ LINE <b>@jnac</b>)
+              </p>
+            </section>
+          )}
+
           {/* ── Tier card ── */}
           <section className="rounded-2xl border border-neutral-200 bg-white p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -225,10 +243,11 @@ export default function AccountPage() {
 
 // ── Self-registration form (login not yet linked to a CRM customer) ─────────
 // Boss's design: the 13-digit tax id doubles as the customer code. If it
-// matches an existing CRM customer, this login joins that company (its tier,
-// history, address and phone apply) — only the contact NAME + MOBILE are kept
-// per login, because one company can have many contact people. No match → a
-// new customer is created at tier "general".
+// matches an existing CRM customer the link is created UNVERIFIED — staff
+// collect documents (หนังสือรับรอง/ภพ.20) and Owner/Admin approve before the
+// company's tier/history are revealed. Contact NAME + MOBILE are per login,
+// because one company can have many contact people. No match → a new customer
+// is created at tier "general" (verified immediately; only their own data).
 function RegisterForm({
   userEmail, onDone, onSignOut,
 }: {
@@ -283,7 +302,8 @@ function RegisterForm({
       <p className="mt-1.5 text-sm text-neutral-500 leading-relaxed">
         บัญชี {userEmail ?? "-"} ยังไม่ผูกกับข้อมูลลูกค้าในระบบ
         กรอกข้อมูลด้านล่างเพื่อเริ่มใช้งาน — หากเลขประจำตัวผู้เสียภาษีตรงกับลูกค้า JNAC เดิม
-        ระบบจะดึงระดับสมาชิก (Tier) และประวัติการซื้อขายของบริษัทคุณมาให้อัตโนมัติ
+        เจ้าหน้าที่จะติดต่อขอเอกสารยืนยัน (เช่น หนังสือรับรองบริษัท, ภพ.20)
+        และหลังอนุมัติ คุณจะเห็นระดับสมาชิก (Tier) และประวัติการซื้อขายของบริษัทโดยอัตโนมัติ
       </p>
 
       <form onSubmit={submit} className="mt-6 grid sm:grid-cols-2 gap-x-6 gap-y-4">

@@ -30,6 +30,9 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '@/lib/AuthProvider';
+import { isAdminOrOwner } from '@/lib/permissions';
 import type { Customer, CustomerBranch, Json } from '../lib/database.types';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
@@ -87,8 +90,27 @@ function typeMeta(t: string | null | undefined) {
 let customersCache: Customer[] | null = null;
 let branchesCache: CustomerBranch[] | null = null;
 
+/** Portal tax-id link request awaiting Owner/Admin approval (RPC row). */
+interface PendingLink {
+    contact_id: string;
+    requested_at: string;
+    contact_name: string | null;
+    contact_phone: string | null;
+    login_email: string | null;
+    claimed_company: string | null;
+    claimed_address: string | null;
+    customer_id: string;
+    customer_code: string | null;
+    customer_name: string;
+    customer_tier: string;
+}
+
 export default function CRM() {
     const { t } = useLanguage();
+    const { profile } = useAuth();
+    const canApprove = isAdminOrOwner(profile?.role);
+    const [pendingLinks, setPendingLinks] = useState<PendingLink[]>([]);
+    const [linkBusy, setLinkBusy] = useState<string | null>(null);
     const [customers, setCustomers] = useState<Customer[]>(() => customersCache ?? []);
     const [branches, setBranches] = useState<CustomerBranch[]>(() => branchesCache ?? []);
     const [loading, setLoading] = useState(customersCache === null);
@@ -125,11 +147,35 @@ export default function CRM() {
         }
     }
 
+    // Portal link requests awaiting approval (tax-id matched an existing customer).
+    async function loadPendingLinks() {
+        const { data, error } = await (supabase.rpc as CallableFunction)('list_pending_customer_links');
+        if (!error) setPendingLinks((data ?? []) as PendingLink[]);
+    }
+
+    async function decideLink(contactId: string, approve: boolean) {
+        const fn = approve ? 'approve_customer_link' : 'reject_customer_link';
+        const verb = approve ? 'อนุมัติ' : 'ปฏิเสธ';
+        if (!window.confirm(`${verb}คำขอเชื่อมบัญชีนี้ใช่หรือไม่?${approve ? ' ลูกค้าจะเห็น Tier และประวัติทั้งหมดของบริษัททันที' : ''}`)) return;
+        setLinkBusy(contactId);
+        try {
+            const { error } = await (supabase.rpc as CallableFunction)(fn, { p_contact_id: contactId });
+            if (error) throw error;
+            await loadPendingLinks();
+        } catch (e) {
+            window.alert(`${verb}ไม่สำเร็จ: ${(e as Error).message}`);
+        } finally {
+            setLinkBusy(null);
+        }
+    }
+
     useEffect(() => {
         void load();
+        void loadPendingLinks();
     }, []);
     useRealtimeTable('customers', () => void load());
     useRealtimeTable('customer_branches', () => void load());
+    useRealtimeTable('customer_contacts', () => void loadPendingLinks());
 
     /** customer_id → its branches, already in display order. */
     const branchesByCustomer = useMemo(() => {
@@ -358,6 +404,69 @@ export default function CRM() {
                     tone="violet"
                 />
             </div>
+
+            {/* ── Portal link requests awaiting Owner/Admin approval ──── */}
+            {pendingLinks.length > 0 && (
+                <Card className="border-amber-300 bg-amber-50/70">
+                    <CardContent className="p-5">
+                        <div className="flex items-center gap-2">
+                            <Bell size={16} className="text-amber-600" />
+                            <h3 className="font-bold text-amber-900 text-sm">
+                                คำขอเชื่อมบัญชีลูกค้าจากหน้าร้าน — รออนุมัติ ({pendingLinks.length})
+                            </h3>
+                        </div>
+                        <p className="mt-1 text-xs text-amber-800">
+                            ลูกค้าลงทะเบียนด้วยเลขผู้เสียภาษีที่ตรงกับลูกค้าเดิมในระบบ
+                            กรุณาติดต่อขอเอกสารยืนยัน (เช่น หนังสือรับรองบริษัท, ภพ.20)
+                            ก่อนอนุมัติ — ลูกค้าจะยังไม่เห็น Tier/ประวัติของบริษัทจนกว่าจะอนุมัติ
+                            {!canApprove && ' (กดอนุมัติ/ปฏิเสธได้เฉพาะ Owner และ Admin)'}
+                        </p>
+                        <div className="mt-3 space-y-2">
+                            {pendingLinks.map((pl) => (
+                                <div
+                                    key={pl.contact_id}
+                                    className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-amber-200 bg-white px-4 py-3"
+                                >
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm font-semibold text-neutral-800">
+                                            {pl.contact_name ?? '-'}
+                                            <span className="ml-2 font-normal text-neutral-500">
+                                                {pl.contact_phone ?? ''} · {pl.login_email ?? ''}
+                                            </span>
+                                        </div>
+                                        <div className="mt-0.5 text-xs text-neutral-500">
+                                            อ้างถึงบริษัท: <b>{pl.claimed_company ?? '-'}</b>
+                                            {' '}→ ตรงกับลูกค้าในระบบ:{' '}
+                                            <b className="text-neutral-700">{pl.customer_name}</b>
+                                            {pl.customer_code ? ` (${pl.customer_code})` : ''} · Tier {pl.customer_tier}
+                                            {' '}· ขอเมื่อ {new Date(pl.requested_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            size="sm"
+                                            disabled={!canApprove || linkBusy === pl.contact_id}
+                                            onClick={() => void decideLink(pl.contact_id, true)}
+                                            className="h-8 bg-emerald-600 hover:bg-emerald-700"
+                                        >
+                                            อนุมัติ
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={!canApprove || linkBusy === pl.contact_id}
+                                            onClick={() => void decideLink(pl.contact_id, false)}
+                                            className="h-8 border-rose-300 text-rose-600 hover:bg-rose-50"
+                                        >
+                                            ปฏิเสธ
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* View toggle: customer list ↔ RFM segments ↔ retention tools */}
             <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 self-start overflow-x-auto max-w-full [&>button]:shrink-0">

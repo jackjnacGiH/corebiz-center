@@ -43,6 +43,12 @@ export interface PortalProfile {
   /** This login's contact person (per-user; a company can have many). */
   contact_name: string | null;
   contact_phone: string | null;
+  /**
+   * True while a tax-id match against an existing CRM customer awaits
+   * Owner/Admin approval — the profile shown is the customer's own typed
+   * data at general tier; real tier/history stay hidden until approved.
+   */
+  pending_verification: boolean;
 }
 
 // ── Self-registration ────────────────────────────────────────────────────────
