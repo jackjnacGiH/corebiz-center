@@ -1,5 +1,8 @@
 /**
- * admin-users — owner/admin user & role management (Admin RBAC Phase 1).
+ * admin-users v3 — owner/admin user & role management (Admin RBAC).
+ *
+ * v3: list excludes role 'customer' (shop accounts are managed in CRM, not
+ * here) + invite redirect default updated to /center (admin app moved).
  *
  * The browser cannot use the Supabase service_role key, so all create/update/
  * delete of accounts goes through this function. It:
@@ -90,9 +93,11 @@ Deno.serve(async (req: Request) => {
 
   switch (action) {
     case "list": {
+      // Staff accounts only — customer signups (shop) live in CRM, not here.
       const { data, error } = await admin
         .from("profiles")
         .select("id, email, full_name, phone, role, is_active, provider, avatar_url")
+        .neq("role", "customer")
         .order("is_active", { ascending: false })
         .order("role", { ascending: true })
         .order("email", { ascending: true });
@@ -107,7 +112,7 @@ Deno.serve(async (req: Request) => {
       const phone = String(body.phone ?? "").trim() || null;
       const password = String(body.password ?? "");
       const mode = body.mode === "invite" ? "invite" : "password";
-      const redirectTo = String(body.redirectTo ?? "https://www.jnac.online/auth/callback");
+      const redirectTo = String(body.redirectTo ?? "https://www.jnac.online/center/auth/callback");
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("กรุณากรอกอีเมลให้ถูกต้อง");
       if (!ASSIGNABLE_ROLES.includes(role)) return fail("สิทธิ์ (role) ไม่ถูกต้อง");
       if (role === "owner" && !isOwner) return fail("เฉพาะ Owner เท่านั้นที่กำหนดสิทธิ์ Owner ได้");
