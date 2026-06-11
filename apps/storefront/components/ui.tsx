@@ -191,10 +191,22 @@ export function Breadcrumb({ items }: { items: { name: string; href?: string }[]
 
 const NAVY = "#0C3C63";
 
+// JNAC head-office pin on Google Maps (ที่ตั้งบริษัท — ใช้ทั้งปุ่มไอคอน
+// และลิงก์ที่อยู่ใน footer).
+export const MAP_URL = "https://goo.gl/maps/yBSsrexnAi42";
+
 // JNAC social channels. LINE ID @jnac is confirmed (footer contact);
 // the rest use the jnac handle — update here if a channel's URL differs.
 type Social = { name: string; href: string; label: string; icon: React.ReactNode };
 const SOCIALS: Social[] = [
+  {
+    name: "Google Maps",
+    label: "ดูแผนที่ / เส้นทางมาบริษัท (Google Maps)",
+    href: MAP_URL,
+    icon: (
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" />
+    ),
+  },
   {
     name: "Line",
     label: "เพิ่มเพื่อนใน LINE @jnac",
@@ -321,7 +333,33 @@ export function Footer({ org }: { org: OrgInfo }) {
               <li>📞 โทร: 02-101-5587, 08-0016-1700</li>
               <li>📱 Line ID: @jnac</li>
               <li>📧 อีเมล: info@jnac.co.th, jnac.co.th@gmail.com</li>
-              {org.address && <li>🏢 {org.address}</li>}
+              {org.address && (
+                <li>
+                  🏢{" "}
+                  <a
+                    href={MAP_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="เปิดแผนที่ Google Maps"
+                    className="underline decoration-white/30 underline-offset-2 hover:text-white transition"
+                  >
+                    {org.address}
+                  </a>
+                </li>
+              )}
+              <li>
+                <a
+                  href={MAP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/30 px-3 py-1.5 text-white/90 hover:bg-[#1696F4] hover:border-[#1696F4] hover:text-white transition"
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" />
+                  </svg>
+                  ดูแผนที่ (Google Maps)
+                </a>
+              </li>
             </ul>
             <div className="mt-4 inline-block rounded bg-white p-[3px] shadow-sm">
               {/* eslint-disable-next-line @next/next/no-img-element */}
