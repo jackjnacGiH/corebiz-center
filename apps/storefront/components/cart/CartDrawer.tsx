@@ -23,6 +23,7 @@ export default function CartDrawer() {
   const [member, setMember] = useState(false);
   const [memberPct, setMemberPct] = useState(0);
   const [memberTier, setMemberTier] = useState("");
+  const [memberPending, setMemberPending] = useState(false);
 
   // Logged-in member → prefill the contact form from their portal profile
   // (only fields still empty, so anything they typed is never overwritten).
@@ -34,6 +35,7 @@ export default function CartDrawer() {
       if (!live) return;
       if (p) {
         setMember(true);
+        setMemberPending(p.pending_verification);
         setMemberPct(p.pending_verification ? 0 : Number(p.discount_percent) || 0);
         setMemberTier(p.tier_label ?? "");
         setName((v) => v || p.contact_name || "");
@@ -179,7 +181,10 @@ export default function CartDrawer() {
                 <div className="text-sm font-bold text-neutral-800">ข้อมูลติดต่อ (เพื่อออกใบเสนอราคา)</div>
                 {member && (
                   <p className="rounded-md bg-emerald-50 border border-emerald-100 px-2.5 py-1.5 text-[11px] text-emerald-700">
-                    ✓ ดึงข้อมูลจากบัญชีสมาชิกของคุณแล้ว (แก้ไขได้) — ใบเสนอราคานี้จะบันทึกเข้าประวัติบัญชีของคุณ
+                    ✓ ดึงข้อมูลจากบัญชีสมาชิกของคุณแล้ว (แก้ไขได้) —{" "}
+                    {memberPending
+                      ? "ทีมงานจะติดต่อกลับ — ประวัติจะแสดงหลังบัญชีได้รับการยืนยัน"
+                      : "ใบเสนอราคานี้จะบันทึกเข้าประวัติบัญชีของคุณ"}
                   </p>
                 )}
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="ชื่อผู้ติดต่อ *" className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-[#1696F4]" />

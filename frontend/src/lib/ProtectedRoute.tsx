@@ -35,9 +35,10 @@ export default function ProtectedRoute({ children, roles }: Props) {
   }
 
   if (!STAFF_ROLES.includes(profile.role)) {
-    // Customer (or unknown role): send to the storefront at the site root.
+    // Customer (or unknown role): straight to their portal ("บัญชีของฉัน") so
+    // logging in lands them somewhere useful, not the shop home page.
     // Full-page redirect — Navigate can't escape the /center router basename.
-    window.location.replace('/');
+    window.location.replace('/account');
     return null;
   }
 

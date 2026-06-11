@@ -2,8 +2,10 @@ import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import {
     X, Loader2, AlertCircle, ShoppingCart, FileText, Award, MessageSquare,
     MapPin, Phone, Mail, Smartphone, Building2, Tag, Hash, Star, Sparkles,
+    UserCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { supabase } from '../lib/supabase';
 import {
     customerProfileApi,
     type CustomerProfileBundle,
@@ -94,11 +96,31 @@ function fmtAddress(a: Json | null | undefined): string | null {
 
 const empty = (msg: string) => <div className="px-3 py-4 text-center text-xs text-neutral-400">{msg}</div>;
 
+/** Portal login contact of this customer (RPC list_customer_portal_contacts). */
+interface PortalContact {
+    contact_id: string;
+    contact_name: string | null;
+    phone: string | null;
+    login_email: string | null;
+    verified: boolean;
+    created_at: string;
+}
+
 export default function CustomerProfile({ customerId, onClose }: { customerId: string; onClose: () => void }) {
     const [data, setData] = useState<CustomerProfileBundle | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [manageLoyalty, setManageLoyalty] = useState(false);
+    const [portalContacts, setPortalContacts] = useState<PortalContact[]>([]);
+
+    useEffect(() => {
+        let live = true;
+        void (supabase.rpc as CallableFunction)('list_customer_portal_contacts', { p_customer_id: customerId })
+            .then(({ data: rows }: { data: PortalContact[] | null }) => {
+                if (live) setPortalContacts(rows ?? []);
+            });
+        return () => { live = false; };
+    }, [customerId]);
 
     const reload = useCallback(async () => {
         setLoading(true);
@@ -201,6 +223,26 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                                 </div>
                             )}
                         </Section>
+
+                        {/* Portal login contacts — one company can have many people */}
+                        {portalContacts.length > 0 && (
+                            <Section icon={<UserCircle size={13} className="text-indigo-500" />} title="ผู้ติดต่อ (จากพอร์ทัล)" count={portalContacts.length}>
+                                <div className="divide-y divide-neutral-100">
+                                    {portalContacts.map((pc) => (
+                                        <div key={pc.contact_id} className="px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                                            <span className="font-semibold text-neutral-800">{pc.contact_name ?? '—'}</span>
+                                            {pc.phone && <span className="inline-flex items-center gap-1 text-neutral-500"><Smartphone size={11} />{pc.phone}</span>}
+                                            {pc.login_email && <span className="inline-flex items-center gap-1 text-neutral-500"><Mail size={11} />{pc.login_email}</span>}
+                                            <span className={cn('ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded',
+                                                pc.verified ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700')}>
+                                                {pc.verified ? '✓ ยืนยันแล้ว' : '⏳ รอยืนยัน'}
+                                            </span>
+                                            <span className="text-[10px] text-neutral-400">{fmtDate(pc.created_at)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </Section>
+                        )}
 
                         {/* Orders */}
                         <Section icon={<ShoppingCart size={13} className="text-indigo-500" />} title="ประวัติการสั่งซื้อ" count={data.orders.length}>
