@@ -3,7 +3,9 @@ import { effectivePrice } from "./format";
 import type { SProduct } from "./products";
 
 export const SITE = "https://www.jnac.online";
-export const SHOP = `${SITE}/shop`;
+// Storefront now lives at the site root (was /shop). Kept as a named export so
+// all the URL builders below stay one-line.
+export const SHOP = SITE;
 
 export interface OrgInfo {
   business_name: string;

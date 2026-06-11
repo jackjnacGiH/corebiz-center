@@ -29,7 +29,7 @@ export async function generateMetadata({
     title: `${cat.name_th} – สินค้าทั้งหมด`,
     description: `รวมสินค้าหมวด ${cat.name_th} จาก JNAC ${products.length} รายการ พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — ขอใบเสนอราคาได้ทันที`,
     keywords: keywordsFromProducts(products, [cat.name_th, cat.name_en || ""]),
-    alternates: { canonical: `/shop/c/${encodeURIComponent(slug)}` },
+    alternates: { canonical: `/c/${encodeURIComponent(slug)}` },
   };
 }
 

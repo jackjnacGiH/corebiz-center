@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     template: "%s | JNAC by CoreBiz",
   },
   description: DESC,
-  alternates: { canonical: "/shop" },
+  alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     locale: "th_TH",

@@ -319,7 +319,7 @@ export function Footer({ org }: { org: OrgInfo }) {
             <div className="mt-4 inline-block rounded bg-white p-[3px] shadow-sm">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="/shop/line-qr.jpg"
+                src="/line-qr.jpg"
                 alt="QR เพิ่มเพื่อน LINE @jnac ของ JNAC"
                 width={62}
                 height={59}

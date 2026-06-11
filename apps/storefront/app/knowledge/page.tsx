@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   title: "ศูนย์ความรู้ (AIO) — เลือกใช้วัสดุงานขัด ตัด เจียร ให้ถูกงาน | JNAC",
   description:
     "ศูนย์ความรู้ JNAC: วิธีเลือกเบอร์กระดาษทราย/จานทราย, ขัดสแตนเลส, ความเร็วรอบ (RPM) ที่ปลอดภัย, งานไม้/โลหะ และคำถามที่พบบ่อย พร้อมผู้ช่วย AI ‘เอย’ ตอบทันที",
-  alternates: { canonical: "/shop/knowledge" },
+  alternates: { canonical: "/knowledge" },
 };
 
 const KB: { q: string; a: string }[] = [

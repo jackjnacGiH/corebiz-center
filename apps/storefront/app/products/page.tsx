@@ -14,7 +14,7 @@ export const metadata: Metadata = {
     "แคตตาล็อกสินค้า JNAC: งานขัด ตัด เจียร, เครื่องมือช่าง (Tools) และพลาสติกวิศวกรรม พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — หยิบใส่ตะกร้าแล้วขอใบเสนอราคาได้ทันที",
   keywords:
     "กระดาษทราย, จานทรายซ้อน, ใบตัด, ใบเจียร, ล้อขัด, ใยขัดสังเคราะห์, สก๊อตไบร์ท, หินเจียร, MIRKA, KLINGSPOR, งานขัด ตัด เจียร, เครื่องมือช่าง, Tool, พลาสติกวิศวกรรม, JNAC, ราคาส่ง, สินค้าอุตสาหกรรม",
-  alternates: { canonical: "/shop/products" },
+  alternates: { canonical: "/products" },
 };
 
 export default async function ProductsCatalog() {

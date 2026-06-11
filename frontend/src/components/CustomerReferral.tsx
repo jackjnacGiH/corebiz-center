@@ -69,7 +69,7 @@ export default function CustomerReferral() {
     }
   }
 
-  const shareLink = shareCode ? `${window.location.origin}/refer/${shareCode}` : '';
+  const shareLink = shareCode ? `${window.location.origin}${import.meta.env.BASE_URL}refer/${shareCode}` : '';
 
   async function copyLink() {
     if (!shareLink) return;

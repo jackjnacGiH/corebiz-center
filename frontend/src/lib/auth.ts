@@ -1,8 +1,13 @@
 import { supabase } from './supabase';
 
+// App base path ('/center/') — admin app is mounted under /center. Auth
+// redirect URLs must include it so OAuth/email links land back in the app.
+const BASE = import.meta.env.BASE_URL; // e.g. '/center/'
+const appUrl = (p: string) => `${window.location.origin}${BASE}${p.replace(/^\//, '')}`;
+
 const LINE_CHANNEL_ID = import.meta.env.VITE_LINE_CHANNEL_ID as string | undefined;
 const LINE_CALLBACK_URL = (import.meta.env.VITE_LINE_CALLBACK_URL as string | undefined)
-  ?? `${window.location.origin}/auth/line-callback`;
+  ?? appUrl('auth/line-callback');
 
 export async function signInWithEmail(email: string, password: string) {
   return supabase.auth.signInWithPassword({ email, password });
@@ -14,7 +19,7 @@ export async function signUpWithEmail(email: string, password: string, fullName?
     password,
     options: {
       data: { full_name: fullName ?? null },
-      emailRedirectTo: `${window.location.origin}/auth/callback`,
+      emailRedirectTo: appUrl('auth/callback'),
     },
   });
 }
@@ -23,7 +28,7 @@ export async function signInWithGoogle() {
   return supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}/auth/callback`,
+      redirectTo: appUrl('auth/callback'),
       queryParams: { access_type: 'offline', prompt: 'consent' },
     },
   });
@@ -61,5 +66,5 @@ export function signInWithLine() {
 
 export async function signOut() {
   await supabase.auth.signOut();
-  window.location.href = '/login';
+  window.location.href = appUrl('login');
 }

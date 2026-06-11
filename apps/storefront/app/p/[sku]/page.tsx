@@ -53,7 +53,7 @@ export async function generateMetadata({
     title,
     description: desc,
     keywords: seoKeywords(p),
-    alternates: { canonical: `/shop/p/${encodeURIComponent(p.sku)}` },
+    alternates: { canonical: `/p/${encodeURIComponent(p.sku)}` },
     openGraph: {
       title,
       description: desc,

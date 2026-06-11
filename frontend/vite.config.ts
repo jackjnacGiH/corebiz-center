@@ -5,6 +5,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Admin app is mounted at /center on jnac.online (Vercel experimentalServices
+  // routePrefix "/center"). Assets + router base must match.
+  base: '/center/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

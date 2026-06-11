@@ -836,7 +836,7 @@ export const surveyApi = {
       p_conversation_id: input.conversationId,
     });
     if (error) throw error;
-    const link = `${window.location.origin}/survey/${token}`;
+    const link = `${window.location.origin}${import.meta.env.BASE_URL}survey/${token}`;
     const content = `${input.text}\n\n⭐ ให้คะแนนความพึงพอใจ (ใช้เวลาแค่ 30 วินาที): ${link}`;
     await chatInboxApi.sendMessage({ conversationId: input.conversationId, content });
   },

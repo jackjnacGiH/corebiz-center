@@ -30,7 +30,7 @@ export async function generateMetadata({
     title: `${group.name} – สินค้าทั้งหมดในกลุ่ม`,
     description: desc.slice(0, 155),
     keywords: keywordsFromProducts(products, [group.name]),
-    alternates: { canonical: `/shop/g/${encodeURIComponent(group.id)}` },
+    alternates: { canonical: `/g/${encodeURIComponent(group.id)}` },
   };
 }
 

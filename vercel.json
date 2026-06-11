@@ -3,7 +3,7 @@
   "experimentalServices": {
     "corebiz": {
       "entrypoint": "frontend",
-      "routePrefix": "/",
+      "routePrefix": "/center",
       "framework": "vite"
     },
     "jnac": {
@@ -13,7 +13,7 @@
     },
     "shop": {
       "entrypoint": "apps/storefront",
-      "routePrefix": "/shop",
+      "routePrefix": "/",
       "framework": "nextjs"
     }
   }

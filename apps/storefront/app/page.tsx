@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   title: "ศูนย์รวมสินค้าอุตสาหกรรม ขัด ตัด เจียร · Tool · พลาสติกวิศวกรรม · CNC",
   description:
     "J NAC (Thailand) จำหน่ายสินค้าอุตสาหกรรม เครื่องมือ Tool พลาสติกวิศวกรรม และบริการงาน CNC ครบวงจร — งานกลึง กัด โมลด์ จิ๊ก ฟิกซ์เจอร์ ชิ้นส่วนเครื่องจักรและอะไหล่แต่งตามสั่ง",
-  alternates: { canonical: "/shop" },
+  alternates: { canonical: "/" },
 };
 
 const FEATURES: [string, string, string][] = [
@@ -40,7 +40,7 @@ export default async function Home() {
           className="absolute inset-0"
           style={{
             backgroundImage:
-              "linear-gradient(90deg, rgba(12,60,99,0.95) 0%, rgba(12,60,99,0.62) 50%, rgba(0,0,0,0.15) 100%), url('/shop/hero.png')",
+              "linear-gradient(90deg, rgba(12,60,99,0.95) 0%, rgba(12,60,99,0.62) 50%, rgba(0,0,0,0.15) 100%), url('/hero.png')",
             backgroundSize: "cover",
             backgroundPosition: "center",
           }}
