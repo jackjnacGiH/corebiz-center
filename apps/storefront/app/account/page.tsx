@@ -263,7 +263,7 @@ export default function AccountPage() {
           <DocSection title="ประวัติคำสั่งซื้อ" rows={orders} statusMap={ORDER_STATUS} rpcItems="my_order_items" paramName="p_order_id" showPayment />
 
           {docQuote && (
-            <QuoteDocModal quote={docQuote} profile={profile} onClose={() => setDocQuote(null)} />
+            <QuoteDocModal quote={docQuote} profile={profile} onClose={() => setDocQuote(null)} onChanged={refresh} />
           )}
 
           <div className="text-right">
@@ -292,15 +292,42 @@ function getOrgInfo(): Promise<OrgInfo | null> {
 }
 
 function QuoteDocModal({
-  quote, profile, onClose,
+  quote, profile, onClose, onChanged,
 }: {
   quote: DocRow;
   profile: PortalProfile;
   onClose: () => void;
+  onChanged: () => void;
 }) {
   const [org, setOrg] = useState<OrgInfo | null>(null);
   const [items, setItems] = useState<QuoteDocItem[]>([]);
-  const st = QUOTE_STATUS[quote.status] ?? { label: quote.status, cls: "bg-neutral-100 text-neutral-600" };
+  // Local status — updates immediately after the customer responds.
+  const [status, setStatus] = useState(quote.status);
+  const [responding, setResponding] = useState(false);
+  const [responseMsg, setResponseMsg] = useState<string | null>(null);
+  const st = QUOTE_STATUS[status] ?? { label: status, cls: "bg-neutral-100 text-neutral-600" };
+  const actionable = status === "draft" || status === "sent";
+
+  async function respond(accept: boolean) {
+    const verb = accept ? "ตอบรับ" : "ปฏิเสธ";
+    if (!window.confirm(`${verb}ใบเสนอราคา ${quote.code} ใช่หรือไม่?${accept ? "\nทีมงานจะดำเนินการเปิดคำสั่งซื้อและติดต่อกลับ" : ""}`)) return;
+    setResponding(true);
+    try {
+      const { data, error } = await supabaseBrowser().rpc("respond_my_quote", {
+        p_quote_id: quote.id, p_accept: accept,
+      });
+      if (error) throw error;
+      setStatus(String(data));
+      setResponseMsg(accept
+        ? `✅ ตอบรับใบเสนอราคาแล้ว — ทีมงานจะดำเนินการเปิดคำสั่งซื้อและติดต่อกลับโดยเร็วค่ะ`
+        : "รับทราบค่ะ — ทีมงานจะติดต่อกลับเพื่อเสนอเงื่อนไขที่เหมาะสมขึ้น");
+      onChanged();
+    } catch {
+      setResponseMsg("ทำรายการไม่สำเร็จ กรุณาลองใหม่ หรือติดต่อทีมงาน โทร 02-101-5587");
+    } finally {
+      setResponding(false);
+    }
+  }
 
   useEffect(() => {
     let live = true;
@@ -365,21 +392,50 @@ function QuoteDocModal({
           </div>
         </div>
         {/* footer */}
-        <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t border-neutral-200 bg-white flex-shrink-0">
-          <button
-            type="button"
-            onClick={() => printElement("portal-quote-doc", { title: `ใบเสนอราคา ${quote.code}` })}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 transition"
-          >
-            🖨 พิมพ์ / บันทึก PDF
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-neutral-300 px-5 py-2 text-sm font-semibold text-neutral-600 hover:bg-neutral-50 transition"
-          >
-            ปิด
-          </button>
+        <div className="px-5 py-3.5 border-t border-neutral-200 bg-white flex-shrink-0 space-y-2.5">
+          {responseMsg && (
+            <p className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-2.5 text-sm text-emerald-800">
+              {responseMsg}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => printElement("portal-quote-doc", { title: `ใบเสนอราคา ${quote.code}` })}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 transition"
+            >
+              🖨 พิมพ์ / บันทึก PDF
+            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-neutral-300 px-5 py-2 text-sm font-semibold text-neutral-600 hover:bg-neutral-50 transition"
+              >
+                ปิด
+              </button>
+              {actionable && (
+                <>
+                  <button
+                    type="button"
+                    disabled={responding}
+                    onClick={() => void respond(false)}
+                    className="rounded-lg border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
+                  >
+                    ปฏิเสธ
+                  </button>
+                  <button
+                    type="button"
+                    disabled={responding}
+                    onClick={() => void respond(true)}
+                    className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50"
+                  >
+                    {responding ? "กำลังบันทึก..." : "✓ ตอบรับใบเสนอราคา"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
