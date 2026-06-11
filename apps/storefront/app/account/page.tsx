@@ -17,6 +17,8 @@ import {
   type PortalProfile,
 } from "@/lib/supabase-browser";
 import ThaiAddressInput from "@/components/ThaiAddressInput";
+import QuoteDoc, { type OrgInfo, type QuoteDocItem } from "@/components/account/QuoteDoc";
+import { printElement } from "@/lib/print";
 
 const BRAND = "#1696F4";
 
@@ -49,6 +51,9 @@ interface DocRow {
   id: string;
   code: string;
   status: string;
+  subtotal?: number;
+  discount?: number;
+  vat?: number;
   total: number;
   created_at: string;
   payment_status?: string;
@@ -84,6 +89,7 @@ export default function AccountPage() {
   const [quotes, setQuotes] = useState<DocRow[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const [editingProfile, setEditingProfile] = useState(false);
+  const [docQuote, setDocQuote] = useState<DocRow | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -253,8 +259,12 @@ export default function AccountPage() {
             )}
           </section>
 
-          <DocSection title="ใบเสนอราคาของฉัน" rows={quotes} statusMap={QUOTE_STATUS} rpcItems="my_quote_items" paramName="p_quote_id" />
+          <DocSection title="ใบเสนอราคาของฉัน" rows={quotes} statusMap={QUOTE_STATUS} rpcItems="my_quote_items" paramName="p_quote_id" onOpen={setDocQuote} />
           <DocSection title="ประวัติคำสั่งซื้อ" rows={orders} statusMap={ORDER_STATUS} rpcItems="my_order_items" paramName="p_order_id" showPayment />
+
+          {docQuote && (
+            <QuoteDocModal quote={docQuote} profile={profile} onClose={() => setDocQuote(null)} />
+          )}
 
           <div className="text-right">
             <button onClick={signOut} className="text-sm text-neutral-400 hover:text-neutral-600 underline underline-offset-2 transition">
@@ -264,6 +274,111 @@ export default function AccountPage() {
         </div>
       )}
     </main>
+  );
+}
+
+// ── Full quote document modal (same form as the back office) ────────────────
+let orgPromise: Promise<OrgInfo | null> | null = null;
+function getOrgInfo(): Promise<OrgInfo | null> {
+  if (!orgPromise) {
+    orgPromise = supabaseBrowser()
+      .from("org_settings")
+      .select("business_name,address,tax_id,phone,email,website,logo_url")
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => (data as OrgInfo | null) ?? null, () => null);
+  }
+  return orgPromise;
+}
+
+function QuoteDocModal({
+  quote, profile, onClose,
+}: {
+  quote: DocRow;
+  profile: PortalProfile;
+  onClose: () => void;
+}) {
+  const [org, setOrg] = useState<OrgInfo | null>(null);
+  const [items, setItems] = useState<QuoteDocItem[]>([]);
+  const st = QUOTE_STATUS[quote.status] ?? { label: quote.status, cls: "bg-neutral-100 text-neutral-600" };
+
+  useEffect(() => {
+    let live = true;
+    void getOrgInfo().then((o) => { if (live) setOrg(o); });
+    void supabaseBrowser()
+      .rpc("my_quote_items", { p_quote_id: quote.id })
+      .then(({ data }) => {
+        if (!live) return;
+        setItems(((data ?? []) as DocItem[]).map((it) => ({
+          name: it.product_name, sku: it.sku, qty: it.quantity,
+          unit: Number(it.unit_price), total: Number(it.total),
+        })));
+      });
+    return () => { live = false; };
+  }, [quote.id]);
+
+  const fmtFull = (s: string) =>
+    new Date(s).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+
+  return (
+    <div className="fixed inset-0 z-[1200]">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="absolute inset-x-0 top-[4vh] bottom-[4vh] mx-auto w-[min(100vw-1.5rem,56rem)] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        {/* header */}
+        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-neutral-200 bg-neutral-50 flex-shrink-0">
+          <div className="font-bold text-neutral-900">
+            ใบเสนอราคา <span className="font-mono text-sm" style={{ color: BRAND }}>{quote.code}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${st.cls}`}>{st.label}</span>
+            <button type="button" onClick={onClose} aria-label="ปิด" className="text-neutral-400 hover:text-neutral-700">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        {/* document */}
+        <div className="flex-1 overflow-y-auto p-5 sm:p-8 bg-neutral-100/60">
+          <div id="portal-quote-doc" className="bg-white rounded-xl border border-neutral-200 p-5 sm:p-8 max-w-3xl mx-auto">
+            <QuoteDoc
+              org={org}
+              code={quote.code}
+              dateLabel={fmtFull(quote.created_at)}
+              customerName={profile.name}
+              customerAddress={formatAddress(profile.billing_address)}
+              customerTaxId={profile.tax_id}
+              contactName={profile.contact_name}
+              contactPhone={profile.contact_phone}
+              items={items}
+              subtotal={Number(quote.subtotal ?? 0) || items.reduce((s, i) => s + i.total, 0)}
+              discount={Number(quote.discount ?? 0)}
+              discountLabel={`ส่วนลดสมาชิก ${profile.tier_label}`}
+              vat={Number(quote.vat ?? 0)}
+              total={Number(quote.total)}
+              note={quote.valid_until ? `ยืนราคาถึงวันที่ ${fmtFull(quote.valid_until)}` : null}
+            />
+          </div>
+        </div>
+        {/* footer */}
+        <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t border-neutral-200 bg-white flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => printElement("portal-quote-doc", { title: `ใบเสนอราคา ${quote.code}` })}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 transition"
+          >
+            🖨 พิมพ์ / บันทึก PDF
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-neutral-300 px-5 py-2 text-sm font-semibold text-neutral-600 hover:bg-neutral-50 transition"
+          >
+            ปิด
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -496,7 +611,7 @@ function RegisterForm({
 
 // ── Expandable document history table (orders / quotes) ─────────────────────
 function DocSection({
-  title, rows, statusMap, rpcItems, paramName, showPayment,
+  title, rows, statusMap, rpcItems, paramName, showPayment, onOpen,
 }: {
   title: string;
   rows: DocRow[];
@@ -504,6 +619,8 @@ function DocSection({
   rpcItems: string;
   paramName: string;
   showPayment?: boolean;
+  /** When set, clicking a row opens the full document instead of expanding inline. */
+  onOpen?: (row: DocRow) => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [items, setItems] = useState<Record<string, DocItem[]>>({});
@@ -544,7 +661,8 @@ function DocSection({
                     key={r.id}
                     r={r} st={st} open={open} showPayment={showPayment}
                     items={items[r.id]}
-                    onToggle={() => void toggle(r.id)}
+                    isDocLink={!!onOpen}
+                    onToggle={() => (onOpen ? onOpen(r) : void toggle(r.id))}
                   />
                 );
               })}
@@ -557,7 +675,7 @@ function DocSection({
 }
 
 function FragmentRow({
-  r, st, open, showPayment, items, onToggle,
+  r, st, open, showPayment, items, onToggle, isDocLink,
 }: {
   r: DocRow;
   st: { label: string; cls: string };
@@ -565,13 +683,15 @@ function FragmentRow({
   showPayment?: boolean;
   items?: DocItem[];
   onToggle: () => void;
+  /** Row opens a full document (📄) instead of expanding inline (▸/▾). */
+  isDocLink?: boolean;
 }) {
   const cols = showPayment ? 5 : 4;
   return (
     <>
       <tr onClick={onToggle} className="cursor-pointer hover:bg-neutral-50 transition">
         <td className="px-6 py-3 font-mono font-semibold" style={{ color: BRAND }}>
-          <span className="mr-1.5 inline-block text-neutral-300">{open ? "▾" : "▸"}</span>{r.code}
+          <span className="mr-1.5 inline-block text-neutral-300">{isDocLink ? "📄" : open ? "▾" : "▸"}</span>{r.code}
         </td>
         <td className="px-4 py-3 text-neutral-500 whitespace-nowrap">{fmtDate(r.created_at)}</td>
         <td className="px-4 py-3"><span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${st.cls}`}>{st.label}</span></td>
