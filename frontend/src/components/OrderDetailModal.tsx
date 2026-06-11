@@ -9,6 +9,7 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
 import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
 import PrintMenu from './PrintMenu';
@@ -169,9 +170,6 @@ export default function OrderDetailModal({
                                 {order?.code ?? 'Loading...'}
                             </p>
                         </div>
-                        {order && !editing && (
-                            <PrintMenu title={docTitle} className="flex-shrink-0" />
-                        )}
                         {order && (
                             <span className={cn('px-3 py-1.5 rounded-md text-xs font-bold border flex-shrink-0', STATUS_STYLES[order.status as OrderStatus] ?? STATUS_STYLES.pending)}>
                                 {STATUS_LABELS[order.status as OrderStatus] ?? order.status}
@@ -289,6 +287,17 @@ export default function OrderDetailModal({
                         </>
                     )}
                 </div>
+
+                {/* Action footer — same layout as the quote dialog (print menu
+                    bottom-left, actions right). Hidden while editing items. */}
+                {!editing && (
+                    <div className="px-6 py-4 border-t border-neutral-200 bg-neutral-50 flex flex-wrap gap-2 justify-end">
+                        {order && <PrintMenu title={docTitle} className="mr-auto" />}
+                        <Button type="button" variant="outline" onClick={onClose}>
+                            ปิด
+                        </Button>
+                    </div>
+                )}
             </DialogContent>
         </Dialog>
     );
