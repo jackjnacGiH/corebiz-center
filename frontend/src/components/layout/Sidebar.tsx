@@ -14,6 +14,7 @@ import {
     Store,
     UserCog,
     Bot,
+    BookOpen,
 } from 'lucide-react';
 import { useLanguage } from '../../i18n';
 import { cn } from '@/lib/utils';
@@ -64,6 +65,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         ...(canManageUsers(role)
             ? [{ name: t.nav.users, path: '/users', icon: <UserCog size={20} /> }]
             : []),
+        { name: t.nav.manual, path: '/help', icon: <BookOpen size={20} /> },
     ];
 
     return (

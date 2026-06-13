@@ -25,6 +25,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Users = lazy(() => import('./pages/Users'));
 const Audit = lazy(() => import('./pages/Audit'));
 const AiAgent = lazy(() => import('./pages/AiAgent'));
+const Manual = lazy(() => import('./pages/Manual'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const AuthCallback = lazy(() => import('./pages/auth/AuthCallback'));
 const LineCallback = lazy(() => import('./pages/auth/LineCallback'));
@@ -72,6 +73,7 @@ function App() {
                 <Route path="affiliate" element={<Affiliate />} />
                 <Route path="rag" element={<OpenclawRAG />} />
                 <Route path="ask" element={<KnowledgeChat />} />
+                <Route path="help" element={<Manual />} />
                 <Route
                   path="settings"
                   element={
