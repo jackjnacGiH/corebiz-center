@@ -43,6 +43,7 @@ import {
     RefreshCw,
     AlertCircle,
     ChevronLeft,
+    Download,
 } from 'lucide-react';
 import {
     chatInboxApi,
@@ -110,6 +111,54 @@ function statusLabel(
 // historical rows but no longer exposed — collapses into 'เสร็จสิ้น'.
 const ACTIVE_STATUSES: ChatStatus[] = ['open', 'assigned', 'resolved'];
 
+// Force-download an image. Storage URLs are cross-origin, so the <a download>
+// attribute is ignored by browsers — fetch the bytes as a blob and save that.
+// Falls back to opening the image in a new tab if the fetch is blocked.
+async function downloadImage(url: string) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(String(res.status));
+        const blob = await res.blob();
+        const ext = blob.type.includes('png') ? 'png'
+            : blob.type.includes('webp') ? 'webp'
+            : blob.type.includes('gif') ? 'gif' : 'jpg';
+        const obj = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = obj;
+        a.download = `jnac-chat-${Date.now()}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(obj);
+    } catch {
+        window.open(url, '_blank', 'noopener');
+    }
+}
+
+// Chat image: click to open full-size in a new tab, hover (or tap the badge)
+// to download the original file.
+function ChatImage({ src, alt }: { src: string; alt: string }) {
+    return (
+        <span className="relative inline-block my-2 group align-top">
+            <img
+                src={src}
+                alt={alt}
+                loading="lazy"
+                onClick={() => window.open(src, '_blank', 'noopener')}
+                className="max-w-[260px] max-h-[260px] rounded-lg border border-neutral-200 object-cover shadow-sm cursor-zoom-in"
+            />
+            <button
+                type="button"
+                title="ดาวน์โหลดรูป"
+                onClick={(e) => { e.stopPropagation(); void downloadImage(src); }}
+                className="absolute top-1.5 right-1.5 grid place-items-center w-7 h-7 rounded-md bg-black/55 text-white opacity-80 sm:opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
+            >
+                <Download size={14} />
+            </button>
+        </span>
+    );
+}
+
 const IMG_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
 function renderMessageContent(content: string): ReactNode[] {
     if (!content) return [];
@@ -119,15 +168,7 @@ function renderMessageContent(content: string): ReactNode[] {
     IMG_MD_RE.lastIndex = 0;
     while ((m = IMG_MD_RE.exec(content)) !== null) {
         if (m.index > lastIndex) out.push(content.slice(lastIndex, m.index));
-        out.push(
-            <img
-                key={`img-${m.index}`}
-                src={m[2]}
-                alt={m[1] || 'image'}
-                loading="lazy"
-                className="my-2 max-w-[260px] max-h-[260px] rounded-lg border border-neutral-200 object-cover shadow-sm"
-            />,
-        );
+        out.push(<ChatImage key={`img-${m.index}`} src={m[2]} alt={m[1] || 'image'} />);
         lastIndex = IMG_MD_RE.lastIndex;
     }
     if (lastIndex < content.length) out.push(content.slice(lastIndex));
