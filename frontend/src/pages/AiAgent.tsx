@@ -314,7 +314,7 @@ function MonthlyReviewPanel() {
         const list = await aiReviewApi.list(12);
         if (list[0] && list[0].id !== before) {
           setReviews(list); setIdx(0);
-          setNote('สร้างรายงานใหม่เรียบร้อย — ส่ง LINE ถึงเจ้าของแล้ว ✓');
+          setNote('สร้างรายงานใหม่เรียบร้อย ✓');
           break;
         }
         if (i === 7) setNote('กำลังประมวลผล อาจใช้เวลาสักครู่ — กดรีเฟรชหน้าได้');
@@ -337,7 +337,7 @@ function MonthlyReviewPanel() {
         </Button>
       </div>
       <p className="text-sm text-neutral-500 mb-3">
-        AI สรุปพฤติกรรมลูกค้าและเสนอข้อปรับปรุงทุก 30 วัน พร้อมส่ง LINE ถึงเจ้าของอัตโนมัติ — คุณเป็นผู้ตัดสินใจว่าจะทำข้อไหนต่อ
+        AI สรุปพฤติกรรมลูกค้าและเสนอข้อปรับปรุงทุก 30 วัน แสดงไว้ที่แท็บนี้ — คุณเป็นผู้ตัดสินใจว่าจะทำข้อไหนต่อ
       </p>
 
       {note && <div className="mb-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700">{note}</div>}
@@ -373,7 +373,10 @@ function MonthlyReviewPanel() {
 }
 
 // --- page ------------------------------------------------------------------
-const VIEWS: { key: AgentTaskView; label: string }[] = [
+// 'reviews' = AI monthly recommendations tab; the rest map to the task queue.
+type PageTab = 'reviews' | AgentTaskView;
+const VIEWS: { key: PageTab; label: string }[] = [
+  { key: 'reviews', label: 'ข้อเสนอแนะ' },
   { key: 'active', label: 'รออนุมัติ' },
   { key: 'snoozed', label: 'เลื่อนไว้' },
   { key: 'history', label: 'ประวัติ' },
@@ -387,7 +390,7 @@ const CATS: { key: 'all' | AgentCategory; label: string }[] = [
 ];
 
 export default function AiAgent() {
-  const [view, setView] = useState<AgentTaskView>('active');
+  const [view, setView] = useState<PageTab>('reviews');
   const [cat, setCat] = useState<'all' | AgentCategory>('all');
   const [rows, setRows] = useState<AgentTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -399,6 +402,7 @@ export default function AiAgent() {
   const flash = (m: string) => { setOk(m); window.setTimeout(() => setOk(null), 2600); };
 
   const load = useCallback(async () => {
+    if (view === 'reviews') { setRows([]); setLoading(false); return; }
     setLoading(true);
     setErr(null);
     try {
@@ -472,11 +476,6 @@ export default function AiAgent() {
         ผู้ช่วย AI คอยตรวจร้านและ<strong>เสนองานให้คุณอนุมัติ</strong> — งานที่มีผลจริง (ส่งข้อความ เปลี่ยนราคา) จะทำก็ต่อเมื่อคุณกดอนุมัติเท่านั้น
       </p>
 
-      {/* monthly AI review — strategic 30-day summary + recommendations */}
-      <MonthlyReviewPanel />
-
-      <h2 className="text-sm font-semibold text-neutral-700 mb-2">งานที่ AI เสนอ (ปฏิบัติการรายวัน)</h2>
-
       {/* banners */}
       {ok && (
         <div className="mb-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-700">
@@ -504,44 +503,50 @@ export default function AiAgent() {
         ))}
       </div>
 
-      {/* category filter */}
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
-        {CATS.map((c) => (
-          <button
-            key={c.key}
-            onClick={() => setCat(c.key)}
-            className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-              cat === c.key ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
-            }`}
-          >
-            {c.label}{c.key !== 'all' && counts[c.key] ? ` ${counts[c.key]}` : ''}
-          </button>
-        ))}
-      </div>
-
-      {/* list */}
-      {loading ? (
-        <div className="py-16 text-center text-neutral-400"><Loader2 size={24} className="animate-spin inline" /></div>
-      ) : filtered.length === 0 ? (
-        <div className="py-16 text-center text-neutral-400">
-          <Bot size={32} className="mx-auto mb-2 opacity-40" />
-          {view === 'active' ? 'ไม่มีงานรออนุมัติ — ทุกอย่างเรียบร้อย 🎉' : 'ไม่มีรายการ'}
-        </div>
+      {view === 'reviews' ? (
+        <MonthlyReviewPanel />
       ) : (
-        <div className="space-y-3">
-          {filtered.map((t) => (
-            <TaskCard
-              key={t.id}
-              task={t}
-              busy={busyId === t.id}
-              isHistory={view === 'history'}
-              onApprove={() => act(t.id, () => aiAgentApi.setStatus(t.id, t.requires_approval ? 'approved' : 'dismissed'),
-                t.requires_approval ? 'อนุมัติแล้ว' : 'รับทราบแล้ว')}
-              onReject={() => act(t.id, () => aiAgentApi.setStatus(t.id, 'rejected'), 'ปฏิเสธแล้ว')}
-              onSnooze={() => act(t.id, () => aiAgentApi.snooze(t.id, 3), 'เลื่อนออกไป 3 วัน')}
-            />
-          ))}
-        </div>
+        <>
+          {/* category filter */}
+          <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+            {CATS.map((c) => (
+              <button
+                key={c.key}
+                onClick={() => setCat(c.key)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                  cat === c.key ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'
+                }`}
+              >
+                {c.label}{c.key !== 'all' && counts[c.key] ? ` ${counts[c.key]}` : ''}
+              </button>
+            ))}
+          </div>
+
+          {/* list */}
+          {loading ? (
+            <div className="py-16 text-center text-neutral-400"><Loader2 size={24} className="animate-spin inline" /></div>
+          ) : filtered.length === 0 ? (
+            <div className="py-16 text-center text-neutral-400">
+              <Bot size={32} className="mx-auto mb-2 opacity-40" />
+              {view === 'active' ? 'ไม่มีงานรออนุมัติ — ทุกอย่างเรียบร้อย 🎉' : 'ไม่มีรายการ'}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filtered.map((t) => (
+                <TaskCard
+                  key={t.id}
+                  task={t}
+                  busy={busyId === t.id}
+                  isHistory={view === 'history'}
+                  onApprove={() => act(t.id, () => aiAgentApi.setStatus(t.id, t.requires_approval ? 'approved' : 'dismissed'),
+                    t.requires_approval ? 'อนุมัติแล้ว' : 'รับทราบแล้ว')}
+                  onReject={() => act(t.id, () => aiAgentApi.setStatus(t.id, 'rejected'), 'ปฏิเสธแล้ว')}
+                  onSnooze={() => act(t.id, () => aiAgentApi.snooze(t.id, 3), 'เลื่อนออกไป 3 วัน')}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

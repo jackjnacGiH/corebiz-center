@@ -1,23 +1,23 @@
 /**
- * monthly-review v1 — AI "สรุปผล + ข้อเสนอแนะ" ประจำเดือน (รอบ 30 วัน)
+ * monthly-review v2 — AI "สรุปผล + ข้อเสนอแนะ" ประจำเดือน (รอบ 30 วัน)
  *
  * Pipeline:
  *   1. agent_collect_review_metrics(days)  → 30-day behaviour/ops metrics
  *   2. Gemini turns the numbers into a Thai analysis + ranked recommendations
  *      (rule-based fallback if Gemini is missing/unavailable — never fails)
  *   3. insert into public.system_reviews
- *   4. push a LINE summary to every active LINE-linked owner/admin
+ *
+ * The result is shown in the AI Agent page → "ข้อเสนอแนะ" tab. No LINE push
+ * (v2: dropped per owner request — recommendations live in-app only).
  *
  * Triggered by the agent-monthly-review cron (pg_net → agent_run_monthly_review_internal)
- * or on demand by the owner via the agent_request_monthly_review() RPC.
- * verify_jwt is OFF — the x-review-key shared header gates it (same model as notify-team).
- * Pass {"push": false} to generate without sending LINE (used for testing).
+ * or on demand via the agent_request_monthly_review() RPC.
+ * verify_jwt is OFF — the x-review-key shared header gates it.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const REVIEW_KEY = "corebiz_monthly_review_2026_r9m4";
-const REPORT_URL = "https://www.jnac.online/center/agent";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
@@ -38,7 +38,6 @@ Deno.serve(async (req: Request) => {
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch { /* empty body ok */ }
   const days = Number(body.days ?? 30) || 30;
-  const doPush = body.push !== false;
 
   const admin = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -84,10 +83,6 @@ Deno.serve(async (req: Request) => {
     .single();
   if (iErr) return json({ ok: false, error: "insert_failed", detail: iErr.message }, 500);
 
-  // 4) push LINE
-  let sent = 0;
-  if (doPush) sent = await pushToOwners(admin, analysis);
-
   return json({
     ok: true,
     review_id: (ins as { id: string }).id,
@@ -95,7 +90,6 @@ Deno.serve(async (req: Request) => {
     model: usedModel,
     headline: analysis.headline,
     recommendations: analysis.recommendations.length,
-    sent,
   });
 });
 
@@ -197,41 +191,4 @@ function fallbackAnalysis(m: Record<string, any>, days: number): Analysis {
     recs.push({ priority: 2, area: "แชท/บริการ", title: `จัดผู้รับผิดชอบแชทค้าง ${ch.open_unassigned} ห้อง`, detail: "แชทที่ยังไม่มีคนรับผิดชอบเสี่ยงตอบช้าและกระทบความพึงพอใจ", effort: "เล็ก" });
   recs.push({ priority: 3, area: "การตลาด", title: "ใช้ฐานลูกค้าเดิมกระตุ้นการซื้อซ้ำ", detail: `มีลูกค้าในระบบ ${c.total ?? 0} ราย ลองยิงแคมเปญหรือคูปองผ่าน LINE เพื่อกระตุ้นให้กลับมาซื้อ`, effort: "กลาง" });
   return { headline, summary, recommendations: recs.slice(0, 6) };
-}
-
-async function pushToOwners(admin: SupabaseClient, analysis: Analysis): Promise<number> {
-  const { data: recipients } = await admin
-    .from("profiles")
-    .select("line_user_id")
-    .in("role", ["owner", "admin"])
-    .eq("is_active", true)
-    .not("line_user_id", "is", null);
-  if (!recipients || recipients.length === 0) return 0;
-
-  const { data: ch } = await admin
-    .from("line_channels")
-    .select("channel_access_token")
-    .eq("is_active", true)
-    .limit(1)
-    .maybeSingle();
-  const token = (ch as { channel_access_token?: string } | null)?.channel_access_token;
-  if (!token) return 0;
-
-  const topRecs = analysis.recommendations.slice(0, 3).map((r, i) => `${i + 1}. ${r.title}`).join("\n");
-  const text =
-    `📊 รายงาน AI ประจำเดือน (30 วันล่าสุด)\n\n${analysis.headline}\n\n` +
-    (topRecs ? `🎯 ข้อเสนอแนะเด่น:\n${topRecs}\n\n` : "") +
-    `อ่านฉบับเต็มในระบบ: ${REPORT_URL}`;
-
-  let sent = 0;
-  for (const r of recipients as Array<{ line_user_id: string }>) {
-    const res = await fetch("https://api.line.me/v2/bot/message/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ to: r.line_user_id, messages: [{ type: "text", text: text.slice(0, 4900) }] }),
-    });
-    if (res.ok) sent++;
-    else console.error("LINE push failed:", res.status, await res.text().catch(() => ""));
-  }
-  return sent;
 }
