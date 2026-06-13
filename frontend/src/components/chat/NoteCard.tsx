@@ -52,6 +52,26 @@ interface Props {
   onDragEnd?: (e: React.DragEvent) => void;
 }
 
+/** Format a Thai address with ต./อ./จ. prefixes (แขวง/เขต for Bangkok) so the
+ *  copied text reads correctly for couriers. Strips any prefix already stored
+ *  to avoid duplicates like "ต.ต.แพรกษา". */
+function formatThaiAddress(a: AddressLike): string {
+  const prov = (a.province ?? '').trim();
+  const bkk = /กรุงเทพ|กทม/.test(prov);
+  const strip = (s: string, prefixes: string[]) => {
+    const t = s.trim();
+    for (const p of prefixes) if (t.startsWith(p)) return t.slice(p.length).trim();
+    return t;
+  };
+  const parts: string[] = [];
+  if (a.line1) parts.push(a.line1.trim());
+  if (a.subdistrict) parts.push((bkk ? 'แขวง' : 'ต.') + strip(a.subdistrict, ['ต.', 'ตำบล', 'แขวง']));
+  if (a.district) parts.push((bkk ? 'เขต' : 'อ.') + strip(a.district, ['อ.', 'อำเภอ', 'เขต']));
+  if (prov) parts.push(bkk ? 'กรุงเทพมหานคร' : 'จ.' + strip(prov, ['จ.', 'จังหวัด']));
+  if (a.postcode) parts.push(String(a.postcode).trim());
+  return parts.join(' ');
+}
+
 /** Flatten a note into plain text for the copy-all button. */
 function noteToText(note: ChatContactNote, a: AddressLike | null): string {
   const lines: string[] = [];
@@ -63,7 +83,7 @@ function noteToText(note: ChatContactNote, a: AddressLike | null): string {
     if (a.tax_id) lines.push(`เลขผู้เสียภาษี: ${a.tax_id}`);
     if (a.branch) lines.push(`สาขา: ${a.branch}`);
     if (a.phone) lines.push(`โทร: ${a.phone}`);
-    const addr = [a.line1, a.subdistrict, a.district, a.province, a.postcode].filter(Boolean).join(' ');
+    const addr = formatThaiAddress(a);
     if (addr) lines.push(addr);
   }
   return lines.join('\n');
@@ -189,11 +209,7 @@ export default function NoteCard({
           {a.branch && <div>สาขา: {a.branch}</div>}
           {a.phone && <div>โทร: {a.phone}</div>}
           {(a.line1 || a.subdistrict || a.district || a.province) && (
-            <div>
-              {[a.line1, a.subdistrict, a.district, a.province, a.postcode]
-                .filter(Boolean)
-                .join(' ')}
-            </div>
+            <div>{formatThaiAddress(a)}</div>
           )}
         </div>
       )}
