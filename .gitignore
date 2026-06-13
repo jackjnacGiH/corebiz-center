@@ -26,3 +26,6 @@ jnac info_Assist/*.docx
 jnac info_Assist/rendered_docx/
 apps/jnac-admin-chat/data/*.json
 apps/jnac-admin-chat/data/*.jsonl
+
+# Source sticker PNGs (resized copies live in frontend/public/stickers)
+/sticker/

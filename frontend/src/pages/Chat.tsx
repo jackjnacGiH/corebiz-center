@@ -63,6 +63,7 @@ import EmojiButton from '../components/chat/EmojiButton';
 import QuickReplyButton from '../components/chat/QuickReplyButton';
 import ImageCropModal, { captureScreen } from '../components/chat/ImageCropModal';
 import ProductCardButton from '../components/chat/ProductCardButton';
+import StickerButton from '../components/chat/StickerButton';
 
 const CHANNEL_LABEL: Record<ChatChannel, string> = {
     livechat: 'Web Chat',
@@ -539,6 +540,24 @@ export default function Chat() {
         }
     }
 
+    /** Send a sticker as a one-tap image message (same pipeline as photos). */
+    async function sendSticker(url: string) {
+        if (!selectedId || sending) return;
+        setSending(true);
+        try {
+            await chatInboxApi.sendMessage({
+                conversationId: selectedId,
+                content: `![image](${url})`,
+                contentType: 'image',
+            });
+            void loadConvs();
+        } catch (e) {
+            alert(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
+        } finally {
+            setSending(false);
+        }
+    }
+
     async function handleSetStatus(s: ChatStatus) {
         if (!selectedId) return;
         // Manual override wins — drop this id from the deferred queue so
@@ -878,6 +897,7 @@ export default function Chat() {
                                         </button>
                                         <QuickReplyButton draft={reply} onPick={insertAtCursor} disabled={sending} />
                                         <ProductCardButton onPick={handlePickProductCard} disabled={sending} />
+                                        <StickerButton onSend={sendSticker} disabled={sending} />
                                     </div>
 
                                     <textarea
