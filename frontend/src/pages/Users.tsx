@@ -25,6 +25,16 @@ const roleBadge: Record<string, string> = {
   customer: 'bg-neutral-100 text-neutral-600 border-neutral-200',
 };
 
+// Display order by seniority (Owner first), then active-first, then email.
+const ROLE_RANK: Record<string, number> = { owner: 0, admin: 1, staff: 2, agent: 3, viewer: 4, customer: 5 };
+function sortUsers(list: AdminUser[]): AdminUser[] {
+  return [...list].sort((a, b) =>
+    (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) ||
+    Number(b.is_active) - Number(a.is_active) ||
+    (a.email ?? '').localeCompare(b.email ?? ''),
+  );
+}
+
 // --- Role permission guide (reference table shown on the page) ---
 type Cell = 'full' | 'limited' | 'edit' | 'view' | 'none';
 const CELL: Record<Cell, { label: string; cls: string }> = {
@@ -78,7 +88,7 @@ export default function Users() {
     setLoading(true);
     setErr(null);
     try {
-      setUsers(await usersApi.list());
+      setUsers(sortUsers(await usersApi.list()));
     } catch (e) {
       setErr((e as Error).message);
     } finally {
