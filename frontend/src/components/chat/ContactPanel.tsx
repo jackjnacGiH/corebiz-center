@@ -405,10 +405,10 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
 
         <Separator />
 
-        {/* Packer + Bot toggle — two-column compact row to save vertical space */}
-        <div className="grid grid-cols-2 gap-2">
+        {/* Packer + Bot toggle — Packer gets 2/3 (long names fit), bot 1/3 (just the switch) */}
+        <div className="grid grid-cols-3 gap-2">
           {/* Packer */}
-          <div className="min-w-0">
+          <div className="min-w-0 col-span-2">
             <div className="text-[10px] uppercase font-bold text-neutral-500 mb-1.5 tracking-wide truncate">
               👷 ผู้รับผิดชอบ
             </div>
