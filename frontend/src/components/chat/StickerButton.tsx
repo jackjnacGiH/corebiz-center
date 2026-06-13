@@ -29,7 +29,11 @@ export default function StickerButton({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [hover, setHover] = useState<number | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Drop the hover preview whenever the picker closes.
+  useEffect(() => { if (!open) setHover(null); }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -68,34 +72,54 @@ export default function StickerButton({
       </button>
 
       {open && (
-        <div className="absolute bottom-full mb-2 left-0 z-30 w-[300px] rounded-xl border border-neutral-200 bg-white shadow-xl overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-100 bg-neutral-50">
-            <span className="text-xs font-bold text-neutral-700 inline-flex items-center gap-1.5">
-              <Sticker size={13} className="text-indigo-500" /> สติกเกอร์
-            </span>
-            <button type="button" onClick={() => setOpen(false)} className="text-neutral-400 hover:text-neutral-700">
-              <X size={15} />
-            </button>
-          </div>
-          <div className="p-2 grid grid-cols-4 gap-1.5 max-h-[260px] overflow-y-auto">
-            {Array.from({ length: COUNT }, (_, i) => i + 1).map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => pick(n)}
-                title={`สติกเกอร์ ${n}`}
-                className="aspect-square rounded-lg hover:bg-indigo-50 active:scale-95 p-1 transition"
-              >
-                <img
-                  src={stickerUrl(n)}
-                  alt={`sticker ${n}`}
-                  loading="lazy"
-                  className="w-full h-full object-contain"
-                />
+        <>
+          <div className="absolute bottom-full mb-2 left-0 z-30 w-[300px] rounded-xl border border-neutral-200 bg-white shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-100 bg-neutral-50">
+              <span className="text-xs font-bold text-neutral-700 inline-flex items-center gap-1.5">
+                <Sticker size={13} className="text-indigo-500" /> สติกเกอร์
+              </span>
+              <button type="button" onClick={() => setOpen(false)} className="text-neutral-400 hover:text-neutral-700">
+                <X size={15} />
               </button>
-            ))}
+            </div>
+            <div className="p-2 grid grid-cols-4 gap-1.5 max-h-[260px] overflow-y-auto">
+              {Array.from({ length: COUNT }, (_, i) => i + 1).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => pick(n)}
+                  onMouseEnter={() => setHover(n)}
+                  onMouseLeave={() => setHover((h) => (h === n ? null : h))}
+                  onFocus={() => setHover(n)}
+                  title={`สติกเกอร์ ${n}`}
+                  className="aspect-square rounded-lg hover:bg-indigo-50 hover:ring-2 hover:ring-indigo-300 active:scale-95 p-1 transition"
+                >
+                  <img
+                    src={stickerUrl(n)}
+                    alt={`sticker ${n}`}
+                    loading="lazy"
+                    className="w-full h-full object-contain"
+                  />
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+
+          {/* Enlarged hover preview — rendered outside the clipped panel so it
+              can grow big enough to read the sticker text before sending. */}
+          {hover !== null && (
+            <div className="absolute bottom-full mb-2 left-[308px] z-40 w-[244px] rounded-xl border border-neutral-200 bg-white shadow-2xl p-2 pointer-events-none">
+              <img
+                src={stickerUrl(hover)}
+                alt={`sticker ${hover} preview`}
+                className="w-full rounded-lg bg-neutral-50"
+              />
+              <div className="mt-1 text-center text-[11px] text-neutral-400">
+                คลิกเพื่อส่งสติกเกอร์ {hover}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
