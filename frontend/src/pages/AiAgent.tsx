@@ -376,10 +376,10 @@ function MonthlyReviewPanel() {
 // 'reviews' = AI monthly recommendations tab; the rest map to the task queue.
 type PageTab = 'reviews' | AgentTaskView;
 const VIEWS: { key: PageTab; label: string }[] = [
-  { key: 'reviews', label: 'ข้อเสนอแนะ' },
   { key: 'active', label: 'รออนุมัติ' },
   { key: 'snoozed', label: 'เลื่อนไว้' },
   { key: 'history', label: 'ประวัติ' },
+  { key: 'reviews', label: 'ข้อเสนอแนะ' },
 ];
 const CATS: { key: 'all' | AgentCategory; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
@@ -390,7 +390,7 @@ const CATS: { key: 'all' | AgentCategory; label: string }[] = [
 ];
 
 export default function AiAgent() {
-  const [view, setView] = useState<PageTab>('reviews');
+  const [view, setView] = useState<PageTab>('active');
   const [cat, setCat] = useState<'all' | AgentCategory>('all');
   const [rows, setRows] = useState<AgentTask[]>([]);
   const [loading, setLoading] = useState(true);
