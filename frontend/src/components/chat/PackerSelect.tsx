@@ -23,6 +23,14 @@ const ROLE_BADGE: Record<StaffProfile['role'], string> = {
   staff: 'bg-slate-50 text-slate-700 border-slate-200',
 };
 
+// Avatar background + ring tint by role — conveys the role in the compact
+// trigger without a text badge that would crowd out the name.
+const ROLE_RING: Record<StaffProfile['role'], string> = {
+  owner: 'bg-purple-500 ring-purple-200',
+  admin: 'bg-blue-500 ring-blue-200',
+  staff: 'bg-slate-500 ring-slate-200',
+};
+
 export default function PackerSelect({ packers, selectedId, onChange, loading }: Props) {
   const selected = packers.find((p) => p.id === selectedId);
   const displayName = (p: StaffProfile) => p.full_name?.trim() || p.email;
@@ -33,22 +41,20 @@ export default function PackerSelect({ packers, selectedId, onChange, loading }:
         <button
           type="button"
           disabled={loading}
+          title={selected ? `${displayName(selected)} · ${selected.role}` : 'ยังไม่ได้กำหนดผู้รับผิดชอบ'}
           className="w-full flex items-center gap-2 h-9 px-2.5 rounded-md border border-neutral-200 bg-white text-sm hover:bg-neutral-50 transition justify-between disabled:opacity-50"
         >
           {selected ? (
-            <span className="flex items-center gap-2 min-w-0">
-              <span className="grid place-items-center w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 text-white text-[10px] font-semibold flex-shrink-0">
+            <span className="flex items-center gap-1.5 min-w-0">
+              <span
+                className={cn(
+                  'grid place-items-center w-6 h-6 rounded-full text-white text-[10px] font-semibold flex-shrink-0 ring-2',
+                  ROLE_RING[selected.role],
+                )}
+              >
                 {displayName(selected).charAt(0).toUpperCase()}
               </span>
               <span className="truncate text-neutral-900">{displayName(selected)}</span>
-              <span
-                className={cn(
-                  'text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border flex-shrink-0',
-                  ROLE_BADGE[selected.role],
-                )}
-              >
-                {selected.role}
-              </span>
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-neutral-400 text-xs">
