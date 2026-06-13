@@ -89,7 +89,7 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
       setType(initial?.note_type ?? 'general');
       setContent(initial?.content ?? '');
       setAddress((initial?.address as AddressDraft) ?? {});
-      setDueDate(initial?.due_date ? initial.due_date.slice(0, 16) : '');
+      setDueDate(initial?.due_date ? initial.due_date.slice(0, 10) : '');
       setZipOptions([]);
       setZipNotFound(false);
     }
@@ -347,7 +347,7 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
             <div>
               <Label className="text-xs">วันที่ครบกำหนด</Label>
               <Input
-                type="datetime-local"
+                type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
                 className="mt-1.5"
