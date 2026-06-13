@@ -220,6 +220,20 @@ export default function Chat() {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Auto-grow the composer with its content, up to ~8 lines, then scroll.
+    // Shrinks back to the 2-row base when the text is cleared.
+    useEffect(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        const cs = getComputedStyle(ta);
+        const lh = parseFloat(cs.lineHeight) || 20;
+        const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const maxH = lh * 8 + pad;
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, maxH) + 'px';
+        ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
+    }, [reply]);
+
     // Screen capture → crop → attach. `cropSrc` holds the captured frame
     // (data-URL) while the crop modal is open.
     const [cropSrc, setCropSrc] = useState<string | null>(null);
