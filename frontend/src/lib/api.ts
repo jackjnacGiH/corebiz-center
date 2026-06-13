@@ -3649,3 +3649,57 @@ export const aiAgentApi = {
     return data;
   },
 };
+
+// =========================================================================
+// AI Monthly Review — สรุปผล + ข้อเสนอแนะ ทุก 30 วัน (system_reviews)
+// =========================================================================
+export interface ReviewRec {
+  priority: number;
+  area: string;
+  title: string;
+  detail: string;
+  effort: string;
+}
+export interface SystemReview {
+  id: string;
+  period_start: string;
+  period_end: string;
+  metrics: Record<string, unknown>;
+  headline: string | null;
+  summary: string | null;
+  recommendations: ReviewRec[];
+  generated_by: 'ai' | 'fallback';
+  model: string | null;
+  status: 'new' | 'read' | 'archived';
+  created_at: string;
+}
+
+export const aiReviewApi = {
+  async list(limit = 12): Promise<SystemReview[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from('system_reviews')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []) as SystemReview[];
+  },
+
+  /** Fire the monthly-review edge fn on demand. Async/fire-and-forget —
+   *  the new row appears a few seconds later; the caller polls list(). */
+  async generateNow(): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any).rpc('agent_request_monthly_review');
+    if (error) throw error;
+  },
+
+  async markRead(id: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from('system_reviews')
+      .update({ status: 'read' })
+      .eq('id', id);
+    if (error) throw error;
+  },
+};

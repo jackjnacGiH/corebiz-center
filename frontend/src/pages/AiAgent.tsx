@@ -4,8 +4,12 @@ import {
   Bot, Loader2, RefreshCw, ScanLine, AlertCircle, CheckCircle2,
   Check, X, Clock, ChevronDown, ChevronUp, ExternalLink, AlertTriangle,
   ShoppingCart, Package, Truck, MessageSquare, FileText, PackageX, UserPlus,
+  Sparkles, CalendarDays,
 } from 'lucide-react';
-import { aiAgentApi, type AgentTask, type AgentTaskView, type AgentCategory } from '@/lib/api';
+import {
+  aiAgentApi, aiReviewApi,
+  type AgentTask, type AgentTaskView, type AgentCategory, type SystemReview,
+} from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
 // --- labels & styling maps -------------------------------------------------
@@ -229,6 +233,145 @@ function TaskCard({
   );
 }
 
+// --- monthly AI review -----------------------------------------------------
+const AREA_BADGE: Record<string, string> = {
+  'ลูกค้า': 'bg-sky-50 text-sky-700 border-sky-200',
+  'การขาย': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'แชท/บริการ': 'bg-violet-50 text-violet-700 border-violet-200',
+  'สินค้า/สต็อก': 'bg-amber-50 text-amber-700 border-amber-200',
+  'การตลาด': 'bg-pink-50 text-pink-700 border-pink-200',
+  'ระบบ': 'bg-neutral-100 text-neutral-600 border-neutral-200',
+};
+const areaBadge = (a: string) => AREA_BADGE[a] ?? 'bg-neutral-100 text-neutral-600 border-neutral-200';
+const prioBadge = (p: number) =>
+  p === 1 ? 'bg-red-50 text-red-600 border-red-200'
+  : p === 2 ? 'bg-amber-50 text-amber-600 border-amber-200'
+  : 'bg-neutral-100 text-neutral-500 border-neutral-200';
+const fmtDate = (s: string) =>
+  new Date(s).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+
+function ReviewCard({ r }: { r: SystemReview }) {
+  const recs = (r.recommendations ?? []).slice().sort((a, b) => a.priority - b.priority);
+  return (
+    <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-white p-4 sm:p-5">
+      <div className="flex items-center gap-2 flex-wrap mb-2 text-xs text-neutral-500">
+        <CalendarDays size={14} />
+        <span>{fmtDate(r.period_start)} – {fmtDate(r.period_end)}</span>
+        <span className={`rounded-full border px-2 py-0.5 ${r.generated_by === 'ai'
+          ? 'bg-indigo-50 text-indigo-600 border-indigo-200'
+          : 'bg-neutral-100 text-neutral-500 border-neutral-200'}`}>
+          {r.generated_by === 'ai' ? 'วิเคราะห์โดย AI' : 'สรุปอัตโนมัติ'}
+        </span>
+      </div>
+      {r.headline && <h3 className="font-bold text-neutral-900 leading-snug">{r.headline}</h3>}
+      {r.summary && <p className="mt-2 text-sm text-neutral-700 leading-relaxed whitespace-pre-line">{r.summary}</p>}
+      {recs.length > 0 && (
+        <div className="mt-4">
+          <div className="text-xs font-semibold text-neutral-500 mb-2">🎯 ข้อเสนอแนะ ({recs.length})</div>
+          <ol className="space-y-2">
+            {recs.map((rec, i) => (
+              <li key={i} className="rounded-lg border border-neutral-200 bg-white p-3">
+                <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                  <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${prioBadge(rec.priority)}`}>ลำดับ {rec.priority}</span>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${areaBadge(rec.area)}`}>{rec.area}</span>
+                  <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] text-neutral-400">งาน{rec.effort}</span>
+                </div>
+                <div className="text-sm font-semibold text-neutral-800">{rec.title}</div>
+                {rec.detail && <div className="text-xs text-neutral-600 mt-0.5 leading-relaxed">{rec.detail}</div>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MonthlyReviewPanel() {
+  const [reviews, setReviews] = useState<SystemReview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [idx, setIdx] = useState(0);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setReviews(await aiReviewApi.list(12)); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  async function generate() {
+    setGenerating(true); setErr(null);
+    setNote('กำลังให้ AI วิเคราะห์ข้อมูล 30 วันล่าสุด… (ประมาณ 10–20 วินาที)');
+    try {
+      const before = reviews[0]?.id;
+      await aiReviewApi.generateNow();
+      for (let i = 0; i < 8; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const list = await aiReviewApi.list(12);
+        if (list[0] && list[0].id !== before) {
+          setReviews(list); setIdx(0);
+          setNote('สร้างรายงานใหม่เรียบร้อย — ส่ง LINE ถึงเจ้าของแล้ว ✓');
+          break;
+        }
+        if (i === 7) setNote('กำลังประมวลผล อาจใช้เวลาสักครู่ — กดรีเฟรชหน้าได้');
+      }
+    } catch (e) { setErr((e as Error).message); setNote(null); }
+    finally { setGenerating(false); }
+  }
+
+  const current = reviews[idx];
+  return (
+    <div className="mb-6 rounded-2xl border border-neutral-200 bg-white p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} className="text-indigo-600" />
+          <h2 className="font-bold text-neutral-900">รายงาน AI ประจำเดือน</h2>
+        </div>
+        <Button size="sm" onClick={generate} disabled={generating}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white">
+          {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} สร้างรายงานเดี๋ยวนี้
+        </Button>
+      </div>
+      <p className="text-sm text-neutral-500 mb-3">
+        AI สรุปพฤติกรรมลูกค้าและเสนอข้อปรับปรุงทุก 30 วัน พร้อมส่ง LINE ถึงเจ้าของอัตโนมัติ — คุณเป็นผู้ตัดสินใจว่าจะทำข้อไหนต่อ
+      </p>
+
+      {note && <div className="mb-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700">{note}</div>}
+      {err && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+
+      {loading ? (
+        <div className="py-8 text-center text-neutral-400"><Loader2 size={20} className="animate-spin inline" /></div>
+      ) : !current ? (
+        <div className="py-8 text-center text-neutral-400 text-sm">
+          ยังไม่มีรายงาน — กด “สร้างรายงานเดี๋ยวนี้” เพื่อให้ AI วิเคราะห์รอบแรก
+          <div className="text-xs mt-1">(ปกติระบบสร้างให้อัตโนมัติทุกวันที่ 1 ของเดือน)</div>
+        </div>
+      ) : (
+        <>
+          <ReviewCard r={current} />
+          {reviews.length > 1 && (
+            <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-neutral-400 mr-1">รายงานก่อนหน้า:</span>
+              {reviews.map((rv, i) => (
+                <button key={rv.id} onClick={() => setIdx(i)}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${i === idx
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-neutral-200 text-neutral-500 hover:bg-neutral-50'}`}>
+                  {fmtDate(rv.created_at)}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // --- page ------------------------------------------------------------------
 const VIEWS: { key: AgentTaskView; label: string }[] = [
   { key: 'active', label: 'รออนุมัติ' },
@@ -328,6 +471,11 @@ export default function AiAgent() {
       <p className="text-sm text-neutral-500 mb-4">
         ผู้ช่วย AI คอยตรวจร้านและ<strong>เสนองานให้คุณอนุมัติ</strong> — งานที่มีผลจริง (ส่งข้อความ เปลี่ยนราคา) จะทำก็ต่อเมื่อคุณกดอนุมัติเท่านั้น
       </p>
+
+      {/* monthly AI review — strategic 30-day summary + recommendations */}
+      <MonthlyReviewPanel />
+
+      <h2 className="text-sm font-semibold text-neutral-700 mb-2">งานที่ AI เสนอ (ปฏิบัติการรายวัน)</h2>
 
       {/* banners */}
       {ok && (
