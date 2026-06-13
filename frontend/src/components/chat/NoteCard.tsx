@@ -1,4 +1,5 @@
-import { GripVertical, Pin, Pencil, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { GripVertical, Pin, Pencil, Trash2, Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ChatContactNote } from '../../lib/api';
 
@@ -51,6 +52,23 @@ interface Props {
   onDragEnd?: (e: React.DragEvent) => void;
 }
 
+/** Flatten a note into plain text for the copy-all button. */
+function noteToText(note: ChatContactNote, a: AddressLike | null): string {
+  const lines: string[] = [];
+  if (note.title) lines.push(note.title);
+  if (note.content) lines.push(note.content);
+  if (a) {
+    if (a.company) lines.push(a.company);
+    if (a.name) lines.push(a.name);
+    if (a.tax_id) lines.push(`เลขผู้เสียภาษี: ${a.tax_id}`);
+    if (a.branch) lines.push(`สาขา: ${a.branch}`);
+    if (a.phone) lines.push(`โทร: ${a.phone}`);
+    const addr = [a.line1, a.subdistrict, a.district, a.province, a.postcode].filter(Boolean).join(' ');
+    if (addr) lines.push(addr);
+  }
+  return lines.join('\n');
+}
+
 export default function NoteCard({
   note,
   onEdit,
@@ -66,17 +84,25 @@ export default function NoteCard({
   onDragEnd,
 }: Props) {
   const a = (note.address ?? null) as AddressLike | null;
+  const [copied, setCopied] = useState(false);
+
+  async function copyAll() {
+    try {
+      await navigator.clipboard.writeText(noteToText(note, a));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — user can still select manually */ }
+  }
 
   return (
+    // Only the grip handle is draggable; making the whole card draggable
+    // blocks text selection. Drop-target handlers stay on the card.
     <div
-      draggable={draggable}
-      onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      onDragEnd={onDragEnd}
       className={cn(
-        'rounded-lg border p-3 mb-2 transition',
+        'rounded-lg border p-3 mb-2 transition select-text',
         note.is_pinned
           ? 'bg-indigo-50/40 border-indigo-200'
           : 'bg-neutral-50/40 border-neutral-200',
@@ -87,6 +113,9 @@ export default function NoteCard({
       <div className="flex items-start gap-2 mb-1.5">
         {draggable && (
           <span
+            draggable
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
             className="text-neutral-400 hover:text-neutral-600 cursor-grab active:cursor-grabbing self-stretch flex items-center -ml-1"
             title="ลากเพื่อจัดลำดับ"
           >
@@ -105,6 +134,17 @@ export default function NoteCard({
           )}
         </div>
         <div className="flex gap-0.5 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => void copyAll()}
+            title="คัดลอกทั้งโน้ต"
+            className={cn(
+              'p-1 rounded hover:bg-neutral-100',
+              copied ? 'text-emerald-600' : 'text-neutral-400 hover:text-neutral-700',
+            )}
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+          </button>
           <button
             type="button"
             onClick={onTogglePin}
