@@ -306,6 +306,9 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
     const isActionable =
         quote && (quote.status === 'draft' || quote.status === 'sent');
     const isApproved = quote?.status === 'accepted';
+    // Customer-accepted (e.g. via the portal/storefront) but not yet turned into
+    // an order — the admin still needs to convert it so it can be prepared/shipped.
+    const needsConversion = !!quote && quote.status === 'accepted' && !quote.converted_to_order_id;
 
     return (
         <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
@@ -327,10 +330,10 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                             <span
                                 className={cn(
                                     'px-3 py-1.5 rounded-md text-xs font-bold border',
-                                    STATUS_STYLES[quote.status] ?? STATUS_STYLES.draft,
+                                    needsConversion ? STATUS_STYLES.draft : (STATUS_STYLES[quote.status] ?? STATUS_STYLES.draft),
                                 )}
                             >
-                                {STATUS_LABELS[quote.status] ?? quote.status}
+                                {needsConversion ? 'ตอบรับแล้ว — รอสร้างคำสั่งซื้อ' : (STATUS_LABELS[quote.status] ?? quote.status)}
                             </span>
                         )}
                     </div>
@@ -439,35 +442,35 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                         </Button>
                     )}
                     {isActionable && (
-                        <>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handleReject}
-                                disabled={approving || rejecting}
-                                className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
-                            >
-                                {rejecting ? (
-                                    <Loader2 size={14} className="animate-spin mr-1" />
-                                ) : (
-                                    <XCircle size={14} className="mr-1" />
-                                )}
-                                ปฏิเสธ
-                            </Button>
-                            <Button
-                                type="button"
-                                onClick={handleApprove}
-                                disabled={approving || rejecting}
-                                className="bg-emerald-600 hover:bg-emerald-700 gap-1.5"
-                            >
-                                {approving ? (
-                                    <Loader2 size={14} className="animate-spin" />
-                                ) : (
-                                    <CheckCircle2 size={14} />
-                                )}
-                                อนุมัติ → สร้างคำสั่งซื้อ
-                            </Button>
-                        </>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleReject}
+                            disabled={approving || rejecting}
+                            className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                        >
+                            {rejecting ? (
+                                <Loader2 size={14} className="animate-spin mr-1" />
+                            ) : (
+                                <XCircle size={14} className="mr-1" />
+                            )}
+                            ปฏิเสธ
+                        </Button>
+                    )}
+                    {(isActionable || needsConversion) && (
+                        <Button
+                            type="button"
+                            onClick={handleApprove}
+                            disabled={approving || rejecting}
+                            className="bg-emerald-600 hover:bg-emerald-700 gap-1.5"
+                        >
+                            {approving ? (
+                                <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                                <CheckCircle2 size={14} />
+                            )}
+                            อนุมัติ → สร้างคำสั่งซื้อ
+                        </Button>
                     )}
                     {isApproved && quote?.converted_to_order_id && (
                         <span className="text-xs text-emerald-700 self-center">
