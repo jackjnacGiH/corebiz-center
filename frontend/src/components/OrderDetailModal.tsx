@@ -140,18 +140,29 @@ export default function OrderDetailModal({
         }
     }
 
-    // Once พร้อมส่ง/จัดส่งแล้ว (shipped/delivered) the document becomes a
-    // delivery note (ใบส่งของ) with the same running number, prefix → DN-.
+    // The same order record prints as a different document depending on its
+    // current status — no separate records:
+    //   • รอดำเนินการ (pending)        → ใบเสนอราคา (QT-)  ← revert here to re-quote
+    //   • กำลังเตรียม (processing)      → ใบสั่งขาย   (SO-)
+    //   • พร้อมส่ง/จัดส่งแล้ว (shipped/delivered) → ใบส่งของ (DN-)
     const isDelivery = order?.status === 'shipped' || order?.status === 'delivered';
+    const isQuote = order?.status === 'pending';
     // Per-status document titles (override the default delivery/sales-order title).
     const DOC_TITLES: Partial<Record<OrderStatus, string>> = {
+        pending: 'ใบเสนอราคา',
         delivered: 'ใบสรุป จัดส่งแล้ว',
         cancelled: 'ใบยกเลิก',
         returned: 'ใบคืน',
     };
     const docTitle = (order && DOC_TITLES[order.status as OrderStatus])
         || (isDelivery ? 'ใบส่งของ' : 'ใบสั่งขาย');
-    const docCode = order ? (isDelivery ? order.code.replace(/^(SO|ORD|QT)-/, 'DN-') : order.code) : '';
+    const docCode = order
+        ? isQuote
+            ? order.code.replace(/^(SO|ORD|DN)-/, 'QT-')
+            : isDelivery
+                ? order.code.replace(/^(SO|ORD|QT)-/, 'DN-')
+                : order.code
+        : '';
 
     return (
         <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
