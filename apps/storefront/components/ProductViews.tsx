@@ -144,6 +144,13 @@ function CompactView({ products }: { products: SProduct[] }) {
               <div className="p-1.5 space-y-0.5">
                 <h3 className="text-[11px] text-neutral-800 leading-tight line-clamp-2 min-h-[1.9rem]">{p.name_th}</h3>
                 <div className="text-xs font-extrabold" style={{ color: BRAND }}>{formatTHB(effectivePrice(p))}</div>
+                <div className="text-[10px] leading-tight">
+                  {p.in_stock && p.stock_qty > 0 ? (
+                    <span className="text-green-600">พร้อมขาย {p.stock_qty.toLocaleString("en-US")} {p.unit ?? "ชิ้น"}</span>
+                  ) : (
+                    <span className="text-amber-600">สั่งผลิต</span>
+                  )}
+                </div>
               </div>
             </Link>
             <AddBtn p={p} variant="overlay" />
@@ -202,6 +209,7 @@ function TableView({ products }: { products: SProduct[] }) {
             <th className="text-left font-semibold px-3 py-2.5 w-14">รูป</th>
             <th className="text-left font-semibold px-3 py-2.5">สินค้า / SKU</th>
             <th className="text-left font-semibold px-3 py-2.5 whitespace-nowrap">สถานะ</th>
+            <th className="text-right font-semibold px-3 py-2.5 whitespace-nowrap">พร้อมขาย</th>
             <th className="text-right font-semibold px-3 py-2.5 whitespace-nowrap">ราคา</th>
             <th className="px-3 py-2.5" />
           </tr>
@@ -228,6 +236,13 @@ function TableView({ products }: { products: SProduct[] }) {
                   </Link>
                 </td>
                 <td className="px-3 py-2 align-middle"><Stock inStock={p.in_stock} /></td>
+                <td className="px-3 py-2 text-right align-middle whitespace-nowrap">
+                  {p.in_stock && p.stock_qty > 0 ? (
+                    <span className="text-neutral-700">{p.stock_qty.toLocaleString("en-US")} {p.unit ?? "ชิ้น"}</span>
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right align-middle"><PriceTag p={p} className="justify-end" /></td>
                 <td className="px-3 py-2 text-right align-middle"><AddBtn p={p} variant="mini" /></td>
               </tr>
