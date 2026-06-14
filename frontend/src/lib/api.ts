@@ -1748,8 +1748,9 @@ export const quoteRecordApi = {
   },
 
   /**
-   * Approve a quote → create an Order with status='pending' that copies all
-   * its line items. The quote's status flips to 'accepted' and its
+   * Approve a quote → create an Order with status='processing' (กำลังเตรียม)
+   * that copies all its line items — orders never start in 'pending', that
+   * tab is for quotes. The quote's status flips to 'accepted' and its
    * `converted_to_order_id` points at the new order. Returns the new order's
    * id + code.
    *
