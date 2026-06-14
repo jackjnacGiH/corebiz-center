@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { getGroups, getGroupById, getProductsByGroup, keywordsFromProducts, collectionArticle } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
 import CollectionArticle from "@/components/CollectionArticle";
-import { ProductCard, Breadcrumb } from "@/components/ui";
+import { Breadcrumb } from "@/components/ui";
+import ProductViews from "@/components/ProductViews";
 import SearchBox from "@/components/SearchBox";
 
 export const revalidate = 300;
@@ -65,11 +66,11 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
         <div className="mt-6 max-w-xl">
           <SearchBox variant="page" />
         </div>
-        <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {products.map((p) => (
-            <ProductCard key={p.id} p={p} />
-          ))}
-        </div>
+        {products.length > 0 && (
+          <div className="mt-8">
+            <ProductViews products={products} />
+          </div>
+        )}
         {products.length === 0 && (
           <p className="mt-10 text-center text-neutral-400">ยังไม่มีสินค้าในกลุ่มนี้</p>
         )}

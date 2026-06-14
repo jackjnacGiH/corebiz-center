@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { searchProducts } from "@/lib/products";
 import { getOrg } from "@/lib/seo";
-import { ProductCard, Breadcrumb } from "@/components/ui";
+import { Breadcrumb } from "@/components/ui";
+import ProductViews from "@/components/ProductViews";
 import SearchBox from "@/components/SearchBox";
 
 export const metadata: Metadata = {
@@ -41,10 +42,8 @@ export default async function SearchPage({
           </p>
 
           {results.length > 0 ? (
-            <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {results.map((p) => (
-                <ProductCard key={p.id} p={p} />
-              ))}
+            <div className="mt-5">
+              <ProductViews products={results} />
             </div>
           ) : (
             <div className="mt-10 rounded-xl border border-neutral-200 bg-neutral-50 p-8 text-center">
