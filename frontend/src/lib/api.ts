@@ -21,6 +21,10 @@ import type {
   OrgSettings, OrgSettingsUpdate,
 } from './database.types';
 
+// Re-export commonly-used row types so UI components can import them from the
+// api module alongside its helpers (e.g. type Customer for the quote picker).
+export type { Customer } from './database.types';
+
 // =========================================================================
 // Products + Inventory (joined view used by the Inventory page)
 // =========================================================================
@@ -404,6 +408,24 @@ export const customersApi = {
       if (batch.length < PAGE) break;
     }
     return all;
+  },
+
+  /** Lightweight server-side search for pickers — matches name / code /
+   *  phone / mobile / tax id / contact name. Avoids pulling the whole
+   *  3k-row customer list into a dropdown. */
+  async search(term: string, limit = 30): Promise<Customer[]> {
+    const t = term.trim().replace(/[,()*]/g, ' ').trim();
+    if (!t) return [];
+    const { data, error } = await supabase
+      .from('customers')
+      .select('id,code,name,tier,phone,mobile,tax_id,contact_name,billing_address')
+      .or(
+        `name.ilike.*${t}*,code.ilike.*${t}*,phone.ilike.*${t}*,mobile.ilike.*${t}*,tax_id.ilike.*${t}*,contact_name.ilike.*${t}*`,
+      )
+      .order('total_spent', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []) as unknown as Customer[];
   },
 
   async create(input: CustomerInsert): Promise<Customer> {
@@ -1683,6 +1705,16 @@ export const quoteRecordApi = {
       .from('quotes')
       .update({ status } as never)
       .eq('id', id);
+    if (error) throw error;
+  },
+
+  /** Link (or unlink) the quote to a customer — used by the admin to assign a
+   *  real customer to a bot-created "ลูกค้าทั่วไป" quote before approving. */
+  async setCustomer(quoteId: string, customerId: string | null): Promise<void> {
+    const { error } = await supabase
+      .from('quotes')
+      .update({ customer_id: customerId } as never)
+      .eq('id', quoteId);
     if (error) throw error;
   },
 

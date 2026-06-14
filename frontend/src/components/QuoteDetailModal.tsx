@@ -17,8 +17,9 @@ import {
     XCircle,
     Loader2,
     AlertCircle,
+    Users,
 } from 'lucide-react';
-import { quoteRecordApi, orgSettingsApi, productsApi, tierApi, type QuoteListItem, type QuoteItem, type ProductWithInventory } from '../lib/api';
+import { quoteRecordApi, orgSettingsApi, productsApi, tierApi, customersApi, type QuoteListItem, type QuoteItem, type ProductWithInventory, type Customer } from '../lib/api';
 import {
     Dialog,
     DialogContent,
@@ -63,6 +64,111 @@ function formatTHB(v: number | string): string {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(Number(v));
+}
+
+/** Inline customer assigner — lets the admin search and attach a real customer
+ *  to a quote (e.g. a bot-created "ลูกค้าทั่วไป" quote) before approving. */
+function CustomerPicker({
+    current,
+    onPick,
+    disabled,
+}: {
+    current: { id?: string | null; name?: string | null } | null;
+    onPick: (customerId: string | null) => Promise<void>;
+    disabled?: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const [q, setQ] = useState('');
+    const [results, setResults] = useState<Customer[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        if (!open) return;
+        const term = q.trim();
+        if (!term) { setResults([]); return; }
+        let cancelled = false;
+        setLoading(true);
+        const h = setTimeout(async () => {
+            try {
+                const rows = await customersApi.search(term, 30);
+                if (!cancelled) setResults(rows);
+            } catch {
+                if (!cancelled) setResults([]);
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        }, 250);
+        return () => { cancelled = true; clearTimeout(h); };
+    }, [q, open]);
+
+    async function choose(id: string | null) {
+        setBusy(true);
+        try { await onPick(id); setOpen(false); setQ(''); setResults([]); }
+        finally { setBusy(false); }
+    }
+
+    return (
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-sm min-w-0">
+                    <span className="text-neutral-500">ลูกค้า: </span>
+                    <span className="font-semibold text-neutral-800">{current?.name ?? '— ลูกค้าทั่วไป —'}</span>
+                </div>
+                <Button
+                    type="button" size="sm" variant="outline" disabled={disabled || busy}
+                    onClick={() => setOpen((o) => !o)}
+                    className="gap-1.5 border-indigo-300 text-indigo-700 hover:bg-indigo-100 h-8"
+                >
+                    {busy ? <Loader2 size={14} className="animate-spin" /> : <Users size={14} />} เลือก/เปลี่ยนลูกค้า
+                </Button>
+            </div>
+            {open && (
+                <div className="mt-2.5">
+                    <input
+                        autoFocus
+                        value={q}
+                        onChange={(e) => setQ(e.target.value)}
+                        placeholder="ค้นหาชื่อ / รหัส / เบอร์โทร / เลขผู้เสียภาษี..."
+                        className="w-full h-9 rounded-md border border-neutral-200 bg-white px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                    />
+                    <div className="mt-2 max-h-60 overflow-y-auto rounded-md border border-neutral-200 bg-white divide-y divide-neutral-100">
+                        {loading && (
+                            <div className="p-3 text-center text-xs text-neutral-400">
+                                <Loader2 size={14} className="inline animate-spin mr-1" /> กำลังค้นหา...
+                            </div>
+                        )}
+                        {!loading && q.trim() && results.length === 0 && (
+                            <div className="p-3 text-center text-xs text-neutral-400">ไม่พบลูกค้าที่ตรงกับคำค้น</div>
+                        )}
+                        {results.map((c) => (
+                            <button
+                                key={c.id}
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void choose(c.id)}
+                                className="w-full text-left px-3 py-2 hover:bg-indigo-50 disabled:opacity-50"
+                            >
+                                <div className="text-sm font-medium text-neutral-800">{c.name}</div>
+                                <div className="text-[11px] text-neutral-400">
+                                    {[c.code, c.phone || (c as { mobile?: string | null }).mobile, c.tax_id].filter(Boolean).join(' · ') || '—'}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                    {current?.id && (
+                        <button
+                            type="button" disabled={busy}
+                            onClick={() => void choose(null)}
+                            className="mt-2 text-xs text-neutral-500 hover:text-red-600 disabled:opacity-50"
+                        >
+                            ล้างลูกค้า (ตั้งกลับเป็นลูกค้าทั่วไป)
+                        </button>
+                    )}
+                </div>
+            )}
+        </div>
+    );
 }
 
 export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }: Props) {
@@ -183,6 +289,20 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
         }
     }
 
+    async function pickCustomer(customerId: string | null) {
+        if (!quote) return;
+        setErr(null);
+        try {
+            await quoteRecordApi.setCustomer(quote.id, customerId);
+            const fresh = await quoteRecordApi.getWithItems(quote.id);
+            setQuote(fresh.quote);
+            setItems(fresh.items);
+            onChange?.();
+        } catch (e) {
+            setErr((e as Error).message);
+        }
+    }
+
     const isActionable =
         quote && (quote.status === 'draft' || quote.status === 'sent');
     const isApproved = quote?.status === 'accepted';
@@ -256,6 +376,14 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                             onSave={saveItems}
                             onCancel={() => setEditing(false)}
                             busy={savingItems}
+                        />
+                    )}
+
+                    {quote && !editing && isActionable && (
+                        <CustomerPicker
+                            current={quote.customer ? { id: quote.customer.id, name: quote.customer.name } : null}
+                            onPick={pickCustomer}
+                            disabled={approving || rejecting}
                         />
                     )}
 
