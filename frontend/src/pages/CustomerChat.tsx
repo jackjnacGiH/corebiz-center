@@ -108,6 +108,35 @@ function detectLang(s: string): 'th' | 'en' {
  * paren arrives in a later SSE chunk.
  */
 const IMG_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+const URL_RE = /(https?:\/\/[^\s)]+)/g;
+
+// Turn bare URLs inside a text fragment into clickable links (e.g. the public
+// quote link the system sends after creating a quote from chat).
+function linkifyText(text: string, keyBase: string): ReactNode[] {
+    const nodes: ReactNode[] = [];
+    let last = 0;
+    let mm: RegExpExecArray | null;
+    URL_RE.lastIndex = 0;
+    while ((mm = URL_RE.exec(text)) !== null) {
+        if (mm.index > last) nodes.push(text.slice(last, mm.index));
+        const url = mm[0];
+        nodes.push(
+            <a
+                key={`${keyBase}-a-${mm.index}`}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-indigo-600 underline break-all hover:text-indigo-700"
+            >
+                {url}
+            </a>,
+        );
+        last = URL_RE.lastIndex;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+}
+
 function renderMessageContent(content: string): ReactNode[] {
     if (!content) return [];
     const out: ReactNode[] = [];
@@ -116,7 +145,7 @@ function renderMessageContent(content: string): ReactNode[] {
     IMG_MD_RE.lastIndex = 0;
     while ((m = IMG_MD_RE.exec(content)) !== null) {
         if (m.index > lastIndex) {
-            out.push(content.slice(lastIndex, m.index));
+            out.push(...linkifyText(content.slice(lastIndex, m.index), `t-${lastIndex}`));
         }
         out.push(
             <img
@@ -130,7 +159,7 @@ function renderMessageContent(content: string): ReactNode[] {
         lastIndex = IMG_MD_RE.lastIndex;
     }
     if (lastIndex < content.length) {
-        out.push(content.slice(lastIndex));
+        out.push(...linkifyText(content.slice(lastIndex), `t-${lastIndex}`));
     }
     return out;
 }
@@ -292,11 +321,14 @@ export default function CustomerChat() {
                         sender_name?: string | null;
                         content: string;
                         created_at: string;
+                        metadata?: { quote_link?: boolean } | null;
                     };
-                    // Only react to AGENT (human admin) messages here —
-                    // 'customer' and 'bot' messages were inserted by us
-                    // (or our own askStream) so they're already in state.
-                    if (row.sender_type !== 'agent') return;
+                    // React to AGENT (human admin) messages, and to bot-sent
+                    // quote links (inserted server-side by a trigger when the
+                    // system creates a quote — so NOT already in our state).
+                    // Other 'customer'/'bot' rows came from us/askStream.
+                    const isQuoteLink = row.sender_type === 'bot' && !!row.metadata?.quote_link;
+                    if (row.sender_type !== 'agent' && !isQuoteLink) return;
                     // Sign the bubble with the admin's name so the visitor knows
                     // who replied (skip emails / missing names).
                     const name = row.sender_name && !row.sender_name.includes('@') ? row.sender_name : null;

@@ -19,6 +19,7 @@ const OpenclawRAG = lazy(() => import('./pages/OpenclawRAG'));
 const KnowledgeChat = lazy(() => import('./pages/KnowledgeChat'));
 const CustomerChat = lazy(() => import('./pages/CustomerChat'));
 const SurveyPage = lazy(() => import('./pages/SurveyPage'));
+const PublicQuote = lazy(() => import('./pages/PublicQuote'));
 const ReferPage = lazy(() => import('./pages/ReferPage'));
 const Affiliate = lazy(() => import('./pages/Affiliate'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -53,6 +54,9 @@ function App() {
               <Route path="/widget" element={<CustomerChat />} />
               {/* Public satisfaction / NPS rating page reached from a LINE link. */}
               <Route path="/survey/:token" element={<SurveyPage />} />
+              {/* Public no-login quote viewer — link the system sends after
+                  creating a quote from chat (view + download PDF, no account). */}
+              <Route path="/q/:token" element={<PublicQuote />} />
               {/* Public referral landing page reached from a customer's share link. */}
               <Route path="/refer/:code" element={<ReferPage />} />
               <Route
