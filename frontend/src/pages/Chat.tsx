@@ -163,6 +163,32 @@ function ChatImage({ src, alt }: { src: string; alt: string }) {
 }
 
 const IMG_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+// Turn bare http(s) URLs in a text run into clickable links (open in new tab).
+const URL_RE = /(https?:\/\/[^\s<]+)/g;
+function linkifyText(text: string, keyBase: string): ReactNode[] {
+    if (!text) return [];
+    const nodes: ReactNode[] = [];
+    let last = 0;
+    let i = 0;
+    let m: RegExpExecArray | null;
+    URL_RE.lastIndex = 0;
+    while ((m = URL_RE.exec(text)) !== null) {
+        if (m.index > last) nodes.push(text.slice(last, m.index));
+        let url = m[1];
+        let trail = '';
+        const tm = url.match(/[)\].,!?]+$/); // keep trailing punctuation out of the link
+        if (tm) { trail = tm[0]; url = url.slice(0, -trail.length); }
+        nodes.push(
+            <a key={`lnk-${keyBase}-${i++}`} href={url} target="_blank" rel="noopener noreferrer"
+                className="text-blue-600 underline break-all hover:text-blue-700">{url}</a>,
+        );
+        if (trail) nodes.push(trail);
+        last = m.index + m[1].length;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+}
+
 function renderMessageContent(content: string): ReactNode[] {
     if (!content) return [];
     const out: ReactNode[] = [];
@@ -170,11 +196,11 @@ function renderMessageContent(content: string): ReactNode[] {
     let m: RegExpExecArray | null;
     IMG_MD_RE.lastIndex = 0;
     while ((m = IMG_MD_RE.exec(content)) !== null) {
-        if (m.index > lastIndex) out.push(content.slice(lastIndex, m.index));
+        if (m.index > lastIndex) out.push(...linkifyText(content.slice(lastIndex, m.index), `t${m.index}`));
         out.push(<ChatImage key={`img-${m.index}`} src={m[2]} alt={m[1] || 'image'} />);
         lastIndex = IMG_MD_RE.lastIndex;
     }
-    if (lastIndex < content.length) out.push(content.slice(lastIndex));
+    if (lastIndex < content.length) out.push(...linkifyText(content.slice(lastIndex), 'tail'));
     return out;
 }
 
