@@ -8,6 +8,7 @@ import {
 } from '../lib/api';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { swrList, hasCache } from '../lib/cache';
 import OrderDetailModal from '../components/OrderDetailModal';
 import QuoteDetailModal from '../components/QuoteDetailModal';
 import PageHeader from '../components/PageHeader';
@@ -107,15 +108,17 @@ export default function Orders() {
     const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
     const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
 
-    async function load() {
-        setLoading(true);
+    // force=true skips the cache (Reload / realtime / after a write). Plain
+    // navigation serves the cached lists instantly + revalidates in background.
+    async function load(force = false) {
+        if (!force && !hasCache('orders')) setLoading(true);
         setErr(null);
         try {
             // Pull both in parallel — both are small tables relative to UI
             // page size; we filter / paginate client-side.
             const [o, q] = await Promise.all([
-                ordersApi.list(),
-                quoteRecordApi.list().catch(() => []),
+                swrList('orders', () => ordersApi.list(), { force, onFresh: setOrders }),
+                swrList('quotes', () => quoteRecordApi.list().catch(() => []), { force, onFresh: setQuotes }),
             ]);
             setOrders(o);
             setQuotes(q);
@@ -127,8 +130,8 @@ export default function Orders() {
     }
 
     useEffect(() => { void load(); }, []);
-    useRealtimeTable('orders', () => void load());
-    useRealtimeTable('quotes', () => void load());
+    useRealtimeTable('orders', () => void load(true));
+    useRealtimeTable('quotes', () => void load(true));
 
     /** Merge orders + quotes into a single, sortable, filterable view. */
     const rows: UnifiedRow[] = useMemo(() => {
@@ -196,7 +199,7 @@ export default function Orders() {
     async function handleStatusChange(orderId: string, newStatus: OrderStatus) {
         try {
             await ordersApi.updateStatus(orderId, newStatus);
-            await load();
+            await load(true);
         } catch (e) {
             setErr((e as Error).message);
         }
@@ -226,7 +229,7 @@ export default function Orders() {
                         <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => load()}
+                            onClick={() => load(true)}
                             disabled={loading}
                             className="gap-2"
                         >
@@ -443,14 +446,14 @@ export default function Orders() {
                 isOpen={detailOrderId !== null}
                 orderId={detailOrderId}
                 onClose={() => setDetailOrderId(null)}
-                onStatusChange={() => void load()}
+                onStatusChange={() => void load(true)}
             />
 
             <QuoteDetailModal
                 isOpen={detailQuoteId !== null}
                 quoteId={detailQuoteId}
                 onClose={() => setDetailQuoteId(null)}
-                onChange={() => void load()}
+                onChange={() => void load(true)}
             />
         </div>
     );

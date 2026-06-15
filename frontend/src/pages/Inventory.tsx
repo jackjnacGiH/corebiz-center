@@ -18,6 +18,7 @@ import {
 } from '../lib/api';
 import type { Category, Warehouse } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { swrList, CK, hasCache } from '../lib/cache';
 import { useLanguage } from '../i18n';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import ProductImagePreview from '../components/ProductImagePreview';
@@ -115,13 +116,16 @@ export default function Inventory() {
   const [isSyncLogOpen, setIsSyncLogOpen] = useState(false);
   const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
 
-  async function load() {
-    setLoading(true); setErr(null);
+  // force=true skips the cache (Reload / realtime / after a write). Plain
+  // navigation serves cached lists instantly + revalidates in background.
+  async function load(force = false) {
+    if (!force && !hasCache(CK.products)) setLoading(true);
+    setErr(null);
     try {
       const [p, c, w, sl] = await Promise.all([
-        productsApi.list(),
-        categoriesApi.list(),
-        warehousesApi.list(),
+        swrList(CK.products, () => productsApi.list(), { force, onFresh: setProducts }),
+        swrList(CK.categories, () => categoriesApi.list(), { force, onFresh: setCategories }),
+        swrList(CK.warehouses, () => warehousesApi.list(), { force, onFresh: setWarehouses }),
         inventorySyncApi.latestLog().catch(() => null),
       ]);
       setProducts(p); setCategories(c); setWarehouses(w);
@@ -151,7 +155,7 @@ export default function Inventory() {
         if (fresh && fresh.id !== startedBefore && fresh.status !== 'pending') {
           setLastSync(fresh);
           // Pull fresh inventory rows now that the sync wrote them
-          await load();
+          await load(true);
           if (fresh.status === 'error') {
             setErr(`Sync ผิดพลาด: ${fresh.error ?? 'unknown'}`);
           }
@@ -167,9 +171,9 @@ export default function Inventory() {
   }
 
   useEffect(() => { void load(); }, []);
-  useRealtimeTable('products', () => void load());
-  useRealtimeTable('inventory', () => void load());
-  useRealtimeTable('product_groups', () => void load());
+  useRealtimeTable('products', () => void load(true));
+  useRealtimeTable('inventory', () => void load(true));
+  useRealtimeTable('product_groups', () => void load(true));
 
   // Filter + sort
   const searchTokens = useMemo(
@@ -275,12 +279,12 @@ export default function Inventory() {
         reorder_level: form.reorder_level,
       });
     }
-    await load();
+    await load(true);
   }
 
   async function handleDelete(p: ProductWithInventory) {
     if (!window.confirm(`ลบ ${p.sku} — ${p.name_th}?`)) return;
-    try { await productsApi.remove(p.id); await load(); }
+    try { await productsApi.remove(p.id); await load(true); }
     catch (e) { setErr((e as Error).message); }
   }
 
@@ -304,7 +308,7 @@ export default function Inventory() {
     const results = await Promise.allSettled(ids.map(id => productsApi.remove(id)));
     const failed = results.filter(r => r.status === 'rejected').length;
     setSelected(new Set());
-    await load();
+    await load(true);
     setBulkDeleting(false);
     if (failed > 0) {
       const firstErr = results.find(r => r.status === 'rejected') as
@@ -328,7 +332,7 @@ export default function Inventory() {
     if (ids.length === 0) return 0;
     const count = await productsApi.bulkUpdate(ids, patch);
     setSelected(new Set());
-    await load();
+    await load(true);
     return count;
   }
 
@@ -354,7 +358,7 @@ export default function Inventory() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-          <IconBtn onClick={() => load()} disabled={loading} title="Reload">
+          <IconBtn onClick={() => load(true)} disabled={loading} title="Reload">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </IconBtn>
           <button
@@ -819,7 +823,7 @@ export default function Inventory() {
       <ImportInventoryModal
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}
-        onImported={() => void load()}
+        onImported={() => void load(true)}
         existingProducts={products}
         categories={categories}
       />
@@ -832,7 +836,7 @@ export default function Inventory() {
       <ProductGroupManagerModal
         isOpen={isGroupManagerOpen}
         onClose={() => setIsGroupManagerOpen(false)}
-        onChanged={() => void load()}
+        onChanged={() => void load(true)}
       />
     </div>
   );

@@ -36,6 +36,7 @@ import {
 } from '../lib/api';
 import type { Category, Customer } from '../lib/database.types';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { swrList, CK, hasCache } from '../lib/cache';
 import { downloadQuotation } from '../components/QuotationPDF';
 import ProductImagePreview from '../components/ProductImagePreview';
 import CustomerPickerModal from '../components/CustomerPickerModal';
@@ -216,13 +217,16 @@ export default function Ecommerce() {
     }
   }, [viewMode]);
 
-  async function load() {
-    setLoading(true); setErr(null);
+  // force=true skips the cache (Reload / realtime / after a write). On a plain
+  // navigation it serves the cached lists instantly + revalidates in background.
+  async function load(force = false) {
+    if (!force && !hasCache(CK.products)) setLoading(true);
+    setErr(null);
     try {
       const [p, c, cust, org] = await Promise.all([
-        productsApi.list(),
-        categoriesApi.list(),
-        customersApi.list().catch(() => [] as Customer[]),
+        swrList(CK.products, () => productsApi.list(), { force, onFresh: (d) => setProducts(d.filter((x) => x.status === 'active')) }),
+        swrList(CK.categories, () => categoriesApi.list(), { force, onFresh: setCategories }),
+        swrList(CK.customers, () => customersApi.list(), { force, onFresh: setCustomers }).catch(() => [] as Customer[]),
         orgSettingsApi.get().catch(() => null),
       ]);
       setProducts(p.filter(x => x.status === 'active'));
@@ -237,10 +241,10 @@ export default function Ecommerce() {
   }
 
   useEffect(() => { void load(); }, []);
-  // Realtime — refresh when products/inventory change
-  useRealtimeTable('products', () => void load());
-  useRealtimeTable('inventory', () => void load());
-  useRealtimeTable('product_groups', () => void load());
+  // Realtime — refresh when products/inventory change (force fresh)
+  useRealtimeTable('products', () => void load(true));
+  useRealtimeTable('inventory', () => void load(true));
+  useRealtimeTable('product_groups', () => void load(true));
 
   /**
    * Set of group ids that are currently expanded. Persisted in memory only
@@ -726,7 +730,7 @@ export default function Ecommerce() {
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
-            onClick={() => load()}
+            onClick={() => load(true)}
             className="commerce-secondary-action"
             title="Reload"
             disabled={loading}
