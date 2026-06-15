@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Loader2, Download, FileText, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { formatThaiAddress } from '../components/CustomerPickerModal';
-import type { QuoteData } from '../components/QuotationPDF';
+import QuoteDocument, { type OrgInfo, type QuoteDocItem, formatThaiAddress } from '../components/QuoteDocument';
+import { printElement } from '../lib/print';
 
 /**
  * PublicQuote — public (no-login) quote viewer.
@@ -12,16 +12,33 @@ import type { QuoteData } from '../components/QuotationPDF';
  * `/account` portal link, so when the system creates a quote from chat it
  * sends THIS link instead: `/q/:token`. The token is an unguessable
  * `quotes.public_token` (same secret-link model as the survey page). It calls
- * the anon-callable `get_quote_by_token` RPC, renders the quote, and lets the
- * customer download the PDF — without any account.
+ * the anon-callable `get_quote_by_token` RPC and renders the quote.
  *
- * The on-screen quote is rendered as plain HTML (not a PDF iframe) so it shows
- * reliably on every device — most customers open the LINE link on a phone,
- * where an embedded <PDFViewer> blob iframe often renders blank. The actual PDF
- * is one tap away via "ดาวน์โหลด PDF".
+ * It reuses the SAME <QuoteDocument> component as the in-system quote view, so
+ * the customer sees an identical document. "ดาวน์โหลด PDF" uses the same
+ * printElement() popup as the admin (browser print → Save as PDF), which is
+ * reliable across devices and produces an identical-looking document.
  */
-function fmt(n: number): string {
-  return new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+interface QuoteView {
+  code: string;
+  created_at: string;
+  valid_until?: string | null;
+  customerName: string;
+  customerAddress?: string | null;
+  customerTaxId?: string | null;
+  org: OrgInfo;
+  items: QuoteDocItem[];
+  subtotal: number;
+  discount: number;
+  vat: number;
+  total: number;
+  note?: string | null;
+}
+
+const DOC_ID = 'public-quote-doc';
+
+function fmtMoney(n: number): string {
+  return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(n);
 }
 function fmtDate(iso?: string | null): string {
   if (!iso) return '—';
@@ -32,9 +49,8 @@ function fmtDate(iso?: string | null): string {
 export default function PublicQuote() {
   const { token } = useParams<{ token: string }>();
   const [state, setState] = useState<'loading' | 'ready' | 'notfound' | 'error'>('loading');
-  const [data, setData] = useState<QuoteData | null>(null);
+  const [q, setQ] = useState<QuoteView | null>(null);
   const [errMsg, setErrMsg] = useState('');
-  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -47,41 +63,41 @@ export default function PublicQuote() {
         if (!alive) return;
         if (!row) { setState('notfound'); return; }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const q = row as any;
-        const mapped: QuoteData = {
-          code: q.code,
-          customer_name: q.customer_name || null,
-          customer_address: formatThaiAddress(q.customer_billing_address) || null,
-          customer_tax_id: q.customer_tax_id || null,
-          created_at: q.created_at,
-          valid_until: q.valid_until ?? null,
+        const r = row as any;
+        const s = r.seller ?? {};
+        const mapped: QuoteView = {
+          code: r.code,
+          created_at: r.created_at,
+          valid_until: r.valid_until ?? null,
+          customerName: r.customer_name || '—',
+          customerAddress: formatThaiAddress(r.customer_billing_address) || null,
+          customerTaxId: r.customer_tax_id || null,
+          org: {
+            business_name: s.name || 'บริษัท เจ แนค (ประเทศไทย) จำกัด',
+            address: s.address ?? null,
+            tax_id: s.tax_id ?? null,
+            phone: s.phone ?? null,
+            email: s.email ?? null,
+            website: s.website ?? null,
+            logo_url: s.logo_url ?? null,
+          },
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          items: ((q.items ?? []) as any[]).map((it) => ({
+          items: ((r.items ?? []) as any[]).map((it) => ({
+            name: it.product_name ?? '',
             sku: it.sku ?? '',
-            product_name: it.product_name ?? '',
-            quantity: Number(it.quantity ?? 0),
-            unit_price: Number(it.unit_price ?? 0),
+            qty: Number(it.quantity ?? 0),
+            unit: Number(it.unit_price ?? 0),
+            unitLabel: it.unit ?? null,
+            lineDisc: Number(it.discount ?? 0),
             total: Number(it.total ?? 0),
           })),
-          subtotal: Number(q.subtotal ?? 0),
-          discount: Number(q.discount ?? 0),
-          vat: Number(q.vat ?? 0),
-          total: Number(q.total ?? 0),
-          notes: q.notes ?? null,
-          seller: q.seller
-            ? {
-                name: q.seller.name || 'JNAC Thailand',
-                tax_id: q.seller.tax_id ?? null,
-                address: q.seller.address ?? null,
-                phone: q.seller.phone ?? null,
-                email: q.seller.email ?? null,
-                website: q.seller.website ?? null,
-                logo_url: q.seller.logo_url ?? null,
-              }
-            : null,
-          doc_type: 'quotation',
+          subtotal: Number(r.subtotal ?? 0),
+          discount: Number(r.discount ?? 0),
+          vat: Number(r.vat ?? 0),
+          total: Number(r.total ?? 0),
+          note: r.notes ?? null,
         };
-        setData(mapped);
+        setQ(mapped);
         setState('ready');
       } catch (e) {
         if (!alive) return;
@@ -92,20 +108,13 @@ export default function PublicQuote() {
     return () => { alive = false; };
   }, [token]);
 
-  async function onDownload() {
-    if (!data || downloading) return;
-    setDownloading(true);
-    try {
-      // Lazy-load the heavy @react-pdf/renderer bundle only when the customer
-      // actually downloads — so the HTML quote view loads instantly on mobile.
-      const { downloadQuotation } = await import('../components/QuotationPDF');
-      await downloadQuotation(data);
-    } catch { /* ignore — download is best-effort */ }
-    finally { setDownloading(false); }
+  function onDownload() {
+    if (!q) return;
+    printElement(DOC_ID, { title: `ใบเสนอราคา ${q.code}`, copies: ['ต้นฉบับ'] });
   }
 
   // ---- Loading / error states -------------------------------------------
-  if (state !== 'ready' || !data) {
+  if (state !== 'ready' || !q) {
     return (
       <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-neutral-100 p-8 text-center">
@@ -139,141 +148,57 @@ export default function PublicQuote() {
     );
   }
 
-  // ---- Ready: sticky header + HTML quote --------------------------------
-  const seller = data.seller;
-  const sellerName = seller?.name || 'JNAC Thailand';
-  const sellerContact = [seller?.website, seller?.email].filter(Boolean).join('  ·  ');
+  const dateLabel = q.valid_until
+    ? `${fmtDate(q.created_at)} (ยืนราคาถึง ${fmtDate(q.valid_until)})`
+    : fmtDate(q.created_at);
+
+  // ---- Ready: sticky header + the in-system quote document ---------------
   return (
     <div className="min-h-screen bg-neutral-100">
-      {/* Top bar */}
       <header className="bg-white border-b border-neutral-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
         <div className="w-9 h-9 rounded-lg bg-indigo-600 text-white grid place-items-center flex-shrink-0">
           <FileText size={18} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="font-bold text-sm text-neutral-800 truncate">ใบเสนอราคา {data.code}</div>
-          <div className="text-xs text-neutral-400 truncate">{data.customer_name || 'JNAC Thailand'}</div>
+          <div className="font-bold text-sm text-neutral-800 truncate">ใบเสนอราคา {q.code}</div>
+          <div className="text-xs text-neutral-400 truncate">{q.customerName}</div>
         </div>
         <button
           type="button"
-          onClick={() => void onDownload()}
-          disabled={downloading}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 h-9 text-sm font-semibold text-white hover:bg-indigo-700 transition flex-shrink-0 disabled:opacity-60"
+          onClick={onDownload}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 h-9 text-sm font-semibold text-white hover:bg-indigo-700 transition flex-shrink-0"
         >
-          {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} ดาวน์โหลด PDF
+          <Download size={15} /> ดาวน์โหลด / พิมพ์ PDF
         </button>
       </header>
 
-      {/* Quote paper */}
       <main className="max-w-3xl mx-auto p-3 sm:p-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden">
-          {/* Brand + doc meta */}
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-indigo-600 p-5 sm:p-6">
-            <div className="flex items-start gap-3 max-w-[62%]">
-              {seller?.logo_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={seller.logo_url} alt="logo" className="w-12 h-12 object-contain flex-shrink-0" />
-              )}
-              <div className="min-w-0">
-                <div className="text-base font-extrabold text-indigo-600 leading-tight">{sellerName}</div>
-                {seller?.address && <div className="text-[11px] text-neutral-500 mt-0.5 leading-snug">{seller.address}</div>}
-                {seller?.tax_id && <div className="text-[11px] text-neutral-500">เลขประจำตัวผู้เสียภาษี {seller.tax_id}</div>}
-                {seller?.phone && <div className="text-[11px] text-neutral-500">โทร. {seller.phone}</div>}
-                {sellerContact && <div className="text-[11px] text-neutral-400">{sellerContact}</div>}
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-lg font-bold text-neutral-800">ใบเสนอราคา / QUOTATION</div>
-              <div className="text-xs text-neutral-500 mt-1">เลขที่ / No: {data.code}</div>
-              <div className="text-xs text-neutral-500">วันที่ / Date: {fmtDate(data.created_at)}</div>
-              {data.valid_until && (
-                <div className="text-xs text-neutral-500">ใช้ได้ถึง / Valid until: {fmtDate(data.valid_until)}</div>
-              )}
-            </div>
-          </div>
-
-          {/* Customer / issuer */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5 sm:p-6 border-b border-neutral-100">
-            <div>
-              <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">ลูกค้า / Customer</div>
-              <div className="text-sm font-semibold text-neutral-800">{data.customer_name || '—'}</div>
-              {data.customer_address && <div className="text-xs text-neutral-500 mt-0.5">{data.customer_address}</div>}
-              {data.customer_tax_id && <div className="text-xs text-neutral-500 mt-0.5">เลขประจำตัวผู้เสียภาษี: {data.customer_tax_id}</div>}
-            </div>
-            <div className="sm:text-right">
-              <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">ผู้ออกเอกสาร / Issued by</div>
-              <div className="text-sm font-semibold text-neutral-800">{sellerName}</div>
-              {seller?.phone && <div className="text-xs text-neutral-500 mt-0.5">โทร. {seller.phone}</div>}
-            </div>
-          </div>
-
-          {/* Items */}
-          <div className="p-5 sm:p-6">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="bg-neutral-50 text-neutral-500 text-xs">
-                    <th className="text-left font-semibold px-2 py-2 rounded-l-lg">SKU</th>
-                    <th className="text-left font-semibold px-2 py-2">รายการ / Description</th>
-                    <th className="text-right font-semibold px-2 py-2">จำนวน</th>
-                    <th className="text-right font-semibold px-2 py-2">หน่วยละ</th>
-                    <th className="text-right font-semibold px-2 py-2 rounded-r-lg">รวม</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.items.map((it, i) => (
-                    <tr key={i} className="border-b border-neutral-100">
-                      <td className="px-2 py-2.5 text-neutral-500 whitespace-nowrap align-top">{it.sku}</td>
-                      <td className="px-2 py-2.5 text-neutral-800 align-top">{it.product_name}</td>
-                      <td className="px-2 py-2.5 text-right text-neutral-700 tabular-nums align-top">{it.quantity}</td>
-                      <td className="px-2 py-2.5 text-right text-neutral-700 tabular-nums align-top">{fmt(it.unit_price)}</td>
-                      <td className="px-2 py-2.5 text-right font-semibold text-neutral-800 tabular-nums align-top">{fmt(it.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Totals */}
-            <div className="mt-4 ml-auto w-full sm:w-72 text-sm">
-              <div className="flex justify-between py-1 text-neutral-600">
-                <span>ยอดสินค้า / Subtotal</span><span className="tabular-nums">{fmt(data.subtotal)}</span>
-              </div>
-              {data.discount > 0 && (
-                <div className="flex justify-between py-1 text-neutral-600">
-                  <span>ส่วนลด / Discount</span><span className="tabular-nums">- {fmt(data.discount)}</span>
-                </div>
-              )}
-              <div className="flex justify-between py-1 text-neutral-600">
-                <span>ภาษีมูลค่าเพิ่ม 7% / VAT</span><span className="tabular-nums">{fmt(data.vat)}</span>
-              </div>
-              <div className="flex justify-between py-2 px-3 mt-1 rounded-lg bg-indigo-600 text-white font-bold">
-                <span>ยอดสุทธิ / Grand Total (THB)</span><span className="tabular-nums">{fmt(data.total)}</span>
-              </div>
-            </div>
-
-            {data.notes && (
-              <div className="mt-5">
-                <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">หมายเหตุ / Notes</div>
-                <div className="text-xs text-neutral-500 whitespace-pre-wrap">{data.notes}</div>
-              </div>
-            )}
-          </div>
-
-          <div className="px-5 sm:px-6 py-4 border-t border-neutral-100 text-[11px] text-neutral-400">
-            เอกสารนี้สร้างจากระบบ CoreBiz Center — ราคาสุทธิ ทีมงานจะยืนยันอีกครั้งก่อนออกใบสั่งขาย
-          </div>
+        <div id={DOC_ID} className="bg-white rounded-2xl shadow-sm border border-neutral-200 p-5 sm:p-8">
+          <QuoteDocument
+            org={q.org}
+            title="ใบเสนอราคา"
+            code={q.code}
+            dateLabel={dateLabel}
+            customerName={q.customerName}
+            customerAddress={q.customerAddress}
+            customerTaxId={q.customerTaxId}
+            items={q.items}
+            subtotal={q.subtotal}
+            discount={q.discount}
+            vat={q.vat}
+            total={q.total}
+            note={q.note}
+            format={fmtMoney}
+            showSignature
+          />
         </div>
 
-        {/* Mobile-friendly download CTA under the paper */}
         <button
           type="button"
-          onClick={() => void onDownload()}
-          disabled={downloading}
-          className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 h-12 text-sm font-bold text-white hover:bg-indigo-700 transition disabled:opacity-60"
+          onClick={onDownload}
+          className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 h-12 text-sm font-bold text-white hover:bg-indigo-700 transition"
         >
-          {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-          ดาวน์โหลดใบเสนอราคา (PDF)
+          <Download size={16} /> ดาวน์โหลด / พิมพ์ใบเสนอราคา (PDF)
         </button>
 
         <div className="mt-4 text-center text-[10px] text-neutral-300">JNAC · CoreBiz Center</div>
