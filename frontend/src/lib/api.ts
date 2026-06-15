@@ -2653,6 +2653,9 @@ export interface ChatConversation {
   // Bot pause toggle (migration 0014) — defaults to true (bot replies).
   // When false, rag-chat/line-webhook skip the auto-reply for this chat.
   bot_enabled?: boolean;
+  // Company name pulled from the contact's tax_invoice note (for the inbox
+  // list). Populated by listConversations, not a real column.
+  company?: string | null;
 }
 
 export interface ChatMessage {
@@ -2696,6 +2699,21 @@ export const chatInboxApi = {
     search?: string;
     limit?: number;
   } = {}): Promise<ChatConversation[]> {
+    const term = opts.search?.trim() ?? '';
+    // chat_contact_notes + this RPC aren't in the generated DB types — query untyped.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+
+    // Search also covers the contact's notes (company / tax id / address /
+    // phone / content) via a staff-only RPC — collect matching ids first.
+    let noteIds: string[] = [];
+    if (term) {
+      try {
+        const { data: ids } = await db.rpc('search_note_conversation_ids', { p_term: term });
+        noteIds = ((ids ?? []) as Array<{ conversation_id: string }>).map((r) => r.conversation_id);
+      } catch { /* note search is best-effort — never break the inbox */ }
+    }
+
     let q = supabase
       .from('chat_conversations')
       .select('*')
@@ -2704,13 +2722,36 @@ export const chatInboxApi = {
       .limit(opts.limit ?? 100);
     if (opts.channel) q = q.eq('channel', opts.channel);
     if (opts.status) q = q.eq('status', opts.status);
-    if (opts.search && opts.search.trim()) {
-      const pat = `%${opts.search.trim().replace(/[%_]/g, (m) => `\\${m}`)}%`;
-      q = q.or(`display_name.ilike.${pat},last_message_preview.ilike.${pat}`);
+    if (term) {
+      const pat = `%${term.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+      const ors = [
+        `display_name.ilike.${pat}`,
+        `alias_name.ilike.${pat}`,
+        `last_message_preview.ilike.${pat}`,
+      ];
+      if (noteIds.length) ors.push(`id.in.(${noteIds.join(',')})`);
+      q = q.or(ors.join(','));
     }
     const { data, error } = await q;
     if (error) throw error;
-    return (data ?? []) as ChatConversation[];
+    let convos = (data ?? []) as ChatConversation[];
+
+    // Attach the contact's company name (from the tax_invoice note) so the
+    // inbox list can show it next to the LINE/web display name.
+    if (convos.length) {
+      const { data: taxNotes } = await db
+        .from('chat_contact_notes')
+        .select('conversation_id, address')
+        .eq('note_type', 'tax_invoice')
+        .in('conversation_id', convos.map((c) => c.id));
+      const byConv = new Map<string, string>();
+      for (const n of (taxNotes ?? []) as Array<{ conversation_id: string; address: { company?: string } | null }>) {
+        const co = (n.address?.company ?? '').trim();
+        if (co && !byConv.has(n.conversation_id)) byConv.set(n.conversation_id, co);
+      }
+      if (byConv.size) convos = convos.map((c) => ({ ...c, company: byConv.get(c.id) ?? null }));
+    }
+    return convos;
   },
 
   /** Full message history for one conversation, oldest first. */

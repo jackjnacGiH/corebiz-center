@@ -723,6 +723,12 @@ export default function Chat() {
                                         <div className="text-sm font-medium text-neutral-900 truncate">
                                             {c.display_name}
                                         </div>
+                                        {c.company && (
+                                            <div className="text-[11px] text-indigo-600 truncate flex items-center gap-1" title={c.company}>
+                                                <span aria-hidden>🏢</span>
+                                                <span className="truncate">{c.company}</span>
+                                            </div>
+                                        )}
                                         {c.last_message_preview && (
                                             <div className="text-xs text-neutral-500 truncate mt-0.5">
                                                 {c.last_message_preview}
