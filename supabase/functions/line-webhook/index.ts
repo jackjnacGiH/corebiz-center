@@ -1,5 +1,10 @@
 /**
- * line-webhook v14 — send public quote link after a bot quote
+ * line-webhook v15 — auto-link bot quotes to the chat's CRM customer
+ *
+ * v15: when the bot creates a quote and the LINE chat is linked to a CRM
+ * customer (chat_conversations.customer_id), stamp that customer onto the
+ * quote — so the quote's PDF / public link show the name + address
+ * automatically, instead of an admin picking the customer by hand.
  *
  * v14: when the bot's request_quote tool creates a draft quote, parse the
  * quote code from rag-chat's tool_calls and push the customer a public
@@ -352,13 +357,28 @@ async function quoteLinkMessage(admin: SupabaseClient, quoteCode: string): Promi
   return `📄 ใบเสนอราคา ${quoteCode}\nดูรายละเอียดและดาวน์โหลด PDF ได้เลย (ไม่ต้องล็อกอิน):\nhttps://www.jnac.online/center/q/${token}`;
 }
 
-// After a bot reply, if a quote was just created, send the customer the public
-// link as a follow-up push and record it in the conversation (so it shows in
-// the admin Omni-Chat with a quote_link marker).
+// After a bot reply, if a quote was just created:
+//  1. auto-link it to the conversation's CRM customer (if linked) so the quote
+//     shows the customer's name/address automatically — no manual admin step;
+//  2. send the customer the public link as a follow-up push and record it in
+//     the conversation (so it shows in the admin Omni-Chat with a marker).
 async function sendQuoteLinkIfAny(
   admin: SupabaseClient, accessToken: string, userId: string, conversationId: string, quoteCode: string | null,
 ): Promise<void> {
   if (!quoteCode) return;
+  // 1) auto-fill the customer from the linked chat (only when the quote has no
+  //    customer yet — never override a manual selection)
+  try {
+    const { data: conv } = await admin
+      .from("chat_conversations").select("customer_id").eq("id", conversationId).maybeSingle();
+    const custId = (conv as { customer_id?: string | null } | null)?.customer_id;
+    if (custId) {
+      await admin.from("quotes").update({ customer_id: custId }).eq("code", quoteCode).is("customer_id", null);
+    }
+  } catch (e) {
+    console.warn("quote auto-link customer failed:", (e as Error).message);
+  }
+  // 2) send the public link
   const linkMsg = await quoteLinkMessage(admin, quoteCode);
   if (!linkMsg) return;
   await pushToLine(accessToken, userId, linkMsg);
