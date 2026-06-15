@@ -520,14 +520,25 @@ export const customerRfmApi = {
     // `customer_rfm` is a read-only VIEW kept OUT of the generated Database
     // type — adding it there broke from() resolution for other relations. So
     // we query it through an untyped client handle and cast the result.
+    // PostgREST caps one request at 1000 rows — page through so the segment
+    // counts match the real customer total (was silently capped at 1000).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any;
-    const { data, error } = await db
-      .from('customer_rfm')
-      .select('*')
-      .order('monetary', { ascending: false });
-    if (error) throw error;
-    return (data ?? []) as CustomerRFM[];
+    const PAGE = 1000;
+    const all: CustomerRFM[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await db
+        .from('customer_rfm')
+        .select('*')
+        .order('monetary', { ascending: false })
+        .order('id', { ascending: true }) // stable tiebreaker — avoids dup/missed rows across pages
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      const batch = (data ?? []) as CustomerRFM[];
+      all.push(...batch);
+      if (batch.length < PAGE) break;
+    }
+    return all;
   },
 };
 
