@@ -21,6 +21,7 @@ import {
   Loader2,
   Hash,
   Bot,
+  Link2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,10 +30,12 @@ import {
   chatProfileApi,
   chatNotesApi,
   profilesApi,
+  customersApi,
   type ChatConversation,
   type ChatContactNote,
   type StaffProfile,
   type CustomerSnapshot,
+  type Customer,
 } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 import { computeAutoTags, daysSince } from '../../utils/chatAutoTags';
@@ -58,6 +61,46 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
   const [editingNote, setEditingNote] = useState<ChatContactNote | undefined>();
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // Manual customer linking (for chats that never self-registered)
+  const [linking, setLinking] = useState(false);
+  const [custQuery, setCustQuery] = useState('');
+  const [custResults, setCustResults] = useState<Customer[]>([]);
+  const [custSearching, setCustSearching] = useState(false);
+  const [linkBusy, setLinkBusy] = useState(false);
+
+  // Debounced customer search while the link picker is open.
+  useEffect(() => {
+    if (!linking) return;
+    const term = custQuery.trim();
+    if (!term) { setCustResults([]); return; }
+    let cancelled = false;
+    setCustSearching(true);
+    const h = setTimeout(async () => {
+      try { const r = await customersApi.search(term, 25); if (!cancelled) setCustResults(r); }
+      catch { if (!cancelled) setCustResults([]); }
+      finally { if (!cancelled) setCustSearching(false); }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(h); };
+  }, [custQuery, linking]);
+
+  async function chooseCustomer(id: string | null) {
+    setLinkBusy(true);
+    try {
+      await chatProfileApi.linkCustomer(conversation.id, id);
+      if (id) {
+        const snap = await chatProfileApi.getCustomerSnapshot(id).catch(() => null);
+        setCustomer(snap);
+      } else {
+        setCustomer(null);
+      }
+      setLinking(false); setCustQuery(''); setCustResults([]);
+      onConversationChanged?.();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setLinkBusy(false);
+    }
+  }
 
   useEffect(() => {
     setAliasDraft(conversation.alias_name ?? '');
@@ -356,33 +399,71 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
           )}
         </div>
 
-        {/* Customer stats */}
-        {customer && (
-          <div className="grid grid-cols-2 gap-2 p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-            <div>
-              <div className="text-[10px] text-neutral-500 flex items-center gap-1">
-                <ShoppingBag size={10} /> ออเดอร์
-              </div>
-              <div className="text-base font-bold text-neutral-900">{customer.total_orders}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-neutral-500 flex items-center gap-1">💰 ยอดซื้อ</div>
-              <div className="text-base font-bold text-emerald-600">
-                ฿{Number(customer.total_spent).toLocaleString()}
-              </div>
-            </div>
-            {lastDays !== null && (
-              <div className="col-span-2 pt-2 border-t border-neutral-200">
-                <div className="text-[10px] text-neutral-500 flex items-center gap-1">
-                  <MessageSquare size={10} /> ลูกค้าทักล่าสุด
-                </div>
-                <div className="text-sm font-medium text-neutral-900">
-                  {lastDays === 0 ? 'วันนี้' : `${lastDays} วันที่แล้ว`}
-                </div>
-              </div>
-            )}
+        {/* Customer link + stats */}
+        <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
+          <div className="text-[10px] uppercase font-bold text-neutral-500 mb-2 tracking-wide flex items-center gap-1">
+            <Link2 size={11} /> ลูกค้าในระบบ
           </div>
-        )}
+          {customer ? (
+            <>
+              <div className="text-sm font-semibold text-neutral-900 leading-snug">{customer.name}</div>
+              <div className="text-[10px] text-neutral-400 mb-2 uppercase">Tier: {customer.tier}</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-[10px] text-neutral-500 flex items-center gap-1"><ShoppingBag size={10} /> ออเดอร์</div>
+                  <div className="text-base font-bold text-neutral-900">{customer.total_orders}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-neutral-500 flex items-center gap-1">💰 ยอดซื้อ</div>
+                  <div className="text-base font-bold text-emerald-600">฿{Number(customer.total_spent).toLocaleString()}</div>
+                </div>
+                {lastDays !== null && (
+                  <div className="col-span-2 pt-2 border-t border-neutral-200">
+                    <div className="text-[10px] text-neutral-500 flex items-center gap-1"><MessageSquare size={10} /> ลูกค้าทักล่าสุด</div>
+                    <div className="text-sm font-medium text-neutral-900">{lastDays === 0 ? 'วันนี้' : `${lastDays} วันที่แล้ว`}</div>
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 flex gap-3">
+                <button type="button" onClick={() => setLinking((v) => !v)} disabled={linkBusy} className="text-[11px] text-indigo-600 hover:underline disabled:opacity-50">เปลี่ยนลูกค้า</button>
+                <button type="button" onClick={() => void chooseCustomer(null)} disabled={linkBusy} className="text-[11px] text-neutral-400 hover:text-red-600 disabled:opacity-50">ยกเลิกการผูก</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] text-neutral-500 mb-2 leading-relaxed">
+                ยังไม่ได้ผูกกับลูกค้าในระบบ — ผูกเพื่อให้ใบเสนอราคาเติมชื่อ/ที่อยู่ลูกค้าอัตโนมัติ
+              </p>
+              <button type="button" onClick={() => setLinking((v) => !v)} disabled={linkBusy}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
+                {linkBusy ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={12} />} ผูกลูกค้า
+              </button>
+            </>
+          )}
+
+          {linking && (
+            <div className="mt-2.5">
+              <input autoFocus value={custQuery} onChange={(e) => setCustQuery(e.target.value)}
+                placeholder="ค้นหาชื่อ / รหัส / เบอร์ / เลขผู้เสียภาษี..."
+                className="w-full h-8 rounded-md border border-neutral-200 bg-white px-2 text-xs outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
+              <div className="mt-1.5 max-h-52 overflow-y-auto rounded-md border border-neutral-200 bg-white divide-y divide-neutral-100">
+                {custSearching && <div className="p-2 text-center text-[11px] text-neutral-400"><Loader2 size={12} className="inline animate-spin mr-1" /> กำลังค้นหา...</div>}
+                {!custSearching && custQuery.trim() && custResults.length === 0 && (
+                  <div className="p-2 text-center text-[11px] text-neutral-400">ไม่พบลูกค้า — เพิ่มในเมนู CRM ก่อนได้</div>
+                )}
+                {custResults.map((c) => (
+                  <button key={c.id} type="button" disabled={linkBusy} onClick={() => void chooseCustomer(c.id)}
+                    className="w-full text-left px-2 py-1.5 hover:bg-indigo-50 disabled:opacity-50">
+                    <div className="text-xs font-medium text-neutral-800 truncate">{c.name}</div>
+                    <div className="text-[10px] text-neutral-400 truncate">
+                      {[c.code, c.phone || (c as { mobile?: string | null }).mobile, c.tax_id].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Tags */}
         <div>

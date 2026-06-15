@@ -3343,6 +3343,17 @@ export const chatProfileApi = {
     if (error) throw error;
   },
 
+  /** Link (or unlink) this chat to a CRM customer — lets staff attach a
+   *  customer to a walk-in / LINE chat that never self-registered, so quotes
+   *  auto-fill the customer's name + address. */
+  async linkCustomer(conversationId: string, customerId: string | null): Promise<void> {
+    const { error } = await supabase
+      .from('chat_conversations')
+      .update({ customer_id: customerId } as never)
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+
   /** Per-conversation bot toggle (migration 0014). bot_enabled column not
    *  yet in database.types.ts — cast through unknown. */
   async setBotEnabled(conversationId: string, enabled: boolean): Promise<void> {
