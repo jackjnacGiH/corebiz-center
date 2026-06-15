@@ -1,5 +1,12 @@
 /**
- * line-webhook v12 — link LINE chats to CRM members
+ * line-webhook v13 — store customer file/PDF attachments
+ *
+ * v13: when a customer sends a file (PDF/docs), download it from LINE,
+ * store it in chat-attachments, and save a content_type='file' message
+ * with the filename/size in metadata so the admin sees + can open it in
+ * Omni-Chat (instead of a blank "[file]" line that's easy to miss).
+ *
+ * v12 — link LINE chats to CRM members
  *
  * v12: when the LINE user has logged in to the portal with LINE
  * (profiles.line_user_id) and is linked to a CRM customer
@@ -21,6 +28,7 @@ const CORS_HEADERS = {
 
 const LOADING_SECONDS = 20;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 interface LineChannel {
   id: string;
@@ -36,7 +44,7 @@ interface LineEvent {
   replyToken?: string;
   source?: { type: string; userId?: string; groupId?: string; roomId?: string };
   timestamp?: number;
-  message?: { type: string; id: string; text?: string; stickerId?: string; packageId?: string; };
+  message?: { type: string; id: string; text?: string; stickerId?: string; packageId?: string; fileName?: string; fileSize?: number; };
 }
 
 type LineMessage =
@@ -175,6 +183,47 @@ async function uploadImageToStorage(admin: SupabaseClient, conversationId: strin
     return data?.publicUrl ?? null;
   } catch (e) {
     console.warn("uploadImageToStorage error:", (e as Error).message);
+    return null;
+  }
+}
+
+// Download any LINE message content (used for file/PDF attachments). Like
+// downloadLineImage but keeps the real mime type and allows larger files.
+async function downloadLineFile(accessToken: string, messageId: string): Promise<{ mimeType: string; base64: string; size: number } | null> {
+  try {
+    const res = await fetch(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) { console.warn("LINE file fetch failed:", res.status); return null; }
+    const mimeType = (res.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.length === 0 || buf.length > MAX_FILE_BYTES) { console.warn("LINE file size out of range:", buf.length); return null; }
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < buf.length; i += chunk) binary += String.fromCharCode(...buf.subarray(i, i + chunk));
+    return { mimeType, base64: btoa(binary), size: buf.length };
+  } catch (e) {
+    console.warn("downloadLineFile error:", (e as Error).message);
+    return null;
+  }
+}
+
+// Upload a customer's file to the public chat-attachments bucket. The original
+// (possibly Thai) filename is kept in message metadata for display; the storage
+// path is ASCII-sanitised + timestamped to stay unique and valid.
+async function uploadFileToStorage(admin: SupabaseClient, conversationId: string, fileName: string, mimeType: string, base64: string): Promise<string | null> {
+  try {
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const safe = (fileName.replace(/[^\w.\-]+/g, "_") || "file").slice(-80);
+    const path = `${conversationId}/${Date.now()}-${safe}`;
+    const { error } = await admin.storage.from("chat-attachments").upload(path, bytes, { contentType: mimeType, upsert: false });
+    if (error) { console.warn("file upload failed:", error.message); return null; }
+    const { data } = admin.storage.from("chat-attachments").getPublicUrl(path);
+    return data?.publicUrl ?? null;
+  } catch (e) {
+    console.warn("uploadFileToStorage error:", (e as Error).message);
     return null;
   }
 }
@@ -373,6 +422,24 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
       channel_id: channel.id, channel_name: channel.name, from_image: true,
     });
+    return;
+  }
+
+  // FILE (PDF / docs) — download it so the admin sees + can open it in Omni-Chat
+  // instead of a blank "[file]" line that's easy to miss.
+  if (msg.type === "file") {
+    const fileName = (msg.fileName && msg.fileName.trim()) || `file-${msg.id}`;
+    const dl = await downloadLineFile(channel.channel_access_token, msg.id);
+    let url: string | null = null;
+    if (dl) url = await uploadFileToStorage(admin, conversationId, fileName, dl.mimeType, dl.base64);
+    const content = url ? `📎 ${fileName}` : `[ลูกค้าส่งไฟล์: ${fileName}]`;
+    await saveMessage(admin, conversationId, "customer", content, msg.id, {
+      line_message_type: "file",
+      file_url: url,
+      file_name: fileName,
+      file_size: msg.fileSize ?? dl?.size ?? null,
+      mime_type: dl?.mimeType ?? null,
+    }, "file");
     return;
   }
 

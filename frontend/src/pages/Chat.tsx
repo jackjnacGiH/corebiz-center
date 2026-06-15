@@ -44,6 +44,7 @@ import {
     AlertCircle,
     ChevronLeft,
     Download,
+    FileText,
 } from 'lucide-react';
 import {
     chatInboxApi,
@@ -1007,6 +1008,41 @@ function FilterChip({
     );
 }
 
+/** Download card for a customer-sent file (PDF / docs) — built from the
+ *  message metadata that line-webhook stores (file_url / file_name / size). */
+function FileAttachment({ meta, fallback }: { meta: Record<string, unknown>; fallback: string }) {
+    const url = typeof meta?.file_url === 'string' ? meta.file_url : null;
+    const name = (typeof meta?.file_name === 'string' && meta.file_name) || 'ไฟล์แนบ';
+    const size = typeof meta?.file_size === 'number' ? meta.file_size : null;
+    const mime = typeof meta?.mime_type === 'string' ? meta.mime_type : '';
+    if (!url) return <span className="text-sm text-neutral-600">{fallback || '[ไฟล์แนบ]'}</span>;
+    const sizeLabel = size != null
+        ? (size < 1024 * 1024 ? `${Math.max(1, Math.round(size / 1024))} KB` : `${(size / 1048576).toFixed(1)} MB`)
+        : '';
+    const kind = mime.includes('pdf') ? 'PDF' : (name.split('.').pop() || '').slice(0, 5).toUpperCase();
+    return (
+        <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            download={name}
+            title={`เปิด/ดาวน์โหลด ${name}`}
+            className="flex items-center gap-2.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 hover:bg-neutral-50 transition no-underline max-w-[260px]"
+        >
+            <span className="grid place-items-center w-9 h-9 rounded bg-red-50 text-red-600 flex-shrink-0">
+                <FileText size={18} />
+            </span>
+            <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-neutral-800 truncate">{name}</span>
+                <span className="block text-[11px] text-neutral-400">
+                    {[kind, sizeLabel].filter(Boolean).join(' · ')} · กดเพื่อเปิด/ดาวน์โหลด
+                </span>
+            </span>
+            <Download size={15} className="text-neutral-400 flex-shrink-0" />
+        </a>
+    );
+}
+
 function MessageRow({ msg }: { msg: ChatMessage }) {
     const { t } = useLanguage();
     const isCustomer = msg.sender_type === 'customer';
@@ -1052,10 +1088,16 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
                                 : 'bg-emerald-50 border border-emerald-200 text-neutral-900 rounded-tr-sm',
                     )}
                 >
-                    {msg.content_type === 'image' && msg.content && (
-                        <ImageIcon size={14} className="inline mr-1 text-neutral-400" />
+                    {msg.content_type === 'file' ? (
+                        <FileAttachment meta={msg.metadata} fallback={msg.content} />
+                    ) : (
+                        <>
+                            {msg.content_type === 'image' && msg.content && (
+                                <ImageIcon size={14} className="inline mr-1 text-neutral-400" />
+                            )}
+                            {renderMessageContent(msg.content)}
+                        </>
                     )}
-                    {renderMessageContent(msg.content)}
                 </div>
             </div>
         </div>
