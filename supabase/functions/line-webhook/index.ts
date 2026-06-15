@@ -1,5 +1,13 @@
 /**
- * line-webhook v15 — auto-link bot quotes to the chat's CRM customer
+ * line-webhook v16 — stop the bot echoing old quote links
+ *
+ * v16: the public quote link was being fed back into rag-chat's history, so
+ * the model parroted the PREVIOUS quote's link into a new answer — a fresh
+ * quote then showed two links (one wrong). loadHistory now drops the dedicated
+ * quote-link messages and strips any /center/q/<token> link from other
+ * messages, so the model never sees (and never repeats) a link.
+ *
+ * v15 — auto-link bot quotes to the chat's CRM customer
  *
  * v15: when the bot creates a quote and the LINE chat is linked to a CRM
  * customer (chat_conversations.customer_id), stamp that customer onto the
@@ -385,15 +393,32 @@ async function sendQuoteLinkIfAny(
   await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
 }
 
+// Strip any public quote link from history content. The bot would otherwise see
+// a previous "📄 ใบเสนอราคา … /center/q/<token>" message in the history and
+// PARROT it (the old token!) into a new answer — so a fresh quote ended up with
+// two links, one pointing at the wrong quote. Links are sent by sendQuoteLinkIfAny,
+// never by the model, so the model never needs to see them.
+function stripQuoteLink(s: string): string {
+  return (s || "")
+    .replace(/📄[^\n]*\n?/gu, "")
+    .replace(/ดูรายละเอียดและดาวน์โหลด[^\n]*\n?/gu, "")
+    .replace(/https?:\/\/[^\s]*\/center\/q\/\S+/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 async function loadHistory(admin: SupabaseClient, conversationId: string): Promise<Array<{ role: string; content: string }>> {
   const { data } = await admin.from("chat_messages")
-    .select("sender_type, content").eq("conversation_id", conversationId)
+    .select("sender_type, content, metadata").eq("conversation_id", conversationId)
     .order("created_at", { ascending: false }).limit(20);
-  const rows = (data ?? []) as Array<{ sender_type: string; content: string }>;
-  return rows.reverse().map((r) => ({
-    role: r.sender_type === "customer" ? "user" : "assistant",
-    content: r.content,
-  }));
+  const rows = (data ?? []) as Array<{ sender_type: string; content: string; metadata: Record<string, unknown> | null }>;
+  return rows.reverse()
+    .filter((r) => !(r.metadata && r.metadata.quote_link))   // drop dedicated quote-link messages
+    .map((r) => ({
+      role: r.sender_type === "customer" ? "user" : "assistant",
+      content: stripQuoteLink(r.content),                     // strip any echoed link from other messages
+    }))
+    .filter((m) => m.content.length > 0);
 }
 
 async function shouldBotReply(admin: SupabaseClient, conversationId: string): Promise<boolean> {

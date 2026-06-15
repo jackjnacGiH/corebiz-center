@@ -1,4 +1,4 @@
-import { Document, Page, Text, View, StyleSheet, PDFViewer, Font, pdf } from '@react-pdf/renderer';
+import { Document, Page, Text, View, Image, StyleSheet, PDFViewer, Font, pdf } from '@react-pdf/renderer';
 
 // Register Sarabun font for Thai support (Google Fonts CDN)
 Font.register({
@@ -8,6 +8,29 @@ Font.register({
     { src: 'https://fonts.gstatic.com/s/sarabun/v15/DtVmJx26TKEr37c9aBBx_nxOQFs.ttf', fontWeight: 700 },
   ],
 });
+
+/** Seller (issuer) shown in the document header — name + logo + contact. */
+export interface QuoteSeller {
+  name: string;
+  tax_id?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  logo_url?: string | null;
+}
+
+// Fallback to JNAC's company details + logo (from org_settings) so the document
+// always shows real branding even when a caller doesn't pass `seller`.
+export const DEFAULT_SELLER: QuoteSeller = {
+  name: 'บริษัท เจ แนค (ประเทศไทย) จำกัด',
+  tax_id: '0115561012346',
+  address: 'เลขที่ 84 หมู่ 2 ซ.สุนทรวิภาค ถ.บางพลี - ตำหรุ ต.แพรกษาใหม่ อ.เมือง จ.สมุทรปราการ 10280',
+  phone: '08 0016 1700 , 08 1144 2000',
+  email: 'jnac.co.th@gmail.com',
+  website: 'www.jnac.co.th',
+  logo_url: 'https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/products/org/logo-1780575093630-4bg7c4.png',
+};
 
 export interface QuoteData {
   code: string;
@@ -28,6 +51,8 @@ export interface QuoteData {
   vat: number;
   total: number;
   notes?: string | null;
+  /** Seller/issuer header. Falls back to DEFAULT_SELLER (JNAC) when omitted. */
+  seller?: QuoteSeller | null;
   /** 'quotation' (ใบเสนอราคา) or 'invoice' (ใบกำกับภาษี) */
   doc_type?: 'quotation' | 'invoice';
 }
@@ -35,8 +60,10 @@ export interface QuoteData {
 const styles = StyleSheet.create({
   page: { padding: 36, fontFamily: 'Sarabun', fontSize: 10, color: '#111' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', borderBottom: '2pt solid #4f46e5', paddingBottom: 12, marginBottom: 14 },
-  brand: { fontSize: 18, fontWeight: 700, color: '#4f46e5' },
-  brandSub: { fontSize: 9, color: '#666', marginTop: 2 },
+  sellerBox: { flexDirection: 'row', gap: 8, maxWidth: '64%' },
+  logo: { width: 42, height: 42, objectFit: 'contain' },
+  brand: { fontSize: 13, fontWeight: 700, color: '#4f46e5' },
+  brandSub: { fontSize: 8, color: '#666', marginTop: 1.5, lineHeight: 1.3 },
   docTitleBox: { textAlign: 'right' },
   docTitle: { fontSize: 16, fontWeight: 700 },
   docMeta: { fontSize: 9, color: '#666', marginTop: 4 },
@@ -79,16 +106,23 @@ function fmtDate(iso: string): string {
 export function QuotationDocument({ data }: { data: QuoteData }) {
   const isInvoice = data.doc_type === 'invoice';
   const title = isInvoice ? 'ใบกำกับภาษี / TAX INVOICE' : 'ใบเสนอราคา / QUOTATION';
+  const seller = data.seller ?? DEFAULT_SELLER;
+  const sellerContact = [seller.website, seller.email].filter(Boolean).join('  ·  ');
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
         {/* Header */}
         <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.brand}>CoreBiz Center</Text>
-            <Text style={styles.brandSub}>Unified Commerce Platform</Text>
-            <Text style={styles.brandSub}>www.jnac.online</Text>
+          <View style={styles.sellerBox}>
+            {seller.logo_url ? <Image src={seller.logo_url} style={styles.logo} /> : null}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.brand}>{seller.name}</Text>
+              {seller.address ? <Text style={styles.brandSub}>{seller.address}</Text> : null}
+              {seller.tax_id ? <Text style={styles.brandSub}>เลขประจำตัวผู้เสียภาษี {seller.tax_id}</Text> : null}
+              {seller.phone ? <Text style={styles.brandSub}>โทร. {seller.phone}</Text> : null}
+              {sellerContact ? <Text style={styles.brandSub}>{sellerContact}</Text> : null}
+            </View>
           </View>
           <View style={styles.docTitleBox}>
             <Text style={styles.docTitle}>{title}</Text>
@@ -110,8 +144,8 @@ export function QuotationDocument({ data }: { data: QuoteData }) {
           </View>
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>ผู้ออกเอกสาร / Issued by</Text>
-            <Text style={styles.sectionValue}>CoreBiz Center</Text>
-            <Text style={styles.sectionLine}>Bangkok HQ, Thailand</Text>
+            <Text style={styles.sectionValue}>{seller.name}</Text>
+            {seller.phone ? <Text style={styles.sectionLine}>โทร. {seller.phone}</Text> : null}
           </View>
         </View>
 

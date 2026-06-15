@@ -780,6 +780,17 @@ export default function Ecommerce() {
                       vat: Number(quote.vat),
                       total: Number(quote.total),
                       notes: quote.notes,
+                      seller: quoteOrg
+                        ? {
+                            name: quoteOrg.business_name || 'JNAC Thailand',
+                            tax_id: quoteOrg.tax_id,
+                            address: quoteOrg.address,
+                            phone: quoteOrg.phone,
+                            email: quoteOrg.email,
+                            website: quoteOrg.website,
+                            logo_url: quoteOrg.logo_url,
+                          }
+                        : null,
                       doc_type: 'quotation',
                     });
                   } catch (e) { setErr((e as Error).message); }

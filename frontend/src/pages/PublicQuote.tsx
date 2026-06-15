@@ -68,6 +68,17 @@ export default function PublicQuote() {
           vat: Number(q.vat ?? 0),
           total: Number(q.total ?? 0),
           notes: q.notes ?? null,
+          seller: q.seller
+            ? {
+                name: q.seller.name || 'JNAC Thailand',
+                tax_id: q.seller.tax_id ?? null,
+                address: q.seller.address ?? null,
+                phone: q.seller.phone ?? null,
+                email: q.seller.email ?? null,
+                website: q.seller.website ?? null,
+                logo_url: q.seller.logo_url ?? null,
+              }
+            : null,
           doc_type: 'quotation',
         };
         setData(mapped);
@@ -129,6 +140,9 @@ export default function PublicQuote() {
   }
 
   // ---- Ready: sticky header + HTML quote --------------------------------
+  const seller = data.seller;
+  const sellerName = seller?.name || 'JNAC Thailand';
+  const sellerContact = [seller?.website, seller?.email].filter(Boolean).join('  ·  ');
   return (
     <div className="min-h-screen bg-neutral-100">
       {/* Top bar */}
@@ -155,10 +169,18 @@ export default function PublicQuote() {
         <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden">
           {/* Brand + doc meta */}
           <div className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-indigo-600 p-5 sm:p-6">
-            <div>
-              <div className="text-xl font-extrabold text-indigo-600">CoreBiz Center</div>
-              <div className="text-xs text-neutral-400">Unified Commerce Platform</div>
-              <div className="text-xs text-neutral-400">www.jnac.online</div>
+            <div className="flex items-start gap-3 max-w-[62%]">
+              {seller?.logo_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={seller.logo_url} alt="logo" className="w-12 h-12 object-contain flex-shrink-0" />
+              )}
+              <div className="min-w-0">
+                <div className="text-base font-extrabold text-indigo-600 leading-tight">{sellerName}</div>
+                {seller?.address && <div className="text-[11px] text-neutral-500 mt-0.5 leading-snug">{seller.address}</div>}
+                {seller?.tax_id && <div className="text-[11px] text-neutral-500">เลขประจำตัวผู้เสียภาษี {seller.tax_id}</div>}
+                {seller?.phone && <div className="text-[11px] text-neutral-500">โทร. {seller.phone}</div>}
+                {sellerContact && <div className="text-[11px] text-neutral-400">{sellerContact}</div>}
+              </div>
             </div>
             <div className="text-right">
               <div className="text-lg font-bold text-neutral-800">ใบเสนอราคา / QUOTATION</div>
@@ -180,8 +202,8 @@ export default function PublicQuote() {
             </div>
             <div className="sm:text-right">
               <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">ผู้ออกเอกสาร / Issued by</div>
-              <div className="text-sm font-semibold text-neutral-800">CoreBiz Center</div>
-              <div className="text-xs text-neutral-500 mt-0.5">JNAC Thailand</div>
+              <div className="text-sm font-semibold text-neutral-800">{sellerName}</div>
+              {seller?.phone && <div className="text-xs text-neutral-500 mt-0.5">โทร. {seller.phone}</div>}
             </div>
           </div>
 
