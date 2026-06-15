@@ -3,11 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Loader2, Download, FileText, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatThaiAddress } from '../components/CustomerPickerModal';
-import {
-  QuotationPreview,
-  downloadQuotation,
-  type QuoteData,
-} from '../components/QuotationPDF';
+import type { QuoteData } from '../components/QuotationPDF';
 
 /**
  * PublicQuote — public (no-login) quote viewer.
@@ -18,12 +14,27 @@ import {
  * `quotes.public_token` (same secret-link model as the survey page). It calls
  * the anon-callable `get_quote_by_token` RPC, renders the quote, and lets the
  * customer download the PDF — without any account.
+ *
+ * The on-screen quote is rendered as plain HTML (not a PDF iframe) so it shows
+ * reliably on every device — most customers open the LINE link on a phone,
+ * where an embedded <PDFViewer> blob iframe often renders blank. The actual PDF
+ * is one tap away via "ดาวน์โหลด PDF".
  */
+function fmt(n: number): string {
+  return new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+function fmtDate(iso?: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 export default function PublicQuote() {
   const { token } = useParams<{ token: string }>();
   const [state, setState] = useState<'loading' | 'ready' | 'notfound' | 'error'>('loading');
   const [data, setData] = useState<QuoteData | null>(null);
   const [errMsg, setErrMsg] = useState('');
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -70,6 +81,18 @@ export default function PublicQuote() {
     return () => { alive = false; };
   }, [token]);
 
+  async function onDownload() {
+    if (!data || downloading) return;
+    setDownloading(true);
+    try {
+      // Lazy-load the heavy @react-pdf/renderer bundle only when the customer
+      // actually downloads — so the HTML quote view loads instantly on mobile.
+      const { downloadQuotation } = await import('../components/QuotationPDF');
+      await downloadQuotation(data);
+    } catch { /* ignore — download is best-effort */ }
+    finally { setDownloading(false); }
+  }
+
   // ---- Loading / error states -------------------------------------------
   if (state !== 'ready' || !data) {
     return (
@@ -105,34 +128,133 @@ export default function PublicQuote() {
     );
   }
 
-  // ---- Ready: header + PDF preview --------------------------------------
+  // ---- Ready: sticky header + HTML quote --------------------------------
   return (
-    <div className="min-h-screen bg-neutral-100 flex flex-col">
+    <div className="min-h-screen bg-neutral-100">
       {/* Top bar */}
       <header className="bg-white border-b border-neutral-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
         <div className="w-9 h-9 rounded-lg bg-indigo-600 text-white grid place-items-center flex-shrink-0">
           <FileText size={18} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="font-bold text-sm text-neutral-800 truncate">
-            ใบเสนอราคา {data.code}
-          </div>
-          <div className="text-xs text-neutral-400 truncate">
-            {data.customer_name || 'JNAC Thailand'}
-          </div>
+          <div className="font-bold text-sm text-neutral-800 truncate">ใบเสนอราคา {data.code}</div>
+          <div className="text-xs text-neutral-400 truncate">{data.customer_name || 'JNAC Thailand'}</div>
         </div>
         <button
           type="button"
-          onClick={() => void downloadQuotation(data)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 h-9 text-sm font-semibold text-white hover:bg-indigo-700 transition flex-shrink-0"
+          onClick={() => void onDownload()}
+          disabled={downloading}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 h-9 text-sm font-semibold text-white hover:bg-indigo-700 transition flex-shrink-0 disabled:opacity-60"
         >
-          <Download size={15} /> ดาวน์โหลด PDF
+          {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} ดาวน์โหลด PDF
         </button>
       </header>
 
-      {/* PDF preview — fills the rest of the viewport */}
-      <main className="flex-1 min-h-0">
-        <QuotationPreview data={data} />
+      {/* Quote paper */}
+      <main className="max-w-3xl mx-auto p-3 sm:p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden">
+          {/* Brand + doc meta */}
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-indigo-600 p-5 sm:p-6">
+            <div>
+              <div className="text-xl font-extrabold text-indigo-600">CoreBiz Center</div>
+              <div className="text-xs text-neutral-400">Unified Commerce Platform</div>
+              <div className="text-xs text-neutral-400">www.jnac.online</div>
+            </div>
+            <div className="text-right">
+              <div className="text-lg font-bold text-neutral-800">ใบเสนอราคา / QUOTATION</div>
+              <div className="text-xs text-neutral-500 mt-1">เลขที่ / No: {data.code}</div>
+              <div className="text-xs text-neutral-500">วันที่ / Date: {fmtDate(data.created_at)}</div>
+              {data.valid_until && (
+                <div className="text-xs text-neutral-500">ใช้ได้ถึง / Valid until: {fmtDate(data.valid_until)}</div>
+              )}
+            </div>
+          </div>
+
+          {/* Customer / issuer */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5 sm:p-6 border-b border-neutral-100">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">ลูกค้า / Customer</div>
+              <div className="text-sm font-semibold text-neutral-800">{data.customer_name || '—'}</div>
+              {data.customer_address && <div className="text-xs text-neutral-500 mt-0.5">{data.customer_address}</div>}
+              {data.customer_tax_id && <div className="text-xs text-neutral-500 mt-0.5">เลขประจำตัวผู้เสียภาษี: {data.customer_tax_id}</div>}
+            </div>
+            <div className="sm:text-right">
+              <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">ผู้ออกเอกสาร / Issued by</div>
+              <div className="text-sm font-semibold text-neutral-800">CoreBiz Center</div>
+              <div className="text-xs text-neutral-500 mt-0.5">JNAC Thailand</div>
+            </div>
+          </div>
+
+          {/* Items */}
+          <div className="p-5 sm:p-6">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-neutral-50 text-neutral-500 text-xs">
+                    <th className="text-left font-semibold px-2 py-2 rounded-l-lg">SKU</th>
+                    <th className="text-left font-semibold px-2 py-2">รายการ / Description</th>
+                    <th className="text-right font-semibold px-2 py-2">จำนวน</th>
+                    <th className="text-right font-semibold px-2 py-2">หน่วยละ</th>
+                    <th className="text-right font-semibold px-2 py-2 rounded-r-lg">รวม</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.items.map((it, i) => (
+                    <tr key={i} className="border-b border-neutral-100">
+                      <td className="px-2 py-2.5 text-neutral-500 whitespace-nowrap align-top">{it.sku}</td>
+                      <td className="px-2 py-2.5 text-neutral-800 align-top">{it.product_name}</td>
+                      <td className="px-2 py-2.5 text-right text-neutral-700 tabular-nums align-top">{it.quantity}</td>
+                      <td className="px-2 py-2.5 text-right text-neutral-700 tabular-nums align-top">{fmt(it.unit_price)}</td>
+                      <td className="px-2 py-2.5 text-right font-semibold text-neutral-800 tabular-nums align-top">{fmt(it.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Totals */}
+            <div className="mt-4 ml-auto w-full sm:w-72 text-sm">
+              <div className="flex justify-between py-1 text-neutral-600">
+                <span>ยอดสินค้า / Subtotal</span><span className="tabular-nums">{fmt(data.subtotal)}</span>
+              </div>
+              {data.discount > 0 && (
+                <div className="flex justify-between py-1 text-neutral-600">
+                  <span>ส่วนลด / Discount</span><span className="tabular-nums">- {fmt(data.discount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between py-1 text-neutral-600">
+                <span>ภาษีมูลค่าเพิ่ม 7% / VAT</span><span className="tabular-nums">{fmt(data.vat)}</span>
+              </div>
+              <div className="flex justify-between py-2 px-3 mt-1 rounded-lg bg-indigo-600 text-white font-bold">
+                <span>ยอดสุทธิ / Grand Total (THB)</span><span className="tabular-nums">{fmt(data.total)}</span>
+              </div>
+            </div>
+
+            {data.notes && (
+              <div className="mt-5">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">หมายเหตุ / Notes</div>
+                <div className="text-xs text-neutral-500 whitespace-pre-wrap">{data.notes}</div>
+              </div>
+            )}
+          </div>
+
+          <div className="px-5 sm:px-6 py-4 border-t border-neutral-100 text-[11px] text-neutral-400">
+            เอกสารนี้สร้างจากระบบ CoreBiz Center — ราคาสุทธิ ทีมงานจะยืนยันอีกครั้งก่อนออกใบสั่งขาย
+          </div>
+        </div>
+
+        {/* Mobile-friendly download CTA under the paper */}
+        <button
+          type="button"
+          onClick={() => void onDownload()}
+          disabled={downloading}
+          className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 h-12 text-sm font-bold text-white hover:bg-indigo-700 transition disabled:opacity-60"
+        >
+          {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+          ดาวน์โหลดใบเสนอราคา (PDF)
+        </button>
+
+        <div className="mt-4 text-center text-[10px] text-neutral-300">JNAC · CoreBiz Center</div>
       </main>
     </div>
   );

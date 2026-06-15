@@ -1,5 +1,13 @@
 /**
- * line-webhook v13 — store customer file/PDF attachments
+ * line-webhook v14 — send public quote link after a bot quote
+ *
+ * v14: when the bot's request_quote tool creates a draft quote, parse the
+ * quote code from rag-chat's tool_calls and push the customer a public
+ * (no-login) link `/center/q/<token>` so they can view + download the PDF
+ * without registering — LINE customers don't have a portal account. (The
+ * DB trigger handles the same for the web-widget channel.)
+ *
+ * v13: store customer file/PDF attachments
  *
  * v13: when a customer sends a file (PDF/docs), download it from LINE,
  * store it in chat-attachments, and save a content_type='file' message
@@ -266,14 +274,25 @@ async function callRagChat(
   query: string,
   history: Array<{ role: string; content: string }>,
   images: Array<{ mimeType: string; data: string }> = [],
-): Promise<string> {
+): Promise<{ answer: string; quoteCode: string | null }> {
   const res = await fetch(`${supabaseUrl}/functions/v1/rag-chat`, {
     method: "POST",
     headers: { "Authorization": `Bearer ${serviceKey}`, "apikey": serviceKey, "Content-Type": "application/json" },
     body: JSON.stringify({ query, history, images, stream: false, channel: "line" }),
   });
   const data = await res.json();
-  return (data?.answer as string) || "ขออภัยค่ะ ยังไม่ได้รับคำตอบ";
+  const answer = (data?.answer as string) || "ขออภัยค่ะ ยังไม่ได้รับคำตอบ";
+  // If the bot's request_quote tool created a draft quote, rag-chat exposes
+  // its code in tool_calls[].result_summary — pull it out so we can send the
+  // customer a public (no-login) link to view + download the PDF.
+  let quoteCode: string | null = null;
+  const calls = Array.isArray((data as Record<string, unknown>)?.tool_calls)
+    ? (data as { tool_calls: Array<Record<string, unknown>> }).tool_calls : [];
+  for (const c of calls) {
+    const m = /"quote_code":\s*"(QT-[^"]+)"/.exec(String(c?.result_summary ?? ""));
+    if (m) { quoteCode = m[1]; break; }
+  }
+  return { answer, quoteCode };
 }
 
 function textToLineMessages(text: string): LineMessage[] {
@@ -310,6 +329,40 @@ async function replyToLine(accessToken: string, replyToken: string, text: string
     body: JSON.stringify({ replyToken, messages }),
   });
   if (!res.ok) console.error("LINE reply failed:", res.status, await res.text().catch(() => ""));
+}
+
+// Push a follow-up message (the reply token is single-use, already spent on the
+// main answer — so the quote link goes out as a push).
+async function pushToLine(accessToken: string, userId: string, text: string): Promise<void> {
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ to: userId, messages: textToLineMessages(text) }),
+  });
+  if (!res.ok) console.error("LINE push failed:", res.status, await res.text().catch(() => ""));
+}
+
+// Build the public (no-login) quote link message for a quote code. Customers
+// who never registered can't open the /account portal, so this link lets them
+// view + download the PDF directly.
+async function quoteLinkMessage(admin: SupabaseClient, quoteCode: string): Promise<string | null> {
+  const { data } = await admin.from("quotes").select("public_token").eq("code", quoteCode).maybeSingle();
+  const token = (data as { public_token?: string } | null)?.public_token;
+  if (!token) return null;
+  return `📄 ใบเสนอราคา ${quoteCode}\nดูรายละเอียดและดาวน์โหลด PDF ได้เลย (ไม่ต้องล็อกอิน):\nhttps://www.jnac.online/center/q/${token}`;
+}
+
+// After a bot reply, if a quote was just created, send the customer the public
+// link as a follow-up push and record it in the conversation (so it shows in
+// the admin Omni-Chat with a quote_link marker).
+async function sendQuoteLinkIfAny(
+  admin: SupabaseClient, accessToken: string, userId: string, conversationId: string, quoteCode: string | null,
+): Promise<void> {
+  if (!quoteCode) return;
+  const linkMsg = await quoteLinkMessage(admin, quoteCode);
+  if (!linkMsg) return;
+  await pushToLine(accessToken, userId, linkMsg);
+  await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
 }
 
 async function loadHistory(admin: SupabaseClient, conversationId: string): Promise<Array<{ role: string; content: string }>> {
@@ -411,17 +464,21 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     if (!allowed) return;
 
     let aiReply: string;
+    let quoteCode: string | null = null;
     if (!img) {
       aiReply = "ขออภัยค่ะ ตอนนี้เอยเปิดดูรูปไม่ได้ รบกวนพิมพ์ชื่อ/รุ่นสินค้ามาได้ไหมคะ เอยจะช่วยหาให้นะคะ 😊";
     } else {
       const history = await loadHistory(admin, conversationId);
       const priorHistory = history.slice(0, -1);
-      aiReply = sanitizeReply(await callRagChat(supabaseUrl, serviceKey, "", priorHistory, [img]));
+      const rag = await callRagChat(supabaseUrl, serviceKey, "", priorHistory, [img]);
+      aiReply = sanitizeReply(rag.answer);
+      quoteCode = rag.quoteCode;
     }
     if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, aiReply);
     await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
       channel_id: channel.id, channel_name: channel.name, from_image: true,
     });
+    await sendQuoteLinkIfAny(admin, channel.channel_access_token, userId, conversationId, quoteCode);
     return;
   }
 
@@ -460,7 +517,8 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
 
   const history = await loadHistory(admin, conversationId);
   const priorHistory = history.slice(0, -1);
-  const aiReply = sanitizeReply(await callRagChat(supabaseUrl, serviceKey, msg.text, priorHistory));
+  const rag = await callRagChat(supabaseUrl, serviceKey, msg.text, priorHistory);
+  const aiReply = sanitizeReply(rag.answer);
 
   if (ev.replyToken) {
     await replyToLine(channel.channel_access_token, ev.replyToken, aiReply);
@@ -469,4 +527,5 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
     channel_id: channel.id, channel_name: channel.name,
   });
+  await sendQuoteLinkIfAny(admin, channel.channel_access_token, userId, conversationId, rag.quoteCode);
 }
