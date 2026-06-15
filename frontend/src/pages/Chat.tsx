@@ -55,6 +55,7 @@ import {
 import { uploadChatImage, validateImage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { useLanguage } from '../i18n';
+import { useAuth } from '../lib/AuthProvider';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -192,6 +193,9 @@ function timeAgo(iso: string | null): string {
 
 export default function Chat() {
     const { t } = useLanguage();
+    const { profile } = useAuth();
+    // Name shown to the customer + in the inbox when this admin replies.
+    const agentName = (profile?.full_name ?? '').trim() || undefined;
     // Filters — default to "Inbox" (no filter, show all)
     const [channel, setChannel] = useState<ChatChannel | null>(null);
     const [status, setStatus] = useState<ChatStatus | null>(null);
@@ -528,6 +532,7 @@ export default function Chat() {
                 conversationId: selectedId,
                 content,
                 contentType: imgs.length > 0 ? 'image' : 'text',
+                senderName: agentName,
             });
             setReply('');
             clearPending();
@@ -549,6 +554,7 @@ export default function Chat() {
                 conversationId: selectedId,
                 content: `![image](${url})`,
                 contentType: 'image',
+                senderName: agentName,
             });
             void loadConvs();
         } catch (e) {

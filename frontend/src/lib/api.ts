@@ -2825,10 +2825,18 @@ export const chatInboxApi = {
     // Forward to the external channel (best-effort)
     if (conv?.channel === 'line' && conv.external_id) {
       try {
+        // Sign outgoing text with the admin's name so the customer knows who
+        // is replying (the bot signs itself "เอย"; a human shows their name).
+        // Skip when the name is missing or looks like an email, and for
+        // image/sticker messages (the prefix would become a lone text bubble).
+        const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
+        const pushText = pushName && (input.contentType ?? 'text') === 'text'
+          ? `${pushName}: ${input.content}`
+          : input.content;
         const { error: pushErr } = await supabase.functions.invoke('line-push', {
           body: {
             conversation_id: input.conversationId,
-            text: input.content,
+            text: pushText,
           },
         });
         if (pushErr) {

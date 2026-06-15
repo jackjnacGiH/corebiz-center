@@ -289,6 +289,7 @@ export default function CustomerChat() {
                     const row = payload.new as {
                         id: string;
                         sender_type: 'customer' | 'agent' | 'bot' | 'system';
+                        sender_name?: string | null;
                         content: string;
                         created_at: string;
                     };
@@ -296,6 +297,9 @@ export default function CustomerChat() {
                     // 'customer' and 'bot' messages were inserted by us
                     // (or our own askStream) so they're already in state.
                     if (row.sender_type !== 'agent') return;
+                    // Sign the bubble with the admin's name so the visitor knows
+                    // who replied (skip emails / missing names).
+                    const name = row.sender_name && !row.sender_name.includes('@') ? row.sender_name : null;
                     setTurns((prev) => {
                         // de-dupe by id
                         if (prev.some((t) => t.id === `db-${row.id}`)) return prev;
@@ -304,7 +308,7 @@ export default function CustomerChat() {
                             {
                                 id: `db-${row.id}`,
                                 role: 'assistant',
-                                content: row.content,
+                                content: name ? `${name}: ${row.content}` : row.content,
                             },
                         ];
                     });
