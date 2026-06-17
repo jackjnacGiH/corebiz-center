@@ -508,17 +508,9 @@ export default function Chat() {
         if (imageUrl) attachHostedImage(imageUrl);
     }
 
-    function onFilesSelected(e: ChangeEvent<HTMLInputElement>) {
-        const files = Array.from(e.target.files ?? []);
-        if (files.length) addImageFiles(files);
-        e.target.value = ''; // allow re-selecting the same file
-    }
-
-    /** Document attachment (PDF/doc/etc.) — upload + send immediately as a file
-     *  message (a file card here; a link to the customer on LINE). */
-    async function onDocsSelected(e: ChangeEvent<HTMLInputElement>) {
-        const files = Array.from(e.target.files ?? []);
-        e.target.value = '';
+    /** Upload + send documents (PDF/doc/etc.) immediately as file messages
+     *  (a file card here; a link to the customer on LINE). */
+    async function sendFiles(files: File[]) {
         if (!files.length || !selectedId || sending) return;
         setSending(true);
         try {
@@ -539,6 +531,25 @@ export default function Chat() {
         } finally {
             setSending(false);
         }
+    }
+
+    // Either attach button funnels here. Images queue for a captioned send;
+    // anything else (PDF/doc/…) is uploaded + sent as a file — so a PDF works
+    // whichever button the user picked (the OS dialog lets them override the
+    // accept filter and choose any file).
+    function onFilesSelected(e: ChangeEvent<HTMLInputElement>) {
+        const files = Array.from(e.target.files ?? []);
+        e.target.value = ''; // allow re-selecting the same file
+        const imgs = files.filter((f) => f.type.startsWith('image/'));
+        const docs = files.filter((f) => !f.type.startsWith('image/'));
+        if (imgs.length) addImageFiles(imgs);
+        if (docs.length) void sendFiles(docs);
+    }
+
+    function onDocsSelected(e: ChangeEvent<HTMLInputElement>) {
+        const files = Array.from(e.target.files ?? []);
+        e.target.value = '';
+        void sendFiles(files);
     }
 
     /** Clipboard paste — captures screenshots / cropped images (Ctrl+V). */
@@ -1052,7 +1063,7 @@ export default function Chat() {
                                 <input
                                     ref={fileInputRef}
                                     type="file"
-                                    accept="image/png,image/jpeg,image/webp,image/gif"
+                                    accept="image/png,image/jpeg,image/webp,image/gif,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf"
                                     multiple
                                     className="hidden"
                                     onChange={onFilesSelected}
