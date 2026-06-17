@@ -1,5 +1,11 @@
 /**
- * line-webhook v17 — capture quoteToken for reply-to-message
+ * line-webhook v18 — show customer LINE locations
+ *
+ * v18: a customer's shared LINE location now becomes a customer message with a
+ * tappable Google Maps link (📍 title + address + maps URL) instead of a blank
+ * "[location]" system line. No bot auto-reply — staff handle it.
+ *
+ * v17 — capture quoteToken for reply-to-message
  *
  * v17: store each incoming message's LINE quoteToken in metadata.quote_token,
  * so when an admin "replies to" that message in Omni-Chat we can send a native
@@ -71,7 +77,7 @@ interface LineEvent {
   replyToken?: string;
   source?: { type: string; userId?: string; groupId?: string; roomId?: string };
   timestamp?: number;
-  message?: { type: string; id: string; text?: string; stickerId?: string; packageId?: string; fileName?: string; fileSize?: number; quoteToken?: string; };
+  message?: { type: string; id: string; text?: string; stickerId?: string; packageId?: string; fileName?: string; fileSize?: number; quoteToken?: string; title?: string; address?: string; latitude?: number; longitude?: number; };
 }
 
 type LineMessage =
@@ -550,6 +556,22 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       quote_token: msg.quoteToken ?? null,
     }, "file");
     return;
+  }
+
+  // LOCATION — show as a customer message with a tappable Google Maps link
+  // (LINE locations aren't text, so without this they showed a blank "[location]").
+  if (msg.type === "location") {
+    const lat = msg.latitude, lng = msg.longitude;
+    const addr = (msg.address ?? "").trim();
+    const mapUrl = (lat != null && lng != null) ? `https://www.google.com/maps?q=${lat},${lng}` : null;
+    const content = [`📍 ${msg.title?.trim() || "ตำแหน่งที่ลูกค้าส่ง"}`, addr, mapUrl].filter(Boolean).join("\n");
+    await saveMessage(admin, conversationId, "customer", content, msg.id, {
+      line_message_type: "location",
+      latitude: lat ?? null, longitude: lng ?? null,
+      address: addr || null, title: msg.title ?? null,
+      map_url: mapUrl,
+    });
+    return; // no bot auto-reply for a location — staff handle it
   }
 
   if (msg.type !== "text" || !msg.text) {

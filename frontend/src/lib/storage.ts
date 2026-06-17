@@ -118,6 +118,37 @@ export async function uploadChatImage(file: File, conversationId: string): Promi
     return data.publicUrl;
 }
 
+const MAX_CHAT_FILE_SIZE = 20 * 1024 * 1024; // 20 MB (chat-attachments bucket limit)
+
+export interface UploadedChatFile { url: string; name: string; size: number; type: string; }
+
+/** Validate a non-image chat attachment (PDF/doc/etc.) before upload. */
+export function validateChatFile(file: File): void {
+    if (file.size > MAX_CHAT_FILE_SIZE) {
+        throw new Error(`ไฟล์ ${file.name} ใหญ่เกิน 20 MB (ตอนนี้ ${(file.size / 1024 / 1024).toFixed(1)} MB)`);
+    }
+}
+
+/**
+ * Upload a document (PDF/docs/etc.) the admin attaches in Omni-Chat to the
+ * public chat-attachments bucket. Keeps the original filename for display; the
+ * storage path is ASCII-sanitised + timestamped. The returned URL is shown as a
+ * file card in Omni-Chat and (for LINE) sent to the customer as a link, since
+ * the LINE Messaging API can't push file messages.
+ */
+export async function uploadChatFile(file: File, conversationId: string): Promise<UploadedChatFile> {
+    validateChatFile(file);
+    const safe = (file.name.replace(/[^\w.\-]+/g, '_') || 'file').slice(-80);
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const path = `${conversationId}/${stamp}-${safe}`;
+    const { error: uploadErr } = await supabase.storage
+        .from(CHAT_BUCKET)
+        .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: file.type || 'application/octet-stream' });
+    if (uploadErr) throw uploadErr;
+    const { data } = supabase.storage.from(CHAT_BUCKET).getPublicUrl(path);
+    return { url: data.publicUrl, name: file.name, size: file.size, type: file.type || 'application/octet-stream' };
+}
+
 /**
  * Best-effort delete by public URL. Silently ignores errors (cleanup task).
  *

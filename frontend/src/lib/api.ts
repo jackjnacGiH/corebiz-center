@@ -2886,6 +2886,72 @@ export const chatInboxApi = {
     return data as ChatMessage;
   },
 
+  /** Send a document (PDF/doc/etc.) the admin attached. Stored as a 'file'
+   *  message (file card in Omni-Chat). LINE can't push files, so the customer
+   *  gets a text message with the filename + a link to open/download it. */
+  async sendFileMessage(input: {
+    conversationId: string;
+    fileUrl: string;
+    fileName: string;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    senderName?: string;
+  }): Promise<ChatMessage> {
+    const { data: userData } = await supabase.auth.getUser();
+    const senderId = userData.user?.id ?? null;
+
+    const { data: conv } = await supabase
+      .from('chat_conversations')
+      .select('channel, external_id')
+      .eq('id', input.conversationId)
+      .maybeSingle();
+
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert({
+        conversation_id: input.conversationId,
+        sender_type: 'agent',
+        sender_id: senderId,
+        sender_name: input.senderName ?? userData.user?.email ?? 'Staff',
+        content: `📎 ${input.fileName}`,
+        content_type: 'file',
+        metadata: {
+          file_url: input.fileUrl,
+          file_name: input.fileName,
+          file_size: input.fileSize ?? null,
+          mime_type: input.mimeType ?? null,
+        },
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    await supabase
+      .from('chat_conversations')
+      .update({
+        last_message_at: new Date().toISOString(),
+        last_message_preview: `📎 ${input.fileName}`,
+        unread_count: 0,
+      })
+      .eq('id', input.conversationId);
+
+    // LINE can't push a file → send a tappable link the customer can open.
+    if (conv?.channel === 'line' && conv.external_id) {
+      try {
+        const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
+        const text = `${pushName ? `${pushName}: ` : ''}📎 ${input.fileName}\n${input.fileUrl}`;
+        const { error: pushErr } = await supabase.functions.invoke('line-push', {
+          body: { conversation_id: input.conversationId, text },
+        });
+        if (pushErr) console.warn('[chatInboxApi] file line-push failed:', pushErr);
+      } catch (pushErr) {
+        console.warn('[chatInboxApi] file line-push threw:', pushErr);
+      }
+    }
+
+    return data as ChatMessage;
+  },
+
   async setStatus(conversationId: string, status: ChatStatus): Promise<void> {
     const { error } = await supabase
       .from('chat_conversations')

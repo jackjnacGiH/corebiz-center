@@ -54,7 +54,7 @@ import {
     type ChatMessage,
     type ChatStatus,
 } from '../lib/api';
-import { uploadChatImage, validateImage } from '../lib/storage';
+import { uploadChatImage, validateImage, uploadChatFile } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { useLanguage } from '../i18n';
 import { useAuth } from '../lib/AuthProvider';
@@ -254,6 +254,7 @@ export default function Chat() {
     const [pendingImages, setPendingImages] = useState<{ previewUrl: string; file?: File; url?: string }[]>([]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const docInputRef = useRef<HTMLInputElement>(null);
 
     // Auto-grow the composer with its content, up to ~8 lines, then scroll.
     // Shrinks back to the 2-row base when the text is cleared.
@@ -511,6 +512,33 @@ export default function Chat() {
         const files = Array.from(e.target.files ?? []);
         if (files.length) addImageFiles(files);
         e.target.value = ''; // allow re-selecting the same file
+    }
+
+    /** Document attachment (PDF/doc/etc.) — upload + send immediately as a file
+     *  message (a file card here; a link to the customer on LINE). */
+    async function onDocsSelected(e: ChangeEvent<HTMLInputElement>) {
+        const files = Array.from(e.target.files ?? []);
+        e.target.value = '';
+        if (!files.length || !selectedId || sending) return;
+        setSending(true);
+        try {
+            for (const file of files) {
+                const up = await uploadChatFile(file, selectedId);
+                await chatInboxApi.sendFileMessage({
+                    conversationId: selectedId,
+                    fileUrl: up.url,
+                    fileName: up.name,
+                    fileSize: up.size,
+                    mimeType: up.type,
+                    senderName: agentName,
+                });
+            }
+            void loadConvs();
+        } catch (err) {
+            alert(`ส่งไฟล์ไม่สำเร็จ: ${(err as Error).message}`);
+        } finally {
+            setSending(false);
+        }
     }
 
     /** Clipboard paste — captures screenshots / cropped images (Ctrl+V). */
@@ -969,6 +997,15 @@ export default function Chat() {
                                         </button>
                                         <button
                                             type="button"
+                                            onClick={() => docInputRef.current?.click()}
+                                            disabled={sending}
+                                            title="แนบไฟล์เอกสาร (PDF, Word, Excel ฯลฯ) — ส่งให้ลูกค้าเปิด/ดาวน์โหลดได้"
+                                            className="grid place-items-center w-8 h-8 rounded-md text-neutral-500 hover:text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            <FileText size={18} />
+                                        </button>
+                                        <button
+                                            type="button"
                                             onClick={() => void handleCaptureScreen()}
                                             disabled={sending || capturing}
                                             title="จับภาพหน้าจอแล้วครอป → ใส่ในช่องพิมพ์ · หรือกด Win+Shift+S ครอปเองทั้งจอ แล้ววาง Ctrl+V"
@@ -1019,6 +1056,15 @@ export default function Chat() {
                                     multiple
                                     className="hidden"
                                     onChange={onFilesSelected}
+                                />
+                                {/* Hidden document input (PDF/Word/Excel/…) */}
+                                <input
+                                    ref={docInputRef}
+                                    type="file"
+                                    accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf"
+                                    multiple
+                                    className="hidden"
+                                    onChange={onDocsSelected}
                                 />
                             </form>
                         </>
