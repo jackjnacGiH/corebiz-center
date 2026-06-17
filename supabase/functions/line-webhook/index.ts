@@ -1,5 +1,11 @@
 /**
- * line-webhook v18 — show customer LINE locations
+ * line-webhook v19 — drop the obsolete "บัญชีของฉัน / /account" pointer
+ *
+ * v19: sanitizeReply now strips the bot's "log in at บัญชีของฉัน /account"
+ * sentence. Quotes are sent as a public no-login link (/center/q/<token>), so
+ * the log-in pointer only confused customers ("ทำไมต้องเข้าระบบ").
+ *
+ * v18 — show customer LINE locations
  *
  * v18: a customer's shared LINE location now becomes a customer message with a
  * tappable Google Maps link (📍 title + address + maps URL) instead of a blank
@@ -282,6 +288,12 @@ async function startLineLoading(accessToken: string, userId: string): Promise<vo
 
 function sanitizeReply(text: string): string {
   if (!text) return text;
+  // Drop the obsolete "บัญชีของฉัน / /account" (log-in) pointer. Quotes now go
+  // out as a public no-login link, so telling the customer to log in just
+  // confuses them ("ทำไมต้องเข้าระบบ").
+  text = text.split(/\n/)
+    .filter((l) => !/บัญชีของฉัน|\/account|เข้าสู่ระบบด้วยอีเมล/u.test(l))
+    .join("\n").replace(/\n{3,}/g, "\n\n").trim();
   const FORBIDDEN = /(ยังไม่พบ|ไม่พบ|ไม่มีสินค้า|ไม่มี[^\n]{0,15}ในระบบ|หาไม่เจอ)/u;
   if (!FORBIDDEN.test(text)) return text;
   const kept = text.split(/\n/).filter((l) => !FORBIDDEN.test(l));

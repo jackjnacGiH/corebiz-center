@@ -139,6 +139,15 @@ function linkifyText(text: string, keyBase: string): ReactNode[] {
 
 function renderMessageContent(content: string): ReactNode[] {
     if (!content) return [];
+    // Drop the obsolete "บัญชีของฉัน / /account" log-in pointer — quotes are sent
+    // as a public no-login link, so telling the customer to log in only confuses.
+    content = content
+        .split('\n')
+        .filter((l) => !/บัญชีของฉัน|\/account|เข้าสู่ระบบด้วยอีเมล/u.test(l))
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    if (!content) return [];
     const out: ReactNode[] = [];
     let lastIndex = 0;
     let m: RegExpExecArray | null;
