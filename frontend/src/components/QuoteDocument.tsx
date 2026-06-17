@@ -135,10 +135,14 @@ export default function QuoteDocument({
                 <td className="px-2 py-2 text-center text-neutral-400 tabular-nums">{i + 1}</td>
                 <td className="px-2 py-2">
                   <div className="text-neutral-800 leading-snug">{l.name}</div>
-                  <div className="mt-0.5 text-[11px] text-neutral-500 font-mono">
-                    <span className="text-[13px] font-bold text-neutral-700 tracking-wide">{l.sku}</span>
-                    {(l.lineDisc ?? 0) > 0 ? ` · ลด ${format(l.lineDisc as number)}` : ''}
-                  </div>
+                  {((l.sku && l.sku !== 'SHIPPING') || (l.lineDisc ?? 0) > 0) && (
+                    <div className="mt-0.5 text-[11px] text-neutral-500 font-mono">
+                      {l.sku && l.sku !== 'SHIPPING' && (
+                        <span className="text-[13px] font-bold text-neutral-700 tracking-wide">{l.sku}</span>
+                      )}
+                      {(l.lineDisc ?? 0) > 0 ? ` · ลด ${format(l.lineDisc as number)}` : ''}
+                    </div>
+                  )}
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap">
                   {formatQty(l.qty)}{l.unitLabel ? <span className="text-neutral-400"> {l.unitLabel}</span> : ''}

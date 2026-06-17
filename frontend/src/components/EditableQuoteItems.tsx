@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Plus, X, Search, Loader2, Save, Trash2 } from 'lucide-react';
+import { Plus, X, Search, Loader2, Save, Trash2, Truck, PencilLine } from 'lucide-react';
 import { getEffectivePrice, type ProductWithInventory } from '../lib/api';
 
 export interface EditLine {
@@ -98,6 +98,20 @@ export default function EditableQuoteItems({
     setPickerOpen(false);
     setQ('');
   }
+  // Free-text line not tied to any product (special item). No stock / Inventory.
+  function addCustomLine() {
+    setLines((ls) => [...ls, {
+      product_id: null, sku: '', product_name: '',
+      quantity: 1, unit_price: 0, discount: 0, unit: null,
+    }]);
+  }
+  // Shipping fee — always kept as the LAST line, only one. Editable price.
+  function addShippingLine() {
+    setLines((ls) => [
+      ...ls.filter((l) => l.sku !== 'SHIPPING'),
+      { product_id: null, sku: 'SHIPPING', product_name: 'ค่าจัดส่งสินค้า', quantity: 1, unit_price: 100, discount: 0, unit: null },
+    ]);
+  }
 
   return (
     <div className="rounded-lg border border-indigo-200 bg-indigo-50/30 p-3 space-y-3">
@@ -123,8 +137,24 @@ export default function EditableQuoteItems({
               <tr key={i} className="align-top">
                 <td className="px-2 py-1.5 text-center text-neutral-400">{i + 1}</td>
                 <td className="px-2 py-1.5">
-                  <div className="text-neutral-800 leading-snug">{l.product_name}</div>
-                  <div className="text-[10px] text-neutral-400 font-mono">{l.sku}</div>
+                  {l.product_id == null ? (
+                    <>
+                      <input
+                        value={l.product_name}
+                        onChange={(e) => patch(i, { product_name: e.target.value })}
+                        placeholder={l.sku === 'SHIPPING' ? 'ค่าจัดส่งสินค้า' : 'ชื่อรายการ (พิมพ์เอง)'}
+                        className="w-full rounded border border-neutral-200 px-1.5 py-1 text-[12px] outline-none focus:border-indigo-400"
+                      />
+                      <div className="text-[10px] text-amber-600 mt-0.5">
+                        {l.sku === 'SHIPPING' ? 'ค่าจัดส่ง · ไม่นับสต๊อก' : 'รายการพิเศษ · ไม่นับสต๊อก'}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-neutral-800 leading-snug">{l.product_name}</div>
+                      <div className="text-[10px] text-neutral-400 font-mono">{l.sku}</div>
+                    </>
+                  )}
                 </td>
                 <td className="px-1 py-1.5">
                   <div className="flex items-center justify-center gap-1.5">
@@ -176,9 +206,17 @@ export default function EditableQuoteItems({
             </div>
           </div>
         ) : (
-          <button type="button" onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-dashed border-indigo-300 bg-white text-[12px] text-indigo-600 hover:bg-indigo-50">
-            <Plus size={13} /> เพิ่มสินค้า
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-dashed border-indigo-300 bg-white text-[12px] text-indigo-600 hover:bg-indigo-50">
+              <Plus size={13} /> เพิ่มสินค้า
+            </button>
+            <button type="button" onClick={addCustomLine} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-dashed border-neutral-300 bg-white text-[12px] text-neutral-600 hover:bg-neutral-50">
+              <PencilLine size={13} /> เพิ่มรายการพิเศษ (พิมพ์เอง)
+            </button>
+            <button type="button" onClick={addShippingLine} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-dashed border-emerald-300 bg-white text-[12px] text-emerald-700 hover:bg-emerald-50">
+              <Truck size={13} /> เพิ่มค่าจัดส่ง
+            </button>
+          </div>
         )}
       </div>
 
@@ -228,7 +266,7 @@ export default function EditableQuoteItems({
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={onCancel} disabled={busy} className="h-9 px-3 rounded-md border border-neutral-200 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-50">ยกเลิก</button>
-          <button type="button" onClick={() => onSave(lines, discount)} disabled={busy} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50">
+          <button type="button" onClick={() => onSave(lines.filter((l) => l.product_name.trim() !== ''), discount)} disabled={busy} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-50">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} บันทึกรายการ
           </button>
         </div>
