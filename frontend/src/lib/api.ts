@@ -2994,6 +2994,16 @@ export const chatInboxApi = {
       .eq('id', conversationId);
     if (error) throw error;
   },
+
+  /** Clear the unread badge on every conversation at once ("อ่านแล้วทั้งหมด").
+   *  Only touches rows that still have a badge so it's a cheap no-op when clean. */
+  async markAllRead(): Promise<void> {
+    const { error } = await supabase
+      .from('chat_conversations')
+      .update({ unread_count: 0 })
+      .gt('unread_count', 0);
+    if (error) throw error;
+  },
 };
 
 // =========================================================================

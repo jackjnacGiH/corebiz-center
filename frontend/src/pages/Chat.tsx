@@ -46,6 +46,7 @@ import {
     Download,
     FileText,
     Reply,
+    CheckCheck,
 } from 'lucide-react';
 import {
     chatInboxApi,
@@ -661,6 +662,15 @@ export default function Chat() {
         }
     }
 
+    async function handleMarkAllRead() {
+        try {
+            await chatInboxApi.markAllRead();
+            void loadConvs();
+        } catch (e) {
+            alert((e as Error).message);
+        }
+    }
+
     async function handleSetStatus(s: ChatStatus) {
         if (!selectedId) return;
         // Manual override wins — drop this id from the deferred queue so
@@ -749,6 +759,18 @@ export default function Chat() {
                                 />
                             ))}
                         </div>
+                    </div>
+
+                    {/* Mark every conversation as read (clears all unread badges) */}
+                    <div className="px-3 py-1.5 border-b border-neutral-100 flex justify-end">
+                        <button
+                            type="button"
+                            onClick={() => void handleMarkAllRead()}
+                            title="ทำเครื่องหมายว่าอ่านแล้วทุกแชท"
+                            className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-500 hover:text-indigo-600 transition"
+                        >
+                            <CheckCheck size={13} /> อ่านแล้วทั้งหมด
+                        </button>
                     </div>
 
                     {/* List body */}
