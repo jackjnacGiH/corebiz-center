@@ -2791,6 +2791,16 @@ export const chatInboxApi = {
      *  ![image](url)). Defaults to 'text'. line-push splits markdown
      *  images into native LINE image messages either way. */
     contentType?: ChatMessage['content_type'];
+    /** Quote-reply: the message this reply is responding to. Renders a quoted
+     *  box in Omni-Chat, and (if quoteToken is present) becomes a native LINE
+     *  quoted reply on the customer's side. */
+    replyTo?: {
+      id: string;
+      sender_type: string;
+      sender_name?: string | null;
+      preview: string;
+      quoteToken?: string | null;
+    } | null;
   }): Promise<ChatMessage> {
     const { data: userData } = await supabase.auth.getUser();
     const senderId = userData.user?.id ?? null;
@@ -2802,6 +2812,17 @@ export const chatInboxApi = {
       .eq('id', input.conversationId)
       .maybeSingle();
 
+    const metadata = input.replyTo
+      ? {
+          reply_to: {
+            id: input.replyTo.id,
+            sender_type: input.replyTo.sender_type,
+            sender_name: input.replyTo.sender_name ?? null,
+            preview: input.replyTo.preview,
+          },
+        }
+      : {};
+
     const { data, error } = await supabase
       .from('chat_messages')
       .insert({
@@ -2811,6 +2832,7 @@ export const chatInboxApi = {
         sender_name: input.senderName ?? userData.user?.email ?? 'Staff',
         content: input.content,
         content_type: input.contentType ?? 'text',
+        metadata,
       })
       .select('*')
       .single();
@@ -2848,6 +2870,8 @@ export const chatInboxApi = {
           body: {
             conversation_id: input.conversationId,
             text: pushText,
+            // Native LINE quoted reply when replying to a quotable message
+            quote_token: input.replyTo?.quoteToken ?? undefined,
           },
         });
         if (pushErr) {

@@ -45,6 +45,7 @@ import {
     ChevronLeft,
     Download,
     FileText,
+    Reply,
 } from 'lucide-react';
 import {
     chatInboxApi,
@@ -242,6 +243,8 @@ export default function Chat() {
     // Reply
     const [reply, setReply] = useState('');
     const [sending, setSending] = useState(false);
+    // Quote-reply: the message the admin is replying to (null = normal send)
+    const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
 
     // Composer attachments: images queued via the attach button or clipboard
     // paste (screen-crop → Ctrl+V). Each keeps the File plus a local
@@ -265,6 +268,10 @@ export default function Chat() {
         ta.style.height = Math.min(ta.scrollHeight, maxH) + 'px';
         ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
     }, [reply]);
+
+    // Drop any pending reply target when switching conversations — it points at
+    // a message in the previous thread.
+    useEffect(() => { setReplyingTo(null); }, [selectedId]);
 
     // Screen capture → crop → attach. `cropSrc` holds the captured frame
     // (data-URL) while the crop modal is open.
@@ -560,8 +567,18 @@ export default function Chat() {
                 content,
                 contentType: imgs.length > 0 ? 'image' : 'text',
                 senderName: agentName,
+                replyTo: replyingTo
+                    ? {
+                          id: replyingTo.id,
+                          sender_type: replyingTo.sender_type,
+                          sender_name: replyingTo.sender_name,
+                          preview: msgPreview(replyingTo),
+                          quoteToken: (replyingTo.metadata as { quote_token?: string | null } | null)?.quote_token ?? null,
+                      }
+                    : null,
             });
             setReply('');
+            setReplyingTo(null);
             clearPending();
             // Optimistically refresh list so this conversation jumps to top
             void loadConvs();
@@ -881,7 +898,11 @@ export default function Chat() {
                                     </div>
                                 )}
                                 {messages.map((m) => (
-                                    <MessageRow key={m.id} msg={m} />
+                                    <MessageRow
+                                        key={m.id}
+                                        msg={m}
+                                        onReply={(rm) => { setReplyingTo(rm); textareaRef.current?.focus(); }}
+                                    />
                                 ))}
                             </div>
 
@@ -890,6 +911,27 @@ export default function Chat() {
                                 onSubmit={handleSend}
                                 className="border-t border-neutral-200 p-3 bg-white"
                             >
+                                {/* Quote-reply preview — the message being replied to */}
+                                {replyingTo && (
+                                    <div className="flex items-start gap-2 mb-2 rounded-lg border border-indigo-200 bg-indigo-50/60 pl-2 pr-1 py-1.5">
+                                        <Reply size={14} className="text-indigo-500 mt-0.5 flex-shrink-0" />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-[11px] font-semibold text-indigo-600">
+                                                ตอบกลับ {quotedSenderLabel(replyingTo.sender_type, replyingTo.sender_name)}
+                                            </div>
+                                            <div className="text-[11px] text-neutral-500 truncate">{msgPreview(replyingTo)}</div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setReplyingTo(null)}
+                                            title="ยกเลิกการตอบกลับ"
+                                            className="w-6 h-6 grid place-items-center rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 flex-shrink-0"
+                                        >
+                                            <X size={13} />
+                                        </button>
+                                    </div>
+                                )}
+
                                 {/* Pending image attachments (device upload / paste) */}
                                 {pendingImages.length > 0 && (
                                     <div className="flex flex-wrap gap-2 mb-2">
@@ -1069,11 +1111,33 @@ function FileAttachment({ meta, fallback }: { meta: Record<string, unknown>; fal
     );
 }
 
-function MessageRow({ msg }: { msg: ChatMessage }) {
+/** A short, clean one-line snippet of a message for quote-reply previews. */
+function msgPreview(msg: Pick<ChatMessage, 'content' | 'content_type' | 'metadata'>): string {
+    if (msg.content_type === 'file') {
+        const name = (msg.metadata as { file_name?: string } | null)?.file_name;
+        return `📎 ${name || 'ไฟล์แนบ'}`;
+    }
+    const cleaned = (msg.content || '')
+        .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g, '🖼️ รูปภาพ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!cleaned) return msg.content_type === 'image' ? '🖼️ รูปภาพ' : '…';
+    return cleaned.length > 90 ? cleaned.slice(0, 90) + '…' : cleaned;
+}
+
+/** Who-sent label for a quoted message. */
+function quotedSenderLabel(senderType: string, senderName?: string | null): string {
+    if (senderType === 'customer') return 'ลูกค้า';
+    if (senderType === 'bot') return 'AI (เอย)';
+    return senderName || 'ทีมงาน';
+}
+
+function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMessage) => void }) {
     const { t } = useLanguage();
     const isCustomer = msg.sender_type === 'customer';
     const isBot = msg.sender_type === 'bot';
     const isSystem = msg.sender_type === 'system';
+    const replyTo = (msg.metadata as { reply_to?: { sender_type: string; sender_name?: string | null; preview: string } } | null)?.reply_to;
 
     if (isSystem) {
         return (
@@ -1084,7 +1148,7 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
     }
 
     return (
-        <div className={`flex gap-2 ${isCustomer ? '' : 'flex-row-reverse'}`}>
+        <div className={`group flex gap-2 ${isCustomer ? '' : 'flex-row-reverse'}`}>
             <div
                 className={cn(
                     'w-7 h-7 rounded-full grid place-items-center flex-shrink-0 mt-0.5',
@@ -1104,25 +1168,47 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
                         minute: '2-digit',
                     })}
                 </div>
-                <div
-                    className={cn(
-                        'rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed',
-                        isCustomer
-                            ? 'bg-white border border-neutral-200 text-neutral-900 rounded-tl-sm'
-                            : isBot
-                                ? 'bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 text-neutral-900 rounded-tr-sm'
-                                : 'bg-emerald-50 border border-emerald-200 text-neutral-900 rounded-tr-sm',
-                    )}
-                >
-                    {msg.content_type === 'file' ? (
-                        <FileAttachment meta={msg.metadata} fallback={msg.content} />
-                    ) : (
-                        <>
-                            {msg.content_type === 'image' && msg.content && (
-                                <ImageIcon size={14} className="inline mr-1 text-neutral-400" />
-                            )}
-                            {renderMessageContent(msg.content)}
-                        </>
+                {/* Bubble + hover "reply" action */}
+                <div className={`flex items-center gap-1.5 ${isCustomer ? '' : 'flex-row-reverse'}`}>
+                    <div
+                        className={cn(
+                            'rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed',
+                            isCustomer
+                                ? 'bg-white border border-neutral-200 text-neutral-900 rounded-tl-sm'
+                                : isBot
+                                    ? 'bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 text-neutral-900 rounded-tr-sm'
+                                    : 'bg-emerald-50 border border-emerald-200 text-neutral-900 rounded-tr-sm',
+                        )}
+                    >
+                        {/* Quoted message this reply is responding to */}
+                        {replyTo && (
+                            <div className="mb-1.5 border-l-2 border-indigo-300 bg-black/5 rounded-r px-2 py-1">
+                                <div className="text-[10px] font-semibold text-indigo-600">
+                                    {quotedSenderLabel(replyTo.sender_type, replyTo.sender_name)}
+                                </div>
+                                <div className="text-[11px] text-neutral-500 line-clamp-2 whitespace-pre-wrap">{replyTo.preview}</div>
+                            </div>
+                        )}
+                        {msg.content_type === 'file' ? (
+                            <FileAttachment meta={msg.metadata} fallback={msg.content} />
+                        ) : (
+                            <>
+                                {msg.content_type === 'image' && msg.content && (
+                                    <ImageIcon size={14} className="inline mr-1 text-neutral-400" />
+                                )}
+                                {renderMessageContent(msg.content)}
+                            </>
+                        )}
+                    </div>
+                    {onReply && (
+                        <button
+                            type="button"
+                            onClick={() => onReply(msg)}
+                            title="ตอบกลับข้อความนี้"
+                            className="opacity-0 group-hover:opacity-100 transition w-7 h-7 grid place-items-center rounded-full text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 flex-shrink-0"
+                        >
+                            <Reply size={14} />
+                        </button>
                     )}
                 </div>
             </div>

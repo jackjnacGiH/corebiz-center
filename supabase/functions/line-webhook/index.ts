@@ -1,5 +1,11 @@
 /**
- * line-webhook v16 — stop the bot echoing old quote links
+ * line-webhook v17 — capture quoteToken for reply-to-message
+ *
+ * v17: store each incoming message's LINE quoteToken in metadata.quote_token,
+ * so when an admin "replies to" that message in Omni-Chat we can send a native
+ * LINE quoted reply (like LINE OA). Captured on text/image/file messages.
+ *
+ * v16 — stop the bot echoing old quote links
  *
  * v16: the public quote link was being fed back into rag-chat's history, so
  * the model parroted the PREVIOUS quote's link into a new answer — a fresh
@@ -65,7 +71,7 @@ interface LineEvent {
   replyToken?: string;
   source?: { type: string; userId?: string; groupId?: string; roomId?: string };
   timestamp?: number;
-  message?: { type: string; id: string; text?: string; stickerId?: string; packageId?: string; fileName?: string; fileSize?: number; };
+  message?: { type: string; id: string; text?: string; stickerId?: string; packageId?: string; fileName?: string; fileSize?: number; quoteToken?: string; };
 }
 
 type LineMessage =
@@ -503,7 +509,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     let url: string | null = null;
     if (img) url = await uploadImageToStorage(admin, conversationId, img.mimeType, img.data);
     const custContent = url ? `![image](${url})` : "[ลูกค้าส่งรูปภาพ]";
-    await saveMessage(admin, conversationId, "customer", custContent, msg.id, { line_message_type: "image", image_url: url }, "image");
+    await saveMessage(admin, conversationId, "customer", custContent, msg.id, { line_message_type: "image", image_url: url, quote_token: msg.quoteToken ?? null }, "image");
 
     const allowed = await shouldBotReply(admin, conversationId);
     if (!allowed) return;
@@ -541,6 +547,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       file_name: fileName,
       file_size: msg.fileSize ?? dl?.size ?? null,
       mime_type: dl?.mimeType ?? null,
+      quote_token: msg.quoteToken ?? null,
     }, "file");
     return;
   }
@@ -553,7 +560,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     return;
   }
 
-  await saveMessage(admin, conversationId, "customer", msg.text, msg.id);
+  await saveMessage(admin, conversationId, "customer", msg.text, msg.id, { quote_token: msg.quoteToken ?? null });
 
   const allowed = await shouldBotReply(admin, conversationId);
   if (!allowed) return;
