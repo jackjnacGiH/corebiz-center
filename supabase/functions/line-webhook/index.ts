@@ -1,5 +1,13 @@
 /**
- * line-webhook v19 — drop the obsolete "บัญชีของฉัน / /account" pointer
+ * line-webhook v20 — send the quote link in the (free) reply, not a push
+ *
+ * v20: the public quote link was sent as a separate LINE push, which uses the
+ * monthly push quota — so once the quota was exhausted the link silently failed
+ * (customer saw the bot reply but no link). Now the link is appended to the SAME
+ * reply as the bot's answer (LINE reply API is free + unlimited), so it always
+ * goes out and stops consuming push quota.
+ *
+ * v19 — drop the obsolete "บัญชีของฉัน / /account" pointer
  *
  * v19: sanitizeReply now strips the bot's "log in at บัญชีของฉัน /account"
  * sentence. Quotes are sent as a public no-login link (/center/q/<token>), so
@@ -358,25 +366,15 @@ function textToLineMessages(text: string): LineMessage[] {
   return out.slice(0, 5);
 }
 
-async function replyToLine(accessToken: string, replyToken: string, text: string): Promise<void> {
-  const messages = textToLineMessages(text);
+async function replyToLine(accessToken: string, replyToken: string, texts: string | string[]): Promise<void> {
+  const arr = Array.isArray(texts) ? texts : [texts];
+  const messages = arr.flatMap((t) => textToLineMessages(t)).slice(0, 5);
   const res = await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ replyToken, messages }),
   });
   if (!res.ok) console.error("LINE reply failed:", res.status, await res.text().catch(() => ""));
-}
-
-// Push a follow-up message (the reply token is single-use, already spent on the
-// main answer — so the quote link goes out as a push).
-async function pushToLine(accessToken: string, userId: string, text: string): Promise<void> {
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ to: userId, messages: textToLineMessages(text) }),
-  });
-  if (!res.ok) console.error("LINE push failed:", res.status, await res.text().catch(() => ""));
 }
 
 // Build the public (no-login) quote link message for a quote code. Customers
@@ -389,17 +387,14 @@ async function quoteLinkMessage(admin: SupabaseClient, quoteCode: string): Promi
   return `📄 ใบเสนอราคา ${quoteCode}\nดูรายละเอียดและดาวน์โหลด PDF ได้เลย (ไม่ต้องล็อกอิน):\nhttps://www.jnac.online/center/q/${token}`;
 }
 
-// After a bot reply, if a quote was just created:
-//  1. auto-link it to the conversation's CRM customer (if linked) so the quote
-//     shows the customer's name/address automatically — no manual admin step;
-//  2. send the customer the public link as a follow-up push and record it in
-//     the conversation (so it shows in the admin Omni-Chat with a marker).
-async function sendQuoteLinkIfAny(
-  admin: SupabaseClient, accessToken: string, userId: string, conversationId: string, quoteCode: string | null,
-): Promise<void> {
-  if (!quoteCode) return;
-  // 1) auto-fill the customer from the linked chat (only when the quote has no
-  //    customer yet — never override a manual selection)
+// When the bot just created a quote: auto-link it to the conversation's CRM
+// customer (DB only, no push) and return the public quote-link text. The caller
+// includes this text in the SAME reply as the answer — the LINE reply API is
+// free, so the link no longer consumes the push quota (and always goes out,
+// even when the monthly push quota is exhausted).
+async function prepareQuoteLink(
+  admin: SupabaseClient, conversationId: string, quoteCode: string,
+): Promise<string | null> {
   try {
     const { data: conv } = await admin
       .from("chat_conversations").select("customer_id").eq("id", conversationId).maybeSingle();
@@ -410,11 +405,7 @@ async function sendQuoteLinkIfAny(
   } catch (e) {
     console.warn("quote auto-link customer failed:", (e as Error).message);
   }
-  // 2) send the public link
-  const linkMsg = await quoteLinkMessage(admin, quoteCode);
-  if (!linkMsg) return;
-  await pushToLine(accessToken, userId, linkMsg);
-  await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
+  return await quoteLinkMessage(admin, quoteCode);
 }
 
 // Strip any public quote link from history content. The bot would otherwise see
@@ -543,11 +534,12 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       aiReply = sanitizeReply(rag.answer);
       quoteCode = rag.quoteCode;
     }
-    if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, aiReply);
+    const linkMsg = quoteCode ? await prepareQuoteLink(admin, conversationId, quoteCode) : null;
+    if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
     await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
       channel_id: channel.id, channel_name: channel.name, from_image: true,
     });
-    await sendQuoteLinkIfAny(admin, channel.channel_access_token, userId, conversationId, quoteCode);
+    if (linkMsg) await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
     return;
   }
 
@@ -606,12 +598,18 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   const rag = await callRagChat(supabaseUrl, serviceKey, msg.text, priorHistory);
   const aiReply = sanitizeReply(rag.answer);
 
+  // Build the quote link (if any) and send it WITH the reply — the reply API is
+  // free, so the link doesn't use the LINE push quota and always goes through.
+  const linkMsg = rag.quoteCode ? await prepareQuoteLink(admin, conversationId, rag.quoteCode) : null;
+
   if (ev.replyToken) {
-    await replyToLine(channel.channel_access_token, ev.replyToken, aiReply);
+    await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
   }
 
   await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
     channel_id: channel.id, channel_name: channel.name,
   });
-  await sendQuoteLinkIfAny(admin, channel.channel_access_token, userId, conversationId, rag.quoteCode);
+  if (linkMsg) {
+    await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: rag.quoteCode });
+  }
 }
