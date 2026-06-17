@@ -374,6 +374,20 @@ export default function Chat() {
                     }
                 },
             )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'chat_messages',
+                    filter: `conversation_id=eq.${selectedId}`,
+                },
+                (payload) => {
+                    // e.g. a background LINE push flagged the message as undelivered
+                    const row = payload.new as ChatMessage;
+                    setMessages((prev) => prev.map((m) => (m.id === row.id ? { ...m, ...row } : m)));
+                },
+            )
             .subscribe();
         return () => { void supabase.removeChannel(ch); };
     }, [selectedId]);
@@ -1195,6 +1209,7 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
     const isBot = msg.sender_type === 'bot';
     const isSystem = msg.sender_type === 'system';
     const replyTo = (msg.metadata as { reply_to?: { sender_type: string; sender_name?: string | null; preview: string } } | null)?.reply_to;
+    const pushFailed = !!(msg.metadata as { line_push_failed?: boolean } | null)?.line_push_failed;
 
     if (isSystem) {
         return (
@@ -1268,6 +1283,11 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
                         </button>
                     )}
                 </div>
+                {pushFailed && !isCustomer && (
+                    <div className={`mt-0.5 px-1 text-[10px] text-rose-500 flex items-center gap-1 ${isCustomer ? '' : 'justify-end'}`}>
+                        <AlertCircle size={11} /> ส่งไม่ถึงลูกค้า (LINE) — โควต้าอาจเต็ม
+                    </div>
+                )}
             </div>
         </div>
     );

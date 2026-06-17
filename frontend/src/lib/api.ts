@@ -2855,31 +2855,36 @@ export const chatInboxApi = {
       })
       .eq('id', input.conversationId);
 
-    // Forward to the external channel (best-effort)
+    // Forward to LINE in the BACKGROUND — don't block the composer on LINE's
+    // response (an over-quota push can take several seconds, which made sending
+    // feel frozen). On failure, flag the message so the admin can see it didn't
+    // reach the customer (e.g. when the LINE OA monthly push quota is used up).
     if (conv?.channel === 'line' && conv.external_id) {
-      try {
-        // Sign outgoing text with the admin's name so the customer knows who
-        // is replying (the bot signs itself "เอย"; a human shows their name).
-        // Skip when the name is missing or looks like an email, and for
-        // image/sticker messages (the prefix would become a lone text bubble).
-        const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
-        const pushText = pushName && (input.contentType ?? 'text') === 'text'
-          ? `${pushName}: ${input.content}`
-          : input.content;
-        const { error: pushErr } = await supabase.functions.invoke('line-push', {
-          body: {
-            conversation_id: input.conversationId,
-            text: pushText,
-            // Native LINE quoted reply when replying to a quotable message
-            quote_token: input.replyTo?.quoteToken ?? undefined,
-          },
-        });
-        if (pushErr) {
-          console.warn('[chatInboxApi] line-push failed (saved locally only):', pushErr);
+      const msgId = (data as ChatMessage).id;
+      // Sign outgoing text with the admin's name so the customer knows who is
+      // replying (the bot signs itself "เอย"; a human shows their name). Skip
+      // for image/sticker messages (the prefix would become a lone text bubble).
+      const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
+      const pushText = pushName && (input.contentType ?? 'text') === 'text'
+        ? `${pushName}: ${input.content}`
+        : input.content;
+      void (async () => {
+        try {
+          const { error: pushErr } = await supabase.functions.invoke('line-push', {
+            body: {
+              conversation_id: input.conversationId,
+              text: pushText,
+              quote_token: input.replyTo?.quoteToken ?? undefined,
+            },
+          });
+          if (pushErr) throw pushErr;
+        } catch (pushErr) {
+          console.warn('[chatInboxApi] line-push failed:', pushErr);
+          await supabase.from('chat_messages')
+            .update({ metadata: { ...metadata, line_push_failed: true } })
+            .eq('id', msgId);
         }
-      } catch (pushErr) {
-        console.warn('[chatInboxApi] line-push threw:', pushErr);
-      }
+      })();
     }
     // TODO Phase 3: messenger-push, email-push
 
@@ -2936,17 +2941,28 @@ export const chatInboxApi = {
       .eq('id', input.conversationId);
 
     // LINE can't push a file → send a tappable link the customer can open.
+    // Background (non-blocking) + flag on failure, same as sendMessage.
     if (conv?.channel === 'line' && conv.external_id) {
-      try {
-        const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
-        const text = `${pushName ? `${pushName}: ` : ''}📎 ${input.fileName}\n${input.fileUrl}`;
-        const { error: pushErr } = await supabase.functions.invoke('line-push', {
-          body: { conversation_id: input.conversationId, text },
-        });
-        if (pushErr) console.warn('[chatInboxApi] file line-push failed:', pushErr);
-      } catch (pushErr) {
-        console.warn('[chatInboxApi] file line-push threw:', pushErr);
-      }
+      const msgId = (data as ChatMessage).id;
+      const fileMeta = {
+        file_url: input.fileUrl, file_name: input.fileName,
+        file_size: input.fileSize ?? null, mime_type: input.mimeType ?? null,
+      };
+      const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
+      const text = `${pushName ? `${pushName}: ` : ''}📎 ${input.fileName}\n${input.fileUrl}`;
+      void (async () => {
+        try {
+          const { error: pushErr } = await supabase.functions.invoke('line-push', {
+            body: { conversation_id: input.conversationId, text },
+          });
+          if (pushErr) throw pushErr;
+        } catch (pushErr) {
+          console.warn('[chatInboxApi] file line-push failed:', pushErr);
+          await supabase.from('chat_messages')
+            .update({ metadata: { ...fileMeta, line_push_failed: true } })
+            .eq('id', msgId);
+        }
+      })();
     }
 
     return data as ChatMessage;
