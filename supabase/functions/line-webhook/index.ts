@@ -582,6 +582,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     await saveMessage(admin, conversationId, "customer",
       `[${msg.type}] ลูกค้าส่ง ${msg.type === "sticker" ? "sticker" : msg.type}`,
       msg.id, { line_message_type: msg.type, sticker_id: msg.stickerId, package_id: msg.packageId },
+      msg.type === "sticker" ? "sticker" : "text",
     );
     return;
   }
