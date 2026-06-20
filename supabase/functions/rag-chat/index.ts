@@ -716,17 +716,41 @@ async function streamGeminiWithFallback(apiKey: string, systemPrompt: string, co
 
 async function getGeminiKey(admin: SupabaseClient): Promise<string | null> {
   if (cachedGeminiKey) return cachedGeminiKey;
-  const { data, error } = await admin.rpc("get_api_secret_internal", { p_name: "GEMINI_API_KEY" });
-  if (error) { console.warn("GEMINI_API_KEY read failed:", error.message); return null; }
-  cachedGeminiKey = (data as string | null) ?? null;
-  return cachedGeminiKey;
+  try {
+    const { data, error } = await admin.rpc("get_api_secret_internal", { p_name: "GEMINI_API_KEY" });
+    if (!error && data) {
+      cachedGeminiKey = String(data);
+      return cachedGeminiKey;
+    }
+    if (error) console.warn("GEMINI_API_KEY RPC read failed:", error.message);
+  } catch (e) {
+    console.warn("GEMINI_API_KEY RPC error:", (e as Error).message);
+  }
+  const env = Deno.env.get("GEMINI_API_KEY");
+  if (env) {
+    cachedGeminiKey = env;
+    return env;
+  }
+  return null;
 }
 async function getOpenAIKey(admin: SupabaseClient): Promise<string | null> {
   if (cachedOpenAIKey) return cachedOpenAIKey;
-  const { data, error } = await admin.rpc("get_api_secret_internal", { p_name: "OPENAI_API_KEY" });
-  if (error) { console.warn("OPENAI_API_KEY read failed:", error.message); return null; }
-  cachedOpenAIKey = (data as string | null) ?? null;
-  return cachedOpenAIKey;
+  try {
+    const { data, error } = await admin.rpc("get_api_secret_internal", { p_name: "OPENAI_API_KEY" });
+    if (!error && data) {
+      cachedOpenAIKey = String(data);
+      return cachedOpenAIKey;
+    }
+    if (error) console.warn("OPENAI_API_KEY RPC read failed:", error.message);
+  } catch (e) {
+    console.warn("OPENAI_API_KEY RPC error:", (e as Error).message);
+  }
+  const env = Deno.env.get("OPENAI_API_KEY");
+  if (env) {
+    cachedOpenAIKey = env;
+    return env;
+  }
+  return null;
 }
 async function embedQueryOpenAI(apiKey: string, query: string): Promise<number[]> {
   const res = await fetch("https://api.openai.com/v1/embeddings", {
