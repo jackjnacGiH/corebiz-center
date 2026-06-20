@@ -326,7 +326,7 @@ async function callRagChat(
     body: JSON.stringify({ query, history, images, stream: false, channel: "line" }),
   });
   const data = await res.json();
-  const answer = (data?.answer as string) || "ขออภัยค่ะ ยังไม่ได้รับคำตอบ";
+  const answer = (data?.answer as string) || "";
   // If the bot's request_quote tool created a draft quote, rag-chat exposes
   // its code in tool_calls[].result_summary — pull it out so we can send the
   // customer a public (no-login) link to view + download the PDF.
@@ -534,12 +534,14 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       aiReply = sanitizeReply(rag.answer);
       quoteCode = rag.quoteCode;
     }
-    const linkMsg = quoteCode ? await prepareQuoteLink(admin, conversationId, quoteCode) : null;
-    if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
-    await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
-      channel_id: channel.id, channel_name: channel.name, from_image: true,
-    });
-    if (linkMsg) await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
+    if (aiReply) {
+      const linkMsg = quoteCode ? await prepareQuoteLink(admin, conversationId, quoteCode) : null;
+      if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
+      await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
+        channel_id: channel.id, channel_name: channel.name, from_image: true,
+      });
+      if (linkMsg) await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
+    }
     return;
   }
 
@@ -599,18 +601,20 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   const rag = await callRagChat(supabaseUrl, serviceKey, msg.text, priorHistory);
   const aiReply = sanitizeReply(rag.answer);
 
-  // Build the quote link (if any) and send it WITH the reply — the reply API is
-  // free, so the link doesn't use the LINE push quota and always goes through.
-  const linkMsg = rag.quoteCode ? await prepareQuoteLink(admin, conversationId, rag.quoteCode) : null;
+  if (aiReply) {
+    // Build the quote link (if any) and send it WITH the reply — the reply API is
+    // free, so the link doesn't use the LINE push quota and always goes through.
+    const linkMsg = rag.quoteCode ? await prepareQuoteLink(admin, conversationId, rag.quoteCode) : null;
 
-  if (ev.replyToken) {
-    await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
-  }
+    if (ev.replyToken) {
+      await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
+    }
 
-  await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
-    channel_id: channel.id, channel_name: channel.name,
-  });
-  if (linkMsg) {
-    await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: rag.quoteCode });
+    await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
+      channel_id: channel.id, channel_name: channel.name,
+    });
+    if (linkMsg) {
+      await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: rag.quoteCode });
+    }
   }
 }
