@@ -52,6 +52,22 @@ export default function PublicQuote() {
   const [q, setQ] = useState<QuoteView | null>(null);
   const [errMsg, setErrMsg] = useState('');
 
+  // PDF-viewer mode: ตั้ง viewport ให้แสดงเอกสารเต็มหน้าแบบ PDF
+  // initial-scale=0.5 = ย่อออกมาให้เห็นเอกสารเต็ม, user-scalable=yes = ซูมได้
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (meta) {
+      const original = meta.getAttribute('content') || '';
+      meta.setAttribute(
+        'content',
+        'width=750, initial-scale=0.5, minimum-scale=0.25, maximum-scale=4.0, user-scalable=yes'
+      );
+      return () => {
+        meta.setAttribute('content', original);
+      };
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -168,41 +184,49 @@ export default function PublicQuote() {
           onClick={onDownload}
           className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 h-9 text-sm font-semibold text-white hover:bg-indigo-700 transition flex-shrink-0"
         >
-          <Download size={15} /> ดาวน์โหลด / พิมพ์ PDF
+          <Download size={15} /> <span className="hidden sm:inline">ดาวน์โหลด / พิมพ์ </span>PDF
         </button>
       </header>
 
-      <main className="max-w-3xl mx-auto p-3 sm:p-6">
-        <div id={DOC_ID} className="bg-white rounded-2xl shadow-sm border border-neutral-200 p-5 sm:p-8">
-          <QuoteDocument
-            org={q.org}
-            title="ใบเสนอราคา"
-            code={q.code}
-            dateLabel={dateLabel}
-            customerName={q.customerName}
-            customerAddress={q.customerAddress}
-            customerTaxId={q.customerTaxId}
-            items={q.items}
-            subtotal={q.subtotal}
-            discount={q.discount}
-            vat={q.vat}
-            total={q.total}
-            note={q.note}
-            format={fmtMoney}
-            showSignature
-          />
+      {/* PDF-viewer wrapper: scroll freely, document locked at 750px wide */}
+      <div className="overflow-x-auto bg-neutral-100">
+        <div className="py-6 px-4">
+          <div
+            id={DOC_ID}
+            className="bg-white rounded-2xl shadow-sm border border-neutral-200 p-8"
+            style={{ width: '750px', minWidth: '750px' }}
+          >
+            <QuoteDocument
+              org={q.org}
+              title="ใบเสนอราคา"
+              code={q.code}
+              dateLabel={dateLabel}
+              customerName={q.customerName}
+              customerAddress={q.customerAddress}
+              customerTaxId={q.customerTaxId}
+              items={q.items}
+              subtotal={q.subtotal}
+              discount={q.discount}
+              vat={q.vat}
+              total={q.total}
+              note={q.note}
+              format={fmtMoney}
+              showSignature
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={onDownload}
+            className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 h-12 text-sm font-bold text-white hover:bg-indigo-700 transition"
+            style={{ width: '750px' }}
+          >
+            <Download size={16} /> ดาวน์โหลด / พิมพ์ใบเสนอราคา (PDF)
+          </button>
+
+          <div className="mt-4 text-center text-[10px] text-neutral-300" style={{ width: '750px' }}>JNAC · CoreBiz Center</div>
         </div>
-
-        <button
-          type="button"
-          onClick={onDownload}
-          className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 h-12 text-sm font-bold text-white hover:bg-indigo-700 transition"
-        >
-          <Download size={16} /> ดาวน์โหลด / พิมพ์ใบเสนอราคา (PDF)
-        </button>
-
-        <div className="mt-4 text-center text-[10px] text-neutral-300">JNAC · CoreBiz Center</div>
-      </main>
+      </div>
     </div>
   );
 }
