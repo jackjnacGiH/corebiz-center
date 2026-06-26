@@ -1703,11 +1703,18 @@ export const quoteRecordApi = {
         .eq('id', id).single(),
       supabase.from('quote_items')
         .select('id,product_id,variant_id,sku,product_name,quantity,unit_price,unit,discount,total')
-        .eq('quote_id', id),
+        .eq('quote_id', id)
+        .order('id', { ascending: true }),
     ]);
     if (qErr) throw qErr;
     if (iErr) throw iErr;
-    return { quote: quote as unknown as QuoteListItem, items: (items ?? []) as QuoteItem[] };
+    // Sort: SHIPPING lines always last (mirrors get_quote_by_token SQL ordering)
+    const sorted = (items ?? []).sort((a, b) => {
+      const aShip = (a as { sku?: string }).sku === 'SHIPPING' ? 1 : 0;
+      const bShip = (b as { sku?: string }).sku === 'SHIPPING' ? 1 : 0;
+      return aShip - bShip;
+    });
+    return { quote: quote as unknown as QuoteListItem, items: sorted as QuoteItem[] };
   },
 
   /** Update a quote's lifecycle status — draft → sent → accepted/rejected/expired. */
@@ -2996,12 +3003,12 @@ export const chatInboxApi = {
   },
 
   /** Clear the unread badge on every conversation at once ("อ่านแล้วทั้งหมด").
-   *  Only touches rows that still have a badge so it's a cheap no-op when clean. */
+   *  Also transitions their status to 'assigned' so they move out of the "ยังไม่อ่าน" tab. */
   async markAllRead(): Promise<void> {
     const { error } = await supabase
       .from('chat_conversations')
-      .update({ unread_count: 0 })
-      .gt('unread_count', 0);
+      .update({ unread_count: 0, status: 'assigned' })
+      .eq('status', 'open');
     if (error) throw error;
   },
 };
