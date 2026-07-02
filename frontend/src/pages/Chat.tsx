@@ -25,6 +25,7 @@ import {
     type FormEvent,
     type ReactNode,
 } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
     MessageSquare,
     Search,
@@ -223,6 +224,8 @@ function timeAgo(iso: string | null): string {
 export default function Chat() {
     const { t } = useLanguage();
     const { profile } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const urlId = searchParams.get('id');
     // Name shown to the customer + in the inbox when this admin replies.
     const agentName = (profile?.full_name ?? '').trim() || undefined;
     // Filters — default to "Inbox" (no filter, show all)
@@ -237,6 +240,39 @@ export default function Chat() {
     const [listErr, setListErr] = useState<string | null>(null);
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
+
+    // Read conversation ID from URL parameters and clear parameter to clean up URL
+    useEffect(() => {
+        if (urlId) {
+            setSelectedId(urlId);
+            setSearchParams({}, { replace: true });
+        }
+    }, [urlId, setSearchParams]);
+
+    // Ensure the selected conversation is loaded in the list (even if filtered out)
+    useEffect(() => {
+        if (selectedId && conversations.length > 0 && !conversations.some((c) => c.id === selectedId)) {
+            let cancelled = false;
+            void (async () => {
+                try {
+                    const { data } = await supabase
+                        .from('chat_conversations')
+                        .select('*')
+                        .eq('id', selectedId)
+                        .single();
+                    if (data && !cancelled) {
+                        setConversations((prev) => {
+                            if (prev.some((c) => c.id === selectedId)) return prev;
+                            return [data as ChatConversation, ...prev];
+                        });
+                    }
+                } catch {
+                    // ignore
+                }
+            })();
+            return () => { cancelled = true; };
+        }
+    }, [selectedId, conversations]);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [loadingMsgs, setLoadingMsgs] = useState(false);
     const [msgErr, setMsgErr] = useState<string | null>(null);

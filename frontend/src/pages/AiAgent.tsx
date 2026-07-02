@@ -44,7 +44,7 @@ function relatedLink(t: AgentTask): { to: string; label: string } | null {
     case 'quote': return { to: '/orders', label: 'ไปที่ใบเสนอราคา' };
     case 'customer':
     case 'cart': return { to: '/crm', label: 'ไปที่ลูกค้า' };
-    case 'conversation': return { to: '/chat', label: 'ไปที่แชท' };
+    case 'conversation': return { to: `/chat?id=${t.related_id}`, label: 'ไปที่แชท' };
     case 'inventory': return { to: '/inventory', label: 'ไปที่คลังสินค้า' };
     case 'product': return { to: '/ecommerce', label: 'ไปที่สินค้า' };
     default: return null;

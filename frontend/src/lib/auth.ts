@@ -9,6 +9,41 @@ const LINE_CHANNEL_ID = import.meta.env.VITE_LINE_CHANNEL_ID as string | undefin
 const LINE_CALLBACK_URL = (import.meta.env.VITE_LINE_CALLBACK_URL as string | undefined)
   ?? appUrl('auth/line-callback');
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+
+/**
+ * Quick reachability probe of the Supabase Auth (GoTrue) service.
+ *
+ * Why: when Supabase Auth is down it doesn't error fast — Cloudflare hangs ~20s
+ * then returns a raw "522 Connection timed out" page. An OAuth login redirects
+ * the browser straight to Supabase's domain, so the user lands on that ugly
+ * page. We probe `/auth/v1/settings` (a CORS-enabled endpoint the SDK itself
+ * uses) with a short timeout first — if it doesn't answer, we show a friendly
+ * "service temporarily down" message instead of bouncing into the 522.
+ *
+ * Returns true (assume healthy) if the URL isn't configured — never hard-block.
+ */
+export async function isAuthHealthy(timeoutMs = 7000): Promise<boolean> {
+  if (!SUPABASE_URL) return true;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
+      headers: SUPABASE_ANON ? { apikey: SUPABASE_ANON } : {},
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res.status < 500; // any 2xx/4xx = reachable; 5xx / timeout = down
+  } catch {
+    return false; // aborted / network error → treat as down
+  }
+}
+
+/** Heuristic: does this login error look like a service outage rather than
+ *  wrong credentials? (network/timeout/5xx vs "Invalid login credentials"). */
+export function looksLikeServiceOutage(message: string | undefined | null): boolean {
+  const m = (message ?? '').toLowerCase();
+  return /failed to fetch|networkerror|network error|timeout|timed out|econn|503|502|522|504|unavailable|upstream/.test(m);
+}
+
 export async function signInWithEmail(email: string, password: string) {
   return supabase.auth.signInWithPassword({ email, password });
 }

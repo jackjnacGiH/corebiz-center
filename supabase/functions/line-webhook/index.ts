@@ -95,7 +95,20 @@ interface LineEvent {
 }
 
 type LineMessage =
-  | { type: "text"; text: string }
+  | { 
+      type: "text"; 
+      text: string; 
+      quickReply?: {
+        items: Array<{
+          type: "action";
+          action: {
+            type: "message";
+            label: string;
+            text: string;
+          };
+        }>;
+      };
+    }
   | { type: "image"; originalContentUrl: string; previewImageUrl: string };
 
 async function verifySignature(body: string, signature: string, secret: string): Promise<boolean> {
@@ -340,6 +353,75 @@ async function callRagChat(
   return { answer, quoteCode };
 }
 
+function extractQuickReplies(text: string) {
+  if (!text) return undefined;
+  const lines = text.split(/\r?\n/);
+  const items: Array<{
+    type: "action";
+    action: {
+      type: "message";
+      label: string;
+      text: string;
+    };
+  }> = [];
+
+  let nextIndex = 1;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Pattern 1: Numbered lists, e.g., "1. ล้อขัด...", "1) ล้อขัด...", "1 ล้อขัด..."
+    // We restrict the number digits to 1 or 2 (max 13 in practice)
+    const numMatch = trimmed.match(/^\s*(\d{1,2})[\.\)\s-]\s*(.+)$/);
+    const bulletMatch = trimmed.match(/^\s*(?:✨|•|·|-|\*|🔸|🔹|✅|👉)\s*(.+)$/);
+
+    let optionText = "";
+    let parsedNum = 0;
+
+    if (numMatch) {
+      parsedNum = parseInt(numMatch[1], 10);
+      if (parsedNum > 0 && parsedNum <= 13) {
+        optionText = numMatch[2].trim();
+      }
+    } else if (bulletMatch) {
+      optionText = bulletMatch[1].trim();
+    }
+
+    if (optionText) {
+      // Avoid matching lines that look like sentences or are too short/long
+      if (optionText.length >= 3 && optionText.length < 80) {
+        // Use the sequential nextIndex for the button label prefix to keep it clean (e.g. 1, 2, 3...)
+        const prefix = `${nextIndex}. `;
+        const maxLabelLen = 20 - prefix.length;
+        let labelName = optionText;
+        if (labelName.length > maxLabelLen) {
+          labelName = labelName.slice(0, maxLabelLen - 1) + "…";
+        }
+        const label = `${prefix}${labelName}`;
+
+        if (!items.some(item => item.action.text === optionText)) {
+          items.push({
+            type: "action",
+            action: {
+              type: "message",
+              label: label,
+              text: optionText,
+            },
+          });
+          nextIndex++;
+        }
+      }
+    }
+  }
+
+  // LINE only allows between 1 and 13 quick reply items.
+  // We show them if there are at least 2 distinct options.
+  if (items.length >= 2) {
+    return { items: items.slice(0, 13) };
+  }
+  return undefined;
+}
+
 function textToLineMessages(text: string): LineMessage[] {
   const IMG_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
   const out: LineMessage[] = [];
@@ -363,6 +445,19 @@ function textToLineMessages(text: string): LineMessage[] {
   if (lastIndex < text.length) pushTextChunk(text.slice(lastIndex));
 
   if (out.length === 0) out.push({ type: "text", text: "..." });
+
+  // Extract quick replies from the input text
+  const quickReplies = extractQuickReplies(text);
+  if (quickReplies) {
+    // Attach to the last text message in out
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i].type === "text") {
+        (out[i] as any).quickReply = quickReplies;
+        break;
+      }
+    }
+  }
+
   return out.slice(0, 5);
 }
 

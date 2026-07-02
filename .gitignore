@@ -29,3 +29,7 @@ apps/jnac-admin-chat/data/*.jsonl
 
 # Source sticker PNGs (resized copies live in frontend/public/stickers)
 /sticker/
+
+# Database backup dumps (scripts/backup-db.sh) — never commit data/credentials
+/backups/
+*.sql.gz

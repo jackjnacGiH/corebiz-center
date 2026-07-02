@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Mail, Lock, LogIn, AlertCircle } from 'lucide-react';
-import { signInWithEmail, signInWithGoogle, signInWithLine } from '../../lib/auth';
+import { signInWithEmail, signInWithGoogle, signInWithLine, isAuthHealthy, looksLikeServiceOutage } from '../../lib/auth';
 import { useLanguage } from '../../i18n';
 
 export default function Login() {
@@ -11,11 +11,18 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(
     searchParams.get('error') === 'inactive'
       ? t.auth.inactiveAccount
       : null
   );
+
+  // Shown when the Supabase Auth service (not the user's account) is unreachable.
+  const authDownMsg =
+    language === 'th'
+      ? 'ระบบเข้าสู่ระบบขัดข้องชั่วคราว (ฝั่งผู้ให้บริการ Supabase) ไม่ใช่ที่บัญชีของคุณ — กรุณารอสักครู่แล้วลองใหม่อีกครั้งค่ะ 🙏'
+      : 'Sign-in is temporarily unavailable (Supabase service issue), not your account — please wait a moment and try again.';
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -24,21 +31,31 @@ export default function Login() {
     const { error: err } = await signInWithEmail(email, password);
     setLoading(false);
     if (err) {
-      setError(err.message);
+      setError(looksLikeServiceOutage(err.message) ? authDownMsg : err.message);
       return;
     }
     navigate('/');
   };
 
+  // OAuth redirects the browser to Supabase's domain; if Auth is down the user
+  // would hit a raw Cloudflare 522. Probe first and show a friendly message.
   const handleGoogle = async () => {
     setError(null);
+    setChecking(true);
+    const ok = await isAuthHealthy();
+    setChecking(false);
+    if (!ok) { setError(authDownMsg); return; }
     const { error: err } = await signInWithGoogle();
-    if (err) setError(err.message);
+    if (err) setError(looksLikeServiceOutage(err.message) ? authDownMsg : err.message);
   };
 
-  const handleLine = () => {
+  const handleLine = async () => {
+    setError(null);
+    setChecking(true);
+    const ok = await isAuthHealthy();
+    setChecking(false);
+    if (!ok) { setError(authDownMsg); return; }
     try {
-      setError(null);
       signInWithLine();
     } catch (e) {
       setError((e as Error).message);
@@ -134,7 +151,7 @@ export default function Login() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || checking}
               className="w-full h-12 flex items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 text-sm font-semibold text-white hover:bg-indigo-600 disabled:opacity-60 disabled:cursor-not-allowed transition shadow-sm"
             >
               <LogIn size={16} />
@@ -158,14 +175,16 @@ export default function Login() {
             <button
               type="button"
               onClick={handleGoogle}
-              className="h-12 flex items-center justify-center gap-2.5 rounded-lg border border-neutral-200 bg-white text-sm font-medium text-neutral-700 hover:bg-neutral-50 hover:border-neutral-300 transition"
+              disabled={checking || loading}
+              className="h-12 flex items-center justify-center gap-2.5 rounded-lg border border-neutral-200 bg-white text-sm font-medium text-neutral-700 hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-60 disabled:cursor-not-allowed transition"
             >
               <GoogleIcon /> Google
             </button>
             <button
               type="button"
               onClick={handleLine}
-              className="h-12 flex items-center justify-center gap-2.5 rounded-lg bg-[#06C755] text-sm font-medium text-white hover:bg-[#05b34a] transition shadow-sm"
+              disabled={checking || loading}
+              className="h-12 flex items-center justify-center gap-2.5 rounded-lg bg-[#06C755] text-sm font-medium text-white hover:bg-[#05b34a] disabled:opacity-60 disabled:cursor-not-allowed transition shadow-sm"
             >
               <LineIcon /> LINE
             </button>
