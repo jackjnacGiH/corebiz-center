@@ -6,12 +6,11 @@
 
 | Layer | Where | If it's down… |
 |---|---|---|
-| **Vercel** (storefront `/`, admin `/center`, `/jnac`) | Vercel | site won't load / old build served |
+| **Vercel** (storefront `/`, admin `/center`) | Vercel | site won't load / old build served |
 | **Supabase DB / PostgREST** (`/rest/v1/`) | Supabase (ap-southeast-2) | data reads/writes fail everywhere |
 | **Supabase Auth / GoTrue** (`/auth/v1/*`) | Supabase | **login fails** (email + Google + LINE); already-logged-in sessions keep working until token refresh |
 | **Supabase Edge Functions** (`rag-chat`, `line-webhook`, …) | Supabase | bot/quote/notify features fail; DB + site still work |
 | **LINE Messaging API** | LINE | bot can't send; quota-related (see below) |
-| **Openclaw RAG API** (`api/`, Express) | wherever it's hosted (:3001) | knowledge ingestion/search only |
 
 ### 30-second triage (run these)
 

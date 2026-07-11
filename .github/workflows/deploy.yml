@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy-corebiz:
-    name: Deploy CoreBiz Unified Project
+    name: Deploy CoreBiz Center
     runs-on: ubuntu-latest
 
     steps:
@@ -23,14 +23,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Lint and build all services
+      - name: Lint and build active services
         run: |
           npm run lint:corebiz
-          npm run lint:jnac
+          npm run lint:storefront
           npm run build:corebiz
-          npm run build:jnac
+          npm run build:storefront
 
-      - name: Deploy CoreBiz unified project to Vercel
+      - name: Deploy CoreBiz project to Vercel
         uses: amondnet/vercel-action@v25
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}

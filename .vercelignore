@@ -1,0 +1,10 @@
+.git/
+.claude/
+**/node_modules/
+**/.next/
+**/dist/
+
+# Local operator files that are not application source.
+CoWork-skills-Summary.md
+J NAC Founder Operating Blueprint v1.0-1.docx
+supabase/config.toml

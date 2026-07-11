@@ -279,15 +279,22 @@ export default function AccountPage() {
 
 // ── Full quote document modal (same form as the back office) ────────────────
 let orgPromise: Promise<OrgInfo | null> | null = null;
-function getOrgInfo(): Promise<OrgInfo | null> {
-  if (!orgPromise) {
-    orgPromise = supabaseBrowser()
+async function loadOrgInfo(): Promise<OrgInfo | null> {
+  try {
+    const { data } = await supabaseBrowser()
       .from("org_settings")
       .select("business_name,address,tax_id,phone,email,website,logo_url")
       .limit(1)
-      .maybeSingle()
-      .then(({ data }) => (data as OrgInfo | null) ?? null, () => null);
+      .maybeSingle();
+    return (data as OrgInfo | null) ?? null;
+  } catch {
+    return null;
   }
+}
+
+function getOrgInfo(): Promise<OrgInfo | null> {
+  if (orgPromise) return orgPromise;
+  orgPromise = loadOrgInfo();
   return orgPromise;
 }
 

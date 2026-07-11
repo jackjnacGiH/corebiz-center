@@ -3956,6 +3956,7 @@ export const aiAgentApi = {
     const db = supabase as any;
     const cols =
       'id,category,kind,action_kind,title,summary,recommendation,payload,status,requires_approval,priority,related_type,related_id,reviewed_at,created_at';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const order = (q: any) =>
       q.order('priority', { ascending: true }).order('created_at', { ascending: false }).limit(500);
     const nowIso = new Date().toISOString();

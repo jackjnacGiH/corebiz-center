@@ -46,7 +46,6 @@ export const translations = {
       ask: 'AI Admin Chat',
       aiAgent: 'AI Agent',
       users: 'User Management',
-      jnac: 'JNAC Admin Chat',
       manual: 'User Manual',
     },
     auth: {
@@ -370,7 +369,6 @@ export const translations = {
       ask: 'AI ผู้ช่วย',
       aiAgent: 'AI Agent',
       users: 'จัดการผู้ใช้',
-      jnac: 'แชทแอดมิน JNAC',
       manual: 'คู่มือการใช้งาน',
     },
     auth: {

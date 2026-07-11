@@ -9,7 +9,6 @@ import {
     Activity, ShoppingBag, UserPlus, Boxes, RefreshCw, FileText,
     AlertCircle, MessageSquare, CheckCircle2, Clock, Target,
 } from 'lucide-react';
-import N8nAssistant from '../components/N8nAssistant';
 import {
     dashboardApi, kpiApi, orgSettingsApi,
     type ActivityEvent,
@@ -253,8 +252,6 @@ const Dashboard = () => {
                     </Button>
                 </div>
             </header>
-
-            <N8nAssistant />
 
             {err && (
                 <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

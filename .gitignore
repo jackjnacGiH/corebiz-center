@@ -9,7 +9,8 @@ coverage/
 .vscode/
 npm-debug.log
 yarn-error.log
-package-lock.json
+**/package-lock.json
+!/package-lock.json
 yarn.lock
 Openclaw RAG/
 *.log

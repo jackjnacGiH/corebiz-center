@@ -2,21 +2,19 @@
   "name": "corebiz-center-monorepo",
   "version": "0.1.0",
   "private": true,
-  "description": "CoreBiz Center monorepo with the CoreBiz shell, Openclaw RAG API, and JNAC Admin Chat kept as separate workspaces.",
+  "description": "CoreBiz Center monorepo for the JNAC storefront and CoreBiz admin center.",
   "workspaces": [
     "frontend",
-    "api",
-    "apps/jnac-admin-chat"
+    "apps/storefront"
   ],
   "scripts": {
     "dev:corebiz": "npm run dev -w frontend",
     "build:corebiz": "npm run build -w frontend",
     "lint:corebiz": "npm run lint -w frontend",
-    "start:api": "npm run start -w openclaw-rag-api",
-    "dev:jnac": "npm run dev -w jnac-admin-chat",
-    "build:jnac": "npm run build -w jnac-admin-chat",
-    "lint:jnac": "npm run lint -w jnac-admin-chat",
-    "build": "npm run build:corebiz && npm run build:jnac",
-    "lint": "npm run lint:corebiz && npm run lint:jnac"
+    "dev:storefront": "npm run dev -w corebiz-storefront",
+    "build:storefront": "npm run build -w corebiz-storefront",
+    "lint:storefront": "npm run lint -w corebiz-storefront",
+    "build": "npm run build:corebiz && npm run build:storefront",
+    "lint": "npm run lint:corebiz && npm run lint:storefront"
   }
 }

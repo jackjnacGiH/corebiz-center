@@ -64,13 +64,16 @@ export default function ThaiAddressInput({
   useEffect(() => {
     if (manual) return;
     const digits = zip.replace(/\D/g, "");
-    if (digits.length !== 5) {
-      setOptions([]);
-      setSel(-1);
-      setZipMiss(false);
-      return;
-    }
     let live = true;
+    if (digits.length !== 5) {
+      queueMicrotask(() => {
+        if (!live) return;
+        setOptions([]);
+        setSel(-1);
+        setZipMiss(false);
+      });
+      return () => { live = false; };
+    }
     void loadZipIndex().then((idx) => {
       if (!live) return;
       const found = idx[digits] ?? [];

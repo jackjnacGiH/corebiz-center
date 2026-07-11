@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { getOrg, ld, faqLd, SHOP, breadcrumbLd } from "@/lib/seo";
 import { Breadcrumb } from "@/components/ui";
 import OpenChatButton from "@/components/OpenChatButton";

@@ -1,69 +1,52 @@
 # CoreBiz Center Monorepo
 
-CoreBiz Center is the main workspace. CoreBiz and JNAC Admin Chat are deployed through the single Vercel project `corebiz-center` using Vercel Services.
+CoreBiz Center is the production monorepo for JNAC's public storefront and back-office admin center.
 
-## Workspaces
+## Active applications
 
-- `frontend` - CoreBiz Center Vite/React admin shell.
-- `api` - Openclaw RAG Express API used by the CoreBiz RAG screen.
-- `apps/jnac-admin-chat` - JNAC Admin Chat Next.js app with Supabase Auth, product/price search, chat history, and sheet sync.
-- `jnac info_Assist` - JNAC crawl, document, CSV, JSONL, and sheet sync source artifacts.
+- `apps/storefront` — public Next.js storefront, served at `/`.
+- `frontend` — CoreBiz Vite/React admin center, served at `/center`.
+- `supabase` — database migrations and active Edge Functions such as `rag-chat`, `line-webhook`, and inventory sync.
+- `jnac info_Assist` — source artifacts for product and knowledge-base imports; it is not a deployed service.
+
+The production domain is `https://www.jnac.online`. The old `corebiz.online` domain remains a Vercel alias during the transition.
 
 ## Commands
 
-Run these from the repository root:
+Run from the repository root:
 
 ```bash
+npm install
+npm run dev:storefront
 npm run dev:corebiz
-npm run start:api
-npm run dev:jnac
-```
-
-Build and lint can also be run from the root:
-
-```bash
-npm run build:corebiz
-npm run build:jnac
 npm run lint
+npm run build
 ```
 
-## Integration Rule
+## Architecture boundaries
 
-For this phase, CoreBiz Center is the central repo and navigation shell, while `jnac-admin-chat` remains a standalone module under the same Vercel project. Do not move its Next.js API routes, Supabase logic, auth flow, or sync logic into the Vite frontend yet.
-
-JNAC Admin Chat is mounted at `/jnac` on the CoreBiz domain. After that is stable, shared auth, shared Supabase schema, and API consolidation can be planned as separate migrations.
+- Public commerce pages live in `apps/storefront`.
+- Staff administration lives in `frontend`.
+- AI knowledge search and customer chat use the CoreBiz Supabase project and its Edge Functions. There is no local Express RAG service.
+- The former JNAC Admin Chat application is not part of the active monorepo or Vercel Services configuration.
 
 ## Environment
 
-Keep app-specific environment variables in each app's local environment files or deployment settings. Do not commit `.env`, `.env.local`, Vercel metadata, `.next`, `dist`, or `node_modules`.
+Keep service-specific variables in local environment files or deployment settings. Never commit `.env`, `.env.local`, `.vercel`, `.next`, `dist`, `node_modules`, or credentials.
 
-Openclaw RAG API local env variables are documented in `api/.env.example`:
+## Vercel deployment
 
-- `OPENCLAW_SUPABASE_URL`
-- `OPENCLAW_SUPABASE_ANON_KEY`
-- `PHAYA_API_KEY`
+The repository deploys to the Vercel project `corebiz-center` using Vercel Services:
 
-## Vercel Deployment
+- `shop`: `apps/storefront` at `/`
+- `corebiz`: `frontend` at `/center`
 
-This repo deploys to one Vercel project:
+Vercel project settings must use the repository root and the Services framework. GitHub Actions deploys `main` through `.github/workflows/deploy.yml` after lint and build pass.
 
-- CoreBiz Center: `corebiz-center`, root directory repo root, production URL `https://www.corebiz.online`
-- CoreBiz Vite shell route: `/`
-- JNAC Admin Chat Next.js route: `/jnac`
-
-Vercel project settings must use:
-
-- Framework Preset: `Services`
-- Root Directory: repo root / blank
-
-GitHub Actions deploys the unified project from `.github/workflows/deploy.yml`. Required GitHub repository secrets:
+Required GitHub repository secrets:
 
 - `VERCEL_TOKEN`
 - `VERCEL_ORG_ID`
 - `VERCEL_COREBIZ_PROJECT_ID` or the legacy `VERCEL_PROJECT_ID`
 
-Current Vercel project id from the linked local workspace:
-
-- `corebiz-center`: `prj_RgkMC07bPnjK0v9RH1491PC0yMKa`
-
-Do not delete the old `jnac-admin-chat` Vercel project until `https://www.corebiz.online/jnac` is verified in production.
+External legacy projects, hosting subscriptions, and old domains are retained until the owner separately approves deletion or cancellation.

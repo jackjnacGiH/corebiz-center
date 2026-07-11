@@ -8,10 +8,6 @@ const basePath = process.env.SHOP_BASE_PATH ?? "";
 const nextConfig: NextConfig = {
   basePath,
   env: { NEXT_PUBLIC_SHOP_BASE_PATH: basePath },
-  // Match the repo's pragmatic "deploy fast" philosophy — don't block the
-  // storefront deploy on lint/type nits (logic is verified separately).
-  eslint: { ignoreDuringBuilds: true },
-  typescript: { ignoreBuildErrors: true },
   async redirects() {
     return [
       // SEO continuity: the shop used to live under /shop.

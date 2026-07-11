@@ -1009,7 +1009,11 @@ export default function Ecommerce() {
                     {p.total_quantity <= 0 ? (
                       <button
                         type="button"
-                        onClick={(e) => handleAddClick(e, p, true)}
+                        onClick={(e) => {
+                          // Nested card renderer is invoked during render; the ref is read only after this click.
+                          // eslint-disable-next-line react-hooks/refs
+                          handleAddClick(e, p, true);
+                        }}
                         className="btn-mto"
                         title={`สั่งผลิต ${p.name_th} — เพิ่มในตะกร้าแบบสั่งผลิต`}
                       >
@@ -1017,7 +1021,10 @@ export default function Ecommerce() {
                       </button>
                     ) : (
                       <button
-                        onClick={(e) => handleAddClick(e, p, false)}
+                        onClick={(e) => {
+                          // Nested card renderer is invoked during render; the ref is read only after this click.
+                          handleAddClick(e, p, false);
+                        }}
                         title={`${ecom.addToQuote}: ${p.name_th}`}
                       >
                         <Plus size={17} />

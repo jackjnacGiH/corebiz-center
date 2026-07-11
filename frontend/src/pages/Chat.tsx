@@ -1246,7 +1246,7 @@ function msgPreview(msg: Pick<ChatMessage, 'content' | 'content_type' | 'metadat
         const name = (msg.metadata as { file_name?: string } | null)?.file_name;
         return `📎 ${name || 'ไฟล์แนบ'}`;
     }
-    if (msg.content_type === 'sticker' || (msg.metadata as any)?.line_message_type === 'sticker') {
+    if (msg.content_type === 'sticker' || msg.metadata?.line_message_type === 'sticker') {
         return '👍 สติกเกอร์';
     }
     const cleaned = (msg.content || '')
@@ -1324,10 +1324,12 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
                         )}
                         {msg.content_type === 'file' ? (
                             <FileAttachment meta={msg.metadata} fallback={msg.content} />
-                        ) : msg.content_type === 'sticker' || (msg.metadata as any)?.line_message_type === 'sticker' ? (
+                        ) : msg.content_type === 'sticker' || msg.metadata?.line_message_type === 'sticker' ? (
                             (() => {
-                                const meta = msg.metadata as any;
-                                const stickerId = meta?.sticker_id;
+                                const rawStickerId = msg.metadata?.sticker_id;
+                                const stickerId = typeof rawStickerId === 'string' || typeof rawStickerId === 'number'
+                                    ? String(rawStickerId)
+                                    : null;
                                 if (stickerId) {
                                     return (
                                         <img

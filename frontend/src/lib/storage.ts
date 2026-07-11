@@ -138,7 +138,7 @@ export function validateChatFile(file: File): void {
  */
 export async function uploadChatFile(file: File, conversationId: string): Promise<UploadedChatFile> {
     validateChatFile(file);
-    const safe = (file.name.replace(/[^\w.\-]+/g, '_') || 'file').slice(-80);
+    const safe = (file.name.replace(/[^\w.-]+/g, '_') || 'file').slice(-80);
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const path = `${conversationId}/${stamp}-${safe}`;
     const { error: uploadErr } = await supabase.storage

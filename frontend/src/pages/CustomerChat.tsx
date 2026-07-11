@@ -566,7 +566,6 @@ export default function CustomerChat() {
                                     }`}
                                 >
                                     {t.image && (
-                                        // eslint-disable-next-line @next/next/no-img-element
                                         <img
                                             src={t.image}
                                             alt="รูปที่ส่ง"
@@ -610,7 +609,6 @@ export default function CustomerChat() {
                     {pendingImage && (
                         <div className="px-3 pt-2 bg-white flex items-center gap-2">
                             <div className="relative">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
                                     src={pendingImage.dataUrl}
                                     alt="รูปที่จะส่ง"

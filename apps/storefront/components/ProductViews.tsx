@@ -288,10 +288,13 @@ export default function ProductViews({ products }: { products: SProduct[] }) {
   const [view, setView] = useState<View>("grid");
 
   useEffect(() => {
-    try {
-      const v = localStorage.getItem(STORAGE_KEY);
-      if (v && (VIEWS as string[]).includes(v)) setView(v as View);
-    } catch { /* ignore */ }
+    const frame = requestAnimationFrame(() => {
+      try {
+        const v = localStorage.getItem(STORAGE_KEY);
+        if (v && (VIEWS as string[]).includes(v)) setView(v as View);
+      } catch { /* ignore */ }
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   const choose = (v: View) => {

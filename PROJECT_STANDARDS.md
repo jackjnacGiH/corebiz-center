@@ -29,20 +29,16 @@ These encode real incidents. Violating them has caused outages or data issues be
 Root `package.json` declares **npm workspaces** (not pnpm/yarn):
 
 ```json
-"workspaces": ["frontend", "api", "apps/jnac-admin-chat"]
+"workspaces": ["frontend", "apps/storefront"]
 ```
 
 | Path | What it is | Stack | Served at |
 |---|---|---|---|
 | `frontend/` | Back-office **admin** shell | **Vite + React 19 + React Router 7** (SPA) | `/center` |
 | `apps/storefront/` | Public **e-commerce** site (jnac.co.th) | **Next.js 16 (App Router) + React 19** | `/` |
-| `apps/jnac-admin-chat/` | JNAC **admin chat** app | **Next.js 16 (App Router)** + `@supabase/ssr` | `/jnac` |
-| `api/` | **Openclaw RAG API** (knowledge ingestion/search) | **Express 4** (`server.js`, port 3001) | standalone service |
 | `supabase/` | Migrations + Edge Functions | Postgres + Deno edge runtime | Supabase project `owoedccmuqnzdtxvywgt` |
 
-> Note: `apps/storefront` is deployed as its own Vercel service but is **not** in the root `workspaces` array; the three workspace entries are `frontend`, `api`, `apps/jnac-admin-chat`.
-
-Useful root scripts: `dev:corebiz` / `build:corebiz` (→ `frontend`), `dev:jnac` / `build:jnac` (→ jnac-admin-chat), `start:api` (→ Express). `build` runs corebiz + jnac.
+Useful root scripts: `dev:corebiz` / `build:corebiz` (→ `frontend`) and `dev:storefront` / `build:storefront` (→ `apps/storefront`). Root `build` and `lint` validate both active applications.
 
 ### 1.2 Vercel routing (`vercel.json`)
 
@@ -52,7 +48,6 @@ Uses Vercel **`experimentalServices`** (multi-framework single deployment):
 {
   "experimentalServices": {
     "corebiz": { "entrypoint": "frontend",               "routePrefix": "/center", "framework": "vite" },
-    "jnac":    { "entrypoint": "apps/jnac-admin-chat",    "routePrefix": "/jnac",   "framework": "nextjs" },
     "shop":    { "entrypoint": "apps/storefront",         "routePrefix": "/",       "framework": "nextjs" }
   }
 }
@@ -60,21 +55,9 @@ Uses Vercel **`experimentalServices`** (multi-framework single deployment):
 
 - **`/`** → storefront (Next). `basePath` via `SHOP_BASE_PATH`. The storefront `next.config.ts` **redirects** `/widget`, `/survey/*`, `/refer/*` → `/center/*` (so those public flows live in the Vite app).
 - **`/center`** → Vite admin SPA. `vite.config.ts` sets `base: '/center/'`; React Router uses `basename="/center"`.
-- **`/jnac`** → Next admin chat. `basePath` via `JNAC_BASE_PATH` (default `/jnac`).
+### 1.3 Knowledge and customer chat
 
-### 1.3 How the Openclaw RAG API (`api/`) fits
-
-There are **two distinct RAG paths** — keep them straight:
-
-| | (a) Openclaw admin ingestion | (b) Customer chatbot |
-|---|---|---|
-| Where | `api/server.js` (Express, :3001) | `supabase/functions/rag-chat` (Deno edge) |
-| Endpoints/entry | `POST /api/upload`, `/api/links`, `/api/search` | invoked via `knowledgeChatApi.askStream` / LINE webhook |
-| Embeddings | **Phaya API** (`https://api.phaya.io/api/v1/embedding/create`) | LLM = **Gemini 2.5 Flash**; vector search via `match_knowledge` RPC |
-| Vector store | `page_sections` table | `knowledge_chunks` table |
-| Consumer | admin knowledge tooling | web widget (`/widget`) + LINE OA auto-reply |
-
-> ⚠️ **Verify before relying on embedding specifics.** The Express service definitively uses **Phaya** → `page_sections`. The customer bot uses **Gemini** for generation and `match_knowledge` over `knowledge_chunks`; the exact embedding model used to populate `knowledge_chunks` should be confirmed in the deployed code before changing it (do **not** assume it matches Phaya or any specific OpenAI model). The admin **OpenclawRAG** page manages the knowledge base; confirm which store/edge-function it writes to in the live code before modifying.
+The active RAG path uses the CoreBiz Supabase project: `knowledge_chunks`, the `match_knowledge` RPC, and `supabase/functions/rag-chat`. Admin knowledge management lives in `pages/OpenclawRAG.tsx`; staff Q&A lives in `pages/KnowledgeChat.tsx`; the web widget and LINE webhook use the same deployed CoreBiz backend. Fetch the live Edge Function before modifying or redeploying it because deployed code may be newer than the repo copy.
 
 ---
 
@@ -82,14 +65,11 @@ There are **two distinct RAG paths** — keep them straight:
 
 **Frontend (admin `/center`):** Vite 7, React 19, React Router 7, TypeScript, Tailwind **v4**, **shadcn/ui** (style "new-york", base color "neutral"), Radix UI, `lucide-react` icons, `recharts`, `@react-pdf/renderer`, `@supabase/supabase-js`.
 
-**Storefront & jnac-admin-chat:** Next.js 16 (App Router), React 19, Tailwind v4 (`@tailwindcss/postcss`), `@supabase/supabase-js`; jnac-admin-chat also uses `@supabase/ssr`.
+**Storefront:** Next.js 16 (App Router), React 19, Tailwind v4 (`@tailwindcss/postcss`), `@supabase/supabase-js`.
 
 **Backend:** Supabase (Postgres + PostgREST + Auth + Realtime + Storage), Deno **Edge Functions**, `pg_net` (HTTP from triggers), `pg_cron` (scheduled jobs), `pgvector` (RAG).
 
-**Standalone API:** Express 4 (`api/`, "openclaw-rag-api"), `multer` (uploads), `cors`.
-
 **Key external APIs / integrations:**
-- **Phaya Embedding API** — RAG embeddings for the Openclaw ingestion service.
 - **Google Gemini** (2.5 Flash / Flash-Lite) — the customer chatbot LLM (`rag-chat`).
 - **LINE Messaging API** — OA inbound webhook + reply/push; channel token in `line_channels`.
 - **Google Sheets** — hourly inventory stock sync.
@@ -232,7 +212,7 @@ UI → `lib/api.ts` (or an edge function) → Supabase → (realtime/trigger) �
 
 ### 5.5 Knowledge / RAG (`pages/OpenclawRAG.tsx`, `pages/KnowledgeChat.tsx`)
 - **OpenclawRAG** = admin knowledge-base management (sources, chunks, categories, keyword synonyms) + a test-search tab. **KnowledgeChat** = staff Q&A against the knowledge base (separate from the customer-facing bot).
-- Two stores exist (see §1.3): the legacy **Express `api/` + Phaya → `page_sections`**, and the Supabase **`knowledge_chunks`** queried by `match_knowledge` and used by `rag-chat`. **Confirm in live code which store the admin page writes to and which embedding model populates `knowledge_chunks` before changing RAG ingestion.**
+- The active store is Supabase `knowledge_chunks`, queried by `match_knowledge` and used by `rag-chat`. The legacy `page_sections` table may remain in migration history for compatibility, but active application code must not depend on the removed local Express service.
 - The customer bot enforces hardcoded safety rules (no cost/margin, no fabrication, always "own it" + `capture_lead` when unsure, treat `QT-/SO-/DN-` as document numbers not SKUs) and matches the customer's language.
 
 ---
