@@ -1650,6 +1650,141 @@ export const dashboardApi = {
 };
 
 // =========================================================================
+// Quote-based KPI APIs (Blueprint: Finance + KPI + AI 95%)
+// =========================================================================
+
+export interface QuoteStats {
+  revenue_this_month: number;
+  revenue_last_month: number;
+  pipeline_value: number;
+  pipeline_count: number;
+  conversion_rate: number;
+  monthly_series: Array<{ month: string; revenue: number }>;
+  funnel: { draft: number; sent: number; confirmed: number; cancelled: number };
+}
+
+export interface AIMetrics {
+  conversations_this_month: number;
+  conversations_last_month: number;
+  tasks_pending: number;
+  tasks_done_this_month: number;
+  ai_utilization_pct: number;
+}
+
+export interface PaymentBreakdown {
+  method: string;
+  count: number;
+  total: number;
+}
+
+export interface PendingQuote {
+  id: string;
+  code: string;
+  customer_name: string;
+  total: number;
+  created_at: string;
+  days_waiting: number;
+  status: string;
+}
+
+export const kpiApi = {
+  async getQuoteStats(): Promise<QuoteStats> {
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+
+    const [quotesRes, ordersRes] = await Promise.all([
+      supabase.from('quotes').select('id, status, total, created_at').order('created_at', { ascending: true }),
+      supabase.from('orders').select('id, status, total, created_at').eq('status', 'delivered').order('created_at', { ascending: true })
+    ]);
+
+    if (quotesRes.error) throw quotesRes.error;
+    if (ordersRes.error) throw ordersRes.error;
+
+    const allQuotes = (quotesRes.data ?? []) as Array<{ id: string; status: string; total: number; created_at: string }>;
+    const allDeliveredOrders = (ordersRes.data ?? []) as Array<{ id: string; status: string; total: number; created_at: string }>;
+
+    // Revenue calculation (from delivered orders)
+    const revenue_this_month = allDeliveredOrders
+      .filter(o => o.created_at >= thisMonthStart)
+      .reduce((s, o) => s + Number(o.total), 0);
+
+    const revenue_last_month = allDeliveredOrders
+      .filter(o => o.created_at >= lastMonthStart && o.created_at < thisMonthStart)
+      .reduce((s, o) => s + Number(o.total), 0);
+
+    // Pipeline (open quotes)
+    const open = allQuotes.filter(q => q.status === 'draft' || q.status === 'sent');
+    const pipeline_value = open.reduce((s, q) => s + Number(q.total), 0);
+    const pipeline_count = open.length;
+
+    // Conversion rate
+    const closedCount = allQuotes.filter(q => q.status === 'confirmed' || q.status === 'cancelled').length;
+    const confirmedCount = allQuotes.filter(q => q.status === 'confirmed').length;
+    const conversion_rate = closedCount > 0 ? (confirmedCount / closedCount) * 100 : 0;
+
+    const funnel = {
+      draft: allQuotes.filter(q => q.status === 'draft').length,
+      sent: allQuotes.filter(q => q.status === 'sent').length,
+      confirmed: confirmedCount,
+      cancelled: allQuotes.filter(q => q.status === 'cancelled').length,
+    };
+
+    // 6-month series from delivered orders
+    const monthly_series: Array<{ month: string; revenue: number }> = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const monthStart = d.toISOString();
+      const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString();
+      const rev = allDeliveredOrders
+        .filter(o => o.created_at >= monthStart && o.created_at < monthEnd)
+        .reduce((s, o) => s + Number(o.total), 0);
+      monthly_series.push({ month: key, revenue: rev });
+    }
+
+    return { revenue_this_month, revenue_last_month, pipeline_value, pipeline_count, conversion_rate, monthly_series, funnel };
+  },
+
+  async getAIMetrics(): Promise<AIMetrics> {
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    const [{ count: convThis }, { count: convLast }] = await Promise.all([
+      supabase.from('chat_conversations').select('id', { count: 'exact', head: true }).gte('created_at', thisMonthStart),
+      supabase.from('chat_conversations').select('id', { count: 'exact', head: true }).gte('created_at', lastMonthStart).lt('created_at', thisMonthStart),
+    ]);
+    const tasks_done_this_month = 0;
+    const tasks_pending = 0;
+    const ai_utilization_pct = 0;
+    return { conversations_this_month: convThis ?? 0, conversations_last_month: convLast ?? 0, tasks_pending, tasks_done_this_month, ai_utilization_pct };
+  },
+
+  async getPaymentBreakdown(): Promise<PaymentBreakdown[]> {
+    const { data, error } = await supabase.from('orders').select('payment_method, total').not('payment_method', 'is', null);
+    if (error) throw error;
+    const map = new Map<string, { count: number; total: number }>();
+    for (const r of (data ?? []) as Array<{ payment_method: string; total: number }>) {
+      const m = r.payment_method || 'อื่นๆ';
+      const cur = map.get(m) ?? { count: 0, total: 0 };
+      map.set(m, { count: cur.count + 1, total: cur.total + Number(r.total) });
+    }
+    return [...map.entries()].map(([method, v]) => ({ method, ...v }));
+  },
+
+  async getPendingQuotes(limit = 8): Promise<PendingQuote[]> {
+    const { data, error } = await supabase
+      .from('quotes').select('id, code, total, created_at, status, customer:customers(name)')
+      .in('status', ['sent', 'draft']).order('created_at', { ascending: true }).limit(limit);
+    if (error) throw error;
+    const now = Date.now();
+    return ((data ?? []) as unknown as Array<{ id: string; code: string; total: number; created_at: string; status: string; customer: { name: string } | null }>)
+      .map(q => ({ id: q.id, code: q.code, customer_name: q.customer?.name ?? '—', total: Number(q.total), created_at: q.created_at, days_waiting: Math.floor((now - new Date(q.created_at).getTime()) / 86400000), status: q.status }));
+  },
+};
+
+
+// =========================================================================
 // Quotes — list, getById (for PDF)
 // =========================================================================
 export interface QuoteListItem {
@@ -3930,3 +4065,4 @@ export const aiReviewApi = {
     if (error) throw error;
   },
 };
+

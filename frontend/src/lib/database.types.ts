@@ -436,6 +436,8 @@ export type Database = {
           logo_url: string | null;
           updated_at: string;
           updated_by: string | null;
+          bot_enabled: boolean;
+          monthly_revenue_target: number | null;
         }
         Insert: {
           id?: boolean;
@@ -450,6 +452,8 @@ export type Database = {
           website?: string | null;
           updated_at?: string;
           updated_by?: string | null;
+          bot_enabled?: boolean;
+          monthly_revenue_target?: number | null;
         }
         Update: Partial<Database['public']['Tables']['org_settings']['Insert']>
         Relationships: []

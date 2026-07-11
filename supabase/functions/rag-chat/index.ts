@@ -1,5 +1,5 @@
 /**
- * rag-chat v33 — portal-aware: status questions point to บัญชีของฉัน
+ * rag-chat v35 — forced retrieval for payment/bank-account queries
  *
  * v33: rule-5 addendum — for quote/order status questions the bot also tells
  * the customer they can self-check at https://www.jnac.online/account.
@@ -142,6 +142,8 @@ const FAQ_HINT_RE = [
   /คืนสินค้า/, /ใบกำกับ/, /ภาษี/, /ตัวแทน/, /สมัคร/, /นโยบาย/, /ส่งของ/, /บัตรเครดิต/, /จัดส่ง/,
   /ที่อยู่/, /ที่ตั้ง/, /โรงงาน/, /แผนที่/, /location/i, /เบอร์โทร/, /เบอร์บัญชี/, /email/i, /ติดต่อ/, /เปิดทำ/, /วันหยุด/,
   /\breturn\b/i, /\binvoice\b/i, /\btax\b/i, /\bagent\b/i, /\bpolicy\b/i, /\bshipping\b/i, /\bcredit\s*card\b/i, /\baddress\b/i, /\bphone\b/i, /\bopening\s*hour/i,
+  // Payment / bank account — must always trigger RAG to retrieve KB docs
+  /เลขบัญชี/, /บัญชีธนาคาร/, /โอนเงิน/, /ชำระเงิน/, /ช่องทางชำระ/, /QR.*code/i, /qr/i, /พร้อมเพย์/, /promptpay/i, /ธนาคาร/, /สแกน.*จ่าย/,
 ];
 function shouldSkipRAG(query: string): boolean {
   const hasFaq = FAQ_HINT_RE.some((p) => p.test(query));
@@ -569,7 +571,8 @@ async function getPersonaPrompt(admin: SupabaseClient, channel: string): Promise
 const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden by persona)
 
 1. ห้ามเปิดเผยข้อมูล cost / ราคาทุน / margin / ราคาซื้อ ของบริษัทโดยเด็ดขาด — ถ้าลูกค้าถาม ให้ปฏิเสธ
-2. ห้าม fabricate ข้อมูลใดๆ — ที่อยู่/เบอร์โทร/email/บัญชี/แผนที่/ราคา/จำนวนขั้นต่ำ ต้องมาจาก [context]/tools เท่านั้น ถ้าไม่มี ส่งให้เจ้าหน้าที่
+2. ห้าม fabricate ข้อมูลใดๆ — ที่อยู่/เบอร์โทร/email/แผนที่/ราคา/จำนวนขั้นต่ำ ต้องมาจาก [context]/tools เท่านั้น ถ้าไม่มี ส่งให้เจ้าหน้าที่
+   ✅ ข้อยกเว้นพิเศษ — เลขบัญชีธนาคารสำหรับรับชำระเงิน (ช่องทางการชำระเงิน): ถ้ามีข้อมูลใน [context] ให้ส่งให้ลูกค้าทันทีเลย รวมถึง QR Code image หรือ URL รูป QR ด้วย ไม่ต้องรอตรวจสอบหรือส่งให้เจ้าหน้าที่ก่อน
 3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ
 4. ห้ามเปิดเผยข้อมูลลับขององค์กร
 5. ห้ามตอบว่า ไม่สามารถ / ทำไม่ได้ / ตรวจสอบให้ไม่ได้ / ไม่ทราบ / ไม่มีข้อมูล เด็ดขาด — คำถามใดที่เอยตอบเองไม่ได้หรือเช็คจากระบบไม่ได้ (เช่น สถานะใบเสนอราคา สถานะการจัดส่ง เรื่องที่ทีมงานต้องยืนยัน) ให้รับเรื่องไว้เสมอ: ตอบประมาณว่า "เดี๋ยวเอยขอตรวจสอบ/ขอเช็คข้อมูลให้ก่อนนะคะ แล้วจะรีบแจ้งกลับโดยเร็วค่ะ 😊" แล้วเรียก capture_lead (ใส่คำถามของลูกค้าใน note) เพื่อให้ทีมงานติดตามแจ้งลูกค้าจริง — ห้ามผลักให้ลูกค้าไปติดต่อใครเองโดยไม่รับเรื่อง
@@ -580,7 +583,8 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
 
 const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 1. NEVER reveal cost/margin/buying-price. Refuse politely.
-2. NEVER fabricate factual data (address/phone/email/bank/map/price/MOQ). If missing, escalate to staff.
+2. NEVER fabricate factual data (address/phone/email/map/price/MOQ). If missing, escalate to staff.
+   ✅ Special exception — bank account number for receiving payment (payment channels): if the info is in [context], send it to the customer IMMEDIATELY including QR Code image/URL. No need to verify or escalate first.
 3. Language: reply in same language as customer (Thai-Thai, English-English).
 4. Never disclose confidential org info.
 5. NEVER say "I can't / unable to / cannot check / I don't know". For anything you cannot answer or verify yourself (e.g. quote status, delivery status, matters staff must confirm), ALWAYS take ownership: reply like "Let me check on that and get back to you shortly 😊", then call capture_lead (put the customer's question in the note) so the team actually follows up — never just redirect the customer to contact someone themselves.
@@ -942,6 +946,29 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       expandedRows = ((all ?? []) as typeof expandedRows).slice(0, MAX_CONTEXT_CHUNKS);
     }
     search_ms = Date.now() - t1;
+
+    // ── Forced retrieval for payment / bank-account queries ────────────────
+    // RAG embedding similarity may be low for short queries like "ขอเลขบัญชี".
+    // If the query is clearly about payment, always inject the payment KB doc.
+    const PAYMENT_RE = /เลขบัญชี|บัญชีธนาคาร|โอนเงิน|ชำระเงิน|ช่องทางชำระ|qr\s*code|qr/i;
+    if (query && PAYMENT_RE.test(query)) {
+      const paymentAlreadyLoaded = expandedRows.some(
+        (r) => /บัญชี|payment|ชำระ|โอน/i.test(r.source_path)
+      );
+      if (!paymentAlreadyLoaded) {
+        const { data: paymentDocs } = await admin
+          .from("knowledge_chunks")
+          .select("source_path, chunk_index, title, content")
+          .ilike("source_path", "%บัญชี%")
+          .eq("visibility", "public")
+          .order("chunk_index", { ascending: true });
+        if (paymentDocs && paymentDocs.length > 0) {
+          expandedRows = [...paymentDocs, ...expandedRows].slice(0, MAX_CONTEXT_CHUNKS);
+        }
+      }
+    }
+    // ── End forced retrieval ───────────────────────────────────────────────
+
     if (expandedRows.length > 0) {
       const bySource = new Map<string, typeof expandedRows>();
       for (const r of expandedRows) {

@@ -195,6 +195,7 @@ export default function Settings() {
         phone: '',
         email: '',
         website: '',
+        monthly_revenue_target: '2000000',
     });
     const [orgLoading, setOrgLoading] = useState(true);
     const [savingOrg, setSavingOrg] = useState(false);
@@ -245,6 +246,7 @@ export default function Settings() {
                         phone: s.phone ?? '',
                         email: s.email ?? '',
                         website: s.website ?? '',
+                        monthly_revenue_target: String(s.monthly_revenue_target ?? 2000000),
                     });
                 }
             })
@@ -266,7 +268,8 @@ export default function Settings() {
             orgForm.address.trim() !== (orgSettings.address ?? '') ||
             orgForm.phone.trim() !== (orgSettings.phone ?? '') ||
             orgForm.email.trim() !== (orgSettings.email ?? '') ||
-            orgForm.website.trim() !== (orgSettings.website ?? ''));
+            orgForm.website.trim() !== (orgSettings.website ?? '') ||
+            Number(orgForm.monthly_revenue_target) !== (orgSettings.monthly_revenue_target ?? 2000000));
 
     async function handleSaveOrg() {
         setSavingOrg(true);
@@ -280,6 +283,7 @@ export default function Settings() {
                 phone: orgForm.phone.trim() || null,
                 email: orgForm.email.trim() || null,
                 website: orgForm.website.trim() || null,
+                monthly_revenue_target: Number(orgForm.monthly_revenue_target) || 2000000,
             });
             setOrgSettings(updated);
             setOrgSavedAt(Date.now());
@@ -778,6 +782,22 @@ export default function Settings() {
                                                 disabled
                                                 className="bg-neutral-50"
                                             />
+                                        </div>
+                                        <div className="space-y-2 md:col-span-2">
+                                            <Label htmlFor="biz-revenue-target">🎯 เป้ายอดขาย / เดือน (บาท)</Label>
+                                            <Input
+                                                id="biz-revenue-target"
+                                                type="number"
+                                                min={0}
+                                                step={100000}
+                                                value={orgForm.monthly_revenue_target}
+                                                onChange={(e) =>
+                                                    setOrgForm({ ...orgForm, monthly_revenue_target: e.target.value })
+                                                }
+                                                disabled={savingOrg}
+                                                placeholder="2000000"
+                                            />
+                                            <p className="text-[11px] text-neutral-400">ใช้แสดง Progress Bar บน KPI Dashboard (Blueprint เป้าหมาย 2,000,000 บาท/เดือน)</p>
                                         </div>
                                     </div>
 
