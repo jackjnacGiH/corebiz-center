@@ -50,7 +50,7 @@ export default function LineCallback() {
                         setStatus('unconfigured');
                         setMessage(
                             'LINE Edge Function is not deployed yet. ' +
-                                'See supabase/functions/line-auth/README.md to set it up.',
+                                'LINE Login is not configured on this environment.',
                         );
                         return;
                     }

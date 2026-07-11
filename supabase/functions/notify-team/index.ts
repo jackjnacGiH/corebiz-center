@@ -14,7 +14,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const NOTIFY_KEY = "corebiz_notify_team_2026_x7k9";
 const ADMIN_URL = "https://www.jnac.online/center/";
 
 function json(body: unknown, status = 200) {
@@ -25,18 +24,23 @@ function json(body: unknown, status = 200) {
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
-  if (req.headers.get("x-notify-key") !== NOTIFY_KEY) return json({ ok: false, error: "forbidden" }, 403);
-
-  let body: Record<string, unknown> = {};
-  try { body = await req.json(); } catch { return json({ ok: false, error: "bad_json" }, 400); }
-  const taskId = String(body.task_id ?? "").trim();
-  if (!taskId) return json({ ok: false, error: "task_id required" }, 400);
 
   const admin = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
+  const { data: notifyKey, error: keyError } = await admin.rpc("get_api_secret_internal", {
+    p_name: "NOTIFY_TEAM_KEY",
+  });
+  if (keyError || !notifyKey || req.headers.get("x-notify-key") !== notifyKey) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { return json({ ok: false, error: "bad_json" }, 400); }
+  const taskId = String(body.task_id ?? "").trim();
+  if (!taskId) return json({ ok: false, error: "task_id required" }, 400);
 
   const { data: task } = await admin
     .from("agent_tasks")

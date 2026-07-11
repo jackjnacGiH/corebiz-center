@@ -11,7 +11,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const KEY = "corebiz_reprocess_files_2026_r7q2";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 function json(body: unknown, status = 200) {
@@ -20,11 +19,16 @@ function json(body: unknown, status = 200) {
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
-  if (req.headers.get("x-key") !== KEY) return json({ ok: false, error: "forbidden" }, 403);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  const { data: reprocessKey, error: keyError } = await admin.rpc("get_api_secret_internal", {
+    p_name: "REPROCESS_LINE_FILES_KEY",
+  });
+  if (keyError || !reprocessKey || req.headers.get("x-key") !== reprocessKey) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
 
   const { data: ch } = await admin.from("line_channels").select("channel_access_token").eq("is_active", true).limit(1).maybeSingle();
   const token = (ch as { channel_access_token?: string } | null)?.channel_access_token;

@@ -17,7 +17,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const REVIEW_KEY = "corebiz_monthly_review_2026_r9m4";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
@@ -33,17 +32,22 @@ const baht = (n: unknown) => Number(n ?? 0).toLocaleString("en-US");
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
-  if (req.headers.get("x-review-key") !== REVIEW_KEY) return json({ ok: false, error: "forbidden" }, 403);
-
-  let body: Record<string, unknown> = {};
-  try { body = await req.json(); } catch { /* empty body ok */ }
-  const days = Number(body.days ?? 30) || 30;
 
   const admin = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
+  const { data: reviewKey, error: keyError } = await admin.rpc("get_api_secret_internal", {
+    p_name: "MONTHLY_REVIEW_KEY",
+  });
+  if (keyError || !reviewKey || req.headers.get("x-review-key") !== reviewKey) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { /* empty body ok */ }
+  const days = Number(body.days ?? 30) || 30;
 
   // 1) metrics
   const { data: metrics, error: mErr } = await admin.rpc("agent_collect_review_metrics", { p_days: days });

@@ -75,11 +75,10 @@ export async function signInWithGoogle() {
  *   1) Redirect user to LINE authorize endpoint
  *   2) LINE → callback page (frontend) with `code`
  *   3) Frontend posts code to Supabase Edge Function `line-auth`
- *   4) Edge Function exchanges code, gets LINE profile, finds/creates
- *      Supabase user via admin API, returns a Supabase session
+ *   4) Edge Function exchanges code, gets the LINE profile, and allows only
+ *      an active, pre-linked CoreBiz staff account
  *   5) Frontend stores session via supabase.auth.setSession()
  *
- * Edge function will be added in phase 0.5 (deferred).
  */
 export function signInWithLine() {
   if (!LINE_CHANNEL_ID) {
@@ -93,7 +92,7 @@ export function signInWithLine() {
     client_id: LINE_CHANNEL_ID,
     redirect_uri: LINE_CALLBACK_URL,
     state,
-    scope: 'profile openid email',
+    scope: 'profile openid',
   });
 
   window.location.href = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;

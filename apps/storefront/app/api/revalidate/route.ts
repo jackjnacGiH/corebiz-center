@@ -5,9 +5,12 @@ export const dynamic = "force-dynamic";
 
 // Low-risk token (only triggers cache regeneration — no data access/mutation).
 // Override via the REVALIDATE_SECRET env var on the Vercel "shop" service.
-const SECRET = process.env.REVALIDATE_SECRET ?? "corebiz_shop_revalidate_2026";
+const SECRET = process.env.REVALIDATE_SECRET;
 
 function handle(req: NextRequest) {
+  if (!SECRET) {
+    return NextResponse.json({ ok: false, error: "server_misconfigured" }, { status: 503 });
+  }
   const secret = req.nextUrl.searchParams.get("secret") ?? req.headers.get("x-revalidate-secret");
   if (secret !== SECRET) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
