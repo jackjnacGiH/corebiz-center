@@ -32,6 +32,10 @@ const RETRY_PER_MODEL = 5;
 const DEFAULT_MATCH_COUNT = 5;
 const DEFAULT_MATCH_THRESHOLD = 0.3;
 const MAX_CONTEXT_CHUNKS = 30;
+const MAX_QUERY_CHARS = 4_000;
+const MAX_HISTORY_ITEMS = 20;
+const MAX_HISTORY_CHARS = 4_000;
+const MAX_IMAGE_BASE64_CHARS = 8_000_000;
 const PERSONA_CACHE_TTL_MS = 60_000;
 const KEYWORD_CACHE_TTL_MS = 60_000;
 const BOT_FLAG_CACHE_TTL_MS = 30_000;
@@ -77,7 +81,9 @@ function normalizeImages(raw: unknown): ImagePart[] {
       : (typeof o.mime_type === "string" ? o.mime_type : "image/jpeg");
     const m = data.match(/^data:([^;]+);base64,(.+)$/);
     if (m) { mimeType = m[1]; data = m[2]; }
-    if (data) out.push({ mimeType, data });
+    if (data && data.length <= MAX_IMAGE_BASE64_CHARS && /^image\/(jpeg|png|webp|gif)$/i.test(mimeType)) {
+      out.push({ mimeType, data });
+    }
   }
   return out;
 }
@@ -200,9 +206,10 @@ async function isGlobalBotEnabled(admin: SupabaseClient): Promise<boolean> {
   if (globalBotCache && globalBotCache.expires > now) return globalBotCache.enabled;
   let enabled = true;
   try {
-    const { data } = await admin.from("org_settings").select("bot_enabled").eq("id", true).maybeSingle();
+    const { data, error } = await admin.from("org_settings").select("bot_enabled").eq("id", true).maybeSingle();
+    if (error) throw error;
     if (data && (data as Record<string, unknown>).bot_enabled === false) enabled = false;
-  } catch (_e) { /* assume enabled on error */ }
+  } catch (_e) { enabled = false; /* fail closed: emergency stop must be reliable */ }
   globalBotCache = { enabled, expires: now + BOT_FLAG_CACHE_TTL_MS };
   return enabled;
 }
@@ -213,9 +220,10 @@ async function isChannelBotEnabled(admin: SupabaseClient, channel: string): Prom
   if (cached && cached.expires > now) return cached.enabled;
   let enabled = true;
   try {
-    const { data } = await admin.from("ai_personas").select("bot_enabled").eq("channel", channel).maybeSingle();
+    const { data, error } = await admin.from("ai_personas").select("bot_enabled").eq("channel", channel).maybeSingle();
+    if (error) throw error;
     if (data && (data as Record<string, unknown>).bot_enabled === false) enabled = false;
-  } catch (_e) { /* assume enabled */ }
+  } catch (_e) { enabled = false; }
   channelBotCache.set(channel, { enabled, expires: now + BOT_FLAG_CACHE_TTL_MS });
   return enabled;
 }
@@ -226,9 +234,10 @@ async function isConversationBotEnabled(admin: SupabaseClient, convId: string): 
   if (cached && cached.expires > now) return cached.enabled;
   let enabled = true;
   try {
-    const { data } = await admin.from("chat_conversations").select("bot_enabled").eq("id", convId).maybeSingle();
+    const { data, error } = await admin.from("chat_conversations").select("bot_enabled").eq("id", convId).maybeSingle();
+    if (error) throw error;
     if (data && (data as Record<string, unknown>).bot_enabled === false) enabled = false;
-  } catch (_e) { /* assume enabled */ }
+  } catch (_e) { enabled = false; }
   convBotCache.set(convId, { enabled, expires: now + BOT_FLAG_CACHE_TTL_MS });
   return enabled;
 }
@@ -798,6 +807,42 @@ async function saveMessage(admin: SupabaseClient, conversationId: string, sender
   }).eq("id", conversationId);
 }
 
+/** Best-effort, privacy-safe run telemetry. Raw prompts/responses and tool
+ * arguments are deliberately excluded. Telemetry must never break a reply. */
+async function recordAiRun(admin: SupabaseClient, input: {
+  conversationId: string | null;
+  channel: string;
+  model: string;
+  retrievalCount: number;
+  topSimilarity: number | null;
+  toolNames: string[];
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  elapsed: { embed: number; search: number; llm: number };
+  outcome?: string;
+}) {
+  try {
+    await admin.from("chat_ai_runs").insert({
+      conversation_id: input.conversationId,
+      channel: input.channel,
+      model: input.model,
+      embedding_model: OPENAI_EMBED_MODEL,
+      embedding_version: "openai-1536-v1",
+      retrieval_count: input.retrievalCount,
+      top_similarity: input.topSimilarity,
+      tool_names: [...new Set(input.toolNames)].slice(0, 20),
+      prompt_tokens: input.usage.prompt_tokens,
+      completion_tokens: input.usage.completion_tokens,
+      total_tokens: input.usage.total_tokens,
+      embed_ms: input.elapsed.embed,
+      search_ms: input.elapsed.search,
+      llm_ms: input.elapsed.llm,
+      outcome: input.outcome ?? "ok",
+    });
+  } catch (e) {
+    console.warn("chat_ai_runs insert failed:", (e as Error).message);
+  }
+}
+
 function zeroTokens() { return { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }; }
 function zeroElapsed() { return { embed: 0, search: 0, llm: 0 }; }
 
@@ -812,11 +857,23 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: MSG.th.invalidJson + " / " + MSG.en.invalidJson }), { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
   }
 
-  const query = String(body.query ?? "").trim();
+  const rawQuery = String(body.query ?? "").trim();
+  if (rawQuery.length > MAX_QUERY_CHARS) {
+    return new Response(JSON.stringify({ error: "ข้อความยาวเกิน 4,000 ตัวอักษร / Message exceeds 4,000 characters" }), { status: 413, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+  }
+  const query = rawQuery;
   const images = normalizeImages(body.images);
-  const history = (body.history ?? []) as Array<{ role: string; content: string }>;
-  const match_count = Number(body.match_count ?? DEFAULT_MATCH_COUNT);
-  const matchThreshold = Number(body.match_threshold ?? DEFAULT_MATCH_THRESHOLD);
+  const history = (Array.isArray(body.history) ? body.history : [])
+    .slice(-MAX_HISTORY_ITEMS)
+    .map((item: unknown) => {
+      const row = (item ?? {}) as Record<string, unknown>;
+      return {
+        role: row.role === "assistant" ? "assistant" : "user",
+        content: String(row.content ?? "").slice(0, MAX_HISTORY_CHARS),
+      };
+    });
+  const match_count = Math.max(1, Math.min(MAX_CONTEXT_CHUNKS, Number(body.match_count ?? DEFAULT_MATCH_COUNT) || DEFAULT_MATCH_COUNT));
+  const matchThreshold = Math.max(0, Math.min(1, Number(body.match_threshold ?? DEFAULT_MATCH_THRESHOLD) || DEFAULT_MATCH_THRESHOLD));
   const wantStream = body.stream !== false;
   const lang: Lang = detectLanguage(query);
   const sessionId = typeof body.session_id === "string" && body.session_id.length >= 8 ? body.session_id : null;
@@ -1053,6 +1110,17 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
 
   const llm_ms = Date.now() - t2;
   const sources = matchedRows.map((m) => ({ id: m.id, title: m.title, source_path: m.source_path, similarity: m.similarity, tags: m.tags ?? [], content_preview: m.content.slice(0, 200) }));
+  const elapsed = { embed: embed_ms, search: search_ms, llm: llm_ms };
+  await recordAiRun(admin, {
+    conversationId,
+    channel,
+    model: usedModel,
+    retrievalCount: matchedRows.length,
+    topSimilarity: matchedRows.length > 0 ? Number(matchedRows[0].similarity ?? 0) : null,
+    toolNames: allToolCalls.map((t) => t.name),
+    usage,
+    elapsed,
+  });
   if (conversationId && fullAnswer.trim()) {
     await saveMessage(admin, conversationId, "bot", fullAnswer, {
       model: usedModel, channel,
@@ -1060,5 +1128,5 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       tokens: usage,
     });
   }
-  send({ type: "done", sources, tokens: usage, elapsed_ms: { embed: embed_ms, search: search_ms, llm: llm_ms }, model: usedModel, tool_calls: allToolCalls, conversation_id: conversationId, channel });
+  send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, conversation_id: conversationId, channel });
 }

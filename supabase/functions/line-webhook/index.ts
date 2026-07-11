@@ -268,20 +268,19 @@ async function downloadLineFile(accessToken: string, messageId: string): Promise
   }
 }
 
-// Upload a customer's file to the public chat-attachments bucket. The original
-// (possibly Thai) filename is kept in message metadata for display; the storage
-// path is ASCII-sanitised + timestamped to stay unique and valid.
-async function uploadFileToStorage(admin: SupabaseClient, conversationId: string, fileName: string, mimeType: string, base64: string): Promise<string | null> {
+// Customer documents can contain PO, tax and payment data. Keep them in a
+// private bucket; staff obtain a short-lived signed URL in Omni-Chat.
+async function uploadFileToStorage(admin: SupabaseClient, conversationId: string, fileName: string, mimeType: string, base64: string): Promise<{ bucket: string; path: string } | null> {
   try {
     const bin = atob(base64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const safe = (fileName.replace(/[^\w.\-]+/g, "_") || "file").slice(-80);
     const path = `${conversationId}/${Date.now()}-${safe}`;
-    const { error } = await admin.storage.from("chat-attachments").upload(path, bytes, { contentType: mimeType, upsert: false });
+    const bucket = "chat-private-files";
+    const { error } = await admin.storage.from(bucket).upload(path, bytes, { contentType: mimeType, upsert: false });
     if (error) { console.warn("file upload failed:", error.message); return null; }
-    const { data } = admin.storage.from("chat-attachments").getPublicUrl(path);
-    return data?.publicUrl ?? null;
+    return { bucket, path };
   } catch (e) {
     console.warn("uploadFileToStorage error:", (e as Error).message);
     return null;
@@ -538,6 +537,12 @@ async function shouldBotReply(admin: SupabaseClient, conversationId: string): Pr
       admin.from("ai_personas").select("bot_enabled").eq("channel", "line").maybeSingle(),
       admin.from("chat_conversations").select("bot_enabled").eq("id", conversationId).maybeSingle(),
     ]);
+    if (global.error || channel.error || conv.error) {
+      console.warn("shouldBotReply query failed; pausing bot", {
+        global: global.error?.code, channel: channel.error?.code, conversation: conv.error?.code,
+      });
+      return false;
+    }
     const g = (global.data as Record<string, unknown> | null)?.bot_enabled;
     const c = (channel.data as Record<string, unknown> | null)?.bot_enabled;
     const v = (conv.data as Record<string, unknown> | null)?.bot_enabled;
@@ -546,8 +551,8 @@ async function shouldBotReply(admin: SupabaseClient, conversationId: string): Pr
     if (v === false) return false;
     return true;
   } catch (e) {
-    console.warn("shouldBotReply check failed, defaulting to enabled:", (e as Error).message);
-    return true;
+    console.warn("shouldBotReply check failed, defaulting to paused:", (e as Error).message);
+    return false;
   }
 }
 
@@ -645,12 +650,13 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   if (msg.type === "file") {
     const fileName = (msg.fileName && msg.fileName.trim()) || `file-${msg.id}`;
     const dl = await downloadLineFile(channel.channel_access_token, msg.id);
-    let url: string | null = null;
-    if (dl) url = await uploadFileToStorage(admin, conversationId, fileName, dl.mimeType, dl.base64);
-    const content = url ? `📎 ${fileName}` : `[ลูกค้าส่งไฟล์: ${fileName}]`;
+    const stored = dl ? await uploadFileToStorage(admin, conversationId, fileName, dl.mimeType, dl.base64) : null;
+    const content = stored ? `📎 ${fileName}` : `[ลูกค้าส่งไฟล์: ${fileName}]`;
     await saveMessage(admin, conversationId, "customer", content, msg.id, {
       line_message_type: "file",
-      file_url: url,
+      file_url: null,
+      file_bucket: stored?.bucket ?? null,
+      file_path: stored?.path ?? null,
       file_name: fileName,
       file_size: msg.fileSize ?? dl?.size ?? null,
       mime_type: dl?.mimeType ?? null,

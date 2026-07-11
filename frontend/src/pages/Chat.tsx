@@ -1208,11 +1208,27 @@ function FilterChip({
 /** Download card for a customer-sent file (PDF / docs) — built from the
  *  message metadata that line-webhook stores (file_url / file_name / size). */
 function FileAttachment({ meta, fallback }: { meta: Record<string, unknown>; fallback: string }) {
-    const url = typeof meta?.file_url === 'string' ? meta.file_url : null;
+    const publicUrl = typeof meta?.file_url === 'string' ? meta.file_url : null;
+    const bucket = typeof meta?.file_bucket === 'string' ? meta.file_bucket : null;
+    const path = typeof meta?.file_path === 'string' ? meta.file_path : null;
+    const [signedUrl, setSignedUrl] = useState<string | null>(null);
+    const [signing, setSigning] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        if (!bucket || !path) { setSignedUrl(null); return; }
+        setSigning(true);
+        void supabase.storage.from(bucket).createSignedUrl(path, 300).then(({ data, error }) => {
+            if (cancelled) return;
+            setSignedUrl(error ? null : (data?.signedUrl ?? null));
+            setSigning(false);
+        });
+        return () => { cancelled = true; };
+    }, [bucket, path]);
+    const url = publicUrl || signedUrl;
     const name = (typeof meta?.file_name === 'string' && meta.file_name) || 'ไฟล์แนบ';
     const size = typeof meta?.file_size === 'number' ? meta.file_size : null;
     const mime = typeof meta?.mime_type === 'string' ? meta.mime_type : '';
-    if (!url) return <span className="text-sm text-neutral-600">{fallback || '[ไฟล์แนบ]'}</span>;
+    if (!url) return <span className="text-sm text-neutral-600">{signing ? 'กำลังเตรียมลิงก์ไฟล์…' : (fallback || '[ไฟล์แนบ]')}</span>;
     const sizeLabel = size != null
         ? (size < 1024 * 1024 ? `${Math.max(1, Math.round(size / 1024))} KB` : `${(size / 1048576).toFixed(1)} MB`)
         : '';

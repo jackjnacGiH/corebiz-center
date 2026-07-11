@@ -14,6 +14,7 @@
     "dev:storefront": "npm run dev -w corebiz-storefront",
     "build:storefront": "npm run build -w corebiz-storefront",
     "lint:storefront": "npm run lint -w corebiz-storefront",
+    "eval:omnichat": "node scripts/omnichat-rag-eval.mjs",
     "build": "npm run build:corebiz && npm run build:storefront",
     "lint": "npm run lint:corebiz && npm run lint:storefront"
   }

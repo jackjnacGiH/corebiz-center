@@ -308,57 +308,48 @@ export default function CustomerChat() {
         saveHistory(turns);
     }, [turns]);
 
-    // Realtime: subscribe to new agent/admin messages on our conversation
-    // so admin's replies from the inbox appear live in the customer's chat.
-    // We only subscribe AFTER the first askStream returns our conversation_id.
+    // Poll a session-scoped SECURITY DEFINER RPC for staff replies. Direct anon
+    // Realtime SELECT on chat_messages used to expose every livechat room.
+    // The random session id is the visitor's capability token; the RPC returns
+    // only agent replies and server-generated quote links for that one session.
     useEffect(() => {
         if (!conversationId) return;
-        const channel = supabase
-            .channel(`chat_msg:${conversationId}`)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'chat_messages',
-                    filter: `conversation_id=eq.${conversationId}`,
-                },
-                (payload) => {
-                    const row = payload.new as {
-                        id: string;
-                        sender_type: 'customer' | 'agent' | 'bot' | 'system';
-                        sender_name?: string | null;
-                        content: string;
-                        created_at: string;
-                        metadata?: { quote_link?: boolean } | null;
-                    };
-                    // React to AGENT (human admin) messages, and to bot-sent
-                    // quote links (inserted server-side by a trigger when the
-                    // system creates a quote — so NOT already in our state).
-                    // Other 'customer'/'bot' rows came from us/askStream.
-                    const isQuoteLink = row.sender_type === 'bot' && !!row.metadata?.quote_link;
-                    if (row.sender_type !== 'agent' && !isQuoteLink) return;
-                    // Sign the bubble with the admin's name so the visitor knows
-                    // who replied (skip emails / missing names).
+        let cancelled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const poll = async () => {
+            try {
+                // RPC is introduced by migration 0074 and is not in the generated
+                // database types yet.
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const db = supabase as any;
+                const { data, error } = await db.rpc('get_livechat_replies', {
+                    p_session_id: sessionIdRef.current,
+                    p_after: null,
+                });
+                if (error) throw error;
+                if (cancelled) return;
+                for (const row of (data ?? []) as Array<{
+                    id: string;
+                    sender_name?: string | null;
+                    content: string;
+                }>) {
                     const name = row.sender_name && !row.sender_name.includes('@') ? row.sender_name : null;
-                    setTurns((prev) => {
-                        // de-dupe by id
-                        if (prev.some((t) => t.id === `db-${row.id}`)) return prev;
-                        return [
-                            ...prev,
-                            {
-                                id: `db-${row.id}`,
-                                role: 'assistant',
-                                content: name ? `${name}: ${row.content}` : row.content,
-                            },
-                        ];
-                    });
-                },
-            )
-            .subscribe();
-        return () => {
-            void supabase.removeChannel(channel);
+                    setTurns((prev) => prev.some((t) => t.id === `db-${row.id}`)
+                        ? prev
+                        : [...prev, {
+                            id: `db-${row.id}`,
+                            role: 'assistant',
+                            content: name ? `${name}: ${row.content}` : row.content,
+                        }]);
+                }
+            } catch (e) {
+                console.warn('[CustomerChat] reply polling failed:', e);
+            } finally {
+                if (!cancelled) timer = setTimeout(poll, 3000);
+            }
         };
+        void poll();
+        return () => { cancelled = true; if (timer) clearTimeout(timer); };
     }, [conversationId]);
 
     // Auto-scroll on new content
