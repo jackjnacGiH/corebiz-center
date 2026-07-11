@@ -964,7 +964,6 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   if (isCostQuery(query)) {
     const refusal = MSG[lang].costRefusal;
     send({ type: "blocked", reason: "cost_query", answer: refusal });
-    send({ type: "text", chunk: refusal });
     send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail", tool_calls: [], conversation_id: conversationId, channel });
     if (conversationId) await saveMessage(admin, conversationId, "bot", refusal, { blocked: "cost_query" });
     return;
