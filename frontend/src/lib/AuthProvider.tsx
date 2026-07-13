@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fetchProfile, supabase, type Profile, type Session } from './supabase';
 
 interface AuthContextValue {
@@ -14,25 +14,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const profileLoadVersion = useRef(0);
 
   const loadProfile = async (s: Session | null) => {
+    const version = ++profileLoadVersion.current;
+    setLoading(true);
+
     if (!s) {
-      setProfile(null);
+      if (version === profileLoadVersion.current) {
+        setProfile(null);
+        setLoading(false);
+      }
       return;
     }
+
     const p = await fetchProfile(s.user.id);
-    setProfile(p);
+    if (version === profileLoadVersion.current) {
+      setProfile(p);
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      void loadProfile(data.session).finally(() => setLoading(false));
+      void loadProfile(data.session);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
-      void loadProfile(s);
+      // Keep protected routes in their loading state until the matching profile
+      // is ready. Supabase calls made directly inside this callback can deadlock,
+      // so defer the profile query until after the auth callback returns.
+      setLoading(true);
+      window.setTimeout(() => {
+        void loadProfile(s);
+      }, 0);
     });
 
     return () => sub.subscription.unsubscribe();
