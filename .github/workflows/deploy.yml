@@ -35,4 +35,4 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_COREBIZ_PROJECT_ID || secrets.VERCEL_PROJECT_ID }}
-        run: npx --yes vercel@47.2.2 --prod --yes --token "$VERCEL_TOKEN"
+        run: npx --yes vercel@56.2.0 --prod --yes --token "$VERCEL_TOKEN"
