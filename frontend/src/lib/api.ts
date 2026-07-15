@@ -19,6 +19,7 @@ import type {
   Quote, LoyaltyTransaction,
   Notification,
   OrgSettings, OrgSettingsUpdate,
+  BotLearningSettings, BotLearningCandidate,
 } from './database.types';
 
 // Re-export commonly-used row types so UI components can import them from the
@@ -3532,6 +3533,118 @@ export const aiPersonaApi = {
       });
       if (error) throw error;
     }
+  },
+};
+
+// =========================================================================
+// Bot learning loop — staff review only. These APIs deliberately expose
+// summaries/candidates, never a raw chat-history training corpus.
+// =========================================================================
+
+export type BotLearningCandidateStatus = 'pending' | 'approved' | 'dismissed';
+export type BotLearningCandidateKind =
+  | 'knowledge_gap'
+  | 'follow_up_needed'
+  | 'repeat_question'
+  | 'product_alias';
+
+export type BotLearningSettingsPatch = Pick<
+  BotLearningSettings,
+  'enabled' | 'context_memory_enabled' | 'candidate_capture_enabled' | 'memory_ttl_days' | 'max_context_chars'
+>;
+
+export interface BotLearningCandidateReview {
+  trigger_terms: string[];
+  approved_guidance: string;
+  review_note?: string;
+}
+
+function isSafeLearningGuidanceForReview(value: string): boolean {
+  return !/(?:\bcost\b|\bmargin\b|\bprice\b|\bstock\b|\binventory\b|\bPO\b|purchase\s*order|bank\s*account|payment|address|e-?mail|phone|ราคา|ราคาทุน|สต็อก|คงเหลือ|จำนวน|ใบสั่งซื้อ|บัญชีธนาคาร|ชำระเงิน|ที่อยู่|อีเมล|เบอร์โทร)/iu.test(value);
+}
+
+export const botLearningApi = {
+  async getSettings(): Promise<BotLearningSettings> {
+    const { data, error } = await supabase
+      .from('bot_learning_settings')
+      .select('*')
+      .eq('id', true)
+      .single();
+    if (error) throw error;
+    return data as BotLearningSettings;
+  },
+
+  async updateSettings(patch: BotLearningSettingsPatch): Promise<BotLearningSettings> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const { data, error } = await supabase
+      .from('bot_learning_settings')
+      .update({
+        ...patch,
+        updated_at: new Date().toISOString(),
+        updated_by: sessionData.session?.user.id ?? null,
+      })
+      .eq('id', true)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as BotLearningSettings;
+  },
+
+  async listCandidates(
+    status: BotLearningCandidateStatus | 'all' = 'pending',
+    limit = 40,
+  ): Promise<BotLearningCandidate[]> {
+    let request = supabase
+      .from('bot_learning_candidates')
+      .select('*')
+      .order('last_seen_at', { ascending: false })
+      .limit(Math.min(Math.max(limit, 1), 100));
+    if (status !== 'all') request = request.eq('status', status);
+    const { data, error } = await request;
+    if (error) throw error;
+    return (data ?? []) as BotLearningCandidate[];
+  },
+
+  async approveCandidate(id: string, review: BotLearningCandidateReview): Promise<void> {
+    const triggerTerms = [...new Set(review.trigger_terms.map((term) => term.trim()).filter(Boolean))].slice(0, 8);
+    const guidance = review.approved_guidance.trim();
+    if (!triggerTerms.length || !guidance) {
+      throw new Error('กรุณาระบุคำกระตุ้นและคำแนะนำก่อนอนุมัติ');
+    }
+    if (!isSafeLearningGuidanceForReview(guidance)) {
+      throw new Error('คำแนะนำสำหรับการเรียนรู้ห้ามมีราคา สต็อก PO การชำระเงิน หรือข้อมูลส่วนบุคคล');
+    }
+    const { data: sessionData } = await supabase.auth.getSession();
+    const { error } = await supabase
+      .from('bot_learning_candidates')
+      .update({
+        status: 'approved',
+        trigger_terms: triggerTerms,
+        approved_guidance: guidance,
+        review_note: review.review_note?.trim() || null,
+        reviewed_by: sessionData.session?.user.id ?? null,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    if (error) throw error;
+  },
+
+  async dismissCandidate(id: string, reviewNote?: string): Promise<void> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const { error } = await supabase
+      .from('bot_learning_candidates')
+      .update({
+        status: 'dismissed',
+        trigger_terms: [],
+        approved_guidance: null,
+        review_note: reviewNote?.trim() || null,
+        reviewed_by: sessionData.session?.user.id ?? null,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    if (error) throw error;
   },
 };
 

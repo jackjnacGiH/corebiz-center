@@ -46,6 +46,8 @@ const MAX_IMAGE_BASE64_CHARS = 8_000_000;
 const PERSONA_CACHE_TTL_MS = 60_000;
 const KEYWORD_CACHE_TTL_MS = 60_000;
 const BOT_FLAG_CACHE_TTL_MS = 30_000;
+const LEARNING_SETTINGS_CACHE_TTL_MS = 30_000;
+const MAX_LEARNING_GUIDANCE = 3;
 const ALLOWED_CHANNELS = new Set(["default", "line", "web"]);
 
 const CORS_HEADERS = {
@@ -65,9 +67,19 @@ let keywordCache: { pairs: RewritePair[]; expires: number } | null = null;
 let globalBotCache: { enabled: boolean; expires: number } | null = null;
 const channelBotCache = new Map<string, { enabled: boolean; expires: number }>();
 const convBotCache = new Map<string, { enabled: boolean; expires: number }>();
+let learningSettingsCache: { value: LearningSettings; expires: number } | null = null;
 
 type Lang = "th" | "en";
 type ImagePart = { mimeType: string; data: string };
+type LearningSettings = {
+  enabled: boolean;
+  context_memory_enabled: boolean;
+  candidate_capture_enabled: boolean;
+  memory_ttl_days: number;
+  max_context_chars: number;
+};
+type ConversationMemory = { summary: string; topics: string[] };
+type LearningGuidance = { trigger_terms: string[]; approved_guidance: string };
 function detectLanguage(s: string): Lang {
   return /[฀-๿]/.test(s) ? "th" : "en";
 }
@@ -705,6 +717,201 @@ async function getPersonaPrompt(admin: SupabaseClient, channel: string): Promise
   return prompt;
 }
 
+const LEARNING_DEFAULTS: LearningSettings = {
+  enabled: false,
+  context_memory_enabled: false,
+  candidate_capture_enabled: false,
+  memory_ttl_days: 90,
+  max_context_chars: 600,
+};
+
+function redactLearningText(input: string, maxChars = 500): string {
+  return input
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "[image]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
+    .replace(/(?:\+?66|0)(?:[\s-]?\d){8,10}/g, "[phone]")
+    .replace(/\b(?:\d[ -]?){10,16}\b/g, "[sensitive-number]")
+    .replace(/https?:\/\/\S+/gi, "[link]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxChars);
+}
+
+function isSensitiveLearningInput(input: string): boolean {
+  return /(?:\bPO\b|purchase\s*order|bank\s*account|payment\s*slip|transfer\s*slip|เลขบัญชี|บัญชีธนาคาร|สลิป|โอนเงิน|ใบสั่งซื้อ)/iu.test(input);
+}
+
+function isSafeLearningGuidance(input: string): boolean {
+  // A staff review can improve how the bot listens or asks a follow-up; it
+  // must never become an alternate source of commercial facts or private data.
+  return !isSensitiveLearningInput(input) && !/(?:\bcost\b|\bmargin\b|\bprice\b|\bstock\b|\binventory\b|ราคา|สต็อก|คงเหลือ|จำนวน)/iu.test(input);
+}
+
+function normalizeLearningMatch(input: string): string {
+  return input.toLowerCase().replace(/[\s\-_/.,!?;:()[\]{}"'`~]/g, "");
+}
+
+function learningFingerprint(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function learningTopics(query: string, toolNames: string[]): string[] {
+  const topics: string[] = [];
+  if (/สินค้า|ราคา|ขนาด|เบอร์|SKU|product|price|size/i.test(query)) topics.push("product");
+  if (/ใบเสนอราคา|quote|QT-/i.test(query) || toolNames.includes("request_quote")) topics.push("quote");
+  if (/จัดส่ง|ส่งของ|delivery|shipping/i.test(query)) topics.push("delivery");
+  if (/แผนที่|location|โลเคชั่น|ที่อยู่/i.test(query)) topics.push("location");
+  if (toolNames.includes("capture_lead")) topics.push("follow_up");
+  return [...new Set(topics)].slice(0, 8);
+}
+
+async function getLearningSettings(admin: SupabaseClient): Promise<LearningSettings> {
+  const now = Date.now();
+  if (learningSettingsCache && learningSettingsCache.expires > now) return learningSettingsCache.value;
+  try {
+    const { data, error } = await admin.from("bot_learning_settings")
+      .select("enabled, context_memory_enabled, candidate_capture_enabled, memory_ttl_days, max_context_chars")
+      .eq("id", true).maybeSingle();
+    if (error || !data) throw error ?? new Error("missing learning settings");
+    const row = data as Partial<LearningSettings>;
+    const value: LearningSettings = {
+      enabled: row.enabled === true,
+      context_memory_enabled: row.context_memory_enabled === true,
+      candidate_capture_enabled: row.candidate_capture_enabled === true,
+      memory_ttl_days: Math.max(7, Math.min(365, Number(row.memory_ttl_days) || 90)),
+      max_context_chars: Math.max(160, Math.min(1200, Number(row.max_context_chars) || 600)),
+    };
+    learningSettingsCache = { value, expires: now + LEARNING_SETTINGS_CACHE_TTL_MS };
+    return value;
+  } catch (e) {
+    console.warn("bot learning settings unavailable; learning is paused:", (e as Error).message);
+    return LEARNING_DEFAULTS;
+  }
+}
+
+async function loadConversationMemory(admin: SupabaseClient, conversationId: string | null, settings: LearningSettings): Promise<ConversationMemory | null> {
+  if (!conversationId || !settings.enabled || !settings.context_memory_enabled) return null;
+  try {
+    const { data, error } = await admin.from("bot_conversation_memory")
+      .select("summary, topics").eq("conversation_id", conversationId)
+      .gt("expires_at", new Date().toISOString()).maybeSingle();
+    if (error || !data) return null;
+    const row = data as { summary?: unknown; topics?: unknown };
+    const summary = redactLearningText(String(row.summary ?? ""), settings.max_context_chars);
+    const topics = Array.isArray(row.topics) ? row.topics.map(String).slice(0, 8) : [];
+    return summary ? { summary, topics } : null;
+  } catch (e) {
+    console.warn("bot conversation memory read failed:", (e as Error).message);
+    return null;
+  }
+}
+
+async function loadApprovedLearningGuidance(admin: SupabaseClient, query: string, settings: LearningSettings): Promise<LearningGuidance[]> {
+  if (!settings.enabled || !query || isSensitiveLearningInput(query)) return [];
+  const normalizedQuery = normalizeLearningMatch(query);
+  if (normalizedQuery.length < 3) return [];
+  try {
+    const { data, error } = await admin.from("bot_learning_candidates")
+      .select("trigger_terms, approved_guidance")
+      .eq("status", "approved")
+      .not("approved_guidance", "is", null)
+      .order("last_seen_at", { ascending: false }).limit(50);
+    if (error) throw error;
+    return ((data ?? []) as Array<{ trigger_terms?: unknown; approved_guidance?: unknown }>)
+      .map((row) => ({
+        trigger_terms: Array.isArray(row.trigger_terms) ? row.trigger_terms.map(String).slice(0, 8) : [],
+        approved_guidance: String(row.approved_guidance ?? "").trim().slice(0, 1200),
+      }))
+      .filter((row) => row.approved_guidance && isSafeLearningGuidance(row.approved_guidance) && row.trigger_terms.some((term) => {
+        const normalizedTerm = normalizeLearningMatch(term);
+        return normalizedTerm.length >= 3 && normalizedQuery.includes(normalizedTerm);
+      }))
+      .slice(0, MAX_LEARNING_GUIDANCE);
+  } catch (e) {
+    console.warn("approved learning guidance read failed:", (e as Error).message);
+    return [];
+  }
+}
+
+async function saveConversationMemory(admin: SupabaseClient, conversationId: string | null, channel: string, query: string, toolNames: string[], settings: LearningSettings): Promise<void> {
+  if (!conversationId || !settings.enabled || !settings.context_memory_enabled || !query || isSensitiveLearningInput(query)) return;
+  const safeQuery = redactLearningText(query, Math.max(80, settings.max_context_chars - 42));
+  if (safeQuery.length < 3) return;
+  try {
+    const expiresAt = new Date(Date.now() + settings.memory_ttl_days * 24 * 60 * 60 * 1000).toISOString();
+    await admin.from("bot_conversation_memory").upsert({
+      conversation_id: conversationId,
+      summary: `Latest customer context: ${safeQuery}`.slice(0, settings.max_context_chars),
+      topics: learningTopics(query, toolNames),
+      source_channel: channel,
+      expires_at: expiresAt,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "conversation_id" });
+  } catch (e) {
+    console.warn("bot conversation memory write failed:", (e as Error).message);
+  }
+}
+
+async function recordLearningCandidate(admin: SupabaseClient, input: {
+  conversationId: string | null;
+  channel: string;
+  query: string;
+  sourceCount: number;
+  toolNames: string[];
+  settings: LearningSettings;
+}): Promise<void> {
+  if (!input.settings.enabled || !input.settings.candidate_capture_enabled || !input.query || isSensitiveLearningInput(input.query)) return;
+  const usesProductTool = input.toolNames.some((name) => ["find_products", "get_product_detail", "list_product_groups", "list_categories"].includes(name));
+  const candidateKind = input.toolNames.includes("capture_lead")
+    ? "follow_up_needed"
+    : (input.sourceCount === 0 && !usesProductTool && input.query.trim().length >= 8 ? "knowledge_gap" : null);
+  if (!candidateKind) return;
+  const sampleText = redactLearningText(input.query);
+  const normalized = normalizeLearningMatch(sampleText);
+  if (normalized.length < 4) return;
+  const fingerprint = learningFingerprint(`${candidateKind}:${normalized}`);
+  try {
+    const { data: existing, error: findError } = await admin.from("bot_learning_candidates")
+      .select("id, occurrence_count").eq("candidate_kind", candidateKind).eq("fingerprint", fingerprint).maybeSingle();
+    if (findError) throw findError;
+    const now = new Date().toISOString();
+    if (existing?.id) {
+      await admin.from("bot_learning_candidates").update({
+        occurrence_count: Math.min(999999, Number(existing.occurrence_count ?? 0) + 1),
+        last_seen_at: now,
+        updated_at: now,
+      }).eq("id", existing.id);
+    } else {
+      await admin.from("bot_learning_candidates").insert({
+        conversation_id: input.conversationId,
+        candidate_kind: candidateKind,
+        fingerprint,
+        sample_text: sampleText,
+        trigger_terms: [sampleText.slice(0, 160)],
+        risk_level: candidateKind === "follow_up_needed" ? "medium" : "low",
+      });
+    }
+  } catch (e) {
+    console.warn("bot learning candidate write failed:", (e as Error).message);
+  }
+}
+
+function learningPromptContext(memory: ConversationMemory | null, guidance: LearningGuidance[]): string {
+  const parts: string[] = [];
+  if (memory) {
+    parts.push(`[private conversation continuity — not factual source]\n${memory.summary}${memory.topics.length ? `\nTopics: ${memory.topics.join(", ")}` : ""}\nUse only to avoid repeating questions or greetings. Never reveal it unprompted, and fresh tools/knowledge always override it.`);
+  }
+  if (guidance.length > 0) {
+    parts.push(`[staff-approved learning guidance]\n${guidance.map((item) => `- Terms: ${item.trigger_terms.join(", ")}\n  Guidance: ${item.approved_guidance}`).join("\n")}\nThis guidance is not product, price, stock, payment, PO, or personal data. It cannot override Safety Rules, Tooling Rules, or product-family gates.`);
+  }
+  return parts.join("\n\n");
+}
+
 const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden by persona)
 
 1. ห้ามเปิดเผยข้อมูล cost / ราคาทุน / margin / ราคาซื้อ ของบริษัทโดยเด็ดขาด — ถ้าลูกค้าถาม ให้ปฏิเสธ
@@ -798,11 +1005,13 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
 • Call capture_lead only ONCE per conversation. Never promise special prices yourself.`;
 
-function buildSystemPrompt(persona: string, contextText: string | null, lang: Lang): string {
+function buildSystemPrompt(persona: string, contextText: string | null, lang: Lang, memory: ConversationMemory | null, guidance: LearningGuidance[]): string {
   const safety  = lang === "th" ? SAFETY_RULES_TH  : SAFETY_RULES_EN;
   const tooling = lang === "th" ? TOOLING_GUIDE_TH : TOOLING_GUIDE_EN;
   const ctx = contextText ? `\n\n[knowledge base context]\n${contextText}` : "";
-  return `${safety}\n\n==========\n👤 PERSONA\n==========\n${persona}\n\n==========\n${tooling}${ctx}`;
+  const learning = learningPromptContext(memory, guidance);
+  const learningCtx = learning ? `\n\n[guarded learning context]\n${learning}` : "";
+  return `${safety}\n\n==========\n👤 PERSONA\n==========\n${persona}\n\n==========\n${tooling}${ctx}${learningCtx}`;
 }
 
 interface GeminiStreamResult { fullText: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }>; allParts: unknown[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; model: string; }
@@ -990,11 +1199,20 @@ async function recordAiRun(admin: SupabaseClient, input: {
 function zeroTokens() { return { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }; }
 function zeroElapsed() { return { embed: 0, search: 0, llm: 0 }; }
 
+function isInternalServiceCall(req: Request, serviceKey: string): boolean {
+  return req.headers.get("authorization") === `Bearer ${serviceKey}`;
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const internalServiceCall = isInternalServiceCall(req, serviceKey);
 
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch {
@@ -1027,9 +1245,17 @@ Deno.serve(async (req: Request) => {
 
   if (!query && images.length === 0) return new Response(JSON.stringify({ error: MSG[lang].queryRequired }), { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 
-  let conversationId: string | null = null;
-  if (sessionId) conversationId = await upsertLivechatConversation(admin, sessionId, displayName);
-  if (conversationId) {
+  // Only a service-role caller (the LINE webhook) may attach an existing
+  // conversation. Browser callers can create/read only their own livechat
+  // conversation via the session id, so they cannot probe another customer's
+  // continuity memory.
+  const internalConversationId = internalServiceCall && isUuid(body.conversation_id)
+    ? body.conversation_id
+    : null;
+  let conversationId: string | null = internalConversationId;
+  const persistMessages = !internalConversationId;
+  if (!conversationId && sessionId) conversationId = await upsertLivechatConversation(admin, sessionId, displayName);
+  if (conversationId && persistMessages) {
     if (images.length > 0) {
       const url = await uploadImageToStorage(admin, conversationId, images[0].mimeType, images[0].data);
       const md = url ? `![image](${url})` : "";
@@ -1047,7 +1273,7 @@ Deno.serve(async (req: Request) => {
         const send = (event: Record<string, unknown>) => {
           try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); } catch (_e) { /* closed */ }
         };
-        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, send); }
+        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, send); }
         catch (e) {
           const msg = (e as Error).message ?? String(e);
           const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -1059,7 +1285,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const events: Array<Record<string, unknown>> = [];
-  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, (e) => events.push(e)); }
+  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, (e) => events.push(e)); }
   catch (e) {
     const msg = (e as Error).message ?? String(e);
     const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -1092,7 +1318,7 @@ Deno.serve(async (req: Request) => {
   }), { status: errEv ? 500 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 });
 
-async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, send: (event: Record<string, unknown>) => void) {
+async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, persistMessages: boolean, send: (event: Record<string, unknown>) => void) {
   const [globalOn, channelOn, convOn] = await Promise.all([
     isGlobalBotEnabled(admin),
     isChannelBotEnabled(admin, channel),
@@ -1109,7 +1335,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     const refusal = MSG[lang].costRefusal;
     send({ type: "blocked", reason: "cost_query", answer: refusal });
     send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail", tool_calls: [], conversation_id: conversationId, channel });
-    if (conversationId) await saveMessage(admin, conversationId, "bot", refusal, { blocked: "cost_query" });
+    if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", refusal, { blocked: "cost_query" });
     return;
   }
 
@@ -1127,12 +1353,17 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     send({ type: "text", chunk: answer });
     send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail:callback_lead", tool_calls: toolCalls, conversation_id: conversationId, channel });
     await recordAiRun(admin, { conversationId, channel, model: "guardrail:callback_lead", retrievalCount: 0, topSimilarity: null, toolNames: ["capture_lead"], usage: zeroTokens(), elapsed: zeroElapsed(), outcome: "callback_lead" });
-    if (conversationId) await saveMessage(admin, conversationId, "bot", answer, { tool_calls: [{ name: "capture_lead", args }] });
+    if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", answer, { tool_calls: [{ name: "capture_lead", args }] });
     return;
   }
 
-  const [geminiKey, openaiKey, persona] = await Promise.all([
-    getGeminiKey(admin), getOpenAIKey(admin), getPersonaPrompt(admin, channel),
+  const learningSettings = await getLearningSettings(admin);
+  const [geminiKey, openaiKey, persona, conversationMemory, approvedGuidance] = await Promise.all([
+    getGeminiKey(admin),
+    getOpenAIKey(admin),
+    getPersonaPrompt(admin, channel),
+    loadConversationMemory(admin, conversationId, learningSettings),
+    loadApprovedLearningGuidance(admin, query, learningSettings),
   ]);
   if (!geminiKey) throw new Error(MSG[lang].geminiKeyMissing);
   if (!openaiKey) throw new Error(MSG[lang].openaiKeyMissing);
@@ -1232,7 +1463,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     send({ type: "status", message: images.length > 0 ? "vision" : "rag_skipped_product_query" });
   }
 
-  const systemPrompt = buildSystemPrompt(persona, contextText, lang);
+  const systemPrompt = buildSystemPrompt(persona, contextText, lang, conversationMemory, approvedGuidance);
   const t2 = Date.now();
   const defaultImgPrompt = lang === "en"
     ? "The customer sent this image. Please inspect it according to image rules."
@@ -1301,17 +1532,29 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     ...forcedRows.map((r) => ({ id: `forced:${r.source_path}:${r.chunk_index}`, title: r.title, source_path: r.source_path, similarity: null, tags: [], content_preview: r.content.slice(0, 200) })),
   ];
   const elapsed = { embed: embed_ms, search: search_ms, llm: llm_ms };
+  const toolNames = allToolCalls.map((t) => t.name);
   await recordAiRun(admin, {
     conversationId,
     channel,
     model: usedModel,
     retrievalCount: matchedRows.length + forcedRows.length,
     topSimilarity: matchedRows.length > 0 ? Number(matchedRows[0].similarity ?? 0) : null,
-    toolNames: allToolCalls.map((t) => t.name),
+    toolNames,
     usage,
     elapsed,
   });
-  if (conversationId && fullAnswer.trim()) {
+  await Promise.all([
+    saveConversationMemory(admin, conversationId, channel, query, toolNames, learningSettings),
+    recordLearningCandidate(admin, {
+      conversationId,
+      channel,
+      query,
+      sourceCount: matchedRows.length + forcedRows.length,
+      toolNames,
+      settings: learningSettings,
+    }),
+  ]);
+  if (conversationId && fullAnswer.trim() && persistMessages) {
     await saveMessage(admin, conversationId, "bot", fullAnswer, {
       model: usedModel, channel,
       tool_calls: allToolCalls.map((t) => ({ name: t.name, args: t.args })),

@@ -530,6 +530,50 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['ai_personas']['Insert']>
         Relationships: []
       }
+      bot_learning_settings: {
+        Row: {
+          id: boolean; enabled: boolean; context_memory_enabled: boolean;
+          candidate_capture_enabled: boolean; memory_ttl_days: number;
+          max_context_chars: number; updated_at: string; updated_by: string | null;
+        }
+        Insert: {
+          id?: boolean; enabled?: boolean; context_memory_enabled?: boolean;
+          candidate_capture_enabled?: boolean; memory_ttl_days?: number;
+          max_context_chars?: number; updated_at?: string; updated_by?: string | null;
+        }
+        Update: Partial<Database['public']['Tables']['bot_learning_settings']['Insert']>
+        Relationships: []
+      }
+      bot_conversation_memory: {
+        Row: {
+          conversation_id: string; summary: string; topics: string[]; source_channel: string;
+          expires_at: string; created_at: string; updated_at: string;
+        }
+        Insert: {
+          conversation_id: string; summary: string; topics?: string[]; source_channel: string;
+          expires_at: string; created_at?: string; updated_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['bot_conversation_memory']['Insert']>
+        Relationships: []
+      }
+      bot_learning_candidates: {
+        Row: {
+          id: string; conversation_id: string | null; candidate_kind: string; fingerprint: string;
+          sample_text: string; trigger_terms: string[]; occurrence_count: number;
+          risk_level: string; status: string; approved_guidance: string | null;
+          review_note: string | null; reviewed_by: string | null; reviewed_at: string | null;
+          first_seen_at: string; last_seen_at: string; created_at: string; updated_at: string;
+        }
+        Insert: {
+          id?: string; conversation_id?: string | null; candidate_kind: string; fingerprint: string;
+          sample_text: string; trigger_terms?: string[]; occurrence_count?: number;
+          risk_level?: string; status?: string; approved_guidance?: string | null;
+          review_note?: string | null; reviewed_by?: string | null; reviewed_at?: string | null;
+          first_seen_at?: string; last_seen_at?: string; created_at?: string; updated_at?: string;
+        }
+        Update: Partial<Database['public']['Tables']['bot_learning_candidates']['Insert']>
+        Relationships: []
+      }
     }
     Views: {}
     Functions: {
@@ -623,6 +667,9 @@ export type OrgSettingsUpdate = Database['public']['Tables']['org_settings']['Up
 export type AiPersonaRow    = Database['public']['Tables']['ai_personas']['Row']
 export type AiPersonaInsert = Database['public']['Tables']['ai_personas']['Insert']
 export type AiPersonaUpdate = Database['public']['Tables']['ai_personas']['Update']
+
+export type BotLearningSettings = Database['public']['Tables']['bot_learning_settings']['Row']
+export type BotLearningCandidate = Database['public']['Tables']['bot_learning_candidates']['Row']
 
 export type Category  = Database['public']['Tables']['categories']['Row']
 export type Warehouse = Database['public']['Tables']['warehouses']['Row']

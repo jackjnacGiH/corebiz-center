@@ -32,12 +32,13 @@ import {
     apiSecretsApi,
     lineChannelsApi,
     aiPersonaApi,
+    botLearningApi,
     PERSONA_DEFAULTS,
     type LineChannel,
     type AiPersona,
     type PersonaChannel,
 } from '../lib/api';
-import type { OrgSettings } from '../lib/database.types';
+import type { BotLearningCandidate, BotLearningSettings, OrgSettings } from '../lib/database.types';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -909,6 +910,7 @@ function IntegrationsTab() {
 
             <BotMasterKillSwitchCard />
             <AiPersonaCard />
+            <BotLearningCard />
             <LineChannelsCard />
         </div>
     );
@@ -1282,6 +1284,300 @@ function AiPersonaCard() {
 // Lets the admin add multiple LINE OA credentials (test + production) and
 // toggle which one is active. The line-webhook Edge Function reads the
 // active channel; admins can swap accounts without redeploying code.
+
+type LearningCandidateDraft = {
+    terms: string;
+    guidance: string;
+    note: string;
+};
+
+function BotLearningCard() {
+    const [settings, setSettings] = useState<BotLearningSettings | null>(null);
+    const [candidates, setCandidates] = useState<BotLearningCandidate[]>([]);
+    const [drafts, setDrafts] = useState<Record<string, LearningCandidateDraft>>({});
+    const [loading, setLoading] = useState(true);
+    const [savingSettings, setSavingSettings] = useState(false);
+    const [actingId, setActingId] = useState<string | null>(null);
+    const [err, setErr] = useState<string | null>(null);
+    const [savedAt, setSavedAt] = useState<number | null>(null);
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            const [nextSettings, pending] = await Promise.all([
+                botLearningApi.getSettings(),
+                botLearningApi.listCandidates('pending'),
+            ]);
+            setSettings(nextSettings);
+            setCandidates(pending);
+            setDrafts((current) => {
+                const next = { ...current };
+                for (const candidate of pending) {
+                    if (!next[candidate.id]) {
+                        next[candidate.id] = {
+                            terms: candidate.trigger_terms.join(', '),
+                            guidance: candidate.approved_guidance ?? '',
+                            note: candidate.review_note ?? '',
+                        };
+                    }
+                }
+                return next;
+            });
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => { void load(); }, []);
+
+    function changeSetting<K extends keyof BotLearningSettings>(key: K, value: BotLearningSettings[K]) {
+        setSettings((current) => current ? { ...current, [key]: value } : current);
+    }
+
+    function changeDraft(id: string, key: keyof LearningCandidateDraft, value: string) {
+        setDrafts((current) => {
+            const existing: LearningCandidateDraft = current[id] ?? { terms: '', guidance: '', note: '' };
+            return { ...current, [id]: { ...existing, [key]: value } };
+        });
+    }
+
+    async function saveSettings() {
+        if (!settings) return;
+        setSavingSettings(true);
+        setErr(null);
+        try {
+            const saved = await botLearningApi.updateSettings({
+                enabled: settings.enabled,
+                context_memory_enabled: settings.context_memory_enabled,
+                candidate_capture_enabled: settings.candidate_capture_enabled,
+                memory_ttl_days: Math.min(365, Math.max(7, settings.memory_ttl_days)),
+                max_context_chars: Math.min(1200, Math.max(160, settings.max_context_chars)),
+            });
+            setSettings(saved);
+            setSavedAt(Date.now());
+            setTimeout(() => setSavedAt(null), 3000);
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setSavingSettings(false);
+        }
+    }
+
+    async function approve(candidate: BotLearningCandidate) {
+        const draft = drafts[candidate.id] ?? { terms: '', guidance: '', note: '' };
+        setActingId(candidate.id);
+        setErr(null);
+        try {
+            await botLearningApi.approveCandidate(candidate.id, {
+                trigger_terms: draft.terms.split(','),
+                approved_guidance: draft.guidance,
+                review_note: draft.note,
+            });
+            await load();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setActingId(null);
+        }
+    }
+
+    async function dismiss(candidate: BotLearningCandidate) {
+        if (!confirm('ไม่ใช้ข้อเสนอนี้ใช่ไหม? ระบบจะไม่ใช้เป็นแนวทางตอบลูกค้า')) return;
+        const draft = drafts[candidate.id];
+        setActingId(candidate.id);
+        setErr(null);
+        try {
+            await botLearningApi.dismissCandidate(candidate.id, draft?.note);
+            await load();
+        } catch (e) {
+            setErr((e as Error).message);
+        } finally {
+            setActingId(null);
+        }
+    }
+
+    return (
+        <Card className="border-violet-200">
+            <CardHeader className="px-6">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                    <Bot size={18} className="text-violet-600" />
+                    Safe Learning — ความจำและข้อเสนอพัฒนาบอท
+                </CardTitle>
+                <p className="text-xs text-neutral-600 mt-1 leading-relaxed">
+                    บอทจดจำเฉพาะสรุปบริบทของแชทเดียวกันแบบมีอายุ และสร้าง “ข้อเสนอพัฒนา” ที่ทีมต้องอนุมัติก่อนใช้จริง
+                    ไม่สร้าง Knowledge Base, ไม่แก้ Persona และไม่เรียนรู้ราคา สต็อก PO การชำระเงิน หรือข้อมูลส่วนบุคคลเอง
+                </p>
+            </CardHeader>
+            <CardContent className="px-6 space-y-5">
+                {loading || !settings ? (
+                    <div className="flex items-center gap-2 text-sm text-neutral-500 py-4">
+                        <Loader2 size={16} className="animate-spin" /> กำลังโหลดการตั้งค่า...
+                    </div>
+                ) : (
+                    <>
+                        <div className="grid gap-3 md:grid-cols-3">
+                            <label className="rounded-md border border-neutral-200 p-3 cursor-pointer">
+                                <div className="flex items-start gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.enabled}
+                                        onChange={(e) => changeSetting('enabled', e.target.checked)}
+                                        className="mt-0.5"
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-medium">เปิด Safe Learning</span>
+                                        <span className="block text-xs text-neutral-500 mt-1">ปิดแล้วจะไม่เขียนความจำและไม่เก็บข้อเสนอใหม่</span>
+                                    </span>
+                                </div>
+                            </label>
+                            <label className="rounded-md border border-neutral-200 p-3 cursor-pointer">
+                                <div className="flex items-start gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.context_memory_enabled}
+                                        disabled={!settings.enabled}
+                                        onChange={(e) => changeSetting('context_memory_enabled', e.target.checked)}
+                                        className="mt-0.5"
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-medium">จำบริบทในแชทเดียวกัน</span>
+                                        <span className="block text-xs text-neutral-500 mt-1">เป็นข้อความสรุปที่ปกปิดข้อมูล ไม่ใช่ transcript</span>
+                                    </span>
+                                </div>
+                            </label>
+                            <label className="rounded-md border border-neutral-200 p-3 cursor-pointer">
+                                <div className="flex items-start gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.candidate_capture_enabled}
+                                        disabled={!settings.enabled}
+                                        onChange={(e) => changeSetting('candidate_capture_enabled', e.target.checked)}
+                                        className="mt-0.5"
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-medium">เก็บข้อเสนอพัฒนา</span>
+                                        <span className="block text-xs text-neutral-500 mt-1">ให้ทีมตรวจช่องว่างความรู้ก่อนอนุมัติ</span>
+                                    </span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                                <Label htmlFor="learning-memory-days" className="text-sm font-medium">อายุความจำ (7–365 วัน)</Label>
+                                <Input
+                                    id="learning-memory-days"
+                                    type="number"
+                                    min={7}
+                                    max={365}
+                                    value={settings.memory_ttl_days}
+                                    onChange={(e) => changeSetting('memory_ttl_days', Number(e.target.value) || 7)}
+                                    className="mt-1"
+                                />
+                            </div>
+                            <div>
+                                <Label htmlFor="learning-memory-chars" className="text-sm font-medium">ขนาดสรุปสูงสุด (160–1,200 ตัวอักษร)</Label>
+                                <Input
+                                    id="learning-memory-chars"
+                                    type="number"
+                                    min={160}
+                                    max={1200}
+                                    value={settings.max_context_chars}
+                                    onChange={(e) => changeSetting('max_context_chars', Number(e.target.value) || 160)}
+                                    className="mt-1"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 border-t border-neutral-200 pt-4">
+                            <div className="text-xs text-neutral-500">
+                                {savedAt ? <span className="inline-flex items-center gap-1 text-green-700"><CheckCircle size={14} /> บันทึกแล้ว</span> : 'การตั้งค่านี้มีผลกับข้อความใหม่เท่านั้น'}
+                            </div>
+                            <Button type="button" onClick={() => void saveSettings()} disabled={savingSettings} className="gap-1.5 bg-violet-600 hover:bg-violet-700">
+                                {savingSettings ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                                บันทึก Safe Learning
+                            </Button>
+                        </div>
+                    </>
+                )}
+
+                <div className="border-t border-neutral-200 pt-5">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                        <div>
+                            <h3 className="text-sm font-semibold text-neutral-900">คิวข้อเสนอพัฒนา ({candidates.length})</h3>
+                            <p className="text-xs text-neutral-500 mt-1">อนุมัติได้เมื่อกำหนดคำกระตุ้นและคำแนะนำที่ปลอดภัยแล้วเท่านั้น</p>
+                        </div>
+                        <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading || actingId !== null}>
+                            รีเฟรช
+                        </Button>
+                    </div>
+
+                    {candidates.length === 0 ? (
+                        <div className="rounded-md border border-dashed border-neutral-300 px-4 py-5 text-sm text-neutral-500">
+                            ยังไม่มีข้อเสนอที่รอตรวจสอบ
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {candidates.map((candidate) => {
+                                const draft = drafts[candidate.id] ?? { terms: '', guidance: '', note: '' };
+                                const busy = actingId === candidate.id;
+                                return (
+                                    <div key={candidate.id} className="rounded-md border border-neutral-200 p-4 space-y-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <span className="text-xs font-medium rounded bg-violet-50 text-violet-700 px-2 py-1">{candidate.candidate_kind}</span>
+                                            <span className="text-xs text-neutral-500">พบ {candidate.occurrence_count} ครั้ง · ล่าสุด {new Date(candidate.last_seen_at).toLocaleString('th-TH')}</span>
+                                        </div>
+                                        <p className="text-sm text-neutral-800 break-words">{candidate.sample_text}</p>
+                                        <div>
+                                            <Label className="text-xs">คำกระตุ้น (คั่นด้วย comma, ไม่เกิน 8 คำ)</Label>
+                                            <Input value={draft.terms} onChange={(e) => changeDraft(candidate.id, 'terms', e.target.value)} className="mt-1" maxLength={400} />
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs">คำแนะนำที่อนุมัติแล้ว</Label>
+                                            <textarea
+                                                value={draft.guidance}
+                                                onChange={(e) => changeDraft(candidate.id, 'guidance', e.target.value)}
+                                                rows={3}
+                                                maxLength={1200}
+                                                placeholder="ระบุวิธีตอบหรือคำถามที่ควรถามต่อ โดยห้ามสร้างข้อเท็จจริงใหม่"
+                                                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-violet-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs">บันทึกทีม (ไม่บังคับ)</Label>
+                                            <Input value={draft.note} onChange={(e) => changeDraft(candidate.id, 'note', e.target.value)} className="mt-1" maxLength={1000} />
+                                        </div>
+                                        <div className="flex flex-wrap justify-end gap-2">
+                                            <Button type="button" variant="outline" size="sm" onClick={() => void dismiss(candidate)} disabled={busy || actingId !== null}>ไม่ใช้</Button>
+                                            <Button type="button" size="sm" onClick={() => void approve(candidate)} disabled={busy || actingId !== null} className="gap-1 bg-violet-600 hover:bg-violet-700">
+                                                {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                                                อนุมัติเป็นแนวทาง
+                                            </Button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                {err && (
+                    <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                        <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                        <span>{err}</span>
+                    </div>
+                )}
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    <Lock size={14} className="flex-shrink-0 mt-0.5" />
+                    <span>แม้อนุมัติแล้ว แนวทางนี้ยังถูกจำกัดด้วย RAG, กฎสินค้าชนิดเดียวกัน, ความปลอดภัย และกฎห้ามสร้างข้อมูลของระบบเสมอ</span>
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
 
 function LineChannelsCard() {
     const [channels, setChannels] = useState<LineChannel[]>([]);

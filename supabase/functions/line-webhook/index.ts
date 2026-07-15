@@ -337,12 +337,16 @@ async function callRagChat(
   serviceKey: string,
   query: string,
   history: Array<{ role: string; content: string }>,
+  conversationId: string,
   images: Array<{ mimeType: string; data: string }> = [],
 ): Promise<{ answer: string; quoteCode: string | null }> {
   const res = await fetch(`${supabaseUrl}/functions/v1/rag-chat`, {
     method: "POST",
     headers: { "Authorization": `Bearer ${serviceKey}`, "apikey": serviceKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, history, images, stream: false, channel: "line" }),
+    // conversation_id is accepted by rag-chat only when its service-role
+    // credential matches. This gives LINE safe continuity memory without
+    // letting a browser caller attach another customer's conversation.
+    body: JSON.stringify({ query, history, images, stream: false, channel: "line", conversation_id: conversationId }),
   });
   const data = await res.json();
   const answer = (data?.answer as string) || "";
@@ -670,7 +674,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     } else {
       const history = await loadHistory(admin, conversationId);
       const priorHistory = history.slice(0, -1);
-      const rag = await callRagChat(supabaseUrl, serviceKey, "", priorHistory, [img]);
+      const rag = await callRagChat(supabaseUrl, serviceKey, "", priorHistory, conversationId, [img]);
       aiReply = sanitizeReply(rag.answer);
       quoteCode = rag.quoteCode;
     }
@@ -744,7 +748,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
 
   const history = await loadHistory(admin, conversationId);
   const priorHistory = history.slice(0, -1);
-  const rag = await callRagChat(supabaseUrl, serviceKey, msg.text, priorHistory);
+  const rag = await callRagChat(supabaseUrl, serviceKey, msg.text, priorHistory, conversationId);
   const aiReply = sanitizeReply(rag.answer);
 
   if (aiReply) {
