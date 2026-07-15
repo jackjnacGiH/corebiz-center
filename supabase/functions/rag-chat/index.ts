@@ -747,6 +747,15 @@ function isSafeLearningGuidance(input: string): boolean {
   return !isSensitiveLearningInput(input) && !/(?:\bcost\b|\bmargin\b|\bprice\b|\bstock\b|\binventory\b|ราคา|สต็อก|คงเหลือ|จำนวน)/iu.test(input);
 }
 
+function isLearningCandidateEligible(input: string): boolean {
+  // A review queue should represent genuine knowledge gaps, not routine lead
+  // capture, price/stock handling, or adversarial messages. This keeps the
+  // staff queue actionable and prevents a prompt-injection attempt becoming a
+  // learning candidate even though it could never be applied automatically.
+  if (isSensitiveLearningInput(input)) return false;
+  return !/(?:ignore\s+(?:all\s+)?previous|system\s*prompt|developer\s*message|jailbreak|company\s*secrets|\bcost\b|\bmargin\b|\bprice\b|\bstock\b|\binventory\b|ราคา|ราคาทุน|สต็อก|คงเหลือ|จำนวน)/iu.test(input);
+}
+
 function normalizeLearningMatch(input: string): string {
   return input.toLowerCase().replace(/[\s\-_/.,!?;:()[\]{}"'`~]/g, "");
 }
@@ -866,10 +875,12 @@ async function recordLearningCandidate(admin: SupabaseClient, input: {
   settings: LearningSettings;
 }): Promise<void> {
   if (!input.settings.enabled || !input.settings.candidate_capture_enabled || !input.query || isSensitiveLearningInput(input.query)) return;
-  const usesProductTool = input.toolNames.some((name) => ["find_products", "get_product_detail", "list_product_groups", "list_categories"].includes(name));
-  const candidateKind = input.toolNames.includes("capture_lead")
-    ? "follow_up_needed"
-    : (input.sourceCount === 0 && !usesProductTool && input.query.trim().length >= 8 ? "knowledge_gap" : null);
+  const candidateKind = input.sourceCount === 0
+    && input.toolNames.length === 0
+    && input.query.trim().length >= 8
+    && isLearningCandidateEligible(input.query)
+    ? "knowledge_gap"
+    : null;
   if (!candidateKind) return;
   const sampleText = redactLearningText(input.query);
   const normalized = normalizeLearningMatch(sampleText);
