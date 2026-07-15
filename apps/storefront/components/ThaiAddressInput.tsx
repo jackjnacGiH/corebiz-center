@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
  * Structured Thai address input: a free "เลขที่/หมู่/ซอย/ถนน" line plus a
  * 5-digit postal code that auto-fills ตำบล/อำเภอ/จังหวัด (แขวง/เขต for
  * Bangkok). Data: /th-address.json — a zip → [tambon, amphoe, province][]
- * index built from the open-source kongvut/thai-province-data set, fetched
- * lazily on first use and cached for the page.
+ * index generated from thai-address-database v0.0.31 (ISC), fetched lazily on
+ * first use and cached for the page. Refresh it with
+ * `node scripts/update-thai-address-data.mjs`.
  *
  * Emits the composed single-line address via onChange, e.g.
  * "84 หมู่ 2 ซ.สุนทรวิภาค ต.แพรกษาใหม่ อ.เมืองสมุทรปราการ จ.สมุทรปราการ 10280".

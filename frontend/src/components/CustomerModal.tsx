@@ -20,7 +20,11 @@ import {
 } from 'lucide-react';
 import type { Customer, CustomerBranch } from '../lib/database.types';
 import { customerBranchesApi } from '../lib/api';
-import { lookupZipcode, type ThaiAddressEntry } from '../lib/thaiAddress';
+import {
+    lookupZipcode,
+    resolveThaiAddressAutofill,
+    type ThaiAddressEntry,
+} from '../lib/thaiAddress';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -684,14 +688,11 @@ function AddressSection({ id, icon, title, value, onChange }: AddressSectionProp
                 });
                 setOptions([]);
             } else {
-                // Same zip → same district + province; user picks subdistrict.
-                const m = matches[0];
+                const resolved = resolveThaiAddressAutofill(matches, value);
                 onChange({
                     ...value,
                     postcode: clean,
-                    subdistrict: '',
-                    district: m.district,
-                    province: m.province,
+                    ...resolved,
                 });
                 setOptions(matches);
             }
@@ -700,10 +701,25 @@ function AddressSection({ id, icon, title, value, onChange }: AddressSectionProp
         }
     }
 
-    function pickSubdistrict(s: string) {
-        onChange({ ...value, subdistrict: s });
+    function pickAddressOption(indexValue: string) {
+        if (indexValue === '') return;
+        const selected = options[Number(indexValue)];
+        if (!selected) return;
+        onChange({
+            ...value,
+            postcode: selected.postcode,
+            subdistrict: selected.subdistrict,
+            district: selected.district,
+            province: selected.province,
+        });
         setOptions([]);
     }
+
+    const selectedOptionIndex = options.findIndex((option) =>
+        option.subdistrict === value.subdistrict &&
+        option.district === value.district &&
+        option.province === value.province
+    );
 
     return (
         <div className="rounded-lg border border-neutral-200 bg-neutral-50/50 p-4 space-y-3">
@@ -809,13 +825,16 @@ function AddressSection({ id, icon, title, value, onChange }: AddressSectionProp
                         <select
                             id={`${id}-subdistrict`}
                             className={selectClass}
-                            value={value.subdistrict}
-                            onChange={(e) => pickSubdistrict(e.target.value)}
+                            value={selectedOptionIndex >= 0 ? String(selectedOptionIndex) : ''}
+                            onChange={(e) => pickAddressOption(e.target.value)}
                         >
                             <option value="">— เลือกตำบล/แขวง —</option>
-                            {options.map((o) => (
-                                <option key={o.subdistrict} value={o.subdistrict}>
-                                    {o.subdistrict}
+                            {options.map((o, index) => (
+                                <option
+                                    key={`${o.subdistrict}|${o.district}|${o.province}`}
+                                    value={index}
+                                >
+                                    {o.subdistrict} — {o.district}
                                 </option>
                             ))}
                         </select>

@@ -12,7 +12,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import type { ChatContactNote } from '../../lib/api';
-import { lookupZipcode, type ThaiAddressEntry } from '../../lib/thaiAddress';
+import {
+  lookupZipcode,
+  resolveThaiAddressAutofill,
+  type ThaiAddressEntry,
+} from '../../lib/thaiAddress';
 
 const TYPES: ChatContactNote['note_type'][] = [
   'general',
@@ -122,14 +126,10 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
         }));
         setZipOptions([]);
       } else {
-        // Same zip → same district + province; user picks subdistrict.
-        const m = matches[0];
         setAddress((prev) => ({
           ...prev,
           postcode: clean,
-          subdistrict: '',
-          district: m.district,
-          province: m.province,
+          ...resolveThaiAddressAutofill(matches, prev),
         }));
         setZipOptions(matches);
       }
@@ -137,6 +137,12 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
       setZipSearching(false);
     }
   }
+
+  const selectedZipOptionIndex = zipOptions.findIndex((option) =>
+    option.subdistrict === address.subdistrict &&
+    option.district === address.district &&
+    option.province === address.province
+  );
 
   const handleSave = async () => {
     setSaving(true);
@@ -317,17 +323,29 @@ export default function NoteModal({ open, initial, onClose, onSubmit }: Props) {
                   <Label className="text-xs">ตำบล/แขวง</Label>
                   {zipOptions.length > 1 ? (
                     <select
-                      value={address.subdistrict ?? ''}
+                      value={selectedZipOptionIndex >= 0 ? String(selectedZipOptionIndex) : ''}
                       onChange={(e) => {
-                        setAddress({ ...address, subdistrict: e.target.value });
+                        if (e.target.value === '') return;
+                        const selected = zipOptions[Number(e.target.value)];
+                        if (!selected) return;
+                        setAddress({
+                          ...address,
+                          postcode: selected.postcode,
+                          subdistrict: selected.subdistrict,
+                          district: selected.district,
+                          province: selected.province,
+                        });
                         setZipOptions([]);
                       }}
                       className="mt-1.5 w-full h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                     >
                       <option value="">— เลือก —</option>
-                      {zipOptions.map((o) => (
-                        <option key={o.subdistrict} value={o.subdistrict}>
-                          {o.subdistrict}
+                      {zipOptions.map((o, index) => (
+                        <option
+                          key={`${o.subdistrict}|${o.district}|${o.province}`}
+                          value={index}
+                        >
+                          {o.subdistrict} — {o.district}
                         </option>
                       ))}
                     </select>
