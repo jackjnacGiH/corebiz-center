@@ -1,5 +1,12 @@
 /**
- * rag-chat v35 — forced retrieval for payment/bank-account queries
+ * rag-chat v50 — family-locked product alternatives
+ *
+ * v50: product suggestions are filtered before reaching the LLM. A recognised
+ * product family must match exactly; unknown families need a normalized-name
+ * score of at least 70%. This prevents cross-type substitutions such as a
+ * sanding belt being offered as a mounted flap wheel.
+ *
+ * v35 — forced retrieval for payment/bank-account queries
  *
  * v33: rule-5 addendum — for quote/order status questions the bot also tells
  * the customer they can self-check at https://www.jnac.online/account.
@@ -118,12 +125,14 @@ const KW_RAKHASUE = TH(0x0E23, 0x0E32, 0x0E04, 0x0E32, 0x0E0B, 0x0E37, 0x0E49, 0
 const KW_RAKHAKHAO = TH(0x0E23, 0x0E32, 0x0E04, 0x0E32, 0x0E40, 0x0E02, 0x0E49, 0x0E32);
 const THAI_COST_KEYWORDS = [KW_RAKHATUN, KW_TONTUN, KW_RAKHASUE, KW_RAKHAKHAO];
 const ASCII_COST_PATTERNS = [/\bcost\b/i, /\bmargin\b/i, /\bbuying\s+price\b/i, /\bbuy\s+price\b/i];
+const CALLBACK_REQUEST_RE = /ติดต่อกลับ|โทรกลับ|(?:ให้|ขอให้|รบกวนให้)(?:พนักงาน|ทีมงาน|เจ้าหน้าที่|คุณเชอร์รี่).*(?:ติดต่อ|โทร)|(?:contact|call).*(?:back|me)/i;
 function isCostQuery(s: string): boolean {
   if (!s) return false;
   for (const kw of THAI_COST_KEYWORDS) if (s.indexOf(kw) !== -1) return true;
   for (const re of ASCII_COST_PATTERNS) if (re.test(s)) return true;
   return false;
 }
+function isCallbackRequest(s: string): boolean { return CALLBACK_REQUEST_RE.test(s); }
 
 const STOPWORDS = new Set([
   "ขอ", "ขอดู", "ขอดูรูป", "ดู", "ดูหน่อย", "หน่อย", "นะคะ", "นะครับ", "น่ะ",
@@ -287,12 +296,112 @@ async function rewriteWithKeywords(
   return { rewritten: result, applied };
 }
 
+/**
+ * Product family is a non-negotiable guard for substitutions.  The broad
+ * database category (for example "ขัด ตัด เจียร") is intentionally not used:
+ * it contains belts, mounted wheels, discs and many other non-interchangeable
+ * products.  Unknown families fail closed and need a >=70% normalized name
+ * match instead of letting an LLM guess a substitute.
+ */
+type ProductFamilyRule = { key: string; labelTh: string; pattern: RegExp };
+const PRODUCT_FAMILY_RULES: ProductFamilyRule[] = [
+  { key: "sanding_belt", labelTh: "ผ้าทรายสายพาน", pattern: /ผ้าทราย\s*สายพาน|sanding\s*belt|abrasive\s*belt/i },
+  { key: "mounted_flap_wheel", labelTh: "ล้อทรายมีแกน", pattern: /ล้อทราย\s*มีแกน|mounted\s*flap\s*wheel/i },
+  { key: "flap_disc", labelTh: "จานทรายซ้อน", pattern: /จานทราย\s*ซ้อน|flap\s*disc/i },
+  { key: "sanding_disc_velcro", labelTh: "กระดาษทรายกลมสักหลาด", pattern: /กระดาษทรายกลม\s*สักหลาด|velcro\s*(?:sanding\s*)?disc/i },
+  { key: "sanding_disc_adhesive", labelTh: "กระดาษทรายกลมหลังกาว", pattern: /กระดาษทรายกลม\s*หลังกาว|adhesive\s*(?:sanding\s*)?disc/i },
+  { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
+  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /ล้อขัดใยสังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
+  { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
+  { key: "pva_disc", labelTh: "ใบขัดกระจก PVA", pattern: /ใบขัดกระจก|pva\s*(?:spongy\s*)?disc/i },
+  { key: "rubber_expander", labelTh: "ลูกยาง", pattern: /ลูกยาง|rubber\s*expander/i },
+];
+
+function productFamilyFor(text: string): string | null {
+  return PRODUCT_FAMILY_RULES.find((rule) => rule.pattern.test(text))?.key ?? null;
+}
+
+function productFamilyLabel(family: string | null): string | null {
+  return PRODUCT_FAMILY_RULES.find((rule) => rule.key === family)?.labelTh ?? null;
+}
+
+function normalizedProductName(text: string): string {
+  return text.toLowerCase()
+    .replace(/\b(?:paco|mirka|jnac)\b/gi, " ")
+    .replace(/\b(?:รุ่น|model|size|เบอร์|grit)\b/gi, " ")
+    .replace(/#\s*\d+[a-z]*/gi, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:mm|มม\.?|inch|นิ้ว)?(?:\s*[x×*]\s*\d+(?:\.\d+)?\s*(?:mm|มม\.?|inch|นิ้ว)?){0,2}\b/gi, " ")
+    .replace(/\b[a-z]{1,4}\d+[a-z0-9-]*\b/gi, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+function normalizedNameScore(a: string, b: string): number {
+  const left = normalizedProductName(a);
+  const right = normalizedProductName(b);
+  if (!left || !right) return 0;
+  if (left === right || left.includes(right) || right.includes(left)) return 1;
+  const grams = (value: string) => {
+    const compact = value.replace(/\s+/g, "");
+    const out = new Set<string>();
+    for (let i = 0; i < compact.length - 1; i++) out.add(compact.slice(i, i + 2));
+    return out;
+  };
+  const aGrams = grams(left), bGrams = grams(right);
+  if (aGrams.size === 0 || bGrams.size === 0) return 0;
+  let common = 0;
+  for (const gram of aGrams) if (bGrams.has(gram)) common++;
+  return (2 * common) / (aGrams.size + bGrams.size);
+}
+
+type SafeProductMatch = {
+  safe: boolean;
+  requestedFamily: string | null;
+  candidateFamily: string | null;
+  nameScore: number;
+  basis: "exact_sku" | "same_family" | "name_score" | "rejected";
+};
+
+function evaluateProductMatch(query: string, product: Record<string, unknown>): SafeProductMatch {
+  const candidateText = [product.name_th, product.name_en, (product.group as { name?: string } | null)?.name]
+    .filter(Boolean).join(" ");
+  const requestedFamily = productFamilyFor(query);
+  const candidateFamily = productFamilyFor(candidateText);
+  const sku = String(product.sku ?? "").trim();
+  const exactSku = Boolean(sku) && query.toLowerCase().includes(sku.toLowerCase());
+  const nameScore = normalizedNameScore(query, candidateText);
+  if (exactSku) return { safe: true, requestedFamily, candidateFamily, nameScore: 1, basis: "exact_sku" };
+  // Once a product type is known, do not allow a high textual score to cross
+  // its boundary.  A sanding belt must never become a mounted flap wheel.
+  if (requestedFamily) {
+    if (requestedFamily === candidateFamily) {
+      return { safe: true, requestedFamily, candidateFamily, nameScore: Math.max(nameScore, 1), basis: "same_family" };
+    }
+    return { safe: false, requestedFamily, candidateFamily, nameScore, basis: "rejected" };
+  }
+  return nameScore >= 0.7
+    ? { safe: true, requestedFamily, candidateFamily, nameScore, basis: "name_score" }
+    : { safe: false, requestedFamily, candidateFamily, nameScore, basis: "rejected" };
+}
+
+function formatSafeProductForLLM(product: Record<string, unknown>, match: SafeProductMatch) {
+  return {
+    ...formatProductForLLM(product),
+    product_family: match.candidateFamily,
+    safe_name_score: Number(match.nameScore.toFixed(3)),
+    safe_match_basis: match.basis,
+    safe_alternative: true,
+  };
+}
+
 async function findProducts(admin: SupabaseClient, query: string) {
   const original = (query ?? "").trim();
   if (!original) return { products: [], note: "empty query" };
 
   const { rewritten, applied } = await rewriteWithKeywords(admin, original);
   const q = rewritten;
+  const requestedFamily = productFamilyFor(q);
+  const requestedProductType = productFamilyLabel(requestedFamily);
 
   const rawTokens = q.split(/\s+/).filter(Boolean).slice(0, 12);
   if (rawTokens.length === 0) return { products: [], note: "empty query" };
@@ -307,14 +416,20 @@ async function findProducts(admin: SupabaseClient, query: string) {
   const { data, error } = await qb;
   if (error) return { error: error.message };
 
-  if ((data ?? []).length > 0) {
+  const directMatches = ((data ?? []) as Record<string, unknown>[])
+    .map((p) => ({ p, match: evaluateProductMatch(q, p) }))
+    .filter(({ match }) => match.safe);
+
+  if (directMatches.length > 0) {
     return {
       query: q, original_query: original !== q ? original : undefined,
       synonym_rewrites: applied.length > 0 ? applied : undefined,
       tokens,
       stripped: rawTokens.length !== tokens.length ? rawTokens.filter((t) => !tokens.includes(t)) : [],
-      count: (data ?? []).length,
-      products: (data ?? []).map((p: Record<string, unknown>) => formatProductForLLM(p)),
+      requested_product_family: requestedFamily,
+      requested_product_type: requestedProductType,
+      count: directMatches.length,
+      products: directMatches.map(({ p, match }) => formatSafeProductForLLM(p, match)),
     };
   }
 
@@ -322,13 +437,22 @@ async function findProducts(admin: SupabaseClient, query: string) {
     const { data: fuzzy } = await admin.rpc("search_products_fuzzy", {
       p_query: q, p_limit: 3, p_threshold: 0.2,
     }) as { data: Array<{ product_id: string; sku: string; name_th: string; name_en: string; sim: number }> | null };
-    if (fuzzy && fuzzy.length > 0) {
+    const safeFuzzy = (fuzzy ?? [])
+      .map((p) => ({ p: p as unknown as Record<string, unknown>, match: evaluateProductMatch(q, p as unknown as Record<string, unknown>) }))
+      .filter(({ match }) => match.safe);
+    if (safeFuzzy.length > 0) {
       return {
         query: q, original_query: original !== q ? original : undefined,
         synonym_rewrites: applied.length > 0 ? applied : undefined,
-        tokens, count: 0, products: [],
-        clarification_candidates: fuzzy.map((r) => ({ sku: r.sku, name_th: r.name_th, name_en: r.name_en ?? null })),
-        note: "มีสินค้าชื่อใกล้เคียงในระบบ ห้ามใช้คำว่า ไม่พบ หรือ ไม่มี เด็ดขาด — ให้แนะนำสินค้าใกล้เคียงเหล่านี้ให้ลูกค้าเลือก แล้วถามว่าสนใจตัวไหน ถ้าลูกค้ายืนยันว่าต้องการตัวที่พิมพ์มาเป๊ะ ให้เสนอสั่งผลิตและส่งให้คุณเชอร์รี่เช็คเวลาผลิต",
+        tokens, requested_product_family: requestedFamily, requested_product_type: requestedProductType, count: 0, products: [],
+        clarification_candidates: safeFuzzy.map(({ p, match }) => ({
+          sku: p.sku, name_th: p.name_th, name_en: p.name_en ?? null,
+          product_family: match.candidateFamily,
+          safe_name_score: Number(match.nameScore.toFixed(3)),
+          safe_match_basis: match.basis,
+          safe_alternative: true,
+        })),
+        note: "เสนอได้เฉพาะรายการที่ tool ระบุ safe_alternative=true เท่านั้น: ชนิดสินค้าต้องตรงกัน หรือชื่อที่ normalize แล้วตรงตั้งแต่ 70% ขึ้นไป. ห้ามเสนอสินค้าคนละชนิดเด็ดขาด; ถ้าไม่มีตัวเลือกที่ปลอดภัย ให้ส่งเรื่องตรวจสอบจัดหา/สั่งผลิตแทน",
       };
     }
   } catch (_e) { /* fuzzy unavailable */ }
@@ -338,8 +462,8 @@ async function findProducts(admin: SupabaseClient, query: string) {
     synonym_rewrites: applied.length > 0 ? applied : undefined,
     tokens,
     stripped: rawTokens.length !== tokens.length ? rawTokens.filter((t) => !tokens.includes(t)) : [],
-    count: 0, products: [],
-    note: "ค้นแล้วยังไม่เจอสินค้าที่ตรง และไม่มีตัวใกล้เคียง — ห้ามตอบว่า ไม่พบ/ไม่มี ให้บอกว่าจะส่งให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิตหรือจัดหาให้ได้ไหม แล้วแจ้งกลับ",
+    requested_product_family: requestedFamily, requested_product_type: requestedProductType, count: 0, products: [],
+    note: `ยังไม่มีตัวเลือกที่ยืนยันได้ว่าเป็นชนิดเดียวกันหรือชื่อที่ normalize แล้วตรงตั้งแต่ 70%${requestedProductType ? ` สำหรับ${requestedProductType}` : ""} — ห้ามเสนอสินค้าคนละชนิด. ให้ส่งเรื่องตรวจสอบจัดหา/สั่งผลิตแทน`,
   };
 }
 
@@ -614,15 +738,22 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 2. คำถามกว้างๆ → เรียก list_product_groups หรือ list_categories ก่อน
 3. ถ้าพูดว่า เดี๋ยวเช็คให้ → ต้อง CALL TOOL จริงใน reply เดียวกัน
 
-🚫 ห้ามเด็ดขาด: อย่าขึ้นต้นหรือพูดลอยๆ ว่า ไม่พบ, ไม่มี, ไม่มีในระบบ, หาไม่เจอ, สินค้าหมด — ให้เปลี่ยนเป็น แนะนำสินค้าใกล้เคียง / เสนอสั่งผลิต / ส่งให้คุณเชอร์รี่ แทนเสมอ
+🚫 ห้ามเสนอสินค้าเพียงเพราะขนาด เบอร์ หรือการใช้งานใกล้เคียงกัน หากเป็นคนละชนิดสินค้า. เมื่อไม่มีตัวเลือกที่ผ่านเงื่อนไข ให้บอกว่าจะตรวจสอบจัดหา/สั่งผลิตกับคุณเชอร์รี่ แทนการเดาสินค้าทดแทน
 
 4. Tool คืน 0 ผล + ไม่มี clarification_candidates → ห้ามบอกว่า ไม่มี/ไม่พบ ให้บอกว่าขอให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิต/จัดหาได้ไหม แล้วแจ้งกลับ
 5. ⚠️ ทุกครั้งที่เสนอตัวเลือกสินค้า, สินค้าทดแทน, สินค้าใกล้เคียง หรือรายการเบอร์/ขนาด/สเป็กสินค้าใดๆ ให้ลูกค้าเลือก (รวมถึงกรณีเสนอนำเสนอตัวเลือกเพื่อสั่งผลิต/สั่งซื้อ): ต้องจัดรูปแบบเป็นรายการลำดับตัวเลข "1.", "2.", "3." เสมอ (ห้ามใช้สัญลักษณ์หรืออีโมจิอื่นๆ เช่น ✨ หรือ • นำหน้าชื่อตัวเลือกเด็ดขาด) เพื่อให้หมายเลขตรงกับปุ่มกด Quick Reply
 6. เจอสินค้าแต่ in_stock=false → เสนอสั่งผลิตเสมอ ไม่ใช่ตอบแค่ หมด
 7. query: ใส่เฉพาะตัวระบุสินค้า (ชื่อ/SKU/ขนาด)
+8. 🔒 กฎสินค้าทดแทน (ห้ามฝ่าฝืน):
+   - เสนอสินค้าได้เฉพาะผลจาก tool ที่มี safe_alternative=true เท่านั้น
+   - ถ้า tool ส่ง requested_product_family มา: เสนอได้เฉพาะ product_family เดียวกันเท่านั้น แม้ขนาด/เบอร์ใกล้เคียงก็ห้ามข้ามชนิด เช่น "ผ้าทรายสายพาน" ห้ามเสนอ "ล้อทรายมีแกน" เด็ดขาด
+   - ถ้าไม่มี requested_product_family: เสนอได้เฉพาะ safe_name_score ตั้งแต่ 0.70 ขึ้นไป
+   - safe_name_score / safe_match_basis เป็นค่าจาก tool เท่านั้น ห้ามคำนวณหรือเดาเอง
+   - หากไม่มีตัวเลือก safe_alternative: ห้ามแสดงชื่อสินค้าอื่น ให้ capture_lead เพื่อให้ทีมตรวจสอบจัดหา/สั่งผลิต และต้องระบุ requested_product_type ในคำตอบเพื่อยืนยันว่ากำลังตรวจสอบสินค้าชนิดที่ลูกค้าถาม
+   - สินค้าที่เป็น same_family แต่ขนาด/เบอร์ไม่ตรง เป็น "ทางเลือก" เท่านั้น: ต้องบอกความต่างให้ชัด และห้ามสร้างใบเสนอราคาจนกว่าลูกค้าจะยืนยัน SKU/ขนาดนั้น
 
 📷 ถ้าลูกค้าส่งรูปภาพใดๆ มา (ไม่ว่าจะส่งเป็นไฟล์รูปภาพ เอกสาร หรือแคปหน้าจอมา) → ให้ตีความวัตถุประสงค์ของรูปภาพนั้นก่อนเป็นอันดับแรก:
-- หากตีความได้ว่าเป็น "ใบสั่งซื้อ / PO / เอกสารสั่งซื้อ / สรุปสั่งของ": ห้ามเสนอสินค้าใกล้เคียงหรือทางเลือกอื่นเด็ดขาด! ให้รับเรื่องโดยแจ้งว่าส่งต่อเอกสารให้ทีมงานจัดการต่อแล้ว (ไม่ต้องทวนรายการหรือจำนวนในใบสั่งซื้อ) และเรียก capture_lead (บันทึกรายละเอียดใบสั่งซื้อใน note) เพื่อส่งเรื่องให้ทีมงาน
+- หากตีความได้ว่าเป็น "ใบสั่งซื้อ / PO / เอกสารสั่งซื้อ / สรุปสั่งของ": ห้ามเสนอสินค้าใกล้เคียงหรือทางเลือกอื่นเด็ดขาด! ให้รับเรื่องโดยแจ้งว่าส่งต่อเอกสารให้ทีมงานจัดการต่อแล้ว (ไม่ต้องทวนรายการหรือจำนวนในใบสั่งซื้อ) และเรียก capture_lead (บันทึกรายละเอียดใบสั่งซื้อใน note) เพื่อส่งเรื่องให้ทีมงาน. ห้ามใช้ชื่อสินค้าจากประวัติแชตเก่ามาตีความแทนรายการในเอกสาร
 - หากตีความได้ว่าเป็น "สลิปโอนเงิน / สลิปแจ้งชำระเงิน": ห้ามแนะนำสินค้า ค้นหาสินค้า หรือเรียกใช้ tool ใดๆ ทั้งสิ้น และห้ามนำข้อมูลในสลิปมาเสนอขายต่อ ให้ขอบคุณและแจ้งส่งเรื่องให้ฝ่ายบัญชีตรวจสอบยอดเงินเท่านั้นตามกฎการแจ้งโอนเงิน
 - หากเป็นรูปภาพอื่นๆ (เช่น รูปสินค้าจริง ชิ้นงานหน้างาน หรือตัวอย่างการใช้งานทั่วไป): ให้ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ และเรียก find_products เพื่อค้นหาสินค้าที่เกี่ยวข้องหรือใกล้เคียงเสนอให้ลูกค้า — ห้ามเดาราคา/สเป็กจากรูปเอง
 
@@ -642,13 +773,20 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 1. Specific product → call find_products FIRST. Never say not available before calling. (Exception: QT-/SO-/DN- numbers are document numbers — use SAFETY rule 5.)
 2. Broad question → call list_product_groups / list_categories first.
 3. If you say let me check → you MUST call a tool in the SAME reply.
-🚫 NEVER bluntly say not found / out of stock — pivot to similar items / made-to-order / Khun Cherry.
+🚫 NEVER offer a product merely because its size, grit, or use is similar when it is a different product type. If no safe option exists, escalate for sourcing/made-to-order instead of guessing a substitute.
 4. 0 results + no candidates → offer made-to-order via Khun Cherry.
 5. ⚠️ Whenever offering product options, alternatives, similar items, or lists of sizes/grits/specs for the customer to choose from (including made-to-order variant choices): You MUST present them as a numbered list starting with "1.", "2.", "3." (do NOT use emojis like ✨ or bullet points like • for these lists under any circumstances) so that the numbers align exactly with the Quick Reply buttons.
 6. in_stock=false → offer made-to-order, never just out of stock.
 7. query: pass ONLY product identifier.
+8. 🔒 SUBSTITUTION GATE (non-negotiable):
+   - Offer only tool results with safe_alternative=true.
+   - When requested_product_family is provided, candidate product_family MUST match exactly. Never cross product types (for example sanding belt -> mounted flap wheel), even when dimensions or grit look similar.
+   - Without requested_product_family, only offer candidates with safe_name_score >= 0.70.
+   - safe_name_score and safe_match_basis come from the tool; never estimate them yourself.
+   - If no safe_alternative exists, do not list another product; call capture_lead for sourcing/made-to-order and explicitly name requested_product_type in the reply.
+   - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.
 📷 If the customer sends any IMAGE (whether uploaded as a photo, doc screenshot, or any file) → You must interpret the intent of the image first:
-- If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team.
+- If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team. Never use a product from old chat history as a substitute for the document contents.
 - If interpreted as a "bank transfer slip / payment receipt": DO NOT recommend products, search products, or call any tools; do not extract notes to offer products. Simply thank the customer and inform them about accounting verification per payment rules.
 - If it is any other image (e.g., product photo, physical workpiece, general usage example): Describe what you see briefly and call find_products to recommend matching or related products to the customer. Never invent price/specs from a photo.
 📦 Fields: stock (0=oos), in_stock, min_order_qty (always use), unit.
@@ -972,6 +1110,24 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     send({ type: "blocked", reason: "cost_query", answer: refusal });
     send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail", tool_calls: [], conversation_id: conversationId, channel });
     if (conversationId) await saveMessage(admin, conversationId, "bot", refusal, { blocked: "cost_query" });
+    return;
+  }
+
+  // A callback request is an operational commitment, not an LLM judgement.
+  // Create the follow-up task deterministically so a friendly acknowledgement
+  // can never be sent without notifying the sales team.
+  if (query && images.length === 0 && isCallbackRequest(query)) {
+    const args = { interest: lang === "th" ? "ขอให้ติดต่อกลับ" : "callback request", note: query };
+    const result = await captureLead(admin, args, channel, conversationId);
+    const answer = lang === "th"
+      ? "เอยรับเรื่องให้ทีมงานติดต่อกลับแล้วนะคะ 😊"
+      : "I have asked our team to contact you back shortly. 😊";
+    const toolCalls = [{ name: "capture_lead", args, result_summary: JSON.stringify(result).slice(0, 200) }];
+    send({ type: "tool_call", name: "capture_lead", args });
+    send({ type: "text", chunk: answer });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail:callback_lead", tool_calls: toolCalls, conversation_id: conversationId, channel });
+    await recordAiRun(admin, { conversationId, channel, model: "guardrail:callback_lead", retrievalCount: 0, topSimilarity: null, toolNames: ["capture_lead"], usage: zeroTokens(), elapsed: zeroElapsed(), outcome: "callback_lead" });
+    if (conversationId) await saveMessage(admin, conversationId, "bot", answer, { tool_calls: [{ name: "capture_lead", args }] });
     return;
   }
 

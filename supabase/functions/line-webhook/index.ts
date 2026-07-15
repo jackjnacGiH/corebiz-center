@@ -1,5 +1,11 @@
 /**
- * line-webhook v20 — send the quote link in the (free) reply, not a push
+ * line-webhook v28 — suppress generic text after a recent image
+ *
+ * v28: LINE sends an image and a generic request such as "ขอราคาหน่อย" as
+ * separate events. The image owns the reply for 12 seconds so the text event
+ * cannot lose the pixels and reuse an unrelated product from old history.
+ *
+ * v20 — send the quote link in the (free) reply, not a push
  *
  * v20: the public quote link was sent as a separate LINE push, which uses the
  * monthly push quota — so once the quota was exhausted the link silently failed
@@ -74,6 +80,7 @@ const CORS_HEADERS = {
 };
 
 const LOADING_SECONDS = 20;
+const IMAGE_FOLLOWUP_WINDOW_MS = 12_000;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
@@ -530,6 +537,39 @@ async function loadHistory(admin: SupabaseClient, conversationId: string): Promi
     .filter((m) => m.content.length > 0);
 }
 
+// LINE can send an image and a short text such as "ขอราคาหน่อย" as separate
+// events only a few seconds apart. The image handler already processes the
+// visual request; invoking RAG again for the generic text loses the pixels and
+// can make the model reuse an unrelated product from old chat history.
+function isGenericImageFollowUp(text: string): boolean {
+  const compact = text.replace(/\s+/g, "").toLowerCase();
+  return /^(?:ขอ)?(?:ใบ)?เสนอราคา(?:ห+น่อย)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
+    || /^ขอราคา(?:ห+น่อย)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
+    || /^ราคา(?:เท่าไหร่)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact);
+}
+
+async function hasRecentCustomerImage(admin: SupabaseClient, conversationId: string): Promise<boolean> {
+  try {
+    const cutoff = new Date(Date.now() - IMAGE_FOLLOWUP_WINDOW_MS).toISOString();
+    const { data, error } = await admin.from("chat_messages")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("sender_type", "customer")
+      .eq("content_type", "image")
+      .gte("created_at", cutoff)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (error) {
+      console.warn("recent image check failed:", error.message);
+      return false;
+    }
+    return (data ?? []).length > 0;
+  } catch (e) {
+    console.warn("recent image check error:", (e as Error).message);
+    return false;
+  }
+}
+
 async function shouldBotReply(admin: SupabaseClient, conversationId: string): Promise<boolean> {
   try {
     const [global, channel, conv] = await Promise.all([
@@ -694,6 +734,11 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
 
   const allowed = await shouldBotReply(admin, conversationId);
   if (!allowed) return;
+
+  if (isGenericImageFollowUp(msg.text) && await hasRecentCustomerImage(admin, conversationId)) {
+    console.log("suppressing generic text follow-up; recent image handler owns reply", { conversationId, messageId: msg.id });
+    return;
+  }
 
   void startLineLoading(channel.channel_access_token, userId);
 
