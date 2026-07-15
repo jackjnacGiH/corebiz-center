@@ -3563,46 +3563,39 @@ function isSafeLearningGuidanceForReview(value: string): boolean {
   return !/(?:\bcost\b|\bmargin\b|\bprice\b|\bstock\b|\binventory\b|\bPO\b|purchase\s*order|bank\s*account|payment|address|e-?mail|phone|ราคา|ราคาทุน|สต็อก|คงเหลือ|จำนวน|ใบสั่งซื้อ|บัญชีธนาคาร|ชำระเงิน|ที่อยู่|อีเมล|เบอร์โทร)/iu.test(value);
 }
 
+async function callBotLearning(action: string, payload: Record<string, unknown> = {}) {
+  const { data, error } = await supabase.functions.invoke('bot-learning-admin', {
+    body: { action, ...payload },
+  });
+  if (error) {
+    let message = error.message;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { message = (await (error as any).context?.json?.())?.error ?? message; } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = data as any;
+  if (!result?.ok) throw new Error(result?.error ?? 'เกิดข้อผิดพลาด');
+  return result;
+}
+
 export const botLearningApi = {
   async getSettings(): Promise<BotLearningSettings> {
-    const { data, error } = await supabase
-      .from('bot_learning_settings')
-      .select('*')
-      .eq('id', true)
-      .single();
-    if (error) throw error;
-    return data as BotLearningSettings;
+    const result = await callBotLearning('get_settings');
+    return result.settings as BotLearningSettings;
   },
 
   async updateSettings(patch: BotLearningSettingsPatch): Promise<BotLearningSettings> {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const { data, error } = await supabase
-      .from('bot_learning_settings')
-      .update({
-        ...patch,
-        updated_at: new Date().toISOString(),
-        updated_by: sessionData.session?.user.id ?? null,
-      })
-      .eq('id', true)
-      .select('*')
-      .single();
-    if (error) throw error;
-    return data as BotLearningSettings;
+    const result = await callBotLearning('update_settings', { settings: patch });
+    return result.settings as BotLearningSettings;
   },
 
   async listCandidates(
     status: BotLearningCandidateStatus | 'all' = 'pending',
     limit = 40,
   ): Promise<BotLearningCandidate[]> {
-    let request = supabase
-      .from('bot_learning_candidates')
-      .select('*')
-      .order('last_seen_at', { ascending: false })
-      .limit(Math.min(Math.max(limit, 1), 100));
-    if (status !== 'all') request = request.eq('status', status);
-    const { data, error } = await request;
-    if (error) throw error;
-    return (data ?? []) as BotLearningCandidate[];
+    const result = await callBotLearning('list_candidates', { status, limit });
+    return (result.candidates ?? []) as BotLearningCandidate[];
   },
 
   async approveCandidate(id: string, review: BotLearningCandidateReview): Promise<void> {
@@ -3614,37 +3607,14 @@ export const botLearningApi = {
     if (!isSafeLearningGuidanceForReview(guidance)) {
       throw new Error('คำแนะนำสำหรับการเรียนรู้ห้ามมีราคา สต็อก PO การชำระเงิน หรือข้อมูลส่วนบุคคล');
     }
-    const { data: sessionData } = await supabase.auth.getSession();
-    const { error } = await supabase
-      .from('bot_learning_candidates')
-      .update({
-        status: 'approved',
-        trigger_terms: triggerTerms,
-        approved_guidance: guidance,
-        review_note: review.review_note?.trim() || null,
-        reviewed_by: sessionData.session?.user.id ?? null,
-        reviewed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id);
-    if (error) throw error;
+    await callBotLearning('approve_candidate', {
+      id,
+      review: { trigger_terms: triggerTerms, approved_guidance: guidance, review_note: review.review_note?.trim() || null },
+    });
   },
 
   async dismissCandidate(id: string, reviewNote?: string): Promise<void> {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const { error } = await supabase
-      .from('bot_learning_candidates')
-      .update({
-        status: 'dismissed',
-        trigger_terms: [],
-        approved_guidance: null,
-        review_note: reviewNote?.trim() || null,
-        reviewed_by: sessionData.session?.user.id ?? null,
-        reviewed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id);
-    if (error) throw error;
+    await callBotLearning('dismiss_candidate', { id, review_note: reviewNote?.trim() || null });
   },
 };
 
