@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { supabase } from './supabase';
 
 /**
  * Subscribe to INSERT/UPDATE/DELETE events on a table.
- * Calls `onChange()` whenever a row changes. Debounce in the parent if needed.
+ * Coalesces bursts of row changes into one callback. The latest callback is
+ * kept in a ref so inline callbacks do not recreate the channel each render.
  *
  * Usage:
  *   useRealtimeTable('orders', () => void load());
@@ -26,18 +27,29 @@ export function useRealtimeTable(
   table: RealtimeTable,
   onChange: () => void,
 ) {
+  const onChangeRef = useRef(onChange);
+
   useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     const channel = supabase
       .channel(`realtime:${table}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table },
-        () => onChange()
+        () => {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => onChangeRef.current(), 750);
+        }
       )
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       void supabase.removeChannel(channel);
     };
-  }, [table, onChange]);
+  }, [table]);
 }

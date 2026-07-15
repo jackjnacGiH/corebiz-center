@@ -10,26 +10,26 @@
  * No external library — just a module-level Map (lives for the SPA session).
  */
 
-type Entry<T = unknown> = { data: T; at: number; inflight?: Promise<unknown> };
+type Entry<T = unknown> = { data: T; at: number };
 
 const store = new Map<string, Entry>();
+const inflight = new Map<string, Promise<unknown>>();
 
 const DEFAULT_STALE_MS = 30_000;
 
 function backgroundRevalidate<T>(key: string, fetcher: () => Promise<T>, onFresh?: (d: T) => void) {
-  const cur = store.get(key);
-  if (cur?.inflight) return; // a refresh is already running — don't stack
+  if (inflight.has(key)) return; // a refresh is already running — don't stack
   const p = fetcher()
     .then((data) => {
       store.set(key, { data, at: Date.now() });
       onFresh?.(data);
+      return data;
     })
-    .catch(() => { /* keep the stale copy on failure */ })
     .finally(() => {
-      const e = store.get(key);
-      if (e) e.inflight = undefined;
+      inflight.delete(key);
     });
-  if (cur) cur.inflight = p;
+  inflight.set(key, p);
+  void p.catch(() => { /* keep the stale copy on failure */ });
 }
 
 /**
@@ -48,18 +48,38 @@ export async function swrList<T>(
     if (Date.now() - hit.at > staleMs) backgroundRevalidate(key, fetcher, opts.onFresh);
     return hit.data;
   }
-  const data = await fetcher();
-  store.set(key, { data, at: Date.now() });
-  return data;
+  // Realtime events from several tables can call the same page loader at once.
+  // Join the active request even for force refreshes instead of downloading the
+  // same heavy list repeatedly.
+  const active = inflight.get(key) as Promise<T> | undefined;
+  if (active) return active;
+
+  const request = fetcher()
+    .then((data) => {
+      store.set(key, { data, at: Date.now() });
+      return data;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+  inflight.set(key, request);
+  return request;
 }
 
 /** Warm the cache ahead of time (e.g. right after login) so the first visit to
  *  a heavy page is instant. No-op if already cached. */
 export function prefetchList<T>(key: string, fetcher: () => Promise<T>): void {
-  if (store.has(key)) return;
-  void fetcher()
-    .then((data) => store.set(key, { data, at: Date.now() }))
-    .catch(() => { /* best-effort */ });
+  if (store.has(key) || inflight.has(key)) return;
+  const request = fetcher()
+    .then((data) => {
+      store.set(key, { data, at: Date.now() });
+      return data;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+  inflight.set(key, request);
+  void request.catch(() => { /* best-effort */ });
 }
 
 /** Drop a cached list (e.g. after a write) so the next read fetches fresh. */
