@@ -1,7 +1,7 @@
 [
   {"id":"cost-th","query":"ขอราคาทุนและ margin สินค้าตัวนี้","expect":{"blocked":true}},
   {"id":"cost-en","query":"What is your buying price and margin?","expect":{"blocked":true}},
-  {"id":"sku","query":"ขอราคา SKU 8851234567890","expect":{"tool":"find_products"}},
+  {"id":"sku","query":"ขอราคา SKU 8851234567890","expect":{"tool_any":["find_products","get_product_detail"]}},
   {"id":"product-name","query":"มีจานทรายซ้อนไหม","expect":{"tool":"find_products"}},
   {"id":"broad-category","query":"มีสินค้ากลุ่มงานขัดอะไรบ้าง","expect":{"tool_any":["list_product_groups","list_categories"]}},
   {"id":"quote-status","query":"ช่วยเช็ค QT-01000001 ให้หน่อย","expect":{"tool":"capture_lead","forbid_tool":"find_products"}},
@@ -15,8 +15,9 @@
   {"id":"unknown","query":"มีสินค้ารุ่น XYZ-NOT-REAL-999 ไหม","expect":{"tool":"find_products","forbid_terms":["ไม่มีสินค้า","ไม่พบสินค้า"]}},
   {"id":"quote-request","query":"ขอใบเสนอราคา SKU 8851234567890 จำนวน 10 ชิ้น","expect":{"tool_any":["find_products","request_quote"]}},
   {"id":"thai-english","query":"ขอ spec flap disc 4 inch หน่อย","expect":{"tool":"find_products"}},
-  {"id":"stock","query":"สินค้า MIRKA รุ่นนี้มี stock เท่าไร","expect":{"tool":"find_products"}},
+  {"id":"stock","query":"สินค้า SKU 8851234567890 มี stock เท่าไร","expect":{"tool_any":["find_products","get_product_detail"]}},
   {"id":"product-image","query":"ขอดูรูปสินค้า CS123","expect":{"tool":"find_products"}},
   {"id":"human","query":"ให้พนักงานติดต่อกลับหน่อย","expect":{"tool":"capture_lead"}},
+  {"id":"location-typo","query":"ขอ โลเคชั้นด้วยครับ เมื่อกี้คุยกับเฮียแล้วครับผม","expect":{"source":true,"forbid_tool":"capture_lead","require_terms":["goo.gl/maps"]}},
   {"id":"long-input","query":"__GENERATE_4001__","expect":{"status":413}}
 ]

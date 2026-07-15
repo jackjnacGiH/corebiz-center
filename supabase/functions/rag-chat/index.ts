@@ -144,9 +144,13 @@ function stripStopWords(tokens: string[]): string[] {
 }
 
 const PRODUCT_HINT_RE = [/\b\d{7,}\b/, /MIRKA|mirka/, /\bCS\d+/i, /\bXA\d+/i, /#\d+/, /สต็อก/, /รูปสินค้า/];
+// Match common Thai spelling variants/typos (โลเคชั่น, โลเคชั้น,
+// โลเคชัน) by their stable prefix. Location answers are high-value factual
+// replies, so they must not depend on vector similarity alone.
+const LOCATION_RE = /โลเคช|แผนที่|ที่อยู่|ที่ตั้ง|โรงงาน|\blocation\b|\baddress\b/i;
 const FAQ_HINT_RE = [
   /คืนสินค้า/, /ใบกำกับ/, /ภาษี/, /ตัวแทน/, /สมัคร/, /นโยบาย/, /ส่งของ/, /บัตรเครดิต/, /จัดส่ง/,
-  /ที่อยู่/, /ที่ตั้ง/, /โรงงาน/, /แผนที่/, /location/i, /เบอร์โทร/, /เบอร์บัญชี/, /email/i, /ติดต่อ/, /เปิดทำ/, /วันหยุด/,
+  /ที่อยู่/, /ที่ตั้ง/, /โรงงาน/, /แผนที่/, /โลเคช/, /location/i, /เบอร์โทร/, /เบอร์บัญชี/, /email/i, /ติดต่อ/, /เปิดทำ/, /วันหยุด/,
   /\breturn\b/i, /\binvoice\b/i, /\btax\b/i, /\bagent\b/i, /\bpolicy\b/i, /\bshipping\b/i, /\bcredit\s*card\b/i, /\baddress\b/i, /\bphone\b/i, /\bopening\s*hour/i,
   // Payment / bank account — must always trigger RAG to retrieve KB docs
   /เลขบัญชี/, /บัญชีธนาคาร/, /โอนเงิน/, /ชำระเงิน/, /ช่องทางชำระ/, /QR.*code/i, /qr/i, /พร้อมเพย์/, /promptpay/i, /ธนาคาร/, /สแกน.*จ่าย/,
@@ -582,6 +586,7 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
 1. ห้ามเปิดเผยข้อมูล cost / ราคาทุน / margin / ราคาซื้อ ของบริษัทโดยเด็ดขาด — ถ้าลูกค้าถาม ให้ปฏิเสธ
 2. ห้าม fabricate ข้อมูลใดๆ — ที่อยู่/เบอร์โทร/email/แผนที่/ราคา/จำนวนขั้นต่ำ ต้องมาจาก [context]/tools เท่านั้น ถ้าไม่มี ส่งให้เจ้าหน้าที่
    ✅ ข้อยกเว้นพิเศษ — เลขบัญชีธนาคารสำหรับรับชำระเงิน (ช่องทางการชำระเงิน): ถ้ามีข้อมูลใน [context] ให้ส่งให้ลูกค้าทันทีเลย รวมถึง QR Code image หรือ URL รูป QR ด้วย ไม่ต้องรอตรวจสอบหรือส่งให้เจ้าหน้าที่ก่อน
+   ✅ โลเคชั่น/แผนที่/ที่อยู่: ถ้ามีข้อมูลใน [context] ให้ส่ง Google Maps URL และที่อยู่ให้ลูกค้าทันที ห้ามเรียก capture_lead หรือบอกว่าจะตรวจสอบก่อน
 3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ
 4. ห้ามเปิดเผยข้อมูลลับขององค์กร
 5. ห้ามตอบว่า ไม่สามารถ / ทำไม่ได้ / ตรวจสอบให้ไม่ได้ / ไม่ทราบ / ไม่มีข้อมูล เด็ดขาด — คำถามใดที่เอยตอบเองไม่ได้หรือเช็คจากระบบไม่ได้ (เช่น สถานะใบเสนอราคา สถานะการจัดส่ง เรื่องที่ทีมงานต้องยืนยัน) ให้รับเรื่องไว้เสมอ: ตอบประมาณว่า "เดี๋ยวเอยขอตรวจสอบ/ขอเช็คข้อมูลให้ก่อนนะคะ แล้วจะรีบแจ้งกลับโดยเร็วค่ะ 😊" แล้วเรียก capture_lead (ใส่คำถามของลูกค้าใน note) เพื่อให้ทีมงานติดตามแจ้งลูกค้าจริง — ห้ามผลักให้ลูกค้าไปติดต่อใครเองโดยไม่รับเรื่อง
@@ -594,6 +599,7 @@ const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 1. NEVER reveal cost/margin/buying-price. Refuse politely.
 2. NEVER fabricate factual data (address/phone/email/map/price/MOQ). If missing, escalate to staff.
    ✅ Special exception — bank account number for receiving payment (payment channels): if the info is in [context], send it to the customer IMMEDIATELY including QR Code image/URL. No need to verify or escalate first.
+   ✅ Location/map/address: when present in [context], send the Google Maps URL and address IMMEDIATELY. Do not call capture_lead or say it needs checking.
 3. Language: reply in same language as customer (Thai-Thai, English-English).
 4. Never disclose confidential org info.
 5. NEVER say "I can't / unable to / cannot check / I don't know". For anything you cannot answer or verify yourself (e.g. quote status, delivery status, matters staff must confirm), ALWAYS take ownership: reply like "Let me check on that and get back to you shortly 😊", then call capture_lead (put the customer's question in the note) so the team actually follows up — never just redirect the customer to contact someone themselves.
@@ -980,6 +986,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   let search_ms = 0;
   let matchedRows: Array<{ id: string; content: string; metadata: unknown; similarity: number; source_path: string; tags: string[]; title: string | null }> = [];
   let expandedRows: Array<{ source_path: string; chunk_index: number; title: string | null; content: string }> = [];
+  let forcedRows: Array<{ source_path: string; chunk_index: number; title: string | null; content: string }> = [];
   let contextText: string | null = null;
 
   if (query && images.length === 0 && !shouldSkipRAG(query)) {
@@ -1024,6 +1031,31 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       }
     }
     // ── End forced retrieval ───────────────────────────────────────────────
+
+    // ── Forced retrieval for location / map / address queries ─────────────
+    // Short or misspelled Thai queries can fall below the vector threshold
+    // (for example "ขอโลเคชั้น"). Always inject the approved public location
+    // document when the intent is unambiguous.
+    if (query && LOCATION_RE.test(query)) {
+      const locationAlreadyLoaded = expandedRows.some(
+        (r) => /location|แผนที่|ที่ตั้ง|ที่อยู่/i.test(r.source_path)
+      );
+      if (!locationAlreadyLoaded) {
+        const { data: locationDocs, error: locationErr } = await admin
+          .from("knowledge_chunks")
+          .select("source_path, chunk_index, title, content")
+          .or("source_path.ilike.%location%,source_path.ilike.%แผนที่%")
+          .eq("visibility", "public")
+          .order("source_path", { ascending: true })
+          .order("chunk_index", { ascending: true });
+        if (locationErr) throw locationErr;
+        if (locationDocs && locationDocs.length > 0) {
+          forcedRows = locationDocs;
+          expandedRows = [...locationDocs, ...expandedRows].slice(0, MAX_CONTEXT_CHUNKS);
+        }
+      }
+    }
+    // ── End forced location retrieval ─────────────────────────────────────
 
     if (expandedRows.length > 0) {
       const bySource = new Map<string, typeof expandedRows>();
@@ -1108,13 +1140,16 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }
 
   const llm_ms = Date.now() - t2;
-  const sources = matchedRows.map((m) => ({ id: m.id, title: m.title, source_path: m.source_path, similarity: m.similarity, tags: m.tags ?? [], content_preview: m.content.slice(0, 200) }));
+  const sources = [
+    ...matchedRows.map((m) => ({ id: m.id, title: m.title, source_path: m.source_path, similarity: m.similarity, tags: m.tags ?? [], content_preview: m.content.slice(0, 200) })),
+    ...forcedRows.map((r) => ({ id: `forced:${r.source_path}:${r.chunk_index}`, title: r.title, source_path: r.source_path, similarity: null, tags: [], content_preview: r.content.slice(0, 200) })),
+  ];
   const elapsed = { embed: embed_ms, search: search_ms, llm: llm_ms };
   await recordAiRun(admin, {
     conversationId,
     channel,
     model: usedModel,
-    retrievalCount: matchedRows.length,
+    retrievalCount: matchedRows.length + forcedRows.length,
     topSimilarity: matchedRows.length > 0 ? Number(matchedRows[0].similarity ?? 0) : null,
     toolNames: allToolCalls.map((t) => t.name),
     usage,

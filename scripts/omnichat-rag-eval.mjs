@@ -28,6 +28,7 @@ for (const test of cases) {
     !e.tool_any || e.tool_any.some((name) => calls.includes(name)),
     !e.forbid_tool || !calls.includes(e.forbid_tool),
     !e.source || (Array.isArray(body.sources) && body.sources.length > 0),
+    !e.require_terms || e.require_terms.every((term) => answer.includes(term)),
     !e.forbid_terms || e.forbid_terms.every((term) => !answer.includes(term)),
   ];
   const ok = checks.every(Boolean);
