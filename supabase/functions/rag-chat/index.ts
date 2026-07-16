@@ -1,10 +1,12 @@
 /**
- * rag-chat v50 — family-locked product alternatives
+ * rag-chat v51 — family and product-type locked alternatives
  *
  * v50: product suggestions are filtered before reaching the LLM. A recognised
  * product family must match exactly; unknown families need a normalized-name
  * score of at least 70%. This prevents cross-type substitutions such as a
- * sanding belt being offered as a mounted flap wheel.
+ * sanding belt being offered as a mounted flap wheel. v51 additionally locks
+ * the meaningful product-type phrase (for example จานทราย vs ล้อทราย) before
+ * evaluating the existing 70% fallback score.
  *
  * v35 — forced retrieval for payment/bank-account queries
  *
@@ -337,6 +339,37 @@ function productFamilyLabel(family: string | null): string | null {
   return PRODUCT_FAMILY_RULES.find((rule) => rule.key === family)?.labelTh ?? null;
 }
 
+/**
+ * Product-type anchors are the meaningful leading phrase that identifies what
+ * the customer is asking for. Thai product names are not reliably delimited by
+ * whitespace, so this is intentionally semantic (for example "จานทราย" and
+ * "ล้อทราย") instead of splitting the first two whitespace tokens.
+ *
+ * A specific family, when present, is still stricter. These anchors close the
+ * gap for short customer queries such as "จานทราย 4 นิ้ว" where the more
+ * specific family word ("ซ้อน") was not included.
+ */
+type ProductTypeRule = { key: string; labelTh: string; pattern: RegExp };
+const PRODUCT_TYPE_RULES: ProductTypeRule[] = [
+  { key: "sanding_belt", labelTh: "ผ้าทรายสายพาน", pattern: /ผ้าทราย\s*สายพาน|sanding\s*belt|abrasive\s*belt/i },
+  { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
+  { key: "mounted_flap_wheel", labelTh: "ล้อทราย", pattern: /ล้อทราย(?:\s*มีแกน)?|mounted\s*flap\s*wheel/i },
+  { key: "flap_disc", labelTh: "จานทราย", pattern: /จานทราย(?:\s*ซ้อน)?|flap\s*disc/i },
+  { key: "sanding_disc", labelTh: "กระดาษทรายกลม", pattern: /กระดาษทราย\s*กลม|(?:velcro|adhesive)\s*(?:sanding\s*)?disc/i },
+  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /ล้อขัดใยสังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
+  { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
+  { key: "pva_disc", labelTh: "ใบขัดกระจก PVA", pattern: /ใบขัดกระจก|pva\s*(?:spongy\s*)?disc/i },
+  { key: "rubber_expander", labelTh: "ลูกยาง", pattern: /ลูกยาง|rubber\s*expander/i },
+];
+
+function productTypeFor(text: string): string | null {
+  return PRODUCT_TYPE_RULES.find((rule) => rule.pattern.test(text))?.key ?? null;
+}
+
+function productTypeLabel(productType: string | null): string | null {
+  return PRODUCT_TYPE_RULES.find((rule) => rule.key === productType)?.labelTh ?? null;
+}
+
 function normalizedProductName(text: string): string {
   return text.toLowerCase()
     .replace(/\b(?:paco|mirka|jnac)\b/gi, " ")
@@ -370,8 +403,10 @@ type SafeProductMatch = {
   safe: boolean;
   requestedFamily: string | null;
   candidateFamily: string | null;
+  requestedProductType: string | null;
+  candidateProductType: string | null;
   nameScore: number;
-  basis: "exact_sku" | "same_family" | "name_score" | "rejected";
+  basis: "exact_sku" | "same_family" | "same_product_type" | "name_score" | "rejected";
 };
 
 function evaluateProductMatch(query: string, product: Record<string, unknown>): SafeProductMatch {
@@ -379,27 +414,48 @@ function evaluateProductMatch(query: string, product: Record<string, unknown>): 
     .filter(Boolean).join(" ");
   const requestedFamily = productFamilyFor(query);
   const candidateFamily = productFamilyFor(candidateText);
+  const requestedProductType = productTypeFor(query);
+  const candidateProductType = productTypeFor(candidateText);
   const sku = String(product.sku ?? "").trim();
   const exactSku = Boolean(sku) && query.toLowerCase().includes(sku.toLowerCase());
   const nameScore = normalizedNameScore(query, candidateText);
-  if (exactSku) return { safe: true, requestedFamily, candidateFamily, nameScore: 1, basis: "exact_sku" };
+  if (exactSku) return {
+    safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+    nameScore: 1, basis: "exact_sku",
+  };
   // Once a product type is known, do not allow a high textual score to cross
   // its boundary.  A sanding belt must never become a mounted flap wheel.
   if (requestedFamily) {
     if (requestedFamily === candidateFamily) {
-      return { safe: true, requestedFamily, candidateFamily, nameScore: Math.max(nameScore, 1), basis: "same_family" };
+      return {
+        safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+        nameScore: Math.max(nameScore, 1), basis: "same_family",
+      };
     }
-    return { safe: false, requestedFamily, candidateFamily, nameScore, basis: "rejected" };
+    return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
+  }
+  // The customer's core product phrase is a hard gate before name scoring.
+  // This preserves the 0.70 fallback for truly unknown product types, while
+  // preventing จานทราย -> ล้อทราย and other cross-type suggestions.
+  if (requestedProductType) {
+    if (requestedProductType === candidateProductType) {
+      return {
+        safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+        nameScore: Math.max(nameScore, 1), basis: "same_product_type",
+      };
+    }
+    return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
   }
   return nameScore >= 0.7
-    ? { safe: true, requestedFamily, candidateFamily, nameScore, basis: "name_score" }
-    : { safe: false, requestedFamily, candidateFamily, nameScore, basis: "rejected" };
+    ? { safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "name_score" }
+    : { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
 }
 
 function formatSafeProductForLLM(product: Record<string, unknown>, match: SafeProductMatch) {
   return {
     ...formatProductForLLM(product),
     product_family: match.candidateFamily,
+    product_type: match.candidateProductType,
     safe_name_score: Number(match.nameScore.toFixed(3)),
     safe_match_basis: match.basis,
     safe_alternative: true,
@@ -413,7 +469,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
   const { rewritten, applied } = await rewriteWithKeywords(admin, original);
   const q = rewritten;
   const requestedFamily = productFamilyFor(q);
-  const requestedProductType = productFamilyLabel(requestedFamily);
+  const requestedProductType = productFamilyLabel(requestedFamily) ?? productTypeLabel(productTypeFor(q));
 
   const rawTokens = q.split(/\s+/).filter(Boolean).slice(0, 12);
   if (rawTokens.length === 0) return { products: [], note: "empty query" };
@@ -460,6 +516,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
         clarification_candidates: safeFuzzy.map(({ p, match }) => ({
           sku: p.sku, name_th: p.name_th, name_en: p.name_en ?? null,
           product_family: match.candidateFamily,
+          product_type: match.candidateProductType,
           safe_name_score: Number(match.nameScore.toFixed(3)),
           safe_match_basis: match.basis,
           safe_alternative: true,
@@ -965,6 +1022,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 8. 🔒 กฎสินค้าทดแทน (ห้ามฝ่าฝืน):
    - เสนอสินค้าได้เฉพาะผลจาก tool ที่มี safe_alternative=true เท่านั้น
    - ถ้า tool ส่ง requested_product_family มา: เสนอได้เฉพาะ product_family เดียวกันเท่านั้น แม้ขนาด/เบอร์ใกล้เคียงก็ห้ามข้ามชนิด เช่น "ผ้าทรายสายพาน" ห้ามเสนอ "ล้อทรายมีแกน" เด็ดขาด
+   - ถ้า tool ส่ง requested_product_type มา (เช่น จานทราย, ล้อทราย, ผ้าทรายม้วน): ให้ถือเป็น hard gate ก่อนดูขนาด/เบอร์/คะแนน และเสนอได้เฉพาะ product_type เดียวกันเท่านั้น ห้ามข้ามคำระบุชนิดสินค้านี้เด็ดขาด
    - ถ้าไม่มี requested_product_family: เสนอได้เฉพาะ safe_name_score ตั้งแต่ 0.70 ขึ้นไป
    - safe_name_score / safe_match_basis เป็นค่าจาก tool เท่านั้น ห้ามคำนวณหรือเดาเอง
    - หากไม่มีตัวเลือก safe_alternative: ห้ามแสดงชื่อสินค้าอื่น ให้ capture_lead เพื่อให้ทีมตรวจสอบจัดหา/สั่งผลิต และต้องระบุ requested_product_type ในคำตอบเพื่อยืนยันว่ากำลังตรวจสอบสินค้าชนิดที่ลูกค้าถาม
@@ -999,6 +1057,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 8. 🔒 SUBSTITUTION GATE (non-negotiable):
    - Offer only tool results with safe_alternative=true.
    - When requested_product_family is provided, candidate product_family MUST match exactly. Never cross product types (for example sanding belt -> mounted flap wheel), even when dimensions or grit look similar.
+   - When requested_product_type is provided (for example flap disc, mounted wheel, sanding roll), it is a hard gate before dimensions, grit, or scoring: candidate product_type MUST match exactly.
    - Without requested_product_family, only offer candidates with safe_name_score >= 0.70.
    - safe_name_score and safe_match_basis come from the tool; never estimate them yourself.
    - If no safe_alternative exists, do not list another product; call capture_lead for sourcing/made-to-order and explicitly name requested_product_type in the reply.

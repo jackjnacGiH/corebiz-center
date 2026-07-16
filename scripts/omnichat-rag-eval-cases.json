@@ -19,6 +19,10 @@
   {"id":"product-image","query":"ขอดูรูปสินค้า CS123","expect":{"tool_any":["find_products","get_product_detail"]}},
   {"id":"sanding-belt-family-lock","query":"ขอราคาผ้าทรายสายพาน 20x30 เบอร์60","expect":{"tool":"find_products","require_terms":["ผ้าทรายสายพาน"],"forbid_terms":["ล้อทรายมีแกน","mounted flap wheel"]}},
   {"id":"mounted-wheel-family-lock","query":"ขอราคาล้อทรายมีแกน 6มม 20x20 เบอร์60","expect":{"tool":"find_products","require_terms":["ล้อทรายมีแกน"],"forbid_terms":["ผ้าทรายสายพาน","sanding belt"]}},
+  {"id":"flap-disc-core-type-lock","query":"ขอจานทราย 4 นิ้ว เบอร์ 80","expect":{"tool":"find_products","require_terms":["จานทราย"],"forbid_terms":["ล้อทราย","ผ้าทรายสายพาน"]}},
+  {"id":"mounted-wheel-core-type-lock","query":"ขอล้อทราย 20x20 เบอร์ 60","expect":{"tool":"find_products","require_terms":["ล้อทราย"],"forbid_terms":["จานทราย","ผ้าทรายสายพาน"]}},
+  {"id":"sanding-roll-core-type-lock","query":"ขอผ้าทรายม้วน 4 นิ้ว เบอร์ 120","expect":{"tool":"find_products","require_terms":["ผ้าทรายม้วน"],"forbid_terms":["ล้อทราย","จานทราย","ผ้าทรายสายพาน"]}},
+  {"id":"sanding-disc-core-type-lock","query":"ขอกระดาษทรายกลม 5 นิ้ว เบอร์ 120","expect":{"tool":"find_products","require_terms":["กระดาษทรายกลม"],"forbid_terms":["ล้อทราย","จานทราย","ผ้าทรายสายพาน"]}},
   {"id":"human","query":"ให้พนักงานติดต่อกลับหน่อย","expect":{"tool":"capture_lead"}},
   {"id":"location-typo","query":"ขอ โลเคชั้นด้วยครับ เมื่อกี้คุยกับเฮียแล้วครับผม","expect":{"source":true,"forbid_tool":"capture_lead","require_terms":["goo.gl/maps"]}},
   {"id":"long-input","query":"__GENERATE_4001__","expect":{"status":413}}
