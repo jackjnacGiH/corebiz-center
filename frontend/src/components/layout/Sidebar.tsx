@@ -15,6 +15,7 @@ import {
     UserCog,
     Bot,
     BookOpen,
+    Images,
 } from 'lucide-react';
 import { useLanguage } from '../../i18n';
 import { cn } from '@/lib/utils';
@@ -53,6 +54,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         { name: t.nav.dashboard, path: '/', icon: <LayoutDashboard size={20} /> },
         { name: t.nav.ecommerce, path: '/ecommerce', icon: <ShoppingCart size={20} /> },
         { name: t.nav.inventory, path: '/inventory', icon: <Package size={20} /> },
+        { name: t.nav.imageStudio, path: '/image-studio', icon: <Images size={20} /> },
         { name: t.nav.orders, path: '/orders', icon: <Truck size={20} /> },
         { name: t.nav.crm, path: '/crm', icon: <Users size={20} /> },
         { name: t.nav.chat, path: '/chat', icon: <MessageSquare size={20} /> },
