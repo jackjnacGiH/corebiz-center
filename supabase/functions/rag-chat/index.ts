@@ -1030,7 +1030,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 📷 ถ้าลูกค้าส่งรูปภาพใดๆ มา (ไม่ว่าจะส่งเป็นไฟล์รูปภาพ เอกสาร หรือแคปหน้าจอมา) → ให้ตีความวัตถุประสงค์ของรูปภาพนั้นก่อนเป็นอันดับแรก:
 - หากตีความได้ว่าเป็น "ใบสั่งซื้อ / PO / เอกสารสั่งซื้อ / สรุปสั่งของ": ห้ามเสนอสินค้าใกล้เคียงหรือทางเลือกอื่นเด็ดขาด! ให้รับเรื่องโดยแจ้งว่าส่งต่อเอกสารให้ทีมงานจัดการต่อแล้ว (ไม่ต้องทวนรายการหรือจำนวนในใบสั่งซื้อ) และเรียก capture_lead (บันทึกรายละเอียดใบสั่งซื้อใน note) เพื่อส่งเรื่องให้ทีมงาน. ห้ามใช้ชื่อสินค้าจากประวัติแชตเก่ามาตีความแทนรายการในเอกสาร
-- หากตีความได้ว่าเป็น "สลิปโอนเงิน / สลิปแจ้งชำระเงิน": ห้ามแนะนำสินค้า ค้นหาสินค้า หรือเรียกใช้ tool ใดๆ ทั้งสิ้น และห้ามนำข้อมูลในสลิปมาเสนอขายต่อ ให้ขอบคุณและแจ้งส่งเรื่องให้ฝ่ายบัญชีตรวจสอบยอดเงินเท่านั้นตามกฎการแจ้งโอนเงิน
+- หากตีความได้ว่าเป็น "สลิปโอนเงิน / สลิปแจ้งชำระเงิน": ห้ามแนะนำสินค้า ค้นหาสินค้า หรือเรียกใช้ tool ใดๆ ทั้งสิ้น และห้ามนำข้อมูลในสลิปมาเสนอขายต่อ ให้ตอบเพียงว่า "ขอบพระคุณค่ะ เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ" ห้ามระบุ/อ่าน/คาดเดายอดเงิน วันที่ เวลา เลขบัญชี ชื่อผู้โอน เลขอ้างอิง หรือยืนยันว่าชำระสำเร็จโดยเด็ดขาด แม้เห็นข้อมูลในภาพ
 - หากเป็นรูปภาพอื่นๆ (เช่น รูปสินค้าจริง ชิ้นงานหน้างาน หรือตัวอย่างการใช้งานทั่วไป): ให้ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ และเรียก find_products เพื่อค้นหาสินค้าที่เกี่ยวข้องหรือใกล้เคียงเสนอให้ลูกค้า — ห้ามเดาราคา/สเป็กจากรูปเอง
 
 📦 ช่องข้อมูลจาก tool: stock (0=หมด), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
@@ -1064,7 +1064,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
    - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.
 📷 If the customer sends any IMAGE (whether uploaded as a photo, doc screenshot, or any file) → You must interpret the intent of the image first:
 - If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team. Never use a product from old chat history as a substitute for the document contents.
-- If interpreted as a "bank transfer slip / payment receipt": DO NOT recommend products, search products, or call any tools; do not extract notes to offer products. Simply thank the customer and inform them about accounting verification per payment rules.
+- If interpreted as a "bank transfer slip / payment receipt": DO NOT recommend products, search products, or call any tools. Reply only with a generic accounting-review acknowledgement. Never state, extract, infer, or confirm an amount, date, time, account number, payer, reference, or payment success from the image.
 - If it is any other image (e.g., product photo, physical workpiece, general usage example): Describe what you see briefly and call find_products to recommend matching or related products to the customer. Never invent price/specs from a photo.
 📦 Fields: stock (0=oos), in_stock, min_order_qty (always use), unit.
 
@@ -1275,6 +1275,19 @@ function isInternalServiceCall(req: Request, serviceKey: string): boolean {
 
 function isUuid(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+const PAYMENT_RECEIPT_ACK_TH = "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊";
+const PAYMENT_RECEIPT_ACK_EN = "Thank you. Our accounting team will review the payment notification shortly. 😊";
+const PAYMENT_RECEIPT_REPLY_RE = /(?:สลิป(?:โอนเงิน|แจ้งชำระเงิน)?|แจ้งโอนเงิน|ฝ่ายบัญชี.*ตรวจสอบ(?:ยอด|การชำระ)|ตรวจสอบ(?:ยอด|การโอน)|payment\s*(?:receipt|slip)|bank\s*transfer\s*slip|accounting.*(?:verify|review))/iu;
+const PAYMENT_RECEIPT_QUERY_RE = /(?:สลิป|แจ้งโอน|โอนเงินแล้ว|ส่งหลักฐาน(?:การ)?ชำระ|payment\s*(?:receipt|slip)|bank\s*transfer\s*(?:receipt|slip|sent))/iu;
+
+function sanitizePaymentReceiptAnswer(query: string, images: ImagePart[], answer: string, lang: Lang): string {
+  const receiptContext = images.length > 0 || PAYMENT_RECEIPT_QUERY_RE.test(query);
+  if (receiptContext && PAYMENT_RECEIPT_REPLY_RE.test(answer)) {
+    return lang === "th" ? PAYMENT_RECEIPT_ACK_TH : PAYMENT_RECEIPT_ACK_EN;
+  }
+  return answer;
 }
 
 Deno.serve(async (req: Request) => {
@@ -1548,6 +1561,14 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const allToolCalls: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }> = [];
   let usedModel = GEMINI_MODELS[0];
   let fullAnswer = "";
+  // Image replies are buffered so a payment receipt can be sanitized before a
+  // single streamed token reaches any channel. Text payment notifications use
+  // the same path for consistent privacy protection.
+  const deferTextForPaymentSafety = images.length > 0 || PAYMENT_RECEIPT_QUERY_RE.test(query);
+  const appendAnswer = (chunk: string) => {
+    fullAnswer += chunk;
+    if (!deferTextForPaymentSafety) send({ type: "text", chunk });
+  };
 
   // Post-tool iterations are buffered (not streamed live) so a repeated
   // acknowledgment — the model loves to re-say "เดี๋ยวเอยขอตรวจสอบ..." after
@@ -1557,8 +1578,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     let iterText = "";
     const r = await streamGeminiWithFallback(geminiKey, systemPrompt, contents, (chunk) => {
       if (iter === 0) {
-        fullAnswer += chunk;
-        send({ type: "text", chunk });
+        appendAnswer(chunk);
       } else {
         iterText += chunk;
       }
@@ -1570,8 +1590,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       if (!duplicate) {
         const sepNeeded = fullAnswer.trim() && !fullAnswer.endsWith("\n");
         const chunkOut = (sepNeeded ? "\n" : "") + iterText;
-        fullAnswer += chunkOut;
-        send({ type: "text", chunk: chunkOut });
+        appendAnswer(chunkOut);
       }
     }
     usedModel = r.model;
@@ -1591,10 +1610,12 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     contents.push({ role: "user", parts: responseParts });
     if (iter === MAX_TOOL_ITERATIONS - 1) {
       const msgText = MSG[lang].maxIterations;
-      fullAnswer += msgText;
-      send({ type: "text", chunk: msgText });
+      appendAnswer(msgText);
     }
   }
+
+  fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);
+  if (deferTextForPaymentSafety && fullAnswer) send({ type: "text", chunk: fullAnswer });
 
   const llm_ms = Date.now() - t2;
   const sources = [

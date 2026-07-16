@@ -195,15 +195,40 @@ async function upsertLineConversation(
   return (inserted as { id: string }).id;
 }
 
-async function saveMessage(admin: SupabaseClient, conversationId: string, senderType: "customer" | "agent" | "bot" | "system", content: string, externalMsgId?: string, metadata: Record<string, unknown> = {}, contentType: string = "text") {
+async function saveMessage(admin: SupabaseClient, conversationId: string, senderType: "customer" | "agent" | "bot" | "system", content: string, externalMsgId?: string, metadata: Record<string, unknown> = {}, contentType: string = "text"): Promise<boolean> {
   const { error } = await admin.from("chat_messages").insert({
     conversation_id: conversationId, sender_type: senderType, content, content_type: contentType,
     external_msg_id: externalMsgId ?? null, metadata,
   });
-  if (error) console.warn("saveMessage err:", error.message);
+  if (error) {
+    // A LINE webhook may be delivered more than once. The unique incoming-ID
+    // index makes this safe; callers stop before invoking RAG on the retry.
+    if (externalMsgId && error.code === "23505") {
+      console.info("duplicate LINE message ignored", { conversationId, externalMsgId });
+      return false;
+    }
+    console.warn("saveMessage err:", error.message);
+    return false;
+  }
   await admin.from("chat_conversations").update({
     last_message_at: new Date().toISOString(), last_message_preview: content.slice(0, 140),
   }).eq("id", conversationId);
+  return true;
+}
+
+async function hasProcessedIncomingMessage(admin: SupabaseClient, conversationId: string, externalMsgId?: string): Promise<boolean> {
+  if (!externalMsgId) return false;
+  const { data, error } = await admin.from("chat_messages")
+    .select("id")
+    .eq("conversation_id", conversationId)
+    .eq("external_msg_id", externalMsgId)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn("incoming message duplicate check failed:", error.message);
+    return false;
+  }
+  return Boolean(data);
 }
 
 async function getLineUserProfile(accessToken: string, userId: string): Promise<{ displayName?: string; pictureUrl?: string } | null> {
@@ -315,6 +340,11 @@ async function startLineLoading(accessToken: string, userId: string): Promise<vo
 
 function sanitizeReply(text: string): string {
   if (!text) return text;
+  // A transfer receipt is not proof of payment. Never repeat, extract, or
+  // guess any monetary amount from a slip; accounting must verify it.
+  if (/(?:สลิป(?:โอนเงิน|แจ้งชำระเงิน)?|แจ้งโอนเงิน|ฝ่ายบัญชี.*ตรวจสอบ(?:ยอด|การชำระ)|ตรวจสอบ(?:ยอด|การโอน))/u.test(text)) {
+    return "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊";
+  }
   // Drop the obsolete "บัญชีของฉัน / /account" (log-in) pointer. Quotes now go
   // out as a public no-login link, so telling the customer to log in just
   // confuses them ("ทำไมต้องเข้าระบบ").
@@ -527,6 +557,13 @@ function stripQuoteLink(s: string): string {
     .trim();
 }
 
+// A LINE reply can contain one composed message. Keeping the quote status and
+// its public link together avoids three separate bot bubbles for one image.
+function composeQuoteReply(answer: string, quoteLink: string | null): string {
+  const cleanAnswer = stripQuoteLink(answer);
+  return quoteLink ? [cleanAnswer, quoteLink].filter(Boolean).join("\n\n") : cleanAnswer;
+}
+
 async function loadHistory(admin: SupabaseClient, conversationId: string): Promise<Array<{ role: string; content: string }>> {
   const { data } = await admin.from("chat_messages")
     .select("sender_type, content, metadata").eq("conversation_id", conversationId)
@@ -549,7 +586,9 @@ function isGenericImageFollowUp(text: string): boolean {
   const compact = text.replace(/\s+/g, "").toLowerCase();
   return /^(?:ขอ)?(?:ใบ)?เสนอราคา(?:ห+น่อย)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
     || /^ขอราคา(?:ห+น่อย)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
-    || /^ราคา(?:เท่าไหร่)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact);
+    || /^ราคา(?:เท่าไหร่)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
+    || /^(?:แจ้ง)?โอนเงิน(?:แล้ว)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
+    || /^(?:ส่ง)?สลิป(?:โอนเงิน)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact);
 }
 
 async function hasRecentCustomerImage(admin: SupabaseClient, conversationId: string): Promise<boolean> {
@@ -655,6 +694,13 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   const msg = ev.message;
   if (!msg) return;
 
+  // Ignore a sequential webhook retry before downloading media or calling the
+  // model. saveMessage below also handles the small concurrent-race window.
+  if (await hasProcessedIncomingMessage(admin, conversationId, msg.id)) {
+    console.info("duplicate LINE webhook ignored before processing", { conversationId, messageId: msg.id });
+    return;
+  }
+
   // v11: IMAGE — store it so the admin sees it in Omni-Chat, and let the bot (vision) understand it.
   if (msg.type === "image") {
     void startLineLoading(channel.channel_access_token, userId);
@@ -662,7 +708,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     let url: string | null = null;
     if (img) url = await uploadImageToStorage(admin, conversationId, img.mimeType, img.data);
     const custContent = url ? `![image](${url})` : "[ลูกค้าส่งรูปภาพ]";
-    await saveMessage(admin, conversationId, "customer", custContent, msg.id, { line_message_type: "image", image_url: url, quote_token: msg.quoteToken ?? null }, "image");
+    if (!await saveMessage(admin, conversationId, "customer", custContent, msg.id, { line_message_type: "image", image_url: url, quote_token: msg.quoteToken ?? null }, "image")) return;
 
     const allowed = await shouldBotReply(admin, conversationId);
     if (!allowed) return;
@@ -680,11 +726,12 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     }
     if (aiReply) {
       const linkMsg = quoteCode ? await prepareQuoteLink(admin, conversationId, quoteCode) : null;
-      if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
-      await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
+      const replyText = composeQuoteReply(aiReply, linkMsg);
+      if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
+      await saveMessage(admin, conversationId, "bot", replyText, undefined, {
         channel_id: channel.id, channel_name: channel.name, from_image: true,
+        quote_link: Boolean(linkMsg), quote_code: quoteCode,
       });
-      if (linkMsg) await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
     }
     return;
   }
@@ -696,7 +743,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     const dl = await downloadLineFile(channel.channel_access_token, msg.id);
     const stored = dl ? await uploadFileToStorage(admin, conversationId, fileName, dl.mimeType, dl.base64) : null;
     const content = stored ? `📎 ${fileName}` : `[ลูกค้าส่งไฟล์: ${fileName}]`;
-    await saveMessage(admin, conversationId, "customer", content, msg.id, {
+    if (!await saveMessage(admin, conversationId, "customer", content, msg.id, {
       line_message_type: "file",
       file_url: null,
       file_bucket: stored?.bucket ?? null,
@@ -705,7 +752,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       file_size: msg.fileSize ?? dl?.size ?? null,
       mime_type: dl?.mimeType ?? null,
       quote_token: msg.quoteToken ?? null,
-    }, "file");
+    }, "file")) return;
     return;
   }
 
@@ -716,25 +763,24 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     const addr = (msg.address ?? "").trim();
     const mapUrl = (lat != null && lng != null) ? `https://www.google.com/maps?q=${lat},${lng}` : null;
     const content = [`📍 ${msg.title?.trim() || "ตำแหน่งที่ลูกค้าส่ง"}`, addr, mapUrl].filter(Boolean).join("\n");
-    await saveMessage(admin, conversationId, "customer", content, msg.id, {
+    if (!await saveMessage(admin, conversationId, "customer", content, msg.id, {
       line_message_type: "location",
       latitude: lat ?? null, longitude: lng ?? null,
       address: addr || null, title: msg.title ?? null,
       map_url: mapUrl,
-    });
+    })) return;
     return; // no bot auto-reply for a location — staff handle it
   }
 
   if (msg.type !== "text" || !msg.text) {
-    await saveMessage(admin, conversationId, "customer",
+    if (!await saveMessage(admin, conversationId, "customer",
       `[${msg.type}] ลูกค้าส่ง ${msg.type === "sticker" ? "sticker" : msg.type}`,
       msg.id, { line_message_type: msg.type, sticker_id: msg.stickerId, package_id: msg.packageId },
-      msg.type === "sticker" ? "sticker" : "text",
-    );
+      msg.type === "sticker" ? "sticker" : "text")) return;
     return;
   }
 
-  await saveMessage(admin, conversationId, "customer", msg.text, msg.id, { quote_token: msg.quoteToken ?? null });
+  if (!await saveMessage(admin, conversationId, "customer", msg.text, msg.id, { quote_token: msg.quoteToken ?? null })) return;
 
   const allowed = await shouldBotReply(admin, conversationId);
   if (!allowed) return;
@@ -756,15 +802,12 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     // free, so the link doesn't use the LINE push quota and always goes through.
     const linkMsg = rag.quoteCode ? await prepareQuoteLink(admin, conversationId, rag.quoteCode) : null;
 
-    if (ev.replyToken) {
-      await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
-    }
+    const replyText = composeQuoteReply(aiReply, linkMsg);
+    if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
 
-    await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
+    await saveMessage(admin, conversationId, "bot", replyText, undefined, {
       channel_id: channel.id, channel_name: channel.name,
+      quote_link: Boolean(linkMsg), quote_code: rag.quoteCode,
     });
-    if (linkMsg) {
-      await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: rag.quoteCode });
-    }
   }
 }
