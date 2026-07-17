@@ -11,6 +11,7 @@ import ProtectedRoute from './lib/ProtectedRoute';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Ecommerce = lazy(() => import('./pages/Ecommerce'));
 const Inventory = lazy(() => import('./pages/Inventory'));
+const ImageStudio = lazy(() => import('./pages/ImageStudio'));
 const Orders = lazy(() => import('./pages/Orders'));
 const CRM = lazy(() => import('./pages/CRM'));
 const Chat = lazy(() => import('./pages/Chat'));
@@ -70,6 +71,7 @@ function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="ecommerce" element={<Ecommerce />} />
                 <Route path="inventory" element={<Inventory />} />
+                <Route path="image-studio" element={<ImageStudio />} />
                 <Route path="orders" element={<Orders />} />
                 <Route path="crm" element={<CRM />} />
                 <Route path="chat" element={<Chat />} />
