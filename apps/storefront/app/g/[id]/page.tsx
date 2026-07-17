@@ -6,6 +6,7 @@ import CollectionArticle from "@/components/CollectionArticle";
 import { Breadcrumb } from "@/components/ui";
 import ProductViews from "@/components/ProductViews";
 import SearchBox from "@/components/SearchBox";
+import { getGroupCrossSiteGuide } from "@/lib/crossSiteGuides";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -40,6 +41,7 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
   const group = await getGroupById(decodeURIComponent(id));
   if (!group) notFound();
   const [products, org] = await Promise.all([getProductsByGroup(group.id), getOrg()]);
+  const crossSiteGuide = getGroupCrossSiteGuide(group.id);
 
   return (
     <>
@@ -63,6 +65,38 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
             ? group.description
             : `รวมสินค้ากลุ่ม ${group.name} จาก ${org.business_name} ทั้งหมด ${products.length} รายการ เลือกดูราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต พร้อมขอใบเสนอราคาได้ทันที`}
         </p>
+        {crossSiteGuide && (
+          <section
+            className="mt-6 max-w-5xl rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm sm:p-6"
+            aria-labelledby="cross-site-guide-title"
+          >
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="max-w-2xl">
+                <p className="text-xs font-bold uppercase tracking-wide text-[#0879BD]">
+                  {crossSiteGuide.eyebrow}
+                </p>
+                <h2
+                  id="cross-site-guide-title"
+                  className="mt-2 text-xl font-bold leading-snug text-[#0C3C63] sm:text-2xl"
+                >
+                  {crossSiteGuide.title}
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-neutral-700 sm:text-base">
+                  {crossSiteGuide.description}
+                </p>
+              </div>
+              <a
+                href={crossSiteGuide.href}
+                target="_blank"
+                rel="noopener"
+                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#0C3C63] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#082F4D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0879BD]"
+              >
+                {crossSiteGuide.cta}
+                <span aria-hidden="true">↗</span>
+              </a>
+            </div>
+          </section>
+        )}
         <div className="mt-6 max-w-xl">
           <SearchBox variant="page" />
         </div>
