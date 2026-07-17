@@ -38,7 +38,7 @@ type TextLayer = {
 };
 type ImageStudioProject = { baseImageUrl: string; layers: TextLayer[]; updatedAt: string };
 
-const STORAGE_KEY = 'corebiz-image-studio-v1';
+const STORAGE_KEY = 'corebiz-image-studio-v2';
 const newLayer = (): TextLayer => ({
   id: crypto.randomUUID(), text: 'สินค้าใหม่', x: 50, y: 14, fontSize: 64,
   fontWeight: 800, color: '#ffffff', background: '#4f46e5', padding: 20, paddingX: 24, paddingY: 10,
@@ -274,8 +274,8 @@ export default function ImageStudio() {
 
   function removeLayer(id: string) {
     const next = layers.filter(layer => layer.id !== id);
-    if (next.length === 0) { const layer = newLayer(); setLayers([layer]); setActiveLayerId(layer.id); }
-    else { setLayers(next); if (activeLayerId === id) setActiveLayerId(next[0].id); }
+    setLayers(next);
+    if (activeLayerId === id) setActiveLayerId(next[0]?.id ?? '');
     setContextMenu(null);
   }
 
@@ -369,10 +369,9 @@ export default function ImageStudio() {
   function rebuildFromOriginal() {
     if (!preview) return;
     const images = getImages(preview); const original = images[1] ?? images[0];
-    const layer = { ...newLayer(), text: 'แก้ไขข้อความ' };
     setSourceImages(current => ({ ...current, [preview.id]: original }));
-    setLayers([layer]); setActiveLayerId(layer.id);
-    setMessage('นำภาพต้นฉบับกลับมาแล้ว กรุณาเปลี่ยนข้อความในแผงด้านขวา');
+    setLayers([]); setActiveLayerId('');
+    setMessage('นำภาพต้นฉบับกลับมาแล้ว กด + หรือเลือก Sticker Template เมื่อต้องการเพิ่มข้อความ');
   }
 
   return (
