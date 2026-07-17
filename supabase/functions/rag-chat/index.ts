@@ -325,7 +325,8 @@ const PRODUCT_FAMILY_RULES: ProductFamilyRule[] = [
   { key: "sanding_disc_velcro", labelTh: "กระดาษทรายกลมสักหลาด", pattern: /กระดาษทรายกลม\s*สักหลาด|velcro\s*(?:sanding\s*)?disc/i },
   { key: "sanding_disc_adhesive", labelTh: "กระดาษทรายกลมหลังกาว", pattern: /กระดาษทรายกลม\s*หลังกาว|adhesive\s*(?:sanding\s*)?disc/i },
   { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
-  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /ล้อขัดใยสังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
+  // Catalog and customers use both ลูกขัด... and ล้อขัด... for this same product family.
+  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /(?:ล้อ|ลูก)\s*ขัด\s*ใย\s*สังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
   { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
   { key: "pva_disc", labelTh: "ใบขัดกระจก PVA", pattern: /ใบขัดกระจก|pva\s*(?:spongy\s*)?disc/i },
   { key: "rubber_expander", labelTh: "ลูกยาง", pattern: /ลูกยาง|rubber\s*expander/i },
@@ -356,7 +357,8 @@ const PRODUCT_TYPE_RULES: ProductTypeRule[] = [
   { key: "mounted_flap_wheel", labelTh: "ล้อทราย", pattern: /ล้อทราย(?:\s*มีแกน)?|mounted\s*flap\s*wheel/i },
   { key: "flap_disc", labelTh: "จานทราย", pattern: /จานทราย(?:\s*ซ้อน)?|flap\s*disc/i },
   { key: "sanding_disc", labelTh: "กระดาษทรายกลม", pattern: /กระดาษทราย\s*กลม|(?:velcro|adhesive)\s*(?:sanding\s*)?disc/i },
-  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /ล้อขัดใยสังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
+  // Keep the same semantic anchor as PRODUCT_FAMILY_RULES; this is a hard gate.
+  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /(?:ล้อ|ลูก)\s*ขัด\s*ใย\s*สังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
   { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
   { key: "pva_disc", labelTh: "ใบขัดกระจก PVA", pattern: /ใบขัดกระจก|pva\s*(?:spongy\s*)?disc/i },
   { key: "rubber_expander", labelTh: "ลูกยาง", pattern: /ลูกยาง|rubber\s*expander/i },
