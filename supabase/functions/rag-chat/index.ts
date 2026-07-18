@@ -86,6 +86,29 @@ function detectLanguage(s: string): Lang {
   return /[฀-๿]/.test(s) ? "th" : "en";
 }
 
+function isImageOnlyHistoryEntry(content: string): boolean {
+  return /^!\[image\]\(https?:\/\/[^\s)]+\)$/i.test(content.trim());
+}
+
+/**
+ * A LINE image has no customer text to detect. In that case, preserve the
+ * language of the most recent meaningful customer message instead of treating
+ * an empty string as English. An entirely textless LINE conversation defaults
+ * to Thai, while an explicit English message continues to receive English.
+ */
+function resolveResponseLanguage(
+  query: string,
+  history: Array<{ role: string; content: string }>,
+  channel: string,
+): Lang {
+  if (query.trim()) return detectLanguage(query);
+  const priorCustomerText = [...history].reverse().find(
+    (message) => message.role === "user" && message.content.trim() && !isImageOnlyHistoryEntry(message.content),
+  )?.content;
+  if (priorCustomerText) return detectLanguage(priorCustomerText);
+  return channel === "line" ? "th" : "en";
+}
+
 function normalizeImages(raw: unknown): ImagePart[] {
   if (!Array.isArray(raw)) return [];
   const out: ImagePart[] = [];
@@ -1322,11 +1345,11 @@ Deno.serve(async (req: Request) => {
   const match_count = Math.max(1, Math.min(MAX_CONTEXT_CHUNKS, Number(body.match_count ?? DEFAULT_MATCH_COUNT) || DEFAULT_MATCH_COUNT));
   const matchThreshold = Math.max(0, Math.min(1, Number(body.match_threshold ?? DEFAULT_MATCH_THRESHOLD) || DEFAULT_MATCH_THRESHOLD));
   const wantStream = body.stream !== false;
-  const lang: Lang = detectLanguage(query);
   const sessionId = typeof body.session_id === "string" && body.session_id.length >= 8 ? body.session_id : null;
   const displayName = typeof body.display_name === "string" ? body.display_name : "";
   const channelRaw = typeof body.channel === "string" ? body.channel.toLowerCase() : "default";
   const channel = ALLOWED_CHANNELS.has(channelRaw) ? channelRaw : "default";
+  const lang = resolveResponseLanguage(query, history, channel);
 
   if (!query && images.length === 0) return new Response(JSON.stringify({ error: MSG[lang].queryRequired }), { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 
