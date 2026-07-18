@@ -55,7 +55,7 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
           ]),
         )}
       />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
+      <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         <Breadcrumb items={[{ name: "หน้าแรก", href: "/" }, { name: group.name }]} />
         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-neutral-900">
           {group.name}

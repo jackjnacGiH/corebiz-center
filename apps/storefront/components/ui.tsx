@@ -6,8 +6,9 @@ import { SITE, type OrgInfo } from "@/lib/seo";
 import CartButton from "@/components/cart/CartButton";
 import CardAddButton from "@/components/cart/CardAddButton";
 import AccountNavButton from "@/components/account/AccountNavButton";
+import MobileNavigation from "@/components/MobileNavigation";
 
-const BRAND = "#1696F4";
+const BRAND = "#0879BD";
 
 export function StockBadge({ inStock }: { inStock: boolean }) {
   return inStock ? (
@@ -41,7 +42,7 @@ export function ProductCard({ p }: { p: SProduct }) {
   const img = imagesOf(p)[0];
   return (
     <div className="group relative rounded-xl border border-neutral-200 bg-white overflow-hidden hover:shadow-md transition">
-      <Link href={`/p/${encodeURIComponent(p.sku)}`} className="block">
+      <Link href={`/p/${encodeURIComponent(p.sku.trim())}`} className="block">
         <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden">
           {img ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -196,8 +197,7 @@ const NAVY = "#0C3C63";
 // และลิงก์ที่อยู่ใน footer).
 export const MAP_URL = "https://goo.gl/maps/yBSsrexnAi42";
 
-// JNAC social channels. LINE ID @jnac is confirmed (footer contact);
-// the rest use the jnac handle — update here if a channel's URL differs.
+// JNAC public channels. Update here if a channel URL changes.
 type Social = { name: string; href: string; label: string; icon: React.ReactNode };
 const SOCIALS: Social[] = [
   {
@@ -261,52 +261,63 @@ const SOCIALS: Social[] = [
 export function SocialLinks() {
   return (
     <div className="mt-5 flex flex-wrap items-center gap-2.5">
-      {SOCIALS.map((s) => (
-        <a
-          key={s.name}
-          href={s.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={s.label}
-          title={s.name}
-          className="grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white/80 transition hover:scale-110 hover:bg-[#1696F4] hover:text-white"
-        >
+      {SOCIALS.map((s) => {
+        const icon = (
           <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
             {s.icon}
           </svg>
-        </a>
-      ))}
+        );
+        const className =
+          "grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white/80 transition hover:scale-110 hover:bg-[#1696F4] hover:text-white";
+        return (
+          <a
+            key={s.name}
+            href={s.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={s.label}
+            title={s.name}
+            className={className}
+          >
+            {icon}
+          </a>
+        );
+      })}
     </div>
   );
 }
 
 export function Nav({ org }: { org: OrgInfo }) {
   return (
-    <nav className="sticky top-0 z-50 shadow-lg" style={{ background: NAVY }}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between h-16 items-center">
-        <Link href="/" className="flex items-center gap-2.5 min-w-0">
+    <header className="sticky top-0 z-50 shadow-lg" style={{ background: NAVY }}>
+      <div className="relative max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex h-16 items-center gap-2 sm:gap-3">
+        <Link href="/" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="JNAC หน้าแรก">
           {org.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={org.logo_url} alt={org.business_name} className="w-9 h-9 object-contain flex-shrink-0 brightness-0 invert" />
           ) : (
             <span className="w-9 h-9 rounded-md grid place-items-center font-bold flex-shrink-0 bg-white/15 text-white">J</span>
           )}
-          <span className="font-bold text-sm sm:text-base tracking-tight text-white truncate">
+          <span className="hidden min-w-0 truncate text-sm font-bold tracking-tight text-white md:block xl:max-w-48 xl:text-base">
             {org.business_name}
           </span>
         </Link>
-        <div className="flex items-center gap-3 lg:gap-5 text-sm font-semibold flex-shrink-0">
-          <Link href="/" className="hidden lg:inline text-white/80 hover:text-white transition">หน้าแรก</Link>
-          <Link href="/products" className="hidden lg:inline text-white/80 hover:text-white transition">สินค้าทั้งหมด</Link>
-          <Link href="/how-to-order" className="hidden lg:inline text-white/80 hover:text-white transition">วิธีการสั่งซื้อ</Link>
-          <Link href="/knowledge" className="hidden lg:inline text-white/80 hover:text-white transition">ศูนย์ความรู้ (AIO)</Link>
-          <a href="#contact" className="hidden lg:inline text-white/80 hover:text-white transition">ติดต่อเรา</a>
+        <nav className="hidden items-center gap-3 text-xs font-semibold xl:flex 2xl:gap-4 2xl:text-sm" aria-label="เมนูหลัก">
+          <Link href="/" className="whitespace-nowrap text-white/85 hover:text-white transition">หน้าแรก</Link>
+          <Link href="/products" className="whitespace-nowrap text-white/85 hover:text-white transition">สินค้าทั้งหมด</Link>
+          <Link href="/compare" className="whitespace-nowrap text-white/85 hover:text-white transition">เปรียบเทียบสินค้า</Link>
+          <Link href="/how-to-order" className="whitespace-nowrap text-white/85 hover:text-white transition">วิธีสั่งซื้อ</Link>
+          <Link href="/knowledge" className="whitespace-nowrap text-white/85 hover:text-white transition">ศูนย์ความรู้</Link>
+          <a href="#contact" className="whitespace-nowrap text-white/85 hover:text-white transition">ติดต่อเรา</a>
+        </nav>
+        <div className="flex flex-shrink-0 items-center gap-2 sm:gap-3">
+          <MobileNavigation />
           {/* เข้าสู่ระบบ ↔ บัญชีของฉัน (swaps with the customer's session). */}
           <AccountNavButton />
           <CartButton />
         </div>
       </div>
-    </nav>
+    </header>
   );
 }
 
@@ -362,10 +373,11 @@ export function Footer({ org }: { org: OrgInfo }) {
               <li><Link href="/products" className="text-white/75 hover:text-white transition">สินค้าทั้งหมด</Link></li>
               <li><Link href="/how-to-order" className="text-white/75 hover:text-white transition">วิธีการสั่งซื้อ</Link></li>
               <li><Link href="/knowledge" className="text-white/75 hover:text-white transition">ศูนย์ความรู้ (AIO)</Link></li>
+              <li><Link href="/compare" className="text-white/75 hover:text-white transition">เปรียบเทียบและเลือกสินค้า</Link></li>
             </ul>
           </div>
         </div>
-        <div className="mt-10 pt-6 border-t border-white/10 text-center text-xs text-white/50">
+        <div className="mt-10 pt-6 border-t border-white/10 text-center text-xs text-white/70">
           © {org.business_name} · จำหน่ายวัสดุงานขัด ตัด เจียร เครื่องมือ Tool และพลาสติกวิศวกรรม — Optimized for AIO &amp; Industrial Customers
         </div>
       </div>
