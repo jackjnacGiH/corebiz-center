@@ -28,7 +28,7 @@ export default function AccountNavButton() {
   }, []);
 
   const cls =
-    "inline-flex items-center gap-1.5 rounded-lg border border-white/30 px-3 py-1.5 text-white/90 hover:bg-white/10 transition whitespace-nowrap";
+    "inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-white/40 px-2.5 py-1.5 text-xs text-white hover:bg-white/10 transition whitespace-nowrap sm:px-3 sm:text-sm";
 
   return loggedIn ? (
     <Link href="/account" className={cls}>

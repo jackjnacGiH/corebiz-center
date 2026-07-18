@@ -1,25 +1,33 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 import { getOrg, SITE } from "@/lib/seo";
 import OpenChatButton from "@/components/OpenChatButton";
 
 export const revalidate = 300;
 
 const NAVY = "#0C3C63";
-const BRAND = "#1696F4";
+const BRAND = "#0879BD";
 
 export const metadata: Metadata = {
   title: "ศูนย์รวมสินค้าอุตสาหกรรม ขัด ตัด เจียร · Tool · พลาสติกวิศวกรรม · CNC",
   description:
     "J NAC (Thailand) จำหน่ายสินค้าอุตสาหกรรม เครื่องมือ Tool พลาสติกวิศวกรรม และบริการงาน CNC ครบวงจร — งานกลึง กัด โมลด์ จิ๊ก ฟิกซ์เจอร์ ชิ้นส่วนเครื่องจักรและอะไหล่แต่งตามสั่ง",
   alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    url: "/",
+    title: "JNAC ศูนย์รวมสินค้าอุตสาหกรรม ขัด ตัด เจียร และ CNC",
+    description:
+      "สินค้าอุตสาหกรรม เครื่องมือ Tool พลาสติกวิศวกรรม และบริการ CNC จาก J NAC (Thailand) พร้อมข้อมูลช่วยเลือกสินค้าและขอใบเสนอราคา",
+  },
 };
 
 const FEATURES: [string, string, string][] = [
-  ["⚙️", "คุณภาพระดับ Industrial Grade", "สินค้าทุกชิ้นออกแบบมาให้ทนแรงกดและรอบสูง (RPM) ไม่ฉีกขาดง่าย ปลอดภัยต่อช่างผู้ใช้งาน"],
-  ["⏱️", "ขัดเร็ว ประหยัดเวลาทำงาน", "เม็ดทรายมีความคมสูง ช่วยลดเวลาในการขัด/ตัด เพิ่มปริมาณงานต่อชั่วโมงได้อย่างชัดเจน"],
-  ["💡", "ให้คำปรึกษาเชิงเทคนิค (AIO)", "มีศูนย์ความรู้และผู้เชี่ยวชาญพร้อมแนะนำเครื่องมือให้ตรงกับเนื้อวัสดุของคุณ"],
-  ["📦", "สต็อกพร้อมส่ง สำหรับโรงงาน", "สินค้าครบวงจร มีของพร้อมส่งทันที รองรับการสั่งซื้อจำนวนมากสำหรับสายการผลิต"],
+  ["⚙️", "เลือกจากสเปกที่ตรงกับงาน", "ตรวจชนิดวัสดุ ขนาด เบอร์ ระบบยึด และความเร็วรอบจากข้อมูลสินค้าก่อนตัดสินใจ"],
+  ["⏱️", "ลดการลองผิดประเภท", "ใช้หมวดสินค้าและคู่มือเปรียบเทียบช่วยแยกงานลบเนื้อ ขัดรอย และเก็บผิวให้ชัดเจน"],
+  ["💡", "ข้อมูลและคำปรึกษาเชิงเทคนิค", "มีศูนย์ความรู้และช่องทางสอบถามเพื่อช่วยคัดตัวเลือกให้ตรงกับวัสดุชิ้นงานและเครื่องมือ"],
+  ["📦", "ตรวจสถานะก่อนสั่งซื้อ", "ดูสถานะพร้อมขายหรือสั่งผลิตจากรายการสินค้า แล้วส่งคำขอใบเสนอราคาเพื่อยืนยันรายละเอียด"],
 ];
 
 const CATS: { icon: string; color: string; title: string; desc: string; href: string; external?: boolean }[] = [
@@ -33,18 +41,21 @@ export default async function Home() {
   const org = await getOrg();
 
   return (
-    <>
+    <main id="main-content">
       {/* Hero */}
-      <section className="relative min-h-[78vh] flex items-center text-white overflow-hidden" style={{ backgroundColor: NAVY }}>
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage:
-              "linear-gradient(90deg, rgba(12,60,99,0.95) 0%, rgba(12,60,99,0.62) 50%, rgba(0,0,0,0.15) 100%), url('/hero.png')",
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
+      <section className="relative flex min-h-[calc(100svh-4rem)] items-center overflow-hidden py-16 text-white sm:min-h-[680px] lg:min-h-[720px]" style={{ backgroundColor: NAVY }}>
+        <Image
+          src="/hero.png"
+          alt="ภาพประกอบงานขัดและเจียรในโรงงานอุตสาหกรรม"
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover object-center"
         />
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(7,31,53,0.97)_0%,rgba(12,60,99,0.86)_55%,rgba(0,0,0,0.35)_100%)]" />
+        <span className="absolute bottom-3 right-3 z-10 rounded bg-black/60 px-2 py-1 text-xs text-white/90">
+          ภาพประกอบ
+        </span>
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
           <div className="max-w-2xl">
             <h1 className="text-4xl sm:text-5xl font-extrabold leading-tight">
@@ -54,7 +65,7 @@ export default async function Home() {
               <br />
               Tool, พลาสติกวิศวกรรม และ CNC
             </h1>
-            <p className="mt-5 text-base sm:text-lg text-white/85 font-light max-w-xl leading-relaxed">
+            <p className="mt-5 max-w-xl text-base font-light leading-relaxed text-white/90 sm:text-lg">
               {org.business_name} จำหน่ายสินค้าอุตสาหกรรม เครื่องมือ Tool พลาสติกวิศวกรรม และบริการงาน CNC ครบวงจร
               ตั้งแต่งานกลึง กัด โมลด์ จิ๊ก ฟิกซ์เจอร์ ไปจนถึงชิ้นส่วนเครื่องจักรและอะไหล่แต่งตามสั่ง
             </p>
@@ -76,6 +87,25 @@ export default async function Home() {
         </div>
       </section>
 
+      <section className="bg-white px-4 py-14 sm:px-6 sm:py-16 lg:px-8" aria-labelledby="compare-heading">
+        <div className="mx-auto max-w-5xl rounded-3xl border border-sky-100 bg-sky-50 p-6 sm:p-10">
+          <p className="text-sm font-bold uppercase tracking-wide text-[#06669F]">คู่มือเลือกสินค้า</p>
+          <h2 id="compare-heading" className="mt-2 text-2xl font-extrabold text-[#0C3C63] sm:text-3xl">
+            เปรียบเทียบวัสดุขัดก่อนเลือกซื้อ
+          </h2>
+          <p className="mt-3 max-w-3xl leading-relaxed text-neutral-700">
+            ดูความต่างของ Fiber Disc, Flap Disc, กระดาษทรายน้ำ-แห้ง, PSA, Hook &amp; Loop และชนิดเม็ดขัด
+            แบบ Answer-first เพื่อเลือกให้เหมาะกับวัสดุชิ้นงานและขั้นตอนการผลิต
+          </p>
+          <Link
+            href="/compare"
+            className="mt-6 inline-flex min-h-11 items-center rounded-full bg-[#0879BD] px-6 py-3 font-semibold text-white transition hover:bg-[#06669f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0879BD]"
+          >
+            ดูคู่มือเปรียบเทียบทั้งหมด →
+          </Link>
+        </div>
+      </section>
+
       {/* About + Features */}
       <section className="relative z-10 bg-white -mt-8 rounded-t-[28px] px-4 sm:px-6 lg:px-8 py-14 sm:py-16 shadow-[0_-10px_30px_rgba(0,0,0,0.05)]">
         <div className="max-w-7xl mx-auto">
@@ -90,7 +120,7 @@ export default async function Home() {
           </p>
 
           <h3 className="text-center mt-12 mb-8 text-xl sm:text-2xl font-bold" style={{ color: NAVY }}>
-            ทำไมโรงงานชั้นนำถึงเลือก J NAC?
+            เลือกสินค้าให้ตรงงานกับ JNAC
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {FEATURES.map(([icon, title, desc]) => (
@@ -147,6 +177,6 @@ export default async function Home() {
           </div>
         </div>
       </section>
-    </>
+    </main>
   );
 }

@@ -102,7 +102,7 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
           ]),
         )}
       />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
+      <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         <Breadcrumb items={[{ name: "หน้าแรก", href: "/" }, { name: cat.name_th }]} />
         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-neutral-900">
           {cat.name_th}

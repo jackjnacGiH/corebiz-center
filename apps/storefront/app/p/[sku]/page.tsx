@@ -27,6 +27,8 @@ import { Breadcrumb, StockBadge } from "@/components/ui";
 import AddToCartButton from "@/components/cart/AddToCartButton";
 import SearchBox from "@/components/SearchBox";
 import TierPrice from "@/components/TierPrice";
+import Link from "next/link";
+import { findComparisonsForText } from "@/lib/comparisons";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -54,7 +56,7 @@ export async function generateMetadata({
     title,
     description: desc,
     keywords: seoKeywords(p),
-    alternates: { canonical: `/p/${encodeURIComponent(p.sku)}` },
+    alternates: { canonical: `/p/${encodeURIComponent(p.sku.trim())}` },
     openGraph: {
       title,
       description: desc,
@@ -82,6 +84,20 @@ export default async function ProductPage({
   const faqs = faqOf(p, org);
   const article = productArticle(p, org);
   const articleBody = article.flatMap((s) => [s.h, ...s.body]).join(" ");
+  const relatedComparisons = findComparisonsForText(
+    [
+      p.name_th,
+      p.name_en,
+      p.description_th,
+      p.description_en,
+      p.category_name_th,
+      p.group_name,
+      ...(p.tags ?? []),
+      ...(p.feature_tags ?? []),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
 
   // Prefer the product group for the breadcrumb (matches the shop's group-first
   // navigation), falling back to the category.
@@ -118,6 +134,7 @@ export default async function ProductPage({
           inLanguage: "th-TH",
           articleBody,
           author: { "@type": "Organization", name: org.business_name },
+          ...(p.updated_at ? { dateModified: p.updated_at } : {}),
           publisher: {
             "@type": "Organization",
             name: org.business_name,
@@ -127,7 +144,7 @@ export default async function ProductPage({
         })}
       />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
+      <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         <Breadcrumb items={crumbItems} />
 
         <div className="mb-8 max-w-xl">
@@ -304,6 +321,28 @@ export default async function ProductPage({
             ))}
           </article>
         </section>
+
+        {relatedComparisons.length > 0 && (
+          <section className="mt-16 max-w-4xl rounded-2xl border border-sky-100 bg-sky-50 p-6 sm:p-8" aria-labelledby="related-comparisons">
+            <h2 id="related-comparisons" className="text-2xl font-bold text-[#0C3C63]">
+              คู่มือเปรียบเทียบที่เกี่ยวข้อง
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-neutral-700">
+              ใช้คู่มือเหล่านี้ช่วยเทียบประเภทวัสดุขัดก่อนยืนยันขนาด เบอร์ และสเปกของสินค้ารุ่นจริง
+            </p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              {relatedComparisons.map((comparison) => (
+                <Link
+                  key={comparison.slug}
+                  href={`/compare/${comparison.slug}`}
+                  className="inline-flex min-h-11 items-center rounded-lg bg-white px-4 py-3 font-semibold text-[#0C3C63] shadow-sm ring-1 ring-sky-200 transition hover:bg-sky-100"
+                >
+                  {comparison.shortTitle} →
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </>
   );

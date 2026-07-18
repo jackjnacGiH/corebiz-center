@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { getOrg, ld, faqLd, SHOP, breadcrumbLd } from "@/lib/seo";
 import { Breadcrumb } from "@/components/ui";
 import OpenChatButton from "@/components/OpenChatButton";
@@ -51,7 +52,7 @@ export default async function Knowledge() {
         type="application/ld+json"
         dangerouslySetInnerHTML={ld(breadcrumbLd([{ name: "หน้าแรก", url: SHOP }, { name: "ศูนย์ความรู้ (AIO)", url: `${SHOP}/knowledge` }]))}
       />
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
+      <main id="main-content" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         <Breadcrumb items={[{ name: "หน้าแรก", href: "/" }, { name: "ศูนย์ความรู้ (AIO)" }]} />
         <h1 className="text-2xl sm:text-3xl font-extrabold" style={{ color: NAVY }}>ศูนย์ความรู้ (AIO)</h1>
         <p className="mt-3 text-neutral-600 leading-relaxed">
@@ -70,6 +71,21 @@ export default async function Knowledge() {
           </OpenChatButton>
         </div>
         <p className="mt-2 text-xs text-neutral-400">หรือกดปุ่มแชทมุมขวาล่างของหน้าจอได้ทุกหน้า</p>
+
+        <section className="mt-8 rounded-2xl border border-sky-100 bg-sky-50 p-5 sm:p-6" aria-labelledby="comparison-guides">
+          <h2 id="comparison-guides" className="text-xl font-bold" style={{ color: NAVY }}>
+            เปรียบเทียบก่อนเลือกวัสดุขัด
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-neutral-700">
+            คู่มือเปรียบเทียบแบบสั้นและตารางช่วยเลือก Fiber Disc, Flap Disc, กระดาษทราย และชนิดเม็ดขัดให้ตรงกับงาน
+          </p>
+          <Link
+            href="/compare"
+            className="mt-4 inline-flex min-h-11 items-center rounded-lg bg-[#0879BD] px-5 py-3 font-semibold text-white transition hover:bg-[#06669f]"
+          >
+            ดูหน้าคู่มือเปรียบเทียบ →
+          </Link>
+        </section>
 
         {/* Knowledge / FAQ */}
         <h2 className="mt-10 text-xl font-bold" style={{ color: NAVY }}>ความรู้ &amp; คำถามที่พบบ่อย</h2>
