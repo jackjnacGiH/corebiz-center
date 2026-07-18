@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 import { effectivePrice } from "./format";
-import type { SProduct } from "./products";
+import { normalizeSku, type SProduct } from "./products";
 
 export const SITE = "https://www.jnac.online";
 // Storefront now lives at the site root (was /shop). Kept as a named export so
@@ -54,7 +54,7 @@ export function ld(obj: unknown): { __html: string } {
 }
 
 export function productUrl(sku: string): string {
-  return `${SHOP}/p/${encodeURIComponent(sku)}`;
+  return `${SHOP}/p/${encodeURIComponent(normalizeSku(sku))}`;
 }
 
 export function categoryUrl(slug: string): string {
@@ -103,6 +103,22 @@ export function localBusinessLd(org: OrgInfo) {
   };
 }
 
+export function websiteLd() {
+  return {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "JNAC",
+    alternateName: "J NAC (Thailand) Co., Ltd.",
+    url: SITE,
+    inLanguage: "th-TH",
+    potentialAction: {
+      "@type": "SearchAction",
+      target: `${SITE}/search?q={search_term_string}`,
+      "query-input": "required name=search_term_string",
+    },
+  };
+}
+
 export function productLd(p: SProduct, org: OrgInfo) {
   const price = effectivePrice(p);
   const images = Array.isArray(p.images)
@@ -114,7 +130,7 @@ export function productLd(p: SProduct, org: OrgInfo) {
     name: p.name_th,
     ...(images.length ? { image: images } : {}),
     description: (p.description_th || p.name_th).slice(0, 500),
-    sku: p.sku,
+    sku: normalizeSku(p.sku),
     ...(p.brand ? { brand: { "@type": "Brand", name: p.brand } } : {}),
     ...(p.category_name_th ? { category: p.category_name_th } : {}),
     offers: {

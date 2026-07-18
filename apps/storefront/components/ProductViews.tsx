@@ -21,7 +21,7 @@ const VIEWS: View[] = ["grid", "compact", "list", "table"];
 const STORAGE_KEY = "jnac:productView";
 
 const img1 = (p: SProduct): string | null => (p.images && p.images.length ? p.images[0] : null);
-const href = (p: SProduct) => `/p/${encodeURIComponent(p.sku)}`;
+const href = (p: SProduct) => `/p/${encodeURIComponent(p.sku.trim())}`;
 
 function Stock({ inStock }: { inStock: boolean }) {
   return inStock ? (

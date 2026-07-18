@@ -41,7 +41,7 @@ export default async function HowToOrder() {
         type="application/ld+json"
         dangerouslySetInnerHTML={ld(breadcrumbLd([{ name: "หน้าแรก", url: SHOP }, { name: "วิธีการสั่งซื้อ", url: `${SHOP}/how-to-order` }]))}
       />
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
+      <main id="main-content" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
         <Breadcrumb items={[{ name: "หน้าแรก", href: "/" }, { name: "วิธีการสั่งซื้อ" }]} />
         <h1 className="text-2xl sm:text-3xl font-extrabold" style={{ color: NAVY }}>วิธีการสั่งซื้อ</h1>
         <p className="mt-3 text-neutral-600 leading-relaxed">

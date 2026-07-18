@@ -2,7 +2,7 @@
 
 import { useCart } from "./CartProvider";
 
-const BRAND = "#1696F4";
+const BRAND = "#0879BD";
 
 export default function CartButton() {
   const { count, setOpen } = useCart();
@@ -10,7 +10,7 @@ export default function CartButton() {
     <button
       type="button"
       onClick={() => setOpen(true)}
-      className="relative inline-flex items-center gap-2 rounded-lg px-3 sm:px-4 py-2 text-sm font-semibold text-white transition"
+      className="relative inline-flex min-h-11 items-center gap-2 rounded-lg px-3 sm:px-4 py-2 text-sm font-semibold text-white transition"
       style={{ background: BRAND }}
       aria-label="ตะกร้าใบเสนอราคา"
     >
