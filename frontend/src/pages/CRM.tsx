@@ -1,18 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Users,
-    Mail,
-    Phone,
-    Smartphone,
-    UserCircle,
     Search,
     UserPlus,
-    Edit2,
     Briefcase,
-    Building2,
     User,
-    Store,
-    HelpCircle,
     RefreshCw,
     Upload,
     FileDown,
@@ -27,8 +19,9 @@ import {
     Megaphone,
     LayoutDashboard,
     CalendarClock,
+    ChevronLeft,
+    ChevronRight,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '@/lib/AuthProvider';
@@ -51,39 +44,15 @@ import TierBenefits from '../components/TierBenefits';
 import CustomerCampaign from '../components/CustomerCampaign';
 import CrmDashboard from '../components/CrmDashboard';
 import CustomerSchedule from '../components/CustomerSchedule';
+import CustomerTable from '../components/CustomerTable';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 
-const TIER_STYLES: Record<string, string> = {
-    vip:     'bg-purple-50 text-purple-700 border-purple-200',
-    gold:    'bg-amber-50  text-amber-800  border-amber-300',
-    silver:  'bg-slate-100 text-slate-700  border-slate-300',
-    general: 'bg-neutral-100 text-neutral-700 border-neutral-200',
-};
-
-type CustomerTypeKey = 'company' | 'shop' | 'individual' | 'unspecified';
-
-const TYPE_META: Record<CustomerTypeKey, { label: string; icon: LucideIcon; iconClass: string }> = {
-    company:     { label: 'นิติบุคคล', icon: Briefcase,  iconClass: 'text-blue-600'    },
-    shop:        { label: 'ร้านค้า',   icon: Store,      iconClass: 'text-amber-600'   },
-    individual:  { label: 'บุคคล',     icon: User,       iconClass: 'text-emerald-600' },
-    unspecified: { label: 'ไม่ระบุ',   icon: HelpCircle, iconClass: 'text-neutral-400' },
-};
-
-function typeMeta(t: string | null | undefined) {
-    return t && t in TYPE_META ? TYPE_META[t as CustomerTypeKey] : TYPE_META.unspecified;
-}
+const CUSTOMER_PAGE_SIZE = 100;
+const REALTIME_RELOAD_DELAY_MS = 150;
 
 // Session-lived cache so re-entering CRM shows data instantly (then revalidates
 // in the background). Survives route changes; reset on full reload.
@@ -121,37 +90,73 @@ export default function CRM() {
     const [isImportOpen, setIsImportOpen] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [bulkDeleting, setBulkDeleting] = useState(false);
+    const [page, setPage] = useState(1);
     // Which CRM view is active.
     const [view, setView] = useState<'dashboard' | 'list' | 'rfm' | 'reorder' | 'winback' | 'quotes' | 'nps' | 'referral' | 'tier' | 'campaign' | 'schedule'>('list');
     // Customer id whose 360° profile drawer is open (null = closed).
     const [profileId, setProfileId] = useState<string | null>(null);
+    const loadInFlightRef = useRef<Promise<void> | null>(null);
+    const loadQueuedRef = useRef(false);
+    const realtimeReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    async function load() {
-        setErr(null);
-        // Cold load → show spinner. Warm (cached) → keep showing cached data
-        // while we revalidate silently in the background.
-        if (customersCache === null) setLoading(true);
-        try {
-            const [cs, bs] = await Promise.all([
-                customersApi.list(),
-                customerBranchesApi.listAll(),
-            ]);
-            customersCache = cs;
-            branchesCache = bs;
-            setCustomers(cs);
-            setBranches(bs);
-        } catch (e) {
-            setErr((e as Error).message);
-        } finally {
-            setLoading(false);
+    const load = useCallback(async () => {
+        // All callers share one request cycle. If Realtime fires again while a
+        // refresh is active, run at most one trailing refresh after it finishes.
+        if (loadInFlightRef.current) {
+            loadQueuedRef.current = true;
+            return loadInFlightRef.current;
         }
-    }
+
+        const cycle = (async () => {
+            setErr(null);
+            // Cold load → show spinner. Warm (cached) → keep showing cached data
+            // while we revalidate silently in the background.
+            if (customersCache === null) setLoading(true);
+
+            try {
+                do {
+                    loadQueuedRef.current = false;
+                    const [freshCustomers, freshBranches] = await Promise.all([
+                        customersApi.list(),
+                        customerBranchesApi.listAll(),
+                    ]);
+                    customersCache = freshCustomers;
+                    branchesCache = freshBranches;
+                    setCustomers(freshCustomers);
+                    setBranches(freshBranches);
+                } while (loadQueuedRef.current);
+            } catch (error) {
+                setErr((error as Error).message);
+            } finally {
+                setLoading(false);
+            }
+        })();
+
+        loadInFlightRef.current = cycle;
+        try {
+            await cycle;
+        } finally {
+            if (loadInFlightRef.current === cycle) {
+                loadInFlightRef.current = null;
+            }
+        }
+    }, []);
 
     // Portal link requests awaiting approval (tax-id matched an existing customer).
-    async function loadPendingLinks() {
+    const loadPendingLinks = useCallback(async () => {
         const { data, error } = await (supabase.rpc as CallableFunction)('list_pending_customer_links');
         if (!error) setPendingLinks((data ?? []) as PendingLink[]);
-    }
+    }, []);
+
+    const scheduleRealtimeLoad = useCallback(() => {
+        if (realtimeReloadTimerRef.current) {
+            clearTimeout(realtimeReloadTimerRef.current);
+        }
+        realtimeReloadTimerRef.current = setTimeout(() => {
+            realtimeReloadTimerRef.current = null;
+            void load();
+        }, REALTIME_RELOAD_DELAY_MS);
+    }, [load]);
 
     async function decideLink(contactId: string, approve: boolean) {
         const fn = approve ? 'approve_customer_link' : 'reject_customer_link';
@@ -172,10 +177,20 @@ export default function CRM() {
     useEffect(() => {
         void load();
         void loadPendingLinks();
-    }, []);
-    useRealtimeTable('customers', () => void load());
-    useRealtimeTable('customer_branches', () => void load());
-    useRealtimeTable('customer_contacts', () => void loadPendingLinks());
+    }, [load, loadPendingLinks]);
+
+    useEffect(
+        () => () => {
+            if (realtimeReloadTimerRef.current) {
+                clearTimeout(realtimeReloadTimerRef.current);
+            }
+        },
+        [],
+    );
+
+    useRealtimeTable('customers', scheduleRealtimeLoad);
+    useRealtimeTable('customer_branches', scheduleRealtimeLoad);
+    useRealtimeTable('customer_contacts', loadPendingLinks);
 
     /** customer_id → its branches, already in display order. */
     const branchesByCustomer = useMemo(() => {
@@ -302,6 +317,53 @@ export default function CRM() {
         return { total: customers.length, company, individual, vip };
     }, [customers]);
 
+    const pageCount = Math.max(1, Math.ceil(filtered.length / CUSTOMER_PAGE_SIZE));
+    const currentPage = Math.min(page, pageCount);
+    const visibleCustomers = useMemo(() => {
+        const from = (currentPage - 1) * CUSTOMER_PAGE_SIZE;
+        return filtered.slice(from, from + CUSTOMER_PAGE_SIZE);
+    }, [currentPage, filtered]);
+    const firstVisibleCustomer = filtered.length === 0
+        ? 0
+        : (currentPage - 1) * CUSTOMER_PAGE_SIZE + 1;
+    const lastVisibleCustomer = Math.min(
+        currentPage * CUSTOMER_PAGE_SIZE,
+        filtered.length,
+    );
+
+    useEffect(() => {
+        if (page > pageCount) setPage(pageCount);
+    }, [page, pageCount]);
+
+    const handleEditCustomer = useCallback((customer: Customer) => {
+        setEditing(customer);
+        setIsModalOpen(true);
+    }, []);
+
+    const handleOpenProfile = useCallback((customerId: string) => {
+        setProfileId(customerId);
+    }, []);
+
+    const handleToggleCustomer = useCallback((customerId: string, checked: boolean) => {
+        setSelected((current) => {
+            const next = new Set(current);
+            if (checked) next.add(customerId);
+            else next.delete(customerId);
+            return next;
+        });
+    }, []);
+
+    const handleTogglePage = useCallback((customerIds: string[], checked: boolean) => {
+        setSelected((current) => {
+            const next = new Set(current);
+            for (const customerId of customerIds) {
+                if (checked) next.add(customerId);
+                else next.delete(customerId);
+            }
+            return next;
+        });
+    }, []);
+
     return (
         <div className="animate-fade-in space-y-6">
             <PageHeader
@@ -319,7 +381,10 @@ export default function CRM() {
                                 type="text"
                                 placeholder={t.crm.searchPlaceholder}
                                 value={search}
-                                onChange={(e) => setSearch(e.target.value)}
+                                onChange={(event) => {
+                                    setSearch(event.target.value);
+                                    setPage(1);
+                                }}
                                 className="pl-9 w-full"
                             />
                         </div>
@@ -604,8 +669,9 @@ export default function CRM() {
             {/* Selection action bar */}
             <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-500">
                 <span>
-                    แสดง <span className="text-neutral-900 font-medium">{filtered.length}</span> /{' '}
-                    {customers.length} รายการ
+                    {t.common.found}{' '}
+                    <span className="text-neutral-900 font-medium">{filtered.length}</span> /{' '}
+                    {customers.length} {t.common.items}
                 </span>
                 {selected.size > 0 && (
                     <div className="flex items-center gap-3">
@@ -637,231 +703,57 @@ export default function CRM() {
                 )}
             </div>
 
-            <Card className="gap-0 py-0 overflow-hidden">
-                <CardContent className="px-0 overflow-x-auto">
-                    <Table>
-                        <TableHeader>
-                            <TableRow className="bg-neutral-50 hover:bg-neutral-50">
-                                <TableHead className="w-10 px-3">
-                                    <input
-                                        type="checkbox"
-                                        checked={
-                                            filtered.length > 0 &&
-                                            selected.size === filtered.length
-                                        }
-                                        ref={(el) => {
-                                            if (el) {
-                                                el.indeterminate =
-                                                    selected.size > 0 &&
-                                                    selected.size < filtered.length;
-                                            }
-                                        }}
-                                        onChange={(e) =>
-                                            setSelected(
-                                                e.target.checked
-                                                    ? new Set(filtered.map((c) => c.id))
-                                                    : new Set(),
-                                            )
-                                        }
-                                        className="w-3.5 h-3.5 rounded border-neutral-300 accent-indigo-600"
-                                    />
-                                </TableHead>
-                                <TableHead className="px-5 text-xs font-semibold text-neutral-600 uppercase tracking-wider">
-                                    {t.crm.table.code}
-                                </TableHead>
-                                <TableHead className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">
-                                    {t.crm.table.contact}
-                                </TableHead>
-                                <TableHead className="text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
-                                    {t.crm.table.type}
-                                </TableHead>
-                                <TableHead className="text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
-                                    {t.crm.table.tier}
-                                </TableHead>
-                                <TableHead className="text-right text-xs font-semibold text-neutral-600 uppercase tracking-wider">
-                                    {t.crm.table.totalSpent}
-                                </TableHead>
-                                <TableHead className="text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
-                                    Orders
-                                </TableHead>
-                                <TableHead className="px-5 text-center text-xs font-semibold text-neutral-600 uppercase tracking-wider">
-                                    {t.common.actions}
-                                </TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {loading && (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={8}
-                                        className="text-center text-sm text-neutral-500 py-12"
-                                    >
-                                        {t.common.loading}
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                            {!loading && filtered.length === 0 && (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={8}
-                                        className="text-center text-sm text-neutral-500 py-12"
-                                    >
-                                        {t.common.noData}
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                            {!loading &&
-                                filtered.map((c) => (
-                                    <TableRow
-                                        key={c.id}
-                                        className={cn(selected.has(c.id) && 'bg-indigo-50/50')}
-                                    >
-                                        <TableCell className="w-10 px-3 align-top pt-4">
-                                            <input
-                                                type="checkbox"
-                                                checked={selected.has(c.id)}
-                                                onChange={(e) => {
-                                                    const next = new Set(selected);
-                                                    if (e.target.checked) next.add(c.id);
-                                                    else next.delete(c.id);
-                                                    setSelected(next);
-                                                }}
-                                                className="w-3.5 h-3.5 rounded border-neutral-300 accent-indigo-600"
-                                            />
-                                        </TableCell>
-                                        <TableCell className="px-5 font-mono text-sm align-top pt-4">
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setEditing(c);
-                                                    setIsModalOpen(true);
-                                                }}
-                                                className="text-indigo-600 hover:text-indigo-700 hover:underline focus:outline-none focus:underline cursor-pointer text-left"
-                                                title="คลิกเพื่อแก้ไขข้อมูลลูกค้า"
-                                            >
-                                                {c.code ?? '—'}
-                                            </button>
-                                            {(branchesByCustomer.get(c.id) ?? []).map((b) => (
-                                                <div
-                                                    key={b.id}
-                                                    className="flex items-center gap-1 text-[11px] text-emerald-700 mt-1 font-normal"
-                                                    title={b.branch_name}
-                                                >
-                                                    <Building2 size={10} className="text-emerald-600 flex-shrink-0" />
-                                                    <span className="tabular-nums">{b.branch_code}</span>
-                                                    <span className="text-neutral-500 truncate">— {b.branch_name}</span>
-                                                </div>
-                                            ))}
-                                        </TableCell>
-                                        <TableCell>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setEditing(c);
-                                                    setIsModalOpen(true);
-                                                }}
-                                                className="font-semibold text-neutral-900 hover:text-indigo-600 hover:underline focus:outline-none focus:text-indigo-600 cursor-pointer text-left"
-                                                title="คลิกเพื่อแก้ไขข้อมูลลูกค้า"
-                                            >
-                                                {c.name}
-                                            </button>
-                                            {c.contact_name && (
-                                                <div className="flex items-center gap-1.5 mt-0.5 text-xs text-neutral-600">
-                                                    <UserCircle size={12} className="text-neutral-400" />
-                                                    {c.contact_name}
-                                                </div>
-                                            )}
-                                            <div className="flex flex-col gap-1 mt-1 text-xs text-neutral-500">
-                                                {c.email && (
-                                                    <span className="flex items-center gap-1.5">
-                                                        <Mail
-                                                            size={12}
-                                                            className="text-neutral-400"
-                                                        />
-                                                        {c.email}
-                                                    </span>
-                                                )}
-                                                {c.phone && (
-                                                    <span className="flex items-center gap-1.5 tabular-nums">
-                                                        <Phone
-                                                            size={12}
-                                                            className="text-neutral-400"
-                                                        />
-                                                        {c.phone}
-                                                    </span>
-                                                )}
-                                                {c.mobile && (
-                                                    <span className="flex items-center gap-1.5 tabular-nums">
-                                                        <Smartphone
-                                                            size={12}
-                                                            className="text-neutral-400"
-                                                        />
-                                                        {c.mobile}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-center align-top pt-4">
-                                            {(() => {
-                                                const meta = typeMeta(c.customer_type);
-                                                const Icon = meta.icon;
-                                                return (
-                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border bg-white border-neutral-200 text-neutral-700">
-                                                        <Icon size={11} className={meta.iconClass} />
-                                                        {meta.label}
-                                                    </span>
-                                                );
-                                            })()}
-                                        </TableCell>
-                                        <TableCell className="text-center align-top pt-4">
-                                            <span
-                                                className={cn(
-                                                    'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider border',
-                                                    TIER_STYLES[c.tier] ?? TIER_STYLES.general,
-                                                )}
-                                            >
-                                                {t.crm.tier[c.tier as keyof typeof t.crm.tier] ??
-                                                    c.tier}
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className="text-right align-top pt-4">
-                                            <span className="font-bold text-emerald-700 text-base tabular-nums">
-                                                ฿{Number(c.total_spent).toLocaleString()}
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className="text-center align-top pt-4 text-sm text-neutral-700 tabular-nums">
-                                            {c.total_orders}
-                                        </TableCell>
-                                        <TableCell className="px-5 text-center align-top pt-4">
-                                            <div className="inline-flex items-center gap-1.5">
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => setProfileId(c.id)}
-                                                    title="ดูโปรไฟล์ 360°"
-                                                    className="h-8 gap-1 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                                                >
-                                                    <UserCircle size={13} /> โปรไฟล์
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => {
-                                                        setEditing(c);
-                                                        setIsModalOpen(true);
-                                                    }}
-                                                    className="h-8 gap-1 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                                                >
-                                                    <Edit2 size={13} /> {t.common.edit}
-                                                </Button>
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                        </TableBody>
-                    </Table>
-                </CardContent>
-            </Card>
+            <CustomerTable
+                customers={visibleCustomers}
+                loading={loading}
+                hasFilteredResults={filtered.length > 0}
+                branchesByCustomer={branchesByCustomer}
+                selected={selected}
+                onTogglePage={handleTogglePage}
+                onToggleCustomer={handleToggleCustomer}
+                onEdit={handleEditCustomer}
+                onOpenProfile={handleOpenProfile}
+            />
+
+            {!loading && filtered.length > 0 && (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs text-neutral-500">
+                    <span>
+                        {t.common.showing} {firstVisibleCustomer.toLocaleString()}–{lastVisibleCustomer.toLocaleString()}{' '}
+                        {t.common.of}{' '}
+                        <span className="font-medium text-neutral-900">
+                            {filtered.length.toLocaleString()}
+                        </span>{' '}
+                        {t.common.items}
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPage((current) => Math.max(1, current - 1))}
+                            disabled={currentPage === 1}
+                            className="h-8 gap-1"
+                        >
+                            <ChevronLeft size={14} /> {t.common.previous}
+                        </Button>
+                        <span className="min-w-20 text-center tabular-nums text-neutral-700">
+                            {t.common.page} {currentPage.toLocaleString()} / {pageCount.toLocaleString()}
+                        </span>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                                setPage((current) => Math.min(pageCount, current + 1))
+                            }
+                            disabled={currentPage === pageCount}
+                            className="h-8 gap-1"
+                        >
+                            {t.common.next} <ChevronRight size={14} />
+                        </Button>
+                    </div>
+                </div>
+            )}
             </>
             )}
 
