@@ -1,5 +1,10 @@
 /**
- * line-webhook v28 — suppress generic text after a recent image
+ * line-webhook v32 — send a quote link only for a newly created quote
+ *
+ * rag-chat can safely reuse a prior draft for the same conversation/items.
+ * A reused quote must never be emitted as another quote-link reply.
+ *
+ * v28 — suppress generic text after a recent image
  *
  * v28: LINE sends an image and a generic request such as "ขอราคาหน่อย" as
  * separate events. The image owns the reply for 12 seconds so the text event
@@ -350,14 +355,16 @@ async function callRagChat(
   });
   const data = await res.json();
   const answer = (data?.answer as string) || "";
-  // If the bot's request_quote tool created a draft quote, rag-chat exposes
-  // its code in tool_calls[].result_summary — pull it out so we can send the
-  // customer a public (no-login) link to view + download the PDF.
+  // Only a freshly created quote gets a public link in this reply. A reused
+  // draft may carry an existing_quote_code, but sending it again would make a
+  // follow-up such as "ขอบคุณ" look like a new quotation event.
   let quoteCode: string | null = null;
   const calls = Array.isArray((data as Record<string, unknown>)?.tool_calls)
     ? (data as { tool_calls: Array<Record<string, unknown>> }).tool_calls : [];
   for (const c of calls) {
-    const m = /"quote_code":\s*"(QT-[^"]+)"/.exec(String(c?.result_summary ?? ""));
+    const summary = String(c?.result_summary ?? "");
+    if (!/"quote_created":true/.test(summary)) continue;
+    const m = /"quote_code":\s*"(QT-[^"]+)"/.exec(summary);
     if (m) { quoteCode = m[1]; break; }
   }
   return { answer, quoteCode };
