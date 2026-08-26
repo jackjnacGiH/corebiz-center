@@ -17,7 +17,6 @@
 import {
     useCallback,
     useEffect,
-    useMemo,
     useRef,
     useState,
     type ChangeEvent,
@@ -221,6 +220,23 @@ function timeAgo(iso: string | null): string {
     return new Date(iso).toLocaleDateString('th-TH');
 }
 
+function hasNewerCustomerActivity(
+    conversation: ChatConversation,
+    readThrough: string | null,
+): boolean {
+    if (!conversation.last_customer_message_at) return false;
+    if (!readThrough) return true;
+    return new Date(conversation.last_customer_message_at).getTime() > new Date(readThrough).getTime();
+}
+
+function newestCustomerMessageAt(messages: ChatMessage[]): string | null {
+    return messages.reduce<string | null>((latest, message) => (
+        message.sender_type === 'customer' && (!latest || message.created_at > latest)
+            ? message.created_at
+            : latest
+    ), null);
+}
+
 export default function Chat() {
     const { t } = useLanguage();
     const { profile } = useAuth();
@@ -240,39 +256,56 @@ export default function Chat() {
     const [listErr, setListErr] = useState<string | null>(null);
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
+    const [readThroughByConversation, setReadThroughByConversation] = useState<Record<string, string | null>>({});
 
     // Read conversation ID from URL parameters and clear parameter to clean up URL
     useEffect(() => {
         if (urlId) {
+            setSelectedConversation(null);
             setSelectedId(urlId);
             setSearchParams({}, { replace: true });
         }
     }, [urlId, setSearchParams]);
 
-    // Ensure the selected conversation is loaded in the list (even if filtered out)
+    // Keep the selected thread separate from the filtered inbox list. Once an
+    // unread chat is marked as read it must disappear from the left-hand
+    // "ยังไม่อ่าน" list while its open thread remains visible on the right.
     useEffect(() => {
-        if (selectedId && conversations.length > 0 && !conversations.some((c) => c.id === selectedId)) {
-            let cancelled = false;
-            void (async () => {
-                try {
-                    const { data } = await supabase
-                        .from('chat_conversations')
-                        .select('*')
-                        .eq('id', selectedId)
-                        .single();
-                    if (data && !cancelled) {
-                        setConversations((prev) => {
-                            if (prev.some((c) => c.id === selectedId)) return prev;
-                            return [data as ChatConversation, ...prev];
-                        });
-                    }
-                } catch {
-                    // ignore
-                }
-            })();
-            return () => { cancelled = true; };
+        if (!selectedId) {
+            setSelectedConversation(null);
+            return;
         }
-    }, [selectedId, conversations]);
+        const listed = conversations.find((c) => c.id === selectedId);
+        if (listed) {
+            const hasReadThrough = Object.prototype.hasOwnProperty.call(readThroughByConversation, listed.id);
+            const readThrough = readThroughByConversation[listed.id] ?? null;
+            setSelectedConversation((current) => (
+                hasReadThrough && listed.status === 'open' && !hasNewerCustomerActivity(listed, readThrough)
+                    ? current?.id === listed.id
+                        ? current
+                        : { ...listed, unread_count: 0, status: 'assigned' }
+                    : listed
+            ));
+            return;
+        }
+        if (selectedConversation?.id === selectedId) return;
+
+        let cancelled = false;
+        void (async () => {
+            try {
+                const { data } = await supabase
+                    .from('chat_conversations')
+                    .select('*')
+                    .eq('id', selectedId)
+                    .single();
+                if (data && !cancelled) setSelectedConversation(data as ChatConversation);
+            } catch {
+                // ignore
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [selectedId, conversations, selectedConversation?.id, readThroughByConversation]);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [loadingMsgs, setLoadingMsgs] = useState(false);
     const [msgErr, setMsgErr] = useState<string | null>(null);
@@ -364,6 +397,30 @@ export default function Chat() {
         return () => { void supabase.removeChannel(ch); };
     }, [loadConvs]);
 
+    const markConversationRead = useCallback(async (
+        conversationId: string,
+        lastSeenCustomerAt: string | null,
+    ) => {
+        const marked = await chatInboxApi.markRead(conversationId, lastSeenCustomerAt);
+        if (!marked) return false;
+        const asRead = (conversation: ChatConversation): ChatConversation => ({
+            ...conversation,
+            unread_count: 0,
+            status: conversation.status === 'open' ? 'assigned' : conversation.status,
+        });
+        setReadThroughByConversation((current) => ({
+            ...current,
+            [conversationId]: lastSeenCustomerAt,
+        }));
+        setSelectedConversation((current) => (
+            current?.id === conversationId ? asRead(current) : current
+        ));
+        setConversations((current) => current.map((conversation) => (
+            conversation.id === conversationId ? asRead(conversation) : conversation
+        )));
+        return true;
+    }, []);
+
     // Load messages for selected conversation + mark as read
     useEffect(() => {
         if (!selectedId) {
@@ -373,19 +430,32 @@ export default function Chat() {
         let cancelled = false;
         setLoadingMsgs(true);
         setMsgErr(null);
-        chatInboxApi
-            .listMessages(selectedId)
-            .then((rows) => {
-                if (!cancelled) {
+        void (async () => {
+            try {
+                let rows = await chatInboxApi.listMessages(selectedId);
+                if (cancelled) return;
+                setMessages(rows);
+
+                // Clear the badge and move an open conversation out of the
+                // "ยังไม่อ่าน" list as soon as the admin opens it.
+                let marked = await markConversationRead(selectedId, newestCustomerMessageAt(rows));
+                if (!marked && !cancelled) {
+                    // A customer message landed between the first snapshot and
+                    // the conditional update. Re-sync once so that message is
+                    // visible before advancing the read-through watermark.
+                    rows = await chatInboxApi.listMessages(selectedId);
+                    if (cancelled) return;
                     setMessages(rows);
-                    // Clear unread badge when admin opens the thread
-                    void chatInboxApi.markRead(selectedId);
+                    marked = await markConversationRead(selectedId, newestCustomerMessageAt(rows));
                 }
-            })
-            .catch((e) => { if (!cancelled) setMsgErr((e as Error).message); })
-            .finally(() => { if (!cancelled) setLoadingMsgs(false); });
+            } catch (e) {
+                if (!cancelled) setMsgErr((e as Error).message);
+            } finally {
+                if (!cancelled) setLoadingMsgs(false);
+            }
+        })();
         return () => { cancelled = true; };
-    }, [selectedId]);
+    }, [selectedId, markConversationRead]);
 
     // Realtime: messages for selected conversation
     useEffect(() => {
@@ -407,7 +477,9 @@ export default function Chat() {
                     // on any customer message. But the admin is looking at THIS
                     // thread right now, so clear its unread badge immediately.
                     if (row.sender_type === 'customer') {
-                        void chatInboxApi.markRead(selectedId);
+                        void markConversationRead(selectedId, row.created_at).catch((e) => {
+                            setMsgErr((e as Error).message);
+                        });
                     }
                 },
             )
@@ -427,7 +499,7 @@ export default function Chat() {
             )
             .subscribe();
         return () => { void supabase.removeChannel(ch); };
-    }, [selectedId]);
+    }, [selectedId, markConversationRead]);
 
     // Auto-scroll thread to bottom on new messages
     useEffect(() => {
@@ -437,44 +509,16 @@ export default function Chat() {
         });
     }, [messages]);
 
-    const selectedConv = useMemo(
-        () => conversations.find((c) => c.id === selectedId) ?? null,
-        [conversations, selectedId],
-    );
-
-    // Deferred auto-transition: when admin opens an "ยังไม่อ่าน" (open)
-    // thread, we DON'T flip it to "กำลังดำเนินการ" immediately, because
-    // Boss Jack wants the conversation to stay visible in the ยังไม่อ่าน
-    // tab while he's still replying. Instead we stash the conversation id
-    // in a ref, and only flush the queued transitions when the admin
-    // switches to a different status filter (or to อินบ็อกซ์ / เสร็จสิ้น).
-    const pendingAssignRef = useRef<Set<string>>(new Set());
-
-    // Stash: any time the selected conv is 'open', queue it.
-    useEffect(() => {
-        if (!selectedId || selectedConv?.status !== 'open') return;
-        pendingAssignRef.current.add(selectedId);
-    }, [selectedId, selectedConv?.status]);
-
-    // Flush: when the status FILTER itself changes (admin clicked a tab),
-    // promote every queued conversation to 'assigned' in one go, then
-    // refresh the list. Excluded from deps intentionally — we want this
-    // to fire *only* when the user picks a different tab, not when
-    // loadConvs is recreated.
-    useEffect(() => {
-        if (pendingAssignRef.current.size === 0) return;
-        const ids = Array.from(pendingAssignRef.current);
-        pendingAssignRef.current = new Set();
-        void (async () => {
-            try {
-                await Promise.all(ids.map((id) => chatInboxApi.setStatus(id, 'assigned')));
-                void loadConvs();
-            } catch {
-                // no-op — admin can still move the status manually
-            }
-        })();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [status]);
+    const selectedConv = selectedConversation;
+    const visibleConversations = status === 'open'
+        ? conversations.filter((conversation) => {
+            if (!Object.prototype.hasOwnProperty.call(readThroughByConversation, conversation.id)) return true;
+            return hasNewerCustomerActivity(
+                conversation,
+                readThroughByConversation[conversation.id] ?? null,
+            );
+        })
+        : conversations;
 
     // Drop any queued attachments when switching conversations. Only blob
     // previews (local files) need revoking; hosted product URLs don't.
@@ -701,6 +745,18 @@ export default function Chat() {
     async function handleMarkAllRead() {
         try {
             await chatInboxApi.markAllRead();
+            setReadThroughByConversation((current) => {
+                const next = { ...current };
+                for (const conversation of conversations) {
+                    if (conversation.status === 'open') {
+                        next[conversation.id] = conversation.last_customer_message_at ?? null;
+                    }
+                }
+                return next;
+            });
+            setSelectedConversation((current) => current?.status === 'open'
+                ? { ...current, unread_count: 0, status: 'assigned' }
+                : current);
             void loadConvs();
         } catch (e) {
             alert((e as Error).message);
@@ -709,12 +765,18 @@ export default function Chat() {
 
     async function handleSetStatus(s: ChatStatus) {
         if (!selectedId) return;
-        // Manual override wins — drop this id from the deferred queue so
-        // we don't redundantly setStatus('assigned') after the admin just
-        // picked a different status from the thread toggle.
-        pendingAssignRef.current.delete(selectedId);
         try {
             await chatInboxApi.setStatus(selectedId, s);
+            if (s === 'open') {
+                setReadThroughByConversation((current) => {
+                    const next = { ...current };
+                    delete next[selectedId];
+                    return next;
+                });
+            }
+            setSelectedConversation((current) => current?.id === selectedId
+                ? { ...current, status: s }
+                : current);
             void loadConvs();
         } catch (e) {
             alert((e as Error).message);
@@ -811,7 +873,7 @@ export default function Chat() {
 
                     {/* List body */}
                     <div className="flex-1 overflow-y-auto">
-                        {loadingList && conversations.length === 0 && (
+                        {loadingList && visibleConversations.length === 0 && (
                             <div className="p-6 text-center text-xs text-neutral-500">
                                 <Loader2 size={14} className="animate-spin inline mr-1" />
                                 {t.chat.loading}
@@ -823,15 +885,18 @@ export default function Chat() {
                                 {listErr}
                             </div>
                         )}
-                        {!loadingList && conversations.length === 0 && !listErr && (
+                        {!loadingList && visibleConversations.length === 0 && !listErr && (
                             <div className="p-6 text-center text-xs text-neutral-400">
                                 {t.chat.emptyList}
                             </div>
                         )}
-                        {conversations.map((c) => (
+                        {visibleConversations.map((c) => (
                             <button
                                 key={c.id}
-                                onClick={() => setSelectedId(c.id)}
+                                onClick={() => {
+                                    setSelectedConversation(c);
+                                    setSelectedId(c.id);
+                                }}
                                 className={cn(
                                     'w-full text-left p-3 border-b border-neutral-100 hover:bg-neutral-50 transition',
                                     selectedId === c.id && 'bg-indigo-50 border-l-2 border-l-indigo-500',
