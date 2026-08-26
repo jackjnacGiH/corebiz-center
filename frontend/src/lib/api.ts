@@ -3130,12 +3130,42 @@ export const chatInboxApi = {
     if (error) throw error;
   },
 
-  async markRead(conversationId: string): Promise<void> {
-    const { error } = await supabase
+  async markRead(conversationId: string, lastSeenCustomerAt: string | null): Promise<boolean> {
+    // `last_customer_message_at` predates the current generated DB types.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    // `open` is the backing status for the "ยังไม่อ่าน" tab. Reading an open
+    // conversation must therefore clear the badge AND move it to `assigned`.
+    // The customer-message timestamp is a read-through watermark: if a newer
+    // message lands concurrently, neither update matches and its unread state
+    // is preserved.
+    let transitionQuery = db
+      .from('chat_conversations')
+      .update({ unread_count: 0, status: 'assigned' })
+      .eq('id', conversationId)
+      .eq('status', 'open');
+    transitionQuery = lastSeenCustomerAt
+      ? transitionQuery.eq('last_customer_message_at', lastSeenCustomerAt)
+      : transitionQuery.is('last_customer_message_at', null);
+    const { data: transitioned, error: transitionError } = await transitionQuery
+      .select('id')
+      .maybeSingle();
+    if (transitionError) throw transitionError;
+    if (transitioned) return true;
+
+    // The thread may already be assigned/resolved. Clear only its badge and
+    // guard against a concurrent customer message that has just reopened it.
+    let clearQuery = db
       .from('chat_conversations')
       .update({ unread_count: 0 })
-      .eq('id', conversationId);
+      .eq('id', conversationId)
+      .neq('status', 'open');
+    clearQuery = lastSeenCustomerAt
+      ? clearQuery.eq('last_customer_message_at', lastSeenCustomerAt)
+      : clearQuery.is('last_customer_message_at', null);
+    const { data: cleared, error } = await clearQuery.select('id').maybeSingle();
     if (error) throw error;
+    return Boolean(cleared);
   },
 
   /** Clear the unread badge on every conversation at once ("อ่านแล้วทั้งหมด").
