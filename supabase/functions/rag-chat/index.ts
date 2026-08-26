@@ -1,5 +1,13 @@
 /**
- * rag-chat v51 — family and product-type locked alternatives
+ * rag-chat v61 — idempotent chatbot quote requests
+ *
+ * A quote request is now keyed by conversation + exact SKU/quantity set in a
+ * database transaction. Repeated follow-up messages or simultaneous LINE
+ * image events reuse the existing draft instead of consuming new QT numbers.
+ * Image-only events, acknowledgements, and questions about how to order are
+ * also barred from creating a quote.
+ *
+ * v51 — family and product-type locked alternatives
  *
  * v50: product suggestions are filtered before reaching the LLM. A recognised
  * product family must match exactly; unknown families need a normalized-name
@@ -217,7 +225,7 @@ const TOOL_DEFINITIONS = [
       { name: "get_group_members", description: "SKUs in a product group.", parameters: { type: "object", properties: { group_name: { type: "string" } }, required: ["group_name"] } },
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
       { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer shows buying intent, asks to be contacted, OR asks anything the bot cannot answer/verify itself (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
-      { name: "request_quote", description: "Create a REAL draft quotation (ใบเสนอราคา) in the system and notify the JNAC sales team. Use when the customer wants a quote for specific items/quantities. Pass EXACT SKUs from find_products/get_product_detail results — if you don't have the SKU yet, call find_products first. Returns quote_code (e.g. QT-01000018): tell the customer this number and that staff will confirm the final price and contact them. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
+      { name: "request_quote", description: "Create one REAL draft quotation for a DIRECT customer request with exact items and quantities. Pass EXACT SKUs from find_products/get_product_detail results. NEVER call for a thank-you, question about how to order, or an image/document by itself. The system reuses an existing draft with identical items in the same chat; only tell the customer a quote_code when the tool returns quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
     ],
   },
 ];
@@ -624,6 +632,8 @@ async function dispatchTool(
   send: (event: Record<string, unknown>) => void,
   channel: string,
   conversationId: string | null,
+  userQuery: string,
+  hasImages: boolean,
 ): Promise<unknown> {
   try {
     switch (name) {
@@ -642,13 +652,26 @@ async function dispatchTool(
       case "get_group_members":   return await getGroupMembers(admin, String(args.group_name ?? ""));
       case "list_categories":     return await listCategories(admin);
       case "capture_lead":        return await captureLead(admin, args, channel, conversationId);
-      case "request_quote":       return await requestQuote(admin, args, channel, conversationId);
+      case "request_quote":       return await requestQuote(admin, args, channel, conversationId, userQuery, hasImages);
       default: return { error: `Unknown tool: ${name}` };
     }
   } catch (e) { return { error: (e as Error).message ?? String(e) }; }
 }
 
 const cleanStr = (v: unknown) => { const t = (v == null ? "" : String(v)).trim(); return t || null; };
+
+function quoteCreationBlockReason(userQuery: string, hasImages: boolean): string | null {
+  if (hasImages) return "image_or_document";
+  const text = userQuery.trim();
+  if (!text) return "empty_message";
+  if (/^(?:ขอบคุณ|ขอบใจ|thanks?|thank\s+you)(?:\s*(?:มาก|มากครับ|มากค่ะ|ครับ|ค่ะ|นะ|นะครับ|นะคะ|so\s+much|very\s+much|again|!|🙏|😊|🙂))*$/iu.test(text)) {
+    return "acknowledgement";
+  }
+  if (/(?:สั่งสินค้า|สั่งของ).{0,16}(?:ยังไง|อย่างไร|วิธี)|(?:วิธี|ขั้นตอน).{0,16}(?:สั่งสินค้า|สั่งของ)/iu.test(text)) {
+    return "ordering_information";
+  }
+  return null;
+}
 
 async function captureLead(
   admin: SupabaseClient,
@@ -677,24 +700,35 @@ async function captureLead(
   return { ok: true, saved: true, message: "บันทึกข้อมูลแล้ว ทีมงานขายจะติดต่อกลับโดยเร็ว" };
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
-
-/** Bot tool: create a REAL draft quote (same server-side pricing as the
- *  storefront cart) + an agent-queue task referencing it. Falls back to a
- *  queue-task-only request when no SKU can be resolved. */
+/**
+ * Create or reuse a real draft quote. The database owns the operation so two
+ * concurrent webhook events cannot each create a document for the same chat
+ * and exact item set.
+ */
 async function requestQuote(
   admin: SupabaseClient,
   args: Record<string, unknown>,
   channel: string,
   conversationId: string | null,
+  userQuery: string,
+  hasImages: boolean,
 ): Promise<unknown> {
+  const blockReason = quoteCreationBlockReason(userQuery, hasImages);
+  if (blockReason) {
+    return {
+      ok: true, saved: false, skipped: true, quote_created: false, quote_reused: false,
+      reason: blockReason,
+      message: "ข้อความนี้ไม่ใช่คำขอออกใบเสนอราคาใหม่โดยตรง — ห้ามสร้างใบเสนอราคาใหม่",
+    };
+  }
+
   const name = cleanStr(args.name), phone = cleanStr(args.phone), note = cleanStr(args.note);
 
-  // Normalize items: structured [{sku, qty}] (new) or legacy free text.
+  // Normalize structured [{sku, qty}] before it reaches the atomic database RPC.
   const reqItems: Array<{ sku: string; qty: number }> = [];
   if (Array.isArray(args.items)) {
     for (const it of args.items as Array<Record<string, unknown>>) {
-      const sku = String(it?.sku ?? "").trim();
+      const sku = String(it?.sku ?? "").trim().toUpperCase();
       const qty = Math.max(1, Math.floor(Number(it?.qty) || 1));
       if (sku) reqItems.push({ sku, qty });
     }
@@ -703,82 +737,52 @@ async function requestQuote(
     ? reqItems.map((i) => `${i.sku} x${i.qty}`).join(", ")
     : cleanStr(args.items);
 
-  // Try to build the actual draft quote from exact SKUs.
-  let quoteCode: string | null = null;
-  let quoteId: string | null = null;
-  let total = 0;
-  if (reqItems.length > 0) {
-    const wanted = new Map<string, number>();
-    for (const it of reqItems) wanted.set(it.sku, (wanted.get(it.sku) ?? 0) + it.qty);
-    const { data: products } = await admin
-      .from("products")
-      .select("id, sku, name_th, unit, price, discount_value, discount_type")
-      .in("sku", [...wanted.keys()])
-      .eq("status", "active");
-    const bySku = new Map(((products ?? []) as Array<Record<string, unknown>>).map((p) => [String(p.sku), p]));
-    const rows: Array<Record<string, unknown>> = [];
-    let subtotal = 0;
-    for (const [sku, qty] of wanted) {
-      const p = bySku.get(sku);
-      if (!p) continue;
-      const { effective } = computeEffectivePrice(p as { price: unknown; discount_value: unknown; discount_type: unknown });
-      const lineTotal = r2(effective * qty);
-      subtotal += lineTotal;
-      rows.push({ product_id: p.id, sku: p.sku, product_name: p.name_th, quantity: qty, unit_price: effective, unit: p.unit ?? null, discount: 0, total: lineTotal });
+  if (conversationId && reqItems.length > 0) {
+    const { data, error } = await admin.rpc("create_or_reuse_bot_quote", {
+      p_conversation_id: conversationId,
+      p_channel: channel,
+      p_items: reqItems,
+      p_name: name,
+      p_phone: phone,
+      p_note: note,
+    });
+    if (error) throw error;
+    const quote = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+    if (quote?.items_resolved === true && quote.quote_created === true && typeof quote.quote_code === "string") {
+      return {
+        ok: true, saved: true, quote_created: true, quote_reused: false,
+        quote_code: quote.quote_code, estimated_total_incl_vat: Number(quote.quote_total ?? 0),
+        message: `สร้างใบเสนอราคาฉบับร่างเลขที่ ${quote.quote_code} แล้ว — แจ้งเลขที่นี้กับลูกค้า และบอกว่าทีมงานจะตรวจสอบ/ยืนยันราคาสุทธิแล้วติดต่อกลับโดยเร็ว`,
+      };
     }
-    // Only create the document when EVERY requested SKU resolved — a partial
-    // quote with silently missing lines would mislead the customer.
-    if (rows.length > 0 && rows.length === wanted.size) {
-      subtotal = r2(subtotal);
-      const vat = r2(subtotal * 0.07);
-      total = r2(subtotal + vat);
-      const validUntil = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-      const notes =
-        "🤖 คำขอใบเสนอราคาจากแชทบอท (เอย)\n" +
-        [name && `ชื่อผู้ติดต่อ: ${name}`, phone && `โทร: ${phone}`,
-         note && `หมายเหตุ: ${note}`, `ช่องทาง: ${channel}`].filter(Boolean).join("\n");
-      const { data: q } = await admin
-        .from("quotes")
-        .insert({ customer_id: null, status: "draft", subtotal, discount: 0, vat, total, valid_until: validUntil, notes })
-        .select("id, code")
-        .single();
-      if (q) {
-        quoteId = (q as { id: string }).id;
-        quoteCode = (q as { code: string }).code;
-        await admin.from("quote_items").insert(rows.map((r) => ({ ...r, quote_id: quoteId })));
-      }
+    if (quote?.items_resolved === true && quote.quote_reused === true && typeof quote.quote_code === "string") {
+      return {
+        ok: true, saved: true, quote_created: false, quote_reused: true,
+        existing_quote_code: quote.quote_code,
+        message: `พบใบเสนอราคาฉบับร่าง ${quote.quote_code} สำหรับรายการและจำนวนเดิมแล้ว — ห้ามสร้างใบเสนอราคาใหม่หรือบอกว่าพึ่งสร้างใหม่`,
+      };
     }
   }
 
+  // No document is created for unresolved items. Keep one human task per chat.
   const summary = [itemsText && `รายการ: ${itemsText}`, name && `ชื่อ: ${name}`,
     phone && `ติดต่อ: ${phone}`, note && `โน้ต: ${note}`].filter(Boolean).join(" · ");
   await admin.rpc("agent_propose", {
     p_category: "sales",
     p_kind: "sales.quote_request",
-    p_title: quoteCode
-      ? `ใบเสนอราคาจากแชทบอท ${quoteCode} — รอตรวจสอบ`
-      : `ขอใบเสนอราคาจากแชท${itemsText ? `: ${itemsText.slice(0, 60)}` : ""}`,
+    p_title: `ขอใบเสนอราคาจากแชท${itemsText ? `: ${itemsText.slice(0, 60)}` : ""}`,
     p_summary: summary || "ลูกค้าขอใบเสนอราคาจากแชท",
-    p_recommendation: quoteCode
-      ? `บอทสร้างใบเสนอราคาฉบับร่าง ${quoteCode} ให้แล้ว — ตรวจสอบราคา/ส่วนลด แล้วติดต่อยืนยันกับลูกค้า`
-      : "แนะนำให้จัดทำใบเสนอราคาและติดต่อยืนยันกับลูกค้า",
-    p_payload: { items: itemsText, structured_items: reqItems, quote_id: quoteId, quote_code: quoteCode, name, phone, note, channel, conversation_id: conversationId },
-    p_action_kind: quoteCode ? "none" : "convert_quote",
+    p_recommendation: "แนะนำให้จัดทำใบเสนอราคาและติดต่อยืนยันกับลูกค้า",
+    p_payload: { items: itemsText, structured_items: reqItems, quote_id: null, quote_code: null, name, phone, note, channel, conversation_id: conversationId },
+    p_action_kind: "convert_quote",
     p_requires_approval: true,
     p_priority: 1,
-    p_related_type: quoteCode ? "quote" : (conversationId ? "conversation" : null),
-    p_related_id: quoteId ?? conversationId,
-    p_dedupe_key: quoteCode ? `sales.quote_request.${quoteId}` : (conversationId ? `sales.quote_request.${conversationId}` : null),
+    p_related_type: conversationId ? "conversation" : null,
+    p_related_id: conversationId,
+    p_dedupe_key: conversationId ? `sales.quote_request.unresolved.${conversationId}` : null,
     p_source: "bot",
   });
-
-  if (quoteCode) {
-    return {
-      ok: true, saved: true, quote_code: quoteCode, estimated_total_incl_vat: total,
-      message: `สร้างใบเสนอราคาฉบับร่างเลขที่ ${quoteCode} แล้ว — แจ้งเลขที่นี้กับลูกค้า และบอกว่าทีมงานจะตรวจสอบ/ยืนยันราคาสุทธิแล้วติดต่อกลับโดยเร็ว`,
-    };
-  }
-  return { ok: true, saved: true, message: "รับเรื่องขอใบเสนอราคาแล้ว ทีมงานจะจัดทำและติดต่อกลับโดยเร็ว" };
+  return { ok: true, saved: true, quote_created: false, quote_reused: false, message: "รับเรื่องขอใบเสนอราคาแล้ว ทีมงานจะจัดทำและติดต่อกลับโดยเร็ว" };
 }
 
 const PERSONA_HARDCODED_FALLBACK = `คุณคือ "เอย" พนักงาน J NAC Thailand หัวหน้าคือ คุณเชอร์รี่`;
@@ -1064,7 +1068,9 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 🤝 เก็บ LEAD / ใบเสนอราคา (สำคัญมาก — โอกาสปิดการขาย)
 • ลูกค้าสนใจซื้อจริง / ถามซื้อจำนวนมาก / ฝากเบอร์ / ขอให้ติดต่อกลับ / ถามสิ่งที่เอยตอบไม่ได้ → เรียก capture_lead ทันที
-• ลูกค้าขอใบเสนอราคา + ระบุสินค้า/จำนวนชัดเจน → เรียก request_quote โดยใส่ SKU จริง (จากผล find_products — ถ้ายังไม่รู้ SKU ให้ค้นก่อน) ระบบจะสร้าง "ใบเสนอราคาฉบับร่างจริง" และคืน quote_code เช่น QT-01000018 → แจ้งเลขที่นี้กับลูกค้าเสมอ พร้อมบอกว่าทีมงานจะยืนยันราคาสุทธิ/ส่วนลดแล้วติดต่อกลับ
+• เรียก request_quote ได้เฉพาะเมื่อลูกค้าขอ "ออกใบเสนอราคา" โดยตรง และยืนยันสินค้า+จำนวนชัดเจนเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)
+• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน
+• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
 • ถ้าลูกค้าไม่ระบุสินค้าแน่ชัด/หา SKU ไม่ได้ → ใช้ capture_lead แทน อย่าเดา SKU
 • tool เหล่านี้ ไม่ได้ ส่งข้อความหาลูกค้า แค่บันทึกในระบบ+แจ้งทีมขาย JNAC ภายใน
 • เรียก capture_lead แค่ครั้งเดียวต่อบทสนทนา
@@ -1095,7 +1101,8 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 
 🤝 CAPTURE LEADS / QUOTES (sales opportunity)
 • Buying intent / bulk / leaves a phone / asks to be contacted / asks anything you cannot answer → call capture_lead.
-• Asks for a quote with specific items+quantities → call request_quote with EXACT SKUs (find_products first if needed). It creates a REAL draft quote and returns quote_code — ALWAYS tell the customer that number, and that staff will confirm the final price and follow up.
+• Call request_quote only for a DIRECT request to issue a quote with confirmed specific items+quantities. Never call it for a thank-you, an ordering-process question, or an image/document alone.
+• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
 • Items unclear / SKU unresolved → capture_lead instead; never guess SKUs.
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
 • Call capture_lead only ONCE per conversation. Never promise special prices yourself.`;
@@ -1627,7 +1634,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     for (const tc of r.toolCalls) { send({ type: "tool_call", name: tc.name, args: tc.args }); }
     const responseParts = await Promise.all(
       r.toolCalls.map(async (call) => {
-        const result = await dispatchTool(admin, call.name, call.args, send, channel, conversationId);
+        const result = await dispatchTool(admin, call.name, call.args, send, channel, conversationId, query, images.length > 0);
         allToolCalls.push({ name: call.name, args: call.args, result_summary: JSON.stringify(result).slice(0, 200) });
         return { functionResponse: { name: call.name, response: result } };
       }),
