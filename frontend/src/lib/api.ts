@@ -3692,6 +3692,8 @@ export interface StaffProfile {
 export interface CustomerSnapshot {
   id: string;
   name: string;
+  tax_id: string | null;
+  billing_address: Record<string, unknown> | null;
   tier: 'general' | 'silver' | 'gold' | 'vip';
   total_orders: number;
   total_spent: number;
@@ -3766,7 +3768,7 @@ export const chatProfileApi = {
   async getCustomerSnapshot(customerId: string): Promise<CustomerSnapshot | null> {
     const { data, error } = await supabase
       .from('customers')
-      .select('id, name, tier, total_orders, total_spent')
+      .select('id, name, tax_id, billing_address, tier, total_orders, total_spent')
       .eq('id', customerId)
       .maybeSingle();
     if (error) throw error;
