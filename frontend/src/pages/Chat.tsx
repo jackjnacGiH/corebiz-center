@@ -48,13 +48,17 @@ import {
     FileText,
     Reply,
     CheckCheck,
+    Building2,
+    BadgeCheck,
 } from 'lucide-react';
 import {
     chatInboxApi,
+    chatProfileApi,
     type ChatChannel,
     type ChatConversation,
     type ChatMessage,
     type ChatStatus,
+    type CustomerSnapshot,
 } from '../lib/api';
 import { uploadChatImage, validateImage, uploadChatFile } from '../lib/storage';
 import { supabase } from '../lib/supabase';
@@ -291,6 +295,8 @@ export default function Chat() {
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
+    const [quoteCustomerPreview, setQuoteCustomerPreview] = useState<CustomerSnapshot | null>(null);
+    const [showQuoteCustomerPreview, setShowQuoteCustomerPreview] = useState(false);
     const [readThroughByConversation, setReadThroughByConversation] = useState<Record<string, string | null>>({});
 
     // Read conversation ID from URL parameters and clear parameter to clean up URL
@@ -341,6 +347,19 @@ export default function Chat() {
         return () => { cancelled = true; };
     }, [selectedId, conversations, selectedConversation?.id, readThroughByConversation]);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+    useEffect(() => {
+        setShowQuoteCustomerPreview(false);
+        if (!selectedConversation?.customer_id) {
+            setQuoteCustomerPreview(null);
+            return;
+        }
+        let cancelled = false;
+        void chatProfileApi.getCustomerSnapshot(selectedConversation.customer_id)
+            .then((customer) => { if (!cancelled) setQuoteCustomerPreview(customer); })
+            .catch(() => { if (!cancelled) setQuoteCustomerPreview(null); });
+        return () => { cancelled = true; };
+    }, [selectedConversation?.customer_id]);
     const [loadingMsgs, setLoadingMsgs] = useState(false);
     const [loadingOlderMsgs, setLoadingOlderMsgs] = useState(false);
     const [hasOlderMessages, setHasOlderMessages] = useState(false);
@@ -647,6 +666,8 @@ export default function Chat() {
     }, [messages]);
 
     const selectedConv = selectedConversation;
+    const linkedTaxId = (quoteCustomerPreview?.tax_id ?? '').replace(/\D/g, '');
+    const quoteCustomerReady = Boolean(selectedConv?.customer_id && linkedTaxId.length === 13);
     const visibleConversations = status === 'open'
         ? conversations.filter((conversation) => {
             if (!Object.prototype.hasOwnProperty.call(readThroughByConversation, conversation.id)) return true;
@@ -1188,6 +1209,20 @@ export default function Chat() {
                                         <span>·</span>
                                         <span>{statusLabel(selectedConv.status, t.chat)}</span>
                                     </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowQuoteCustomerPreview(true)}
+                                        className={cn(
+                                            'mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors',
+                                            quoteCustomerReady
+                                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                                : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100',
+                                        )}
+                                        aria-label="ดูข้อมูลลูกค้าสำหรับใบเสนอราคา"
+                                    >
+                                        {quoteCustomerReady ? <BadgeCheck size={11} /> : <AlertCircle size={11} />}
+                                        {quoteCustomerReady ? 'ผูก CRM แล้ว' : 'รอข้อมูลออกบิล'}
+                                    </button>
                                 </div>
                                 {/* Status toggle — any → any direction */}
                                 <div className="inline-flex rounded-md border border-neutral-200 p-0.5 bg-neutral-50">
@@ -1409,6 +1444,64 @@ export default function Chat() {
                     onCancel={() => setCropSrc(null)}
                 />
             )}
+
+            {showQuoteCustomerPreview && selectedConv && (
+                <div
+                    className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="quote-customer-preview-title"
+                    onMouseDown={(event) => {
+                        if (event.currentTarget === event.target) setShowQuoteCustomerPreview(false);
+                    }}
+                >
+                    <Card className="w-full max-w-lg gap-0 overflow-hidden py-0 shadow-xl">
+                        <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
+                            <div>
+                                <div id="quote-customer-preview-title" className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                                    <Building2 size={16} className="text-indigo-600" /> ข้อมูลลูกค้าบนใบเสนอราคา
+                                </div>
+                                <div className="mt-0.5 text-xs text-neutral-500">แสดงข้อมูลจาก CRM แบบอ่านอย่างเดียว</div>
+                            </div>
+                            <button type="button" onClick={() => setShowQuoteCustomerPreview(false)} className="rounded p-1 text-neutral-500 hover:bg-neutral-100" aria-label="ปิด">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="space-y-3 p-4 text-sm">
+                            {quoteCustomerReady && quoteCustomerPreview ? (
+                                <>
+                                    <PreviewField label="ชื่อบริษัท/ลูกค้า" value={quoteCustomerPreview.name} />
+                                    <PreviewField label="เลขผู้เสียภาษี" value={quoteCustomerPreview.tax_id ?? '—'} mono />
+                                    <PreviewField label="ที่อยู่ออกบิล" value={formatBillingAddress(quoteCustomerPreview.billing_address)} />
+                                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                                        ข้อมูลครบและพร้อมใช้กับใบเสนอราคา
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                                    ห้องแชตนี้ยังไม่ได้ผูกลูกค้า CRM ที่มีเลขผู้เสียภาษี 13 หลัก บอทจะขอชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี และสาขาก่อนสร้างใบเสนอราคา
+                                </div>
+                            )}
+                        </div>
+                    </Card>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function formatBillingAddress(address: Record<string, unknown> | null): string {
+    if (!address) return '—';
+    const preferredKeys = ['line', 'line1', 'subdistrict', 'district', 'province', 'postcode', 'branch'];
+    const parts = preferredKeys.map((key) => String(address[key] ?? '').trim()).filter(Boolean);
+    return parts.length > 0 ? parts.join(' ') : '—';
+}
+
+function PreviewField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+    return (
+        <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">{label}</div>
+            <div className={cn('mt-1 whitespace-pre-wrap text-sm text-neutral-900', mono && 'font-mono tabular-nums')}>{value}</div>
         </div>
     );
 }

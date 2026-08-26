@@ -239,7 +239,8 @@ const TOOL_DEFINITIONS = [
       { name: "get_group_members", description: "SKUs in a product group.", parameters: { type: "object", properties: { group_name: { type: "string" } }, required: ["group_name"] } },
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
       { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer shows buying intent, asks to be contacted, OR asks anything the bot cannot answer/verify itself (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
-      { name: "request_quote", description: "Create a REAL draft quotation (ใบเสนอราคา) in the system and notify the JNAC sales team. Use when the customer wants a quote for specific items/quantities. Pass EXACT SKUs from find_products/get_product_detail results — if you don't have the SKU yet, call find_products first. Returns quote_code (e.g. QT-01000018): tell the customer this number and that staff will confirm the final price and contact them. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
+      { name: "link_quote_customer", description: "Link the current chat to CRM before creating a quotation. Call only when a quotation is pending and the customer supplies billing details in text or a clearly readable company document/image. Extract exactly what is visible; NEVER guess. Tax ID must contain exactly 13 digits and is the ONLY customer matching key. Require company_name and billing_address too. If any required field is missing or unclear, ask the customer instead of calling.", parameters: { type: "object", properties: { tax_id: { type: "string", description: "exact 13-digit Thai tax ID" }, company_name: { type: "string", description: "legal customer/company name" }, billing_address: { type: "string", description: "complete billing address as one string" }, branch: { type: "string", description: "head office or branch label/code if visible" }, phone: { type: "string", description: "phone if supplied" } }, required: ["tax_id", "company_name", "billing_address"] } },
+      { name: "request_quote", description: "Create one REAL draft quotation for a DIRECT customer request with exact items and quantities. The chat MUST already be linked to a CRM customer with a valid 13-digit tax ID; otherwise the tool asks for company name, billing address, tax ID and branch. Pass EXACT SKUs from find_products/get_product_detail results. NEVER call for a thank-you or question about how to order. An image may lead to a quote only when it is the requested billing document and link_quote_customer succeeded in the same flow. The system reuses an existing draft with identical items in the same chat; only tell the customer a quote_code when quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
     ],
   },
 ];
@@ -666,6 +667,7 @@ async function dispatchTool(
       case "get_group_members":   return await getGroupMembers(admin, String(args.group_name ?? ""));
       case "list_categories":     return await listCategories(admin);
       case "capture_lead":        return await captureLead(admin, args, channel, conversationId);
+      case "link_quote_customer": return await linkQuoteCustomer(admin, args, conversationId);
       case "request_quote":       return await requestQuote(admin, args, channel, conversationId, userQuery, hasImages);
       default: return { error: `Unknown tool: ${name}` };
     }
@@ -673,6 +675,48 @@ async function dispatchTool(
 }
 
 const cleanStr = (v: unknown) => { const t = (v == null ? "" : String(v)).trim(); return t || null; };
+
+async function getQuoteCustomerState(admin: SupabaseClient, conversationId: string | null): Promise<{
+  ready: boolean; recentlyLinked: boolean;
+}> {
+  if (!conversationId) return { ready: false, recentlyLinked: false };
+  const { data: conversation, error: conversationError } = await admin
+    .from("chat_conversations").select("customer_id, metadata").eq("id", conversationId).maybeSingle();
+  if (conversationError) throw conversationError;
+  const customerId = (conversation as { customer_id?: string | null } | null)?.customer_id;
+  if (!customerId) return { ready: false, recentlyLinked: false };
+  const { data: customer, error: customerError } = await admin
+    .from("customers").select("tax_id").eq("id", customerId).maybeSingle();
+  if (customerError) throw customerError;
+  const taxId = String((customer as { tax_id?: string | null } | null)?.tax_id ?? "").replace(/\D/g, "");
+  const metadata = ((conversation as { metadata?: Record<string, unknown> | null } | null)?.metadata ?? {});
+  const linkedAt = Date.parse(String(metadata.quote_customer_linked_at ?? ""));
+  return { ready: taxId.length === 13, recentlyLinked: Number.isFinite(linkedAt) && Date.now() - linkedAt < 2 * 60_000 };
+}
+
+async function linkQuoteCustomer(admin: SupabaseClient, args: Record<string, unknown>, conversationId: string | null): Promise<unknown> {
+  if (!conversationId) return { ok: false, linked: false, reason: "conversation_required" };
+  const taxId = String(args.tax_id ?? "").replace(/\D/g, "");
+  const companyName = cleanStr(args.company_name);
+  const billingAddress = cleanStr(args.billing_address);
+  if (taxId.length !== 13 || !companyName || !billingAddress) {
+    return { ok: true, linked: false, customer_details_required: true, message: "ข้อมูลออกใบเสนอราคายังไม่ครบ กรุณาขอชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) จากลูกค้า ห้ามเดาข้อมูล" };
+  }
+  const { data, error } = await admin.rpc("link_chat_customer_by_tax", {
+    p_conversation_id: conversationId, p_tax_id: taxId, p_company_name: companyName,
+    p_billing_address: billingAddress, p_branch: cleanStr(args.branch), p_phone: cleanStr(args.phone),
+  });
+  if (error) throw error;
+  const result = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  const status = String(result?.link_status ?? "unknown");
+  if (status === "conversation_customer_conflict") {
+    return { ok: true, linked: false, conflict: true, message: "ห้องแชตผูกกับลูกค้าคนละเลขผู้เสียภาษีอยู่แล้ว ให้ทีมงานตรวจสอบ ห้ามเปลี่ยนการผูกอัตโนมัติ" };
+  }
+  if (status !== "linked" && status !== "already_linked") {
+    return { ok: true, linked: false, customer_details_required: true, reason: status, message: "ข้อมูลออกใบเสนอราคาไม่ถูกต้องหรือไม่ครบ กรุณาขอข้อมูลจากลูกค้าใหม่ ห้ามเดา" };
+  }
+  return { ok: true, linked: true, matched_by: "tax_id", customer_name: result?.customer_name, message: "ผูกข้อมูลลูกค้าด้วยเลขผู้เสียภาษีเรียบร้อย สามารถดำเนินการสร้างใบเสนอราคาต่อได้" };
+}
 
 async function captureLead(
   admin: SupabaseClient,
@@ -727,7 +771,15 @@ async function requestQuote(
   userQuery: string,
   hasImages: boolean,
 ): Promise<unknown> {
-  const blockReason = quoteCreationBlockReason(userQuery, hasImages);
+  const customerState = await getQuoteCustomerState(admin, conversationId);
+  if (!customerState.ready) {
+    return {
+      ok: true, saved: false, skipped: true, quote_created: false, quote_reused: false,
+      customer_details_required: true, reason: "tax_customer_required",
+      message: "ก่อนออกใบเสนอราคา กรุณาขอชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) จากลูกค้า โดยรับได้ทั้งข้อความหรือรูปเอกสารที่อ่านชัดเจน แล้วเรียก link_quote_customer ก่อน ห้ามสร้างใบเสนอราคาที่ยังไม่ผูก CRM",
+    };
+  }
+  const blockReason = quoteCreationBlockReason(userQuery, hasImages && !customerState.recentlyLinked);
   if (blockReason) {
     return {
       ok: true, saved: false, skipped: true, quote_created: false, quote_reused: false,
@@ -1079,6 +1131,9 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 🤝 เก็บ LEAD / ใบเสนอราคา (สำคัญมาก — โอกาสปิดการขาย)
 • ลูกค้าสนใจซื้อจริง / ถามซื้อจำนวนมาก / ฝากเบอร์ / ขอให้ติดต่อกลับ / ถามสิ่งที่เอยตอบไม่ได้ → เรียก capture_lead ทันที
+• ก่อนออกใบเสนอราคา ต้องมีลูกค้า CRM ที่ผูกด้วยเลขผู้เสียภาษี 13 หลักเสมอ ถ้า request_quote แจ้ง customer_details_required ให้ถามชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) แล้วรอข้อมูล ห้ามบอกว่าสร้างใบเสนอราคาแล้ว
+• เมื่อลูกค้าส่งข้อมูลออกบิลเป็นข้อความหรือรูปเอกสารที่อ่านชัด ให้เรียก link_quote_customer โดยคัดลอกข้อมูลตามจริง ห้ามเดาหรือเติมข้อมูลเอง เลขผู้เสียภาษีเป็นกุญแจเดียวที่ใช้ผูกลูกค้า
+• ถ้ารูปเป็นหนังสือรับรอง/ภ.พ.20/นามบัตรที่ส่งมาเพื่อตอบคำถามข้อมูลออกบิล ไม่ถือเป็น PO และสามารถเรียก link_quote_customer ได้ เมื่อข้อมูลบังคับครบและอ่านชัด
 • เรียก request_quote ได้เฉพาะเมื่อลูกค้าขอ "ออกใบเสนอราคา" โดยตรง และยืนยันสินค้า+จำนวนชัดเจนเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)\n• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน\n• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
 • ถ้าลูกค้าไม่ระบุสินค้าแน่ชัด/หา SKU ไม่ได้ → ใช้ capture_lead แทน อย่าเดา SKU
 • tool เหล่านี้ ไม่ได้ ส่งข้อความหาลูกค้า แค่บันทึกในระบบ+แจ้งทีมขาย JNAC ภายใน
@@ -1110,6 +1165,9 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 
 🤝 CAPTURE LEADS / QUOTES (sales opportunity)
 • Buying intent / bulk / leaves a phone / asks to be contacted / asks anything you cannot answer → call capture_lead.
+• A quotation requires a CRM customer linked by an exact 13-digit tax ID. If request_quote returns customer_details_required, ask for legal company name, billing address, 13-digit tax ID, and branch (if any). Do not claim a quote exists yet.
+• When the customer supplies readable billing details in text or a document image, call link_quote_customer with exact visible values. Never infer missing data. Tax ID is the only matching key.
+• A certificate/VAT registration/business card sent specifically to answer the billing-data request is not a PO and may be processed with link_quote_customer when all required fields are legible.
 • Call request_quote only for a DIRECT request to issue a quote with confirmed specific items+quantities. Never call it for a thank-you, an ordering-process question, or an image/document alone.\n• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
 • Items unclear / SKU unresolved → capture_lead instead; never guess SKUs.
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
