@@ -1,18 +1,12 @@
 /**
- * rag-chat v61 — idempotent chatbot quote requests
- *
- * A quote request is now keyed by conversation + exact SKU/quantity set in a
- * database transaction. Repeated follow-up messages or simultaneous LINE
- * image events reuse the existing draft instead of consuming new QT numbers.
- * Image-only events, acknowledgements, and questions about how to order are
- * also barred from creating a quote.
- *
- * v51 — family and product-type locked alternatives
+ * rag-chat v51 — family and product-type locked alternatives
  *
  * v50: product suggestions are filtered before reaching the LLM. A recognised
  * product family must match exactly; unknown families need a normalized-name
  * score of at least 70%. This prevents cross-type substitutions such as a
- * sanding belt being offered as a mounted flap wheel.
+ * sanding belt being offered as a mounted flap wheel. v51 additionally locks
+ * the meaningful product-type phrase (for example จานทราย vs ล้อทราย) before
+ * evaluating the existing 70% fallback score.
  *
  * v35 — forced retrieval for payment/bank-account queries
  *
@@ -88,9 +82,54 @@ type LearningSettings = {
 };
 type ConversationMemory = { summary: string; topics: string[] };
 type LearningGuidance = { trigger_terms: string[]; approved_guidance: string };
+type RoutingVariant = "auto" | "db_region" | "direct";
+type RequestTelemetry = {
+  requestId: string;
+  startedAt: number;
+  edgeRegion: string | null;
+  routingVariant: RoutingVariant;
+  contentKind: "text" | "image";
+};
+
+/** Keep non-critical analytics and learning writes off the customer response
+ * path. EdgeRuntime.waitUntil lets the isolate finish them after responding. */
+function runInBackground(label: string, task: Promise<unknown>): void {
+  const guarded = task.catch((error) => {
+    console.warn(`${label} background task failed:`, (error as Error).message);
+  });
+  const runtime = (globalThis as typeof globalThis & {
+    EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void };
+  }).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(guarded);
+  else void guarded;
+}
 function detectLanguage(s: string): Lang {
   return /[฀-๿]/.test(s) ? "th" : "en";
 }
+
+function isImageOnlyHistoryEntry(content: string): boolean {
+  return /^!\[image\]\(https?:\/\/[^\s)]+\)$/i.test(content.trim());
+}
+
+/**
+ * A LINE image has no customer text to detect. In that case, preserve the
+ * language of the most recent meaningful customer message instead of treating
+ * an empty string as English. An entirely textless LINE conversation defaults
+ * to Thai, while an explicit English message continues to receive English.
+ */
+function resolveResponseLanguage(
+  query: string,
+  history: Array<{ role: string; content: string }>,
+  channel: string,
+): Lang {
+  if (query.trim()) return detectLanguage(query);
+  const priorCustomerText = [...history].reverse().find(
+    (message) => message.role === "user" && message.content.trim() && !isImageOnlyHistoryEntry(message.content),
+  )?.content;
+  if (priorCustomerText) return detectLanguage(priorCustomerText);
+  return channel === "line" ? "th" : "en";
+}
+
 
 function normalizeImages(raw: unknown): ImagePart[] {
   if (!Array.isArray(raw)) return [];
@@ -200,7 +239,7 @@ const TOOL_DEFINITIONS = [
       { name: "get_group_members", description: "SKUs in a product group.", parameters: { type: "object", properties: { group_name: { type: "string" } }, required: ["group_name"] } },
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
       { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer shows buying intent, asks to be contacted, OR asks anything the bot cannot answer/verify itself (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
-      { name: "request_quote", description: "Create one REAL draft quotation for a DIRECT customer request with exact items and quantities. Pass EXACT SKUs from find_products/get_product_detail results. NEVER call for a thank-you, question about how to order, or an image/document by itself. The system reuses an existing draft with identical items in the same chat; only tell the customer a quote_code when the tool returns quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
+      { name: "request_quote", description: "Create a REAL draft quotation (ใบเสนอราคา) in the system and notify the JNAC sales team. Use when the customer wants a quote for specific items/quantities. Pass EXACT SKUs from find_products/get_product_detail results — if you don't have the SKU yet, call find_products first. Returns quote_code (e.g. QT-01000018): tell the customer this number and that staff will confirm the final price and contact them. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
     ],
   },
 ];
@@ -331,7 +370,8 @@ const PRODUCT_FAMILY_RULES: ProductFamilyRule[] = [
   { key: "sanding_disc_velcro", labelTh: "กระดาษทรายกลมสักหลาด", pattern: /กระดาษทรายกลม\s*สักหลาด|velcro\s*(?:sanding\s*)?disc/i },
   { key: "sanding_disc_adhesive", labelTh: "กระดาษทรายกลมหลังกาว", pattern: /กระดาษทรายกลม\s*หลังกาว|adhesive\s*(?:sanding\s*)?disc/i },
   { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
-  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /ล้อขัดใยสังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
+  // Catalog and customers use both ลูกขัด... and ล้อขัด... for this same product family.
+  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /(?:ล้อ|ลูก)\s*ขัด\s*ใย\s*สังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
   { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
   { key: "pva_disc", labelTh: "ใบขัดกระจก PVA", pattern: /ใบขัดกระจก|pva\s*(?:spongy\s*)?disc/i },
   { key: "rubber_expander", labelTh: "ลูกยาง", pattern: /ลูกยาง|rubber\s*expander/i },
@@ -343,6 +383,38 @@ function productFamilyFor(text: string): string | null {
 
 function productFamilyLabel(family: string | null): string | null {
   return PRODUCT_FAMILY_RULES.find((rule) => rule.key === family)?.labelTh ?? null;
+}
+
+/**
+ * Product-type anchors are the meaningful leading phrase that identifies what
+ * the customer is asking for. Thai product names are not reliably delimited by
+ * whitespace, so this is intentionally semantic (for example "จานทราย" and
+ * "ล้อทราย") instead of splitting the first two whitespace tokens.
+ *
+ * A specific family, when present, is still stricter. These anchors close the
+ * gap for short customer queries such as "จานทราย 4 นิ้ว" where the more
+ * specific family word ("ซ้อน") was not included.
+ */
+type ProductTypeRule = { key: string; labelTh: string; pattern: RegExp };
+const PRODUCT_TYPE_RULES: ProductTypeRule[] = [
+  { key: "sanding_belt", labelTh: "ผ้าทรายสายพาน", pattern: /ผ้าทราย\s*สายพาน|sanding\s*belt|abrasive\s*belt/i },
+  { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
+  { key: "mounted_flap_wheel", labelTh: "ล้อทราย", pattern: /ล้อทราย(?:\s*มีแกน)?|mounted\s*flap\s*wheel/i },
+  { key: "flap_disc", labelTh: "จานทราย", pattern: /จานทราย(?:\s*ซ้อน)?|flap\s*disc/i },
+  { key: "sanding_disc", labelTh: "กระดาษทรายกลม", pattern: /กระดาษทราย\s*กลม|(?:velcro|adhesive)\s*(?:sanding\s*)?disc/i },
+  // Keep the same semantic anchor as PRODUCT_FAMILY_RULES; this is a hard gate.
+  { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /(?:ล้อ|ลูก)\s*ขัด\s*ใย\s*สังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
+  { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
+  { key: "pva_disc", labelTh: "ใบขัดกระจก PVA", pattern: /ใบขัดกระจก|pva\s*(?:spongy\s*)?disc/i },
+  { key: "rubber_expander", labelTh: "ลูกยาง", pattern: /ลูกยาง|rubber\s*expander/i },
+];
+
+function productTypeFor(text: string): string | null {
+  return PRODUCT_TYPE_RULES.find((rule) => rule.pattern.test(text))?.key ?? null;
+}
+
+function productTypeLabel(productType: string | null): string | null {
+  return PRODUCT_TYPE_RULES.find((rule) => rule.key === productType)?.labelTh ?? null;
 }
 
 function normalizedProductName(text: string): string {
@@ -378,8 +450,10 @@ type SafeProductMatch = {
   safe: boolean;
   requestedFamily: string | null;
   candidateFamily: string | null;
+  requestedProductType: string | null;
+  candidateProductType: string | null;
   nameScore: number;
-  basis: "exact_sku" | "same_family" | "name_score" | "rejected";
+  basis: "exact_sku" | "same_family" | "same_product_type" | "name_score" | "rejected";
 };
 
 function evaluateProductMatch(query: string, product: Record<string, unknown>): SafeProductMatch {
@@ -387,27 +461,48 @@ function evaluateProductMatch(query: string, product: Record<string, unknown>): 
     .filter(Boolean).join(" ");
   const requestedFamily = productFamilyFor(query);
   const candidateFamily = productFamilyFor(candidateText);
+  const requestedProductType = productTypeFor(query);
+  const candidateProductType = productTypeFor(candidateText);
   const sku = String(product.sku ?? "").trim();
   const exactSku = Boolean(sku) && query.toLowerCase().includes(sku.toLowerCase());
   const nameScore = normalizedNameScore(query, candidateText);
-  if (exactSku) return { safe: true, requestedFamily, candidateFamily, nameScore: 1, basis: "exact_sku" };
+  if (exactSku) return {
+    safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+    nameScore: 1, basis: "exact_sku",
+  };
   // Once a product type is known, do not allow a high textual score to cross
-  // its boundary.  A sanding belt must never become a mounted flap wheel.
+  // its boundary. A sanding belt must never become a mounted flap wheel.
   if (requestedFamily) {
     if (requestedFamily === candidateFamily) {
-      return { safe: true, requestedFamily, candidateFamily, nameScore: Math.max(nameScore, 1), basis: "same_family" };
+      return {
+        safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+        nameScore: Math.max(nameScore, 1), basis: "same_family",
+      };
     }
-    return { safe: false, requestedFamily, candidateFamily, nameScore, basis: "rejected" };
+    return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
+  }
+  // The customer's core product phrase is a hard gate before name scoring.
+  // This preserves the 0.70 fallback for truly unknown product types, while
+  // preventing จานทราย -> ล้อทราย and other cross-type suggestions.
+  if (requestedProductType) {
+    if (requestedProductType === candidateProductType) {
+      return {
+        safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+        nameScore: Math.max(nameScore, 1), basis: "same_product_type",
+      };
+    }
+    return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
   }
   return nameScore >= 0.7
-    ? { safe: true, requestedFamily, candidateFamily, nameScore, basis: "name_score" }
-    : { safe: false, requestedFamily, candidateFamily, nameScore, basis: "rejected" };
+    ? { safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "name_score" }
+    : { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
 }
 
 function formatSafeProductForLLM(product: Record<string, unknown>, match: SafeProductMatch) {
   return {
     ...formatProductForLLM(product),
     product_family: match.candidateFamily,
+    product_type: match.candidateProductType,
     safe_name_score: Number(match.nameScore.toFixed(3)),
     safe_match_basis: match.basis,
     safe_alternative: true,
@@ -421,7 +516,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
   const { rewritten, applied } = await rewriteWithKeywords(admin, original);
   const q = rewritten;
   const requestedFamily = productFamilyFor(q);
-  const requestedProductType = productFamilyLabel(requestedFamily);
+  const requestedProductType = productFamilyLabel(requestedFamily) ?? productTypeLabel(productTypeFor(q));
 
   const rawTokens = q.split(/\s+/).filter(Boolean).slice(0, 12);
   if (rawTokens.length === 0) return { products: [], note: "empty query" };
@@ -468,6 +563,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
         clarification_candidates: safeFuzzy.map(({ p, match }) => ({
           sku: p.sku, name_th: p.name_th, name_en: p.name_en ?? null,
           product_family: match.candidateFamily,
+          product_type: match.candidateProductType,
           safe_name_score: Number(match.nameScore.toFixed(3)),
           safe_match_basis: match.basis,
           safe_alternative: true,
@@ -578,19 +674,6 @@ async function dispatchTool(
 
 const cleanStr = (v: unknown) => { const t = (v == null ? "" : String(v)).trim(); return t || null; };
 
-function quoteCreationBlockReason(userQuery: string, hasImages: boolean): string | null {
-  if (hasImages) return "image_or_document";
-  const text = userQuery.trim();
-  if (!text) return "empty_message";
-  if (/^(?:ขอบคุณ|ขอบใจ|thanks?|thank\s+you)(?:\s*(?:มาก|มากครับ|มากค่ะ|ครับ|ค่ะ|นะ|นะครับ|นะคะ|so\s+much|very\s+much|again|!|🙏|😊|🙂))*$/iu.test(text)) {
-    return "acknowledgement";
-  }
-  if (/(?:สั่งสินค้า|สั่งของ).{0,16}(?:ยังไง|อย่างไร|วิธี)|(?:วิธี|ขั้นตอน).{0,16}(?:สั่งสินค้า|สั่งของ)/iu.test(text)) {
-    return "ordering_information";
-  }
-  return null;
-}
-
 async function captureLead(
   admin: SupabaseClient,
   args: Record<string, unknown>,
@@ -618,6 +701,19 @@ async function captureLead(
   return { ok: true, saved: true, message: "บันทึกข้อมูลแล้ว ทีมงานขายจะติดต่อกลับโดยเร็ว" };
 }
 
+function quoteCreationBlockReason(userQuery: string, hasImages: boolean): string | null {
+  if (hasImages) return "image_or_document";
+  const text = userQuery.trim();
+  if (!text) return "empty_message";
+  if (/^(?:ขอบคุณ|ขอบใจ|thanks?|thank\s+you)(?:\s*(?:มาก|มากครับ|มากค่ะ|ครับ|ค่ะ|นะ|นะครับ|นะคะ|so\s+much|very\s+much|again|!|🙏|😊|🙂))*$/iu.test(text)) {
+    return "acknowledgement";
+  }
+  if (/(?:สั่งสินค้า|สั่งของ).{0,16}(?:ยังไง|อย่างไร|วิธี)|(?:วิธี|ขั้นตอน).{0,16}(?:สั่งสินค้า|สั่งของ)/iu.test(text)) {
+    return "ordering_information";
+  }
+  return null;
+}
+
 /**
  * Create or reuse a real draft quote. The database owns the operation so two
  * concurrent webhook events cannot each create a document for the same chat
@@ -641,8 +737,6 @@ async function requestQuote(
   }
 
   const name = cleanStr(args.name), phone = cleanStr(args.phone), note = cleanStr(args.note);
-
-  // Normalize structured [{sku, qty}] before it reaches the atomic database RPC.
   const reqItems: Array<{ sku: string; qty: number }> = [];
   if (Array.isArray(args.items)) {
     for (const it of args.items as Array<Record<string, unknown>>) {
@@ -682,7 +776,6 @@ async function requestQuote(
     }
   }
 
-  // No document is created for unresolved items. Keep one human task per chat.
   const summary = [itemsText && `รายการ: ${itemsText}`, name && `ชื่อ: ${name}`,
     phone && `ติดต่อ: ${phone}`, note && `โน้ต: ${note}`].filter(Boolean).join(" · ");
   await admin.rpc("agent_propose", {
@@ -969,6 +1062,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 8. 🔒 กฎสินค้าทดแทน (ห้ามฝ่าฝืน):
    - เสนอสินค้าได้เฉพาะผลจาก tool ที่มี safe_alternative=true เท่านั้น
    - ถ้า tool ส่ง requested_product_family มา: เสนอได้เฉพาะ product_family เดียวกันเท่านั้น แม้ขนาด/เบอร์ใกล้เคียงก็ห้ามข้ามชนิด เช่น "ผ้าทรายสายพาน" ห้ามเสนอ "ล้อทรายมีแกน" เด็ดขาด
+   - ถ้า tool ส่ง requested_product_type มา (เช่น จานทราย, ล้อทราย, ผ้าทรายม้วน): ให้ถือเป็น hard gate ก่อนดูขนาด/เบอร์/คะแนน และเสนอได้เฉพาะ product_type เดียวกันเท่านั้น ห้ามข้ามคำระบุชนิดสินค้านี้เด็ดขาด
    - ถ้าไม่มี requested_product_family: เสนอได้เฉพาะ safe_name_score ตั้งแต่ 0.70 ขึ้นไป
    - safe_name_score / safe_match_basis เป็นค่าจาก tool เท่านั้น ห้ามคำนวณหรือเดาเอง
    - หากไม่มีตัวเลือก safe_alternative: ห้ามแสดงชื่อสินค้าอื่น ให้ capture_lead เพื่อให้ทีมตรวจสอบจัดหา/สั่งผลิต และต้องระบุ requested_product_type ในคำตอบเพื่อยืนยันว่ากำลังตรวจสอบสินค้าชนิดที่ลูกค้าถาม
@@ -976,7 +1070,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 📷 ถ้าลูกค้าส่งรูปภาพใดๆ มา (ไม่ว่าจะส่งเป็นไฟล์รูปภาพ เอกสาร หรือแคปหน้าจอมา) → ให้ตีความวัตถุประสงค์ของรูปภาพนั้นก่อนเป็นอันดับแรก:
 - หากตีความได้ว่าเป็น "ใบสั่งซื้อ / PO / เอกสารสั่งซื้อ / สรุปสั่งของ": ห้ามเสนอสินค้าใกล้เคียงหรือทางเลือกอื่นเด็ดขาด! ให้รับเรื่องโดยแจ้งว่าส่งต่อเอกสารให้ทีมงานจัดการต่อแล้ว (ไม่ต้องทวนรายการหรือจำนวนในใบสั่งซื้อ) และเรียก capture_lead (บันทึกรายละเอียดใบสั่งซื้อใน note) เพื่อส่งเรื่องให้ทีมงาน. ห้ามใช้ชื่อสินค้าจากประวัติแชตเก่ามาตีความแทนรายการในเอกสาร
-- หากตีความได้ว่าเป็น "สลิปโอนเงิน / สลิปแจ้งชำระเงิน": ห้ามแนะนำสินค้า ค้นหาสินค้า หรือเรียกใช้ tool ใดๆ ทั้งสิ้น และห้ามนำข้อมูลในสลิปมาเสนอขายต่อ ให้ขอบคุณและแจ้งส่งเรื่องให้ฝ่ายบัญชีตรวจสอบยอดเงินเท่านั้นตามกฎการแจ้งโอนเงิน
+- หากตีความได้ว่าเป็น "สลิปโอนเงิน / สลิปแจ้งชำระเงิน": ห้ามแนะนำสินค้า ค้นหาสินค้า หรือเรียกใช้ tool ใดๆ ทั้งสิ้น และห้ามนำข้อมูลในสลิปมาเสนอขายต่อ ให้ตอบเพียงว่า "ขอบพระคุณค่ะ เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ" ห้ามระบุ/อ่าน/คาดเดายอดเงิน วันที่ เวลา เลขบัญชี ชื่อผู้โอน เลขอ้างอิง หรือยืนยันว่าชำระสำเร็จโดยเด็ดขาด แม้เห็นข้อมูลในภาพ
 - หากเป็นรูปภาพอื่นๆ (เช่น รูปสินค้าจริง ชิ้นงานหน้างาน หรือตัวอย่างการใช้งานทั่วไป): ให้ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ และเรียก find_products เพื่อค้นหาสินค้าที่เกี่ยวข้องหรือใกล้เคียงเสนอให้ลูกค้า — ห้ามเดาราคา/สเป็กจากรูปเอง
 
 📦 ช่องข้อมูลจาก tool: stock (0=หมด), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
@@ -985,9 +1079,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 🤝 เก็บ LEAD / ใบเสนอราคา (สำคัญมาก — โอกาสปิดการขาย)
 • ลูกค้าสนใจซื้อจริง / ถามซื้อจำนวนมาก / ฝากเบอร์ / ขอให้ติดต่อกลับ / ถามสิ่งที่เอยตอบไม่ได้ → เรียก capture_lead ทันที
-• เรียก request_quote ได้เฉพาะเมื่อลูกค้าขอ "ออกใบเสนอราคา" โดยตรง และยืนยันสินค้า+จำนวนชัดเจนเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)
-• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน
-• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
+• เรียก request_quote ได้เฉพาะเมื่อลูกค้าขอ "ออกใบเสนอราคา" โดยตรง และยืนยันสินค้า+จำนวนชัดเจนเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)\n• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน\n• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
 • ถ้าลูกค้าไม่ระบุสินค้าแน่ชัด/หา SKU ไม่ได้ → ใช้ capture_lead แทน อย่าเดา SKU
 • tool เหล่านี้ ไม่ได้ ส่งข้อความหาลูกค้า แค่บันทึกในระบบ+แจ้งทีมขาย JNAC ภายใน
 • เรียก capture_lead แค่ครั้งเดียวต่อบทสนทนา
@@ -1005,20 +1097,20 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 8. 🔒 SUBSTITUTION GATE (non-negotiable):
    - Offer only tool results with safe_alternative=true.
    - When requested_product_family is provided, candidate product_family MUST match exactly. Never cross product types (for example sanding belt -> mounted flap wheel), even when dimensions or grit look similar.
+   - When requested_product_type is provided (for example flap disc, mounted wheel, sanding roll), it is a hard gate before dimensions, grit, or scoring: candidate product_type MUST match exactly.
    - Without requested_product_family, only offer candidates with safe_name_score >= 0.70.
    - safe_name_score and safe_match_basis come from the tool; never estimate them yourself.
    - If no safe_alternative exists, do not list another product; call capture_lead for sourcing/made-to-order and explicitly name requested_product_type in the reply.
    - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.
 📷 If the customer sends any IMAGE (whether uploaded as a photo, doc screenshot, or any file) → You must interpret the intent of the image first:
 - If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team. Never use a product from old chat history as a substitute for the document contents.
-- If interpreted as a "bank transfer slip / payment receipt": DO NOT recommend products, search products, or call any tools; do not extract notes to offer products. Simply thank the customer and inform them about accounting verification per payment rules.
+- If interpreted as a "bank transfer slip / payment receipt": DO NOT recommend products, search products, or call any tools. Reply only with a generic accounting-review acknowledgement. Never state, extract, infer, or confirm an amount, date, time, account number, payer, reference, or payment success from the image.
 - If it is any other image (e.g., product photo, physical workpiece, general usage example): Describe what you see briefly and call find_products to recommend matching or related products to the customer. Never invent price/specs from a photo.
 📦 Fields: stock (0=oos), in_stock, min_order_qty (always use), unit.
 
 🤝 CAPTURE LEADS / QUOTES (sales opportunity)
 • Buying intent / bulk / leaves a phone / asks to be contacted / asks anything you cannot answer → call capture_lead.
-• Call request_quote only for a DIRECT request to issue a quote with confirmed specific items+quantities. Never call it for a thank-you, an ordering-process question, or an image/document alone.
-• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
+• Call request_quote only for a DIRECT request to issue a quote with confirmed specific items+quantities. Never call it for a thank-you, an ordering-process question, or an image/document alone.\n• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
 • Items unclear / SKU unresolved → capture_lead instead; never guess SKUs.
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
 • Call capture_lead only ONCE per conversation. Never promise special prices yourself.`;
@@ -1172,15 +1264,12 @@ async function saveMessage(admin: SupabaseClient, conversationId: string, sender
     conversation_id: conversationId, sender_type: senderType, content, content_type: contentType, metadata,
   });
   if (error) { console.warn("chat msg insert failed:", error.message); return; }
-  const preview = content.slice(0, 140);
-  await admin.from("chat_conversations").update({
-    last_message_at: new Date().toISOString(), last_message_preview: preview,
-  }).eq("id", conversationId);
 }
 
 /** Best-effort, privacy-safe run telemetry. Raw prompts/responses and tool
  * arguments are deliberately excluded. Telemetry must never break a reply. */
 async function recordAiRun(admin: SupabaseClient, input: {
+  requestId: string;
   conversationId: string | null;
   channel: string;
   model: string;
@@ -1189,10 +1278,20 @@ async function recordAiRun(admin: SupabaseClient, input: {
   toolNames: string[];
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   elapsed: { embed: number; search: number; llm: number };
+  totalMs: number;
+  firstTokenMs: number | null;
+  toolMs: number;
+  toolIterations: number;
+  edgeRegion: string | null;
+  routingVariant: RoutingVariant;
+  contentKind: "text" | "image";
+  phaseTimings: Record<string, number>;
   outcome?: string;
+  errorCode?: string | null;
 }) {
   try {
-    await admin.from("chat_ai_runs").insert({
+    const { error } = await admin.from("chat_ai_runs").insert({
+      request_id: input.requestId,
       conversation_id: input.conversationId,
       channel: input.channel,
       model: input.model,
@@ -1207,8 +1306,20 @@ async function recordAiRun(admin: SupabaseClient, input: {
       embed_ms: input.elapsed.embed,
       search_ms: input.elapsed.search,
       llm_ms: input.elapsed.llm,
+      total_ms: input.totalMs,
+      first_token_ms: input.firstTokenMs,
+      tool_ms: input.toolMs,
+      tool_iterations: input.toolIterations,
+      edge_region: input.edgeRegion,
+      routing_variant: input.routingVariant,
+      content_kind: input.contentKind,
+      phase_timings: input.phaseTimings,
       outcome: input.outcome ?? "ok",
+      error_code: input.errorCode ?? null,
     });
+    if (error) {
+      console.warn("chat_ai_runs insert failed:", { code: error.code, message: error.message });
+    }
   } catch (e) {
     console.warn("chat_ai_runs insert failed:", (e as Error).message);
   }
@@ -1216,6 +1327,44 @@ async function recordAiRun(admin: SupabaseClient, input: {
 
 function zeroTokens() { return { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }; }
 function zeroElapsed() { return { embed: 0, search: 0, llm: 0 }; }
+
+function classifyAiError(error: unknown): string {
+  const message = String((error as Error)?.message ?? error);
+  if (/429|rate.?limit/i.test(message)) return "rate_limited";
+  if (/503|UNAVAILABLE/i.test(message)) return "unavailable";
+  if (/key missing|configuration/i.test(message)) return "configuration";
+  return "unknown";
+}
+
+function recordFailedAiRun(
+  admin: SupabaseClient,
+  telemetry: RequestTelemetry,
+  conversationId: string | null,
+  channel: string,
+  error: unknown,
+): void {
+  runInBackground("chat_ai_runs_error", recordAiRun(admin, {
+    requestId: telemetry.requestId,
+    conversationId,
+    channel,
+    model: "error",
+    retrievalCount: 0,
+    topSimilarity: null,
+    toolNames: [],
+    usage: zeroTokens(),
+    elapsed: zeroElapsed(),
+    totalMs: Date.now() - telemetry.startedAt,
+    firstTokenMs: null,
+    toolMs: 0,
+    toolIterations: 0,
+    edgeRegion: telemetry.edgeRegion,
+    routingVariant: telemetry.routingVariant,
+    contentKind: telemetry.contentKind,
+    phaseTimings: {},
+    outcome: "error",
+    errorCode: classifyAiError(error),
+  }));
+}
 
 function isInternalServiceCall(req: Request, serviceKey: string): boolean {
   return req.headers.get("authorization") === `Bearer ${serviceKey}`;
@@ -1225,7 +1374,21 @@ function isUuid(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+const PAYMENT_RECEIPT_ACK_TH = "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊";
+const PAYMENT_RECEIPT_ACK_EN = "Thank you. Our accounting team will review the payment notification shortly. 😊";
+const PAYMENT_RECEIPT_REPLY_RE = /(?:สลิป(?:โอนเงิน|แจ้งชำระเงิน)?|แจ้งโอนเงิน|ฝ่ายบัญชี.*ตรวจสอบ(?:ยอด|การชำระ)|ตรวจสอบ(?:ยอด|การโอน)|payment\s*(?:receipt|slip)|bank\s*transfer\s*slip|accounting.*(?:verify|review))/iu;
+const PAYMENT_RECEIPT_QUERY_RE = /(?:สลิป|แจ้งโอน|โอนเงินแล้ว|ส่งหลักฐาน(?:การ)?ชำระ|payment\s*(?:receipt|slip)|bank\s*transfer\s*(?:receipt|slip|sent))/iu;
+
+function sanitizePaymentReceiptAnswer(query: string, images: ImagePart[], answer: string, lang: Lang): string {
+  const receiptContext = images.length > 0 || PAYMENT_RECEIPT_QUERY_RE.test(query);
+  if (receiptContext && PAYMENT_RECEIPT_REPLY_RE.test(answer)) {
+    return lang === "th" ? PAYMENT_RECEIPT_ACK_TH : PAYMENT_RECEIPT_ACK_EN;
+  }
+  return answer;
+}
+
 Deno.serve(async (req: Request) => {
+  const requestStartedAt = Date.now();
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -1255,11 +1418,25 @@ Deno.serve(async (req: Request) => {
   const match_count = Math.max(1, Math.min(MAX_CONTEXT_CHUNKS, Number(body.match_count ?? DEFAULT_MATCH_COUNT) || DEFAULT_MATCH_COUNT));
   const matchThreshold = Math.max(0, Math.min(1, Number(body.match_threshold ?? DEFAULT_MATCH_THRESHOLD) || DEFAULT_MATCH_THRESHOLD));
   const wantStream = body.stream !== false;
-  const lang: Lang = detectLanguage(query);
   const sessionId = typeof body.session_id === "string" && body.session_id.length >= 8 ? body.session_id : null;
   const displayName = typeof body.display_name === "string" ? body.display_name : "";
   const channelRaw = typeof body.channel === "string" ? body.channel.toLowerCase() : "default";
   const channel = ALLOWED_CHANNELS.has(channelRaw) ? channelRaw : "default";
+  const lang = resolveResponseLanguage(query, history, channel);
+  const requestId = internalServiceCall && isUuid(body.request_id)
+    ? body.request_id
+    : crypto.randomUUID();
+  const routingVariantRaw = internalServiceCall ? String(body.routing_variant ?? "direct") : "direct";
+  const routingVariant: RoutingVariant = routingVariantRaw === "auto" || routingVariantRaw === "db_region"
+    ? routingVariantRaw
+    : "direct";
+  const telemetry: RequestTelemetry = {
+    requestId,
+    startedAt: requestStartedAt,
+    edgeRegion: Deno.env.get("SB_REGION") ?? Deno.env.get("DENO_REGION") ?? null,
+    routingVariant,
+    contentKind: images.length > 0 ? "image" : "text",
+  };
 
   if (!query && images.length === 0) return new Response(JSON.stringify({ error: MSG[lang].queryRequired }), { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 
@@ -1291,11 +1468,12 @@ Deno.serve(async (req: Request) => {
         const send = (event: Record<string, unknown>) => {
           try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); } catch (_e) { /* closed */ }
         };
-        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, send); }
+        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, telemetry, send); }
         catch (e) {
           const msg = (e as Error).message ?? String(e);
           const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
           send({ type: "error", message: friendly });
+          recordFailedAiRun(admin, telemetry, conversationId, channel, e);
         } finally { try { controller.close(); } catch (_e) { /* ignore */ } }
       },
     });
@@ -1303,11 +1481,12 @@ Deno.serve(async (req: Request) => {
   }
 
   const events: Array<Record<string, unknown>> = [];
-  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, (e) => events.push(e)); }
+  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, telemetry, (e) => events.push(e)); }
   catch (e) {
     const msg = (e as Error).message ?? String(e);
     const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
     events.push({ type: "error", message: friendly });
+    recordFailedAiRun(admin, telemetry, conversationId, channel, e);
   }
   const done = events.find((e) => e.type === "done") ?? {};
   const errEv = events.find((e) => e.type === "error");
@@ -1327,6 +1506,7 @@ Deno.serve(async (req: Request) => {
     elapsed_ms: (done as Record<string, unknown>).elapsed_ms ?? zeroElapsed(),
     model: (done as Record<string, unknown>).model ?? "unknown",
     tool_calls: (done as Record<string, unknown>).tool_calls ?? [],
+    request_id: (done as Record<string, unknown>).request_id ?? requestId,
     conversation_id: conversationId,
     channel,
     clarification_candidates,
@@ -1336,24 +1516,59 @@ Deno.serve(async (req: Request) => {
   }), { status: errEv ? 500 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 });
 
-async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, persistMessages: boolean, send: (event: Record<string, unknown>) => void) {
+async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, persistMessages: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
+  const botFlagsStartedAt = Date.now();
   const [globalOn, channelOn, convOn] = await Promise.all([
     isGlobalBotEnabled(admin),
     isChannelBotEnabled(admin, channel),
     conversationId ? isConversationBotEnabled(admin, conversationId) : Promise.resolve(true),
   ]);
+  const botFlagsMs = Date.now() - botFlagsStartedAt;
+  const scheduleSimpleRun = (
+    model: string,
+    outcome: string,
+    firstTokenMs: number | null,
+    toolNames: string[] = [],
+    toolMs = 0,
+    toolIterations = 0,
+  ) => {
+    const totalMs = Date.now() - telemetry.startedAt;
+    runInBackground("chat_ai_runs", recordAiRun(admin, {
+      requestId: telemetry.requestId,
+      conversationId,
+      channel,
+      model,
+      retrievalCount: 0,
+      topSimilarity: null,
+      toolNames,
+      usage: zeroTokens(),
+      elapsed: zeroElapsed(),
+      totalMs,
+      firstTokenMs,
+      toolMs,
+      toolIterations,
+      edgeRegion: telemetry.edgeRegion,
+      routingVariant: telemetry.routingVariant,
+      contentKind: telemetry.contentKind,
+      phaseTimings: { bot_flags_ms: botFlagsMs },
+      outcome,
+    }));
+  };
   if (!globalOn || !channelOn || !convOn) {
     const reason = !globalOn ? "global" : !channelOn ? "channel" : "conversation";
     send({ type: "paused", reason });
-    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: `paused:${reason}`, tool_calls: [], conversation_id: conversationId, channel });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: `paused:${reason}`, tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel });
+    scheduleSimpleRun(`paused:${reason}`, "paused", null);
     return;
   }
 
   if (isCostQuery(query)) {
     const refusal = MSG[lang].costRefusal;
+    const firstTokenMs = Date.now() - telemetry.startedAt;
     send({ type: "blocked", reason: "cost_query", answer: refusal });
-    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail", tool_calls: [], conversation_id: conversationId, channel });
     if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", refusal, { blocked: "cost_query" });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail", tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel });
+    scheduleSimpleRun("guardrail", "cost_query", firstTokenMs);
     return;
   }
 
@@ -1361,20 +1576,24 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   // Create the follow-up task deterministically so a friendly acknowledgement
   // can never be sent without notifying the sales team.
   if (query && images.length === 0 && isCallbackRequest(query)) {
+    const toolStartedAt = Date.now();
     const args = { interest: lang === "th" ? "ขอให้ติดต่อกลับ" : "callback request", note: query };
     const result = await captureLead(admin, args, channel, conversationId);
+    const toolMs = Date.now() - toolStartedAt;
     const answer = lang === "th"
       ? "เอยรับเรื่องให้ทีมงานติดต่อกลับแล้วนะคะ 😊"
       : "I have asked our team to contact you back shortly. 😊";
     const toolCalls = [{ name: "capture_lead", args, result_summary: JSON.stringify(result).slice(0, 200) }];
     send({ type: "tool_call", name: "capture_lead", args });
+    const firstTokenMs = Date.now() - telemetry.startedAt;
     send({ type: "text", chunk: answer });
-    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail:callback_lead", tool_calls: toolCalls, conversation_id: conversationId, channel });
-    await recordAiRun(admin, { conversationId, channel, model: "guardrail:callback_lead", retrievalCount: 0, topSimilarity: null, toolNames: ["capture_lead"], usage: zeroTokens(), elapsed: zeroElapsed(), outcome: "callback_lead" });
     if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", answer, { tool_calls: [{ name: "capture_lead", args }] });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail:callback_lead", tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel });
+    scheduleSimpleRun("guardrail:callback_lead", "callback_lead", firstTokenMs, ["capture_lead"], toolMs, 1);
     return;
   }
 
+  const setupStartedAt = Date.now();
   const learningSettings = await getLearningSettings(admin);
   const [geminiKey, openaiKey, persona, conversationMemory, approvedGuidance] = await Promise.all([
     getGeminiKey(admin),
@@ -1383,6 +1602,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     loadConversationMemory(admin, conversationId, learningSettings),
     loadApprovedLearningGuidance(admin, query, learningSettings),
   ]);
+  const setupMs = Date.now() - setupStartedAt;
   if (!geminiKey) throw new Error(MSG[lang].geminiKeyMissing);
   if (!openaiKey) throw new Error(MSG[lang].openaiKeyMissing);
 
@@ -1482,7 +1702,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }
 
   const systemPrompt = buildSystemPrompt(persona, contextText, lang, conversationMemory, approvedGuidance);
-  const t2 = Date.now();
+  const generationStartedAt = Date.now();
   const defaultImgPrompt = lang === "en"
     ? "The customer sent this image. Please inspect it according to image rules."
     : "ลูกค้าส่งรูปภาพนี้มา ช่วยตรวจสอบตามกฎการจัดการรูปภาพ";
@@ -1496,6 +1716,19 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const allToolCalls: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }> = [];
   let usedModel = GEMINI_MODELS[0];
   let fullAnswer = "";
+  let firstTokenMs: number | null = null;
+  let llm_ms = 0;
+  let tool_ms = 0;
+  let toolIterations = 0;
+  // Image replies are buffered so a payment receipt can be sanitized before a
+  // single streamed token reaches any channel. Text payment notifications use
+  // the same path for consistent privacy protection.
+  const deferTextForPaymentSafety = images.length > 0 || PAYMENT_RECEIPT_QUERY_RE.test(query);
+  const appendAnswer = (chunk: string) => {
+    if (chunk && firstTokenMs === null) firstTokenMs = Date.now() - telemetry.startedAt;
+    fullAnswer += chunk;
+    if (!deferTextForPaymentSafety) send({ type: "text", chunk });
+  };
 
   // Post-tool iterations are buffered (not streamed live) so a repeated
   // acknowledgment — the model loves to re-say "เดี๋ยวเอยขอตรวจสอบ..." after
@@ -1503,14 +1736,16 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const normText = (s: string) => s.replace(/\s+/g, "").replace(/[.,!?;:()\[\]"'`~\-—·]/g, "");
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let iterText = "";
+    const llmStartedAt = Date.now();
     const r = await streamGeminiWithFallback(geminiKey, systemPrompt, contents, (chunk) => {
+      if (chunk && firstTokenMs === null) firstTokenMs = Date.now() - telemetry.startedAt;
       if (iter === 0) {
-        fullAnswer += chunk;
-        send({ type: "text", chunk });
+        appendAnswer(chunk);
       } else {
         iterText += chunk;
       }
     });
+    llm_ms += Date.now() - llmStartedAt;
     if (iter > 0 && iterText) {
       const a = normText(fullAnswer);
       const b = normText(iterText);
@@ -1518,8 +1753,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       if (!duplicate) {
         const sepNeeded = fullAnswer.trim() && !fullAnswer.endsWith("\n");
         const chunkOut = (sepNeeded ? "\n" : "") + iterText;
-        fullAnswer += chunkOut;
-        send({ type: "text", chunk: chunkOut });
+        appendAnswer(chunkOut);
       }
     }
     usedModel = r.model;
@@ -1527,8 +1761,10 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     usage.completion_tokens += r.usage.completion_tokens;
     usage.total_tokens += r.usage.total_tokens;
     if (r.toolCalls.length === 0) break;
+    toolIterations += 1;
     contents.push({ role: "model", parts: r.allParts });
     for (const tc of r.toolCalls) { send({ type: "tool_call", name: tc.name, args: tc.args }); }
+    const toolsStartedAt = Date.now();
     const responseParts = await Promise.all(
       r.toolCalls.map(async (call) => {
         const result = await dispatchTool(admin, call.name, call.args, send, channel, conversationId, query, images.length > 0);
@@ -1536,33 +1772,68 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         return { functionResponse: { name: call.name, response: result } };
       }),
     );
+    tool_ms += Date.now() - toolsStartedAt;
     contents.push({ role: "user", parts: responseParts });
     if (iter === MAX_TOOL_ITERATIONS - 1) {
       const msgText = MSG[lang].maxIterations;
-      fullAnswer += msgText;
-      send({ type: "text", chunk: msgText });
+      appendAnswer(msgText);
     }
   }
 
-  const llm_ms = Date.now() - t2;
+  fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);
+  if (deferTextForPaymentSafety && fullAnswer) send({ type: "text", chunk: fullAnswer });
+
+  const generationMs = Date.now() - generationStartedAt;
   const sources = [
     ...matchedRows.map((m) => ({ id: m.id, title: m.title, source_path: m.source_path, similarity: m.similarity, tags: m.tags ?? [], content_preview: m.content.slice(0, 200) })),
     ...forcedRows.map((r) => ({ id: `forced:${r.source_path}:${r.chunk_index}`, title: r.title, source_path: r.source_path, similarity: null, tags: [], content_preview: r.content.slice(0, 200) })),
   ];
   const elapsed = { embed: embed_ms, search: search_ms, llm: llm_ms };
   const toolNames = allToolCalls.map((t) => t.name);
-  await recordAiRun(admin, {
-    conversationId,
-    channel,
-    model: usedModel,
-    retrievalCount: matchedRows.length + forcedRows.length,
-    topSimilarity: matchedRows.length > 0 ? Number(matchedRows[0].similarity ?? 0) : null,
-    toolNames,
-    usage,
-    elapsed,
-  });
-  await Promise.all([
+  const responseCriticalWrites: Promise<unknown>[] = [
+    // Keep this write on the response path. Moving a last-write-wins memory
+    // upsert to waitUntil widens the chance that an older concurrent turn
+    // overwrites the newer customer context.
     saveConversationMemory(admin, conversationId, channel, query, toolNames, learningSettings),
+  ];
+  if (conversationId && fullAnswer.trim() && persistMessages) {
+    responseCriticalWrites.push(saveMessage(admin, conversationId, "bot", fullAnswer, {
+      model: usedModel, channel,
+      tool_calls: allToolCalls.map((t) => ({ name: t.name, args: t.args })),
+      tokens: usage,
+    }));
+  }
+  await Promise.all(responseCriticalWrites);
+  const totalMs = Date.now() - telemetry.startedAt;
+  send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel });
+  runInBackground("post_reply", Promise.all([
+    recordAiRun(admin, {
+      requestId: telemetry.requestId,
+      conversationId,
+      channel,
+      model: usedModel,
+      retrievalCount: matchedRows.length + forcedRows.length,
+      topSimilarity: matchedRows.length > 0 ? Number(matchedRows[0].similarity ?? 0) : null,
+      toolNames,
+      usage,
+      elapsed,
+      totalMs,
+      firstTokenMs,
+      toolMs: tool_ms,
+      toolIterations,
+      edgeRegion: telemetry.edgeRegion,
+      routingVariant: telemetry.routingVariant,
+      contentKind: telemetry.contentKind,
+      phaseTimings: {
+        bot_flags_ms: botFlagsMs,
+        setup_ms: setupMs,
+        embed_ms,
+        search_ms,
+        llm_ms,
+        tool_ms,
+        generation_ms: generationMs,
+      },
+    }),
     recordLearningCandidate(admin, {
       conversationId,
       channel,
@@ -1571,13 +1842,5 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       toolNames,
       settings: learningSettings,
     }),
-  ]);
-  if (conversationId && fullAnswer.trim() && persistMessages) {
-    await saveMessage(admin, conversationId, "bot", fullAnswer, {
-      model: usedModel, channel,
-      tool_calls: allToolCalls.map((t) => ({ name: t.name, args: t.args })),
-      tokens: usage,
-    });
-  }
-  send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, conversation_id: conversationId, channel });
+  ]));
 }

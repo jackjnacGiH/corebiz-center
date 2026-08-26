@@ -17,6 +17,7 @@
 import {
     useCallback,
     useEffect,
+    useLayoutEffect,
     useRef,
     useState,
     type ChangeEvent,
@@ -115,6 +116,8 @@ function statusLabel(
 // Status flow shown in the UI. `archived` is kept in the DB enum for
 // historical rows but no longer exposed — collapses into 'เสร็จสิ้น'.
 const ACTIVE_STATUSES: ChatStatus[] = ['open', 'assigned', 'resolved'];
+const MESSAGE_PAGE_SIZE = 100;
+const CONVERSATION_REFRESH_DELAY_MS = 200;
 
 // Force-download an image. Storage URLs are cross-origin, so the <a download>
 // attribute is ignored by browsers — fetch the bytes as a blob and save that.
@@ -237,6 +240,31 @@ function newestCustomerMessageAt(messages: ChatMessage[]): string | null {
     ), null);
 }
 
+function compareMessages(a: ChatMessage, b: ChatMessage): number {
+    const byCreatedAt = a.created_at.localeCompare(b.created_at);
+    return byCreatedAt || a.id.localeCompare(b.id);
+}
+
+function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+    if (incoming.length === 0) return current;
+    const byId = new Map(current.map((message) => [message.id, message]));
+    let changed = false;
+    for (const message of incoming) {
+        if (byId.has(message.id)) continue;
+        byId.set(message.id, message);
+        changed = true;
+    }
+    if (!changed) return current;
+    return Array.from(byId.values()).sort(compareMessages);
+}
+
+function messagePreview(content: string): string {
+    return content
+        .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g, '🖼️ รูปภาพ')
+        .trim()
+        .slice(0, 140);
+}
+
 export default function Chat() {
     const { t } = useLanguage();
     const { profile } = useAuth();
@@ -254,6 +282,12 @@ export default function Chat() {
     const [conversations, setConversations] = useState<ChatConversation[]>([]);
     const [loadingList, setLoadingList] = useState(true);
     const [listErr, setListErr] = useState<string | null>(null);
+    const conversationFiltersRef = useRef({ channel, status, search: debouncedSearch });
+    const conversationRefreshRef = useRef({ inFlight: false, queued: false, version: 0 });
+    const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => {
+        conversationFiltersRef.current = { channel, status, search: debouncedSearch };
+    }, [channel, status, debouncedSearch]);
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
@@ -308,7 +342,15 @@ export default function Chat() {
     }, [selectedId, conversations, selectedConversation?.id, readThroughByConversation]);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [loadingMsgs, setLoadingMsgs] = useState(false);
+    const [loadingOlderMsgs, setLoadingOlderMsgs] = useState(false);
+    const [hasOlderMessages, setHasOlderMessages] = useState(false);
     const [msgErr, setMsgErr] = useState<string | null>(null);
+    const selectedIdRef = useRef(selectedId);
+    const selectedConversationRef = useRef(selectedConversation);
+    useEffect(() => {
+        selectedIdRef.current = selectedId;
+        selectedConversationRef.current = selectedConversation;
+    }, [selectedId, selectedConversation]);
 
     // Reply
     const [reply, setReply] = useState('');
@@ -350,6 +392,7 @@ export default function Chat() {
     const [capturing, setCapturing] = useState(false);
 
     const threadScrollRef = useRef<HTMLDivElement>(null);
+    const preserveThreadScrollRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
 
     // Debounce the search box
     useEffect(() => {
@@ -363,26 +406,65 @@ export default function Chat() {
     // 'open' → 'assigned' deferred transition while he was actually reading
     // a different chat further down the list — when he then switched tabs,
     // the chat he never opened got promoted. Admin must click explicitly.
-    const loadConvs = useCallback(async () => {
-        setLoadingList(true);
-        setListErr(null);
+    const loadConvs = useCallback(async (options: { showLoading?: boolean } = {}) => {
+        const refresh = conversationRefreshRef.current;
+        const showLoading = options.showLoading ?? true;
+        refresh.version += 1;
+        refresh.queued = true;
+        if (showLoading) {
+            setLoadingList(true);
+            setListErr(null);
+        }
+        if (refresh.inFlight) return;
+
+        refresh.inFlight = true;
         try {
-            const rows = await chatInboxApi.listConversations({
-                channel,
-                status,
-                search: debouncedSearch,
-            });
-            setConversations(rows);
-        } catch (e) {
-            setListErr((e as Error).message);
+            while (refresh.queued) {
+                refresh.queued = false;
+                const requestVersion = refresh.version;
+                const filters = { ...conversationFiltersRef.current };
+                try {
+                    const rows = await chatInboxApi.listConversations(filters);
+                    const latestFilters = conversationFiltersRef.current;
+                    const isCurrent = requestVersion === refresh.version
+                        && filters.channel === latestFilters.channel
+                        && filters.status === latestFilters.status
+                        && filters.search === latestFilters.search;
+                    if (isCurrent) {
+                        setConversations(rows);
+                        setListErr(null);
+                    }
+                } catch (e) {
+                    if (requestVersion === refresh.version) {
+                        setListErr((e as Error).message);
+                    }
+                }
+            }
         } finally {
+            refresh.inFlight = false;
             setLoadingList(false);
         }
-    }, [channel, status, debouncedSearch]);
+    }, []);
+
+    const scheduleConversationRefresh = useCallback(() => {
+        if (conversationRefreshTimerRef.current) {
+            clearTimeout(conversationRefreshTimerRef.current);
+        }
+        conversationRefreshTimerRef.current = setTimeout(() => {
+            conversationRefreshTimerRef.current = null;
+            void loadConvs({ showLoading: false });
+        }, CONVERSATION_REFRESH_DELAY_MS);
+    }, [loadConvs]);
 
     useEffect(() => {
         void loadConvs();
-    }, [loadConvs]);
+    }, [loadConvs, channel, status, debouncedSearch]);
+
+    useEffect(() => () => {
+        if (conversationRefreshTimerRef.current) {
+            clearTimeout(conversationRefreshTimerRef.current);
+        }
+    }, []);
 
     // Realtime: any change to chat_conversations triggers a list refresh
     useEffect(() => {
@@ -391,11 +473,11 @@ export default function Chat() {
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'chat_conversations' },
-                () => void loadConvs(),
+                scheduleConversationRefresh,
             )
             .subscribe();
         return () => { void supabase.removeChannel(ch); };
-    }, [loadConvs]);
+    }, [scheduleConversationRefresh]);
 
     const markConversationRead = useCallback(async (
         conversationId: string,
@@ -425,28 +507,43 @@ export default function Chat() {
     useEffect(() => {
         if (!selectedId) {
             setMessages([]);
+            setHasOlderMessages(false);
+            setLoadingOlderMsgs(false);
             return;
         }
         let cancelled = false;
         setLoadingMsgs(true);
+        setLoadingOlderMsgs(false);
+        setHasOlderMessages(false);
+        setMessages([]);
         setMsgErr(null);
         void (async () => {
             try {
-                let rows = await chatInboxApi.listMessages(selectedId);
+                let page = await chatInboxApi.listMessages(selectedId, { limit: MESSAGE_PAGE_SIZE });
                 if (cancelled) return;
+                let rows = page.messages;
                 setMessages(rows);
+                setHasOlderMessages(page.hasMore);
 
                 // Clear the badge and move an open conversation out of the
                 // "ยังไม่อ่าน" list as soon as the admin opens it.
-                let marked = await markConversationRead(selectedId, newestCustomerMessageAt(rows));
+                let readThrough = newestCustomerMessageAt(rows)
+                    ?? selectedConversationRef.current?.last_customer_message_at
+                    ?? null;
+                let marked = await markConversationRead(selectedId, readThrough);
                 if (!marked && !cancelled) {
                     // A customer message landed between the first snapshot and
                     // the conditional update. Re-sync once so that message is
                     // visible before advancing the read-through watermark.
-                    rows = await chatInboxApi.listMessages(selectedId);
+                    page = await chatInboxApi.listMessages(selectedId, { limit: MESSAGE_PAGE_SIZE });
                     if (cancelled) return;
+                    rows = page.messages;
                     setMessages(rows);
-                    marked = await markConversationRead(selectedId, newestCustomerMessageAt(rows));
+                    setHasOlderMessages(page.hasMore);
+                    readThrough = newestCustomerMessageAt(rows)
+                        ?? selectedConversationRef.current?.last_customer_message_at
+                        ?? null;
+                    marked = await markConversationRead(selectedId, readThrough);
                 }
             } catch (e) {
                 if (!cancelled) setMsgErr((e as Error).message);
@@ -456,6 +553,36 @@ export default function Chat() {
         })();
         return () => { cancelled = true; };
     }, [selectedId, markConversationRead]);
+
+    async function loadOlderMessages() {
+        if (!selectedId || loadingOlderMsgs || !hasOlderMessages || messages.length === 0) return;
+        const conversationId = selectedId;
+        const oldest = messages[0];
+        const scrollElement = threadScrollRef.current;
+        const scrollSnapshot = scrollElement
+            ? { scrollHeight: scrollElement.scrollHeight, scrollTop: scrollElement.scrollTop }
+            : null;
+        setLoadingOlderMsgs(true);
+        setMsgErr(null);
+        try {
+            const page = await chatInboxApi.listMessages(conversationId, {
+                limit: MESSAGE_PAGE_SIZE,
+                before: { createdAt: oldest.created_at, id: oldest.id },
+            });
+            if (selectedIdRef.current !== conversationId) return;
+            preserveThreadScrollRef.current = scrollSnapshot;
+            setMessages((current) => mergeMessages(current, page.messages));
+            setHasOlderMessages(page.hasMore);
+        } catch (e) {
+            if (selectedIdRef.current === conversationId) {
+                setMsgErr((e as Error).message);
+            }
+        } finally {
+            if (selectedIdRef.current === conversationId) {
+                setLoadingOlderMsgs(false);
+            }
+        }
+    }
 
     // Realtime: messages for selected conversation
     useEffect(() => {
@@ -472,7 +599,7 @@ export default function Chat() {
                 },
                 (payload) => {
                     const row = payload.new as ChatMessage;
-                    setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+                    setMessages((prev) => mergeMessages(prev, [row]));
                     // The DB trigger re-opens the conversation as "ยังไม่อ่าน"
                     // on any customer message. But the admin is looking at THIS
                     // thread right now, so clear its unread badge immediately.
@@ -501,10 +628,20 @@ export default function Chat() {
         return () => { void supabase.removeChannel(ch); };
     }, [selectedId, markConversationRead]);
 
-    // Auto-scroll thread to bottom on new messages
-    useEffect(() => {
-        threadScrollRef.current?.scrollTo({
-            top: threadScrollRef.current.scrollHeight,
+    // Auto-scroll on new/initial messages, but preserve the viewport when an
+    // older page is prepended above the messages the admin is reading.
+    useLayoutEffect(() => {
+        const scrollElement = threadScrollRef.current;
+        if (!scrollElement) return;
+        const preserve = preserveThreadScrollRef.current;
+        if (preserve) {
+            preserveThreadScrollRef.current = null;
+            scrollElement.scrollTop = preserve.scrollTop
+                + (scrollElement.scrollHeight - preserve.scrollHeight);
+            return;
+        }
+        scrollElement.scrollTo({
+            top: scrollElement.scrollHeight,
             behavior: 'smooth',
         });
     }, [messages]);
@@ -603,6 +740,27 @@ export default function Chat() {
         if (imageUrl) attachHostedImage(imageUrl);
     }
 
+    const applySentMessage = useCallback((message: ChatMessage) => {
+        const updateConversation = (conversation: ChatConversation): ChatConversation => ({
+            ...conversation,
+            last_message_at: message.created_at,
+            last_message_preview: messagePreview(message.content),
+            unread_count: 0,
+        });
+        if (selectedIdRef.current === message.conversation_id) {
+            setMessages((current) => mergeMessages(current, [message]));
+            setSelectedConversation((current) => (
+                current?.id === message.conversation_id ? updateConversation(current) : current
+            ));
+        }
+        setConversations((current) => {
+            const existing = current.find((conversation) => conversation.id === message.conversation_id);
+            if (!existing) return current;
+            const updated = updateConversation(existing);
+            return [updated, ...current.filter((conversation) => conversation.id !== message.conversation_id)];
+        });
+    }, []);
+
     /** Upload + send documents (PDF/doc/etc.) immediately as file messages
      *  (a file card here; a link to the customer on LINE). */
     async function sendFiles(files: File[]) {
@@ -611,7 +769,7 @@ export default function Chat() {
         try {
             for (const file of files) {
                 const up = await uploadChatFile(file, selectedId);
-                await chatInboxApi.sendFileMessage({
+                const sent = await chatInboxApi.sendFileMessage({
                     conversationId: selectedId,
                     fileUrl: up.url,
                     fileName: up.name,
@@ -619,8 +777,8 @@ export default function Chat() {
                     mimeType: up.type,
                     senderName: agentName,
                 });
+                applySentMessage(sent);
             }
-            void loadConvs();
         } catch (err) {
             alert(`ส่งไฟล์ไม่สำเร็จ: ${(err as Error).message}`);
         } finally {
@@ -696,7 +854,7 @@ export default function Chat() {
                 const md = urls.map((u) => `![image](${u})`).join('\n');
                 content = text ? `${text}\n${md}` : md;
             }
-            await chatInboxApi.sendMessage({
+            const sent = await chatInboxApi.sendMessage({
                 conversationId: selectedId,
                 content,
                 contentType: imgs.length > 0 ? 'image' : 'text',
@@ -711,11 +869,10 @@ export default function Chat() {
                       }
                     : null,
             });
+            applySentMessage(sent);
             setReply('');
             setReplyingTo(null);
             clearPending();
-            // Optimistically refresh list so this conversation jumps to top
-            void loadConvs();
         } catch (e) {
             alert(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
         } finally {
@@ -728,13 +885,13 @@ export default function Chat() {
         if (!selectedId || sending) return;
         setSending(true);
         try {
-            await chatInboxApi.sendMessage({
+            const sent = await chatInboxApi.sendMessage({
                 conversationId: selectedId,
                 content: `![image](${url})`,
                 contentType: 'image',
                 senderName: agentName,
             });
-            void loadConvs();
+            applySentMessage(sent);
         } catch (e) {
             alert(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
         } finally {
@@ -1061,6 +1218,19 @@ export default function Chat() {
 
                             {/* Messages */}
                             <div ref={threadScrollRef} className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-neutral-50">
+                                {hasOlderMessages && !loadingMsgs && (
+                                    <div className="flex justify-center">
+                                        <button
+                                            type="button"
+                                            onClick={() => void loadOlderMessages()}
+                                            disabled={loadingOlderMsgs}
+                                            className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-sm hover:bg-neutral-100 disabled:cursor-wait disabled:opacity-60"
+                                        >
+                                            {loadingOlderMsgs && <Loader2 size={12} className="animate-spin" />}
+                                            {loadingOlderMsgs ? 'กำลังโหลดข้อความเก่า...' : 'โหลดข้อความเก่ากว่านี้'}
+                                        </button>
+                                    </div>
+                                )}
                                 {loadingMsgs && (
                                     <div className="text-center text-xs text-neutral-500">
                                         <Loader2 size={14} className="animate-spin inline mr-1" />

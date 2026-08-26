@@ -2827,6 +2827,16 @@ export interface ChatMessage {
   created_at: string;
 }
 
+export interface ChatMessageCursor {
+  createdAt: string;
+  id: string;
+}
+
+export interface ChatMessagePage {
+  messages: ChatMessage[];
+  hasMore: boolean;
+}
+
 /**
  * A saved canned reply ("ข้อความตอบกลับที่ตั้งไว้"), shared across the
  * whole team. Inserted into the composer from the Omni-Chat quick-reply
@@ -2908,19 +2918,37 @@ export const chatInboxApi = {
     return convos;
   },
 
-  /** Full message history for one conversation, oldest first. */
-  async listMessages(conversationId: string): Promise<ChatMessage[]> {
-    const { data, error } = await supabase
+  /** One cursor-paginated message page, returned oldest-first for rendering.
+   *  The initial call fetches only the latest messages; pass `before` to walk
+   *  backwards without a growing offset being shifted by Realtime inserts. */
+  async listMessages(
+    conversationId: string,
+    opts: { limit?: number; before?: ChatMessageCursor } = {},
+  ): Promise<ChatMessagePage> {
+    const limit = Math.max(1, Math.min(opts.limit ?? 100, 200));
+    let query = supabase
       .from('chat_messages')
       .select('*')
       .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(limit + 1);
+    if (opts.before) {
+      query = query.or(
+        `created_at.lt.${opts.before.createdAt},and(created_at.eq.${opts.before.createdAt},id.lt.${opts.before.id})`,
+      );
+    }
+    const { data, error } = await query;
     if (error) throw error;
-    return (data ?? []) as ChatMessage[];
+    const rows = (data ?? []) as ChatMessage[];
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.pop();
+    rows.reverse();
+    return { messages: rows, hasMore };
   },
 
-  /** Admin sends a reply. Inserts the chat_messages row, bumps the
-   *  conversation summary, then — if conversation.channel is on an
+  /** Admin sends a reply. Inserts the chat_messages row (the database trigger
+   *  updates the conversation summary/unread count), then — if the channel is
    *  external platform (line / messenger / email) — also forwards the
    *  message via the platform's send API through the matching Edge
    *  Function (line-push for now; messenger-push etc. in future). The
@@ -2980,23 +3008,6 @@ export const chatInboxApi = {
       .select('*')
       .single();
     if (error) throw error;
-
-    // Inbox preview: collapse any image markdown into a "🖼️ รูปภาพ" label
-    // so the list shows a clean summary instead of a raw URL.
-    const preview = input.content
-      .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g, '🖼️ รูปภาพ')
-      .trim()
-      .slice(0, 140);
-
-    // Bump summary so the inbox list re-orders
-    await supabase
-      .from('chat_conversations')
-      .update({
-        last_message_at: new Date().toISOString(),
-        last_message_preview: preview,
-        unread_count: 0,
-      })
-      .eq('id', input.conversationId);
 
     // Forward to LINE in the BACKGROUND — don't block the composer on LINE's
     // response (an over-quota push can take several seconds, which made sending
@@ -3073,15 +3084,6 @@ export const chatInboxApi = {
       .select('*')
       .single();
     if (error) throw error;
-
-    await supabase
-      .from('chat_conversations')
-      .update({
-        last_message_at: new Date().toISOString(),
-        last_message_preview: `📎 ${input.fileName}`,
-        unread_count: 0,
-      })
-      .eq('id', input.conversationId);
 
     // LINE can't push a file → send a tappable link the customer can open.
     // Background (non-blocking) + flag on failure, same as sendMessage.

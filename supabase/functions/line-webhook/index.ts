@@ -1,14 +1,18 @@
 /**
- * line-webhook v32 — send a quote link only for a newly created quote
- *
- * rag-chat can safely reuse a prior draft for the same conversation/items.
- * A reused quote must never be emitted as another quote-link reply.
- *
- * v28 — suppress generic text after a recent image
+ * line-webhook v28 — suppress generic text after a recent image
  *
  * v28: LINE sends an image and a generic request such as "ขอราคาหน่อย" as
  * separate events. The image owns the reply for 12 seconds so the text event
  * cannot lose the pixels and reuse an unrelated product from old history.
+ *
+ * v31 — idempotent LINE events, payment-slip privacy, and one quote reply
+ *
+ * v33 — lower-latency LINE processing and privacy-safe timing telemetry
+ *
+ * Reuses briefly cached channel/bot flags, fetches a LINE profile only when a
+ * conversation is first created, lets the incoming-message unique index handle
+ * cheap event retries, and measures the LINE-to-RAG/reply path without storing
+ * customer text, image data, profile data, or other PII in telemetry.
  *
  * v20 — send the quote link in the (free) reply, not a push
  *
@@ -88,6 +92,23 @@ const LOADING_SECONDS = 20;
 const IMAGE_FOLLOWUP_WINDOW_MS = 12_000;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const ACTIVE_CHANNEL_CACHE_MS = 15_000;
+const BOT_FLAG_CACHE_MS = 30_000;
+const BOT_CONVERSATION_CACHE_MAX = 1_000;
+const DB_REGION = Deno.env.get("LINE_RAG_DB_REGION")?.trim() || "ap-southeast-2";
+const DB_REGION_PERCENT = Math.max(0, Math.min(
+  100,
+  Number(Deno.env.get("LINE_RAG_DB_REGION_PERCENT") ?? "50") || 0,
+));
+
+type CacheEntry<T> = { value: T; expiresAt: number };
+type RoutingVariant = "auto" | "db_region";
+type SafeTimings = Record<string, number>;
+
+let activeChannelCache: CacheEntry<LineChannel> | null = null;
+let globalBotFlagCache: CacheEntry<boolean> | null = null;
+let channelBotFlagCache: CacheEntry<boolean> | null = null;
+const conversationBotFlagCache = new Map<string, CacheEntry<boolean>>();
 
 interface LineChannel {
   id: string;
@@ -133,13 +154,21 @@ async function verifySignature(body: string, signature: string, secret: string):
 }
 
 async function getActiveChannel(admin: SupabaseClient): Promise<LineChannel | null> {
+  const now = Date.now();
+  if (activeChannelCache && activeChannelCache.expiresAt > now) {
+    return activeChannelCache.value;
+  }
   const { data, error } = await admin
     .from("line_channels")
     .select("id, name, channel_id, channel_access_token, channel_secret, is_active")
     .eq("is_active", true)
     .limit(1).maybeSingle();
   if (error) { console.error("getActiveChannel error:", error.message); return null; }
-  return (data as LineChannel | null) ?? null;
+  const channel = (data as LineChannel | null) ?? null;
+  // Cache only a valid active channel. A missing/failed lookup stays fail-closed
+  // and is retried on the next webhook instead of becoming a stale negative.
+  if (channel) activeChannelCache = { value: channel, expiresAt: now + ACTIVE_CHANNEL_CACHE_MS };
+  return channel;
 }
 
 // v12: LINE user → portal member → CRM customer. Verified contact first,
@@ -165,18 +194,20 @@ async function resolveMemberCustomerId(admin: SupabaseClient, lineUserId: string
 async function upsertLineConversation(
   admin: SupabaseClient,
   lineUserId: string,
-  displayName: string,
-  avatarUrl: string | null,
+  accessToken: string,
 ): Promise<string | null> {
-  const { data: existing } = await admin.from("chat_conversations")
-    .select("id, display_name, avatar_url, customer_id")
+  const { data: existing, error: existingError } = await admin.from("chat_conversations")
+    .select("id, customer_id")
     .eq("channel", "line").eq("external_id", lineUserId).maybeSingle();
 
+  if (existingError) {
+    console.warn("find LINE conversation error:", existingError.message);
+    return null;
+  }
+
   if (existing?.id) {
-    const row = existing as { id: string; display_name: string | null; avatar_url: string | null; customer_id: string | null };
+    const row = existing as { id: string; customer_id: string | null };
     const patch: Record<string, unknown> = {};
-    if (displayName && row.display_name !== displayName) patch.display_name = displayName;
-    if (avatarUrl && row.avatar_url !== avatarUrl) patch.avatar_url = avatarUrl;
     if (!row.customer_id) {
       const cust = await resolveMemberCustomerId(admin, lineUserId);
       if (cust) patch.customer_id = cust;
@@ -187,7 +218,14 @@ async function upsertLineConversation(
     return row.id;
   }
 
-  const customerId = await resolveMemberCustomerId(admin, lineUserId);
+  // LINE profile HTTP calls are needed only for a brand-new conversation.
+  // Existing chats keep their saved name/avatar while CRM linking still runs.
+  const [profile, customerId] = await Promise.all([
+    getLineUserProfile(accessToken, lineUserId),
+    resolveMemberCustomerId(admin, lineUserId),
+  ]);
+  const displayName = profile?.displayName ?? `LINE User ${lineUserId.slice(0, 6)}`;
+  const avatarUrl = profile?.pictureUrl ?? null;
   const { data: inserted, error } = await admin.from("chat_conversations").insert({
     channel: "line",
     external_id: lineUserId,
@@ -196,19 +234,51 @@ async function upsertLineConversation(
     status: "open",
     customer_id: customerId,
   }).select("id").single();
+  // Concurrent first events can race the unique (channel, external_id) key.
+  // Read the winning row instead of losing the customer's message.
+  if (error?.code === "23505") {
+    const { data: raced } = await admin.from("chat_conversations")
+      .select("id")
+      .eq("channel", "line").eq("external_id", lineUserId).maybeSingle();
+    return (raced as { id?: string } | null)?.id ?? null;
+  }
   if (error) { console.error("insert conv error:", error.message); return null; }
   return (inserted as { id: string }).id;
 }
 
-async function saveMessage(admin: SupabaseClient, conversationId: string, senderType: "customer" | "agent" | "bot" | "system", content: string, externalMsgId?: string, metadata: Record<string, unknown> = {}, contentType: string = "text") {
+async function saveMessage(admin: SupabaseClient, conversationId: string, senderType: "customer" | "agent" | "bot" | "system", content: string, externalMsgId?: string, metadata: Record<string, unknown> = {}, contentType: string = "text"): Promise<boolean> {
   const { error } = await admin.from("chat_messages").insert({
     conversation_id: conversationId, sender_type: senderType, content, content_type: contentType,
     external_msg_id: externalMsgId ?? null, metadata,
   });
-  if (error) console.warn("saveMessage err:", error.message);
-  await admin.from("chat_conversations").update({
-    last_message_at: new Date().toISOString(), last_message_preview: content.slice(0, 140),
-  }).eq("id", conversationId);
+  if (error) {
+    // A LINE webhook may be delivered more than once. The unique incoming-ID
+    // index makes this safe; callers stop before invoking RAG on the retry.
+    if (externalMsgId && error.code === "23505") {
+      console.info("duplicate LINE message ignored", { conversationId, externalMsgId });
+      return false;
+    }
+    console.warn("saveMessage err:", error.message);
+    return false;
+  }
+  // The consolidated chat_message_inserted trigger owns conversation preview,
+  // timestamp, unread count, status, and last-customer-message maintenance.
+  return true;
+}
+
+async function hasProcessedIncomingMessage(admin: SupabaseClient, conversationId: string, externalMsgId?: string): Promise<boolean> {
+  if (!externalMsgId) return false;
+  const { data, error } = await admin.from("chat_messages")
+    .select("id")
+    .eq("conversation_id", conversationId)
+    .eq("external_msg_id", externalMsgId)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn("incoming message duplicate check failed:", error.message);
+    return false;
+  }
+  return Boolean(data);
 }
 
 async function getLineUserProfile(accessToken: string, userId: string): Promise<{ displayName?: string; pictureUrl?: string } | null> {
@@ -320,6 +390,11 @@ async function startLineLoading(accessToken: string, userId: string): Promise<vo
 
 function sanitizeReply(text: string): string {
   if (!text) return text;
+  // A transfer receipt is not proof of payment. Never repeat, extract, or
+  // guess any monetary amount from a slip; accounting must verify it.
+  if (/(?:สลิป(?:โอนเงิน|แจ้งชำระเงิน)?|แจ้งโอนเงิน|ฝ่ายบัญชี.*ตรวจสอบ(?:ยอด|การชำระ)|ตรวจสอบ(?:ยอด|การโอน))/u.test(text)) {
+    return "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊";
+  }
   // Drop the obsolete "บัญชีของฉัน / /account" (log-in) pointer. Quotes now go
   // out as a public no-login link, so telling the customer to log in just
   // confuses them ("ทำไมต้องเข้าระบบ").
@@ -337,29 +412,120 @@ function sanitizeReply(text: string): string {
   return out;
 }
 
+function routingVariantForConversation(conversationId: string): RoutingVariant {
+  // FNV-1a gives a stable, non-PII 50/50 assignment for repeat requests from
+  // the same conversation. It is routing only—not a security decision.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < conversationId.length; i += 1) {
+    hash ^= conversationId.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % 100 < DB_REGION_PERCENT ? "db_region" : "auto";
+}
+
+function lineEdgeRegion(): string | null {
+  return Deno.env.get("SB_REGION") ?? Deno.env.get("DENO_REGION") ?? null;
+}
+
+function runInBackground(label: string, task: Promise<unknown>): void {
+  const guarded = task.catch((error) => {
+    console.warn(`${label} background task failed:`, (error as Error).message);
+  });
+  const runtime = (globalThis as typeof globalThis & {
+    EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void };
+  }).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(guarded);
+  else void guarded;
+}
+
+function sanitizeTimings(timings: SafeTimings): SafeTimings {
+  return Object.fromEntries(Object.entries(timings)
+    .filter(([, value]) => Number.isFinite(value) && value >= 0)
+    .map(([key, value]) => [key, Math.round(value)]));
+}
+
+async function updateLineTelemetry(admin: SupabaseClient, input: {
+  requestId: string;
+  routingVariant: RoutingVariant;
+  lineReplyMs: number | null;
+  endToEndMs: number;
+  phaseTimings: SafeTimings;
+}): Promise<void> {
+  // rag-chat records its run in the background. Retry only this idempotent
+  // telemetry update while that insert becomes visible—never retry RAG/tools.
+  const retryDelays = [0, 150, 400, 800, 1_200];
+  for (const delayMs of retryDelays) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const { data, error } = await admin.from("chat_ai_runs")
+      .select("id, phase_timings")
+      .eq("request_id", input.requestId)
+      .maybeSingle();
+    if (error) {
+      console.warn("LINE telemetry lookup failed:", error.message);
+      return;
+    }
+    if (!data) continue;
+
+    const existing = ((data as { phase_timings?: unknown }).phase_timings ?? {}) as Record<string, unknown>;
+    const { error: updateError } = await admin.from("chat_ai_runs").update({
+      line_reply_ms: input.lineReplyMs,
+      end_to_end_ms: Math.round(Math.max(0, input.endToEndMs)),
+      line_edge_region: lineEdgeRegion(),
+      routing_variant: input.routingVariant,
+      phase_timings: { ...existing, line: sanitizeTimings(input.phaseTimings) },
+    }).eq("id", (data as { id: string }).id);
+    if (updateError) console.warn("LINE telemetry update failed:", updateError.message);
+    return;
+  }
+  console.warn("LINE telemetry row not visible before retry budget expired", { requestId: input.requestId });
+}
+
 async function callRagChat(
   supabaseUrl: string,
   serviceKey: string,
   query: string,
   history: Array<{ role: string; content: string }>,
   conversationId: string,
+  requestId: string,
+  routingVariant: RoutingVariant,
   images: Array<{ mimeType: string; data: string }> = [],
 ): Promise<{ answer: string; quoteCode: string | null }> {
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${serviceKey}`,
+    "apikey": serviceKey,
+    "Content-Type": "application/json",
+  };
+  if (routingVariant === "db_region") headers["x-region"] = DB_REGION;
   const res = await fetch(`${supabaseUrl}/functions/v1/rag-chat`, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${serviceKey}`, "apikey": serviceKey, "Content-Type": "application/json" },
+    headers,
     // conversation_id is accepted by rag-chat only when its service-role
     // credential matches. This gives LINE safe continuity memory without
     // letting a browser caller attach another customer's conversation.
-    body: JSON.stringify({ query, history, images, stream: false, channel: "line", conversation_id: conversationId }),
+    body: JSON.stringify({
+      query, history, images, stream: false, channel: "line",
+      conversation_id: conversationId, request_id: requestId,
+      routing_variant: routingVariant,
+    }),
   });
-  const data = await res.json();
-  const answer = (data?.answer as string) || "";
-  // Only a freshly created quote gets a public link in this reply. A reused
-  // draft may carry an existing_quote_code, but sending it again would make a
-  // follow-up such as "ขอบคุณ" look like a new quotation event.
+  let data: Record<string, unknown> = {};
+  try { data = await res.json() as Record<string, unknown>; } catch { /* status handling below */ }
+  if (!res.ok) {
+    // Never retry RAG here: the failed invocation may already have executed an
+    // operational tool. Log only safe correlation fields for the A/B report.
+    console.error("rag-chat HTTP failed", {
+      status: res.status,
+      requestId,
+      routingVariant,
+    });
+    throw new Error(`rag_chat_http_${res.status}`);
+  }
+  const answer = (data.answer as string) || "";
+  // If the bot's request_quote tool created a draft quote, rag-chat exposes
+  // its code in tool_calls[].result_summary — pull it out so we can send the
+  // customer a public (no-login) link to view + download the PDF.
   let quoteCode: string | null = null;
-  const calls = Array.isArray((data as Record<string, unknown>)?.tool_calls)
+  const calls = Array.isArray(data.tool_calls)
     ? (data as { tool_calls: Array<Record<string, unknown>> }).tool_calls : [];
   for (const c of calls) {
     const summary = String(c?.result_summary ?? "");
@@ -478,7 +644,7 @@ function textToLineMessages(text: string): LineMessage[] {
   return out.slice(0, 5);
 }
 
-async function replyToLine(accessToken: string, replyToken: string, texts: string | string[]): Promise<void> {
+async function replyToLine(accessToken: string, replyToken: string, texts: string | string[]): Promise<boolean> {
   const arr = Array.isArray(texts) ? texts : [texts];
   const messages = arr.flatMap((t) => textToLineMessages(t)).slice(0, 5);
   const res = await fetch("https://api.line.me/v2/bot/message/reply", {
@@ -486,7 +652,11 @@ async function replyToLine(accessToken: string, replyToken: string, texts: strin
     headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ replyToken, messages }),
   });
-  if (!res.ok) console.error("LINE reply failed:", res.status, await res.text().catch(() => ""));
+  if (!res.ok) {
+    console.error("LINE reply failed:", res.status, await res.text().catch(() => ""));
+    return false;
+  }
+  return true;
 }
 
 // Build the public (no-login) quote link message for a quote code. Customers
@@ -534,6 +704,13 @@ function stripQuoteLink(s: string): string {
     .trim();
 }
 
+// A LINE reply can contain one composed message. Keeping the quote status and
+// its public link together avoids three separate bot bubbles for one image.
+function composeQuoteReply(answer: string, quoteLink: string | null): string {
+  const cleanAnswer = stripQuoteLink(answer);
+  return quoteLink ? [cleanAnswer, quoteLink].filter(Boolean).join("\n\n") : cleanAnswer;
+}
+
 async function loadHistory(admin: SupabaseClient, conversationId: string): Promise<Array<{ role: string; content: string }>> {
   const { data } = await admin.from("chat_messages")
     .select("sender_type, content, metadata").eq("conversation_id", conversationId)
@@ -556,7 +733,9 @@ function isGenericImageFollowUp(text: string): boolean {
   const compact = text.replace(/\s+/g, "").toLowerCase();
   return /^(?:ขอ)?(?:ใบ)?เสนอราคา(?:ห+น่อย)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
     || /^ขอราคา(?:ห+น่อย)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
-    || /^ราคา(?:เท่าไหร่)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact);
+    || /^ราคา(?:เท่าไหร่)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
+    || /^(?:แจ้ง)?โอนเงิน(?:แล้ว)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact)
+    || /^(?:ส่ง)?สลิป(?:โอนเงิน)?(?:ครับ|ค่ะ|คับ)?$/u.test(compact);
 }
 
 async function hasRecentCustomerImage(admin: SupabaseClient, conversationId: string): Promise<boolean> {
@@ -583,24 +762,63 @@ async function hasRecentCustomerImage(admin: SupabaseClient, conversationId: str
 
 async function shouldBotReply(admin: SupabaseClient, conversationId: string): Promise<boolean> {
   try {
-    const [global, channel, conv] = await Promise.all([
-      admin.from("org_settings").select("bot_enabled").eq("id", true).maybeSingle(),
-      admin.from("ai_personas").select("bot_enabled").eq("channel", "line").maybeSingle(),
-      admin.from("chat_conversations").select("bot_enabled").eq("id", conversationId).maybeSingle(),
+    const now = Date.now();
+    const cachedGlobal = globalBotFlagCache && globalBotFlagCache.expiresAt > now
+      ? globalBotFlagCache.value : undefined;
+    const cachedChannel = channelBotFlagCache && channelBotFlagCache.expiresAt > now
+      ? channelBotFlagCache.value : undefined;
+    const convEntry = conversationBotFlagCache.get(conversationId);
+    const cachedConversation = convEntry && convEntry.expiresAt > now ? convEntry.value : undefined;
+    if (convEntry && convEntry.expiresAt <= now) conversationBotFlagCache.delete(conversationId);
+
+    const globalPromise: Promise<boolean | null> = cachedGlobal !== undefined
+      ? Promise.resolve(cachedGlobal)
+      : (async () => {
+        const result = await admin.from("org_settings").select("bot_enabled").eq("id", true).maybeSingle();
+        if (result.error) {
+          console.warn("global bot flag query failed; pausing bot", { code: result.error.code });
+          return null;
+        }
+        const value = (result.data as Record<string, unknown> | null)?.bot_enabled !== false;
+        globalBotFlagCache = { value, expiresAt: Date.now() + BOT_FLAG_CACHE_MS };
+        return value;
+      })();
+    const channelPromise: Promise<boolean | null> = cachedChannel !== undefined
+      ? Promise.resolve(cachedChannel)
+      : (async () => {
+        const result = await admin.from("ai_personas").select("bot_enabled").eq("channel", "line").maybeSingle();
+        if (result.error) {
+          console.warn("LINE bot flag query failed; pausing bot", { code: result.error.code });
+          return null;
+        }
+        const value = (result.data as Record<string, unknown> | null)?.bot_enabled !== false;
+        channelBotFlagCache = { value, expiresAt: Date.now() + BOT_FLAG_CACHE_MS };
+        return value;
+      })();
+    const conversationPromise: Promise<boolean | null> = cachedConversation !== undefined
+      ? Promise.resolve(cachedConversation)
+      : (async () => {
+        const result = await admin.from("chat_conversations").select("bot_enabled").eq("id", conversationId).maybeSingle();
+        if (result.error || !result.data) {
+          console.warn("conversation bot flag query failed; pausing bot", { code: result.error?.code ?? "not_found" });
+          return null;
+        }
+        const value = (result.data as Record<string, unknown>).bot_enabled !== false;
+        if (conversationBotFlagCache.size >= BOT_CONVERSATION_CACHE_MAX) {
+          const oldestKey = conversationBotFlagCache.keys().next().value;
+          if (oldestKey) conversationBotFlagCache.delete(oldestKey);
+        }
+        conversationBotFlagCache.set(conversationId, { value, expiresAt: Date.now() + BOT_FLAG_CACHE_MS });
+        return value;
+      })();
+
+    const [globalOn, channelOn, conversationOn] = await Promise.all([
+      globalPromise, channelPromise, conversationPromise,
     ]);
-    if (global.error || channel.error || conv.error) {
-      console.warn("shouldBotReply query failed; pausing bot", {
-        global: global.error?.code, channel: channel.error?.code, conversation: conv.error?.code,
-      });
-      return false;
-    }
-    const g = (global.data as Record<string, unknown> | null)?.bot_enabled;
-    const c = (channel.data as Record<string, unknown> | null)?.bot_enabled;
-    const v = (conv.data as Record<string, unknown> | null)?.bot_enabled;
-    if (g === false) return false;
-    if (c === false) return false;
-    if (v === false) return false;
-    return true;
+    // Null means a lookup failed. Never let an unavailable control-plane query
+    // turn the bot on; cached successful values expire after 30 seconds.
+    if (globalOn === null || channelOn === null || conversationOn === null) return false;
+    return globalOn && channelOn && conversationOn;
   } catch (e) {
     console.warn("shouldBotReply check failed, defaulting to paused:", (e as Error).message);
     return false;
@@ -648,50 +866,117 @@ Deno.serve(async (req: Request) => {
 });
 
 async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: LineEvent, supabaseUrl: string, serviceKey: string) {
+  const processingStartedAt = Date.now();
+  const eventStartedAt = typeof ev.timestamp === "number"
+      && Number.isFinite(ev.timestamp)
+      && ev.timestamp > 1_000_000_000_000
+      && ev.timestamp <= processingStartedAt + 60_000
+    ? ev.timestamp
+    : processingStartedAt;
+  const requestId = crypto.randomUUID();
+  const phaseTimings: SafeTimings = {};
   if (ev.type !== "message") return;
   const userId = ev.source?.userId;
   if (!userId) return;
 
-  const profile = await getLineUserProfile(channel.channel_access_token, userId);
-  const displayName = profile?.displayName ?? `LINE User ${userId.slice(0, 6)}`;
-  const avatarUrl = profile?.pictureUrl ?? null;
-
-  const conversationId = await upsertLineConversation(admin, userId, displayName, avatarUrl);
+  const conversationStartedAt = Date.now();
+  const conversationId = await upsertLineConversation(admin, userId, channel.channel_access_token);
+  phaseTimings.conversation_ms = Date.now() - conversationStartedAt;
   if (!conversationId) return;
+  const routingVariant = routingVariantForConversation(conversationId);
 
   const msg = ev.message;
   if (!msg) return;
 
+  // Media downloads/storage are expensive, so reject sequential image/file
+  // retries before fetching bytes. Text/location/sticker events go straight to
+  // the unique external_msg_id insert, avoiding this extra read on the hot path.
+  if (msg.type === "image" || msg.type === "file") {
+    const dedupeStartedAt = Date.now();
+    const duplicate = await hasProcessedIncomingMessage(admin, conversationId, msg.id);
+    phaseTimings.media_dedupe_ms = Date.now() - dedupeStartedAt;
+    if (duplicate) {
+      console.info("duplicate LINE media webhook ignored before download", { conversationId, messageId: msg.id });
+      return;
+    }
+  }
+
   // v11: IMAGE — store it so the admin sees it in Omni-Chat, and let the bot (vision) understand it.
   if (msg.type === "image") {
     void startLineLoading(channel.channel_access_token, userId);
+    const mediaStartedAt = Date.now();
     const img = await downloadLineImage(channel.channel_access_token, msg.id);
     let url: string | null = null;
     if (img) url = await uploadImageToStorage(admin, conversationId, img.mimeType, img.data);
+    phaseTimings.media_ms = Date.now() - mediaStartedAt;
     const custContent = url ? `![image](${url})` : "[ลูกค้าส่งรูปภาพ]";
-    await saveMessage(admin, conversationId, "customer", custContent, msg.id, { line_message_type: "image", image_url: url, quote_token: msg.quoteToken ?? null }, "image");
+    const incomingSaveStartedAt = Date.now();
+    if (!await saveMessage(admin, conversationId, "customer", custContent, msg.id, { line_message_type: "image", image_url: url, quote_token: msg.quoteToken ?? null }, "image")) return;
+    phaseTimings.incoming_save_ms = Date.now() - incomingSaveStartedAt;
 
+    const botFlagStartedAt = Date.now();
     const allowed = await shouldBotReply(admin, conversationId);
+    phaseTimings.bot_flags_ms = Date.now() - botFlagStartedAt;
     if (!allowed) return;
 
     let aiReply: string;
     let quoteCode: string | null = null;
+    let ragCalled = false;
     if (!img) {
       aiReply = "ขออภัยค่ะ ตอนนี้เอยเปิดดูรูปไม่ได้ รบกวนพิมพ์ชื่อ/รุ่นสินค้ามาได้ไหมคะ เอยจะช่วยหาให้นะคะ 😊";
     } else {
+      const historyStartedAt = Date.now();
       const history = await loadHistory(admin, conversationId);
       const priorHistory = history.slice(0, -1);
-      const rag = await callRagChat(supabaseUrl, serviceKey, "", priorHistory, conversationId, [img]);
+      phaseTimings.history_ms = Date.now() - historyStartedAt;
+      phaseTimings.before_rag_ms = Date.now() - processingStartedAt;
+      const ragStartedAt = Date.now();
+      const rag = await callRagChat(
+        supabaseUrl, serviceKey, "", priorHistory, conversationId,
+        requestId, routingVariant, [img],
+      );
+      phaseTimings.rag_ms = Date.now() - ragStartedAt;
+      ragCalled = true;
       aiReply = sanitizeReply(rag.answer);
       quoteCode = rag.quoteCode;
     }
+    let lineReplyMs: number | null = null;
+    let replyCompletedAt = Date.now();
     if (aiReply) {
+      const quoteStartedAt = Date.now();
       const linkMsg = quoteCode ? await prepareQuoteLink(admin, conversationId, quoteCode) : null;
-      if (ev.replyToken) await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
-      await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
-        channel_id: channel.id, channel_name: channel.name, from_image: true,
-      });
-      if (linkMsg) await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: quoteCode });
+      phaseTimings.quote_link_ms = Date.now() - quoteStartedAt;
+      const replyText = composeQuoteReply(aiReply, linkMsg);
+      let delivered = false;
+      if (ev.replyToken) {
+        const replyStartedAt = Date.now();
+        delivered = await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
+        const replyAttemptMs = Date.now() - replyStartedAt;
+        phaseTimings.line_reply_attempt_ms = replyAttemptMs;
+        phaseTimings.line_reply_ok = delivered ? 1 : 0;
+        if (delivered) lineReplyMs = replyAttemptMs;
+      } else {
+        phaseTimings.line_reply_ok = 0;
+        console.warn("LINE message event has no reply token", { requestId });
+      }
+      replyCompletedAt = Date.now();
+      if (delivered) {
+        const botSaveStartedAt = Date.now();
+        await saveMessage(admin, conversationId, "bot", replyText, undefined, {
+          channel_id: channel.id, channel_name: channel.name, from_image: true,
+          quote_link: Boolean(linkMsg), quote_code: quoteCode,
+        });
+        phaseTimings.bot_save_ms = Date.now() - botSaveStartedAt;
+      }
+    }
+    if (ragCalled) {
+      runInBackground("LINE telemetry", updateLineTelemetry(admin, {
+        requestId,
+        routingVariant,
+        lineReplyMs,
+        endToEndMs: replyCompletedAt - eventStartedAt,
+        phaseTimings: { ...phaseTimings },
+      }));
     }
     return;
   }
@@ -703,7 +988,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     const dl = await downloadLineFile(channel.channel_access_token, msg.id);
     const stored = dl ? await uploadFileToStorage(admin, conversationId, fileName, dl.mimeType, dl.base64) : null;
     const content = stored ? `📎 ${fileName}` : `[ลูกค้าส่งไฟล์: ${fileName}]`;
-    await saveMessage(admin, conversationId, "customer", content, msg.id, {
+    if (!await saveMessage(admin, conversationId, "customer", content, msg.id, {
       line_message_type: "file",
       file_url: null,
       file_bucket: stored?.bucket ?? null,
@@ -712,7 +997,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       file_size: msg.fileSize ?? dl?.size ?? null,
       mime_type: dl?.mimeType ?? null,
       quote_token: msg.quoteToken ?? null,
-    }, "file");
+    }, "file")) return;
     return;
   }
 
@@ -723,27 +1008,30 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     const addr = (msg.address ?? "").trim();
     const mapUrl = (lat != null && lng != null) ? `https://www.google.com/maps?q=${lat},${lng}` : null;
     const content = [`📍 ${msg.title?.trim() || "ตำแหน่งที่ลูกค้าส่ง"}`, addr, mapUrl].filter(Boolean).join("\n");
-    await saveMessage(admin, conversationId, "customer", content, msg.id, {
+    if (!await saveMessage(admin, conversationId, "customer", content, msg.id, {
       line_message_type: "location",
       latitude: lat ?? null, longitude: lng ?? null,
       address: addr || null, title: msg.title ?? null,
       map_url: mapUrl,
-    });
+    })) return;
     return; // no bot auto-reply for a location — staff handle it
   }
 
   if (msg.type !== "text" || !msg.text) {
-    await saveMessage(admin, conversationId, "customer",
+    if (!await saveMessage(admin, conversationId, "customer",
       `[${msg.type}] ลูกค้าส่ง ${msg.type === "sticker" ? "sticker" : msg.type}`,
       msg.id, { line_message_type: msg.type, sticker_id: msg.stickerId, package_id: msg.packageId },
-      msg.type === "sticker" ? "sticker" : "text",
-    );
+      msg.type === "sticker" ? "sticker" : "text")) return;
     return;
   }
 
-  await saveMessage(admin, conversationId, "customer", msg.text, msg.id, { quote_token: msg.quoteToken ?? null });
+  const incomingSaveStartedAt = Date.now();
+  if (!await saveMessage(admin, conversationId, "customer", msg.text, msg.id, { quote_token: msg.quoteToken ?? null })) return;
+  phaseTimings.incoming_save_ms = Date.now() - incomingSaveStartedAt;
 
+  const botFlagStartedAt = Date.now();
   const allowed = await shouldBotReply(admin, conversationId);
+  phaseTimings.bot_flags_ms = Date.now() - botFlagStartedAt;
   if (!allowed) return;
 
   if (isGenericImageFollowUp(msg.text) && await hasRecentCustomerImage(admin, conversationId)) {
@@ -753,25 +1041,57 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
 
   void startLineLoading(channel.channel_access_token, userId);
 
+  const historyStartedAt = Date.now();
   const history = await loadHistory(admin, conversationId);
   const priorHistory = history.slice(0, -1);
-  const rag = await callRagChat(supabaseUrl, serviceKey, msg.text, priorHistory, conversationId);
+  phaseTimings.history_ms = Date.now() - historyStartedAt;
+  phaseTimings.before_rag_ms = Date.now() - processingStartedAt;
+  const ragStartedAt = Date.now();
+  const rag = await callRagChat(
+    supabaseUrl, serviceKey, msg.text, priorHistory, conversationId,
+    requestId, routingVariant,
+  );
+  phaseTimings.rag_ms = Date.now() - ragStartedAt;
   const aiReply = sanitizeReply(rag.answer);
 
+  let lineReplyMs: number | null = null;
+  let replyCompletedAt = Date.now();
   if (aiReply) {
     // Build the quote link (if any) and send it WITH the reply — the reply API is
     // free, so the link doesn't use the LINE push quota and always goes through.
+    const quoteStartedAt = Date.now();
     const linkMsg = rag.quoteCode ? await prepareQuoteLink(admin, conversationId, rag.quoteCode) : null;
+    phaseTimings.quote_link_ms = Date.now() - quoteStartedAt;
 
+    const replyText = composeQuoteReply(aiReply, linkMsg);
+    let delivered = false;
     if (ev.replyToken) {
-      await replyToLine(channel.channel_access_token, ev.replyToken, linkMsg ? [aiReply, linkMsg] : aiReply);
+      const replyStartedAt = Date.now();
+      delivered = await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
+      const replyAttemptMs = Date.now() - replyStartedAt;
+      phaseTimings.line_reply_attempt_ms = replyAttemptMs;
+      phaseTimings.line_reply_ok = delivered ? 1 : 0;
+      if (delivered) lineReplyMs = replyAttemptMs;
+    } else {
+      phaseTimings.line_reply_ok = 0;
+      console.warn("LINE message event has no reply token", { requestId });
     }
+    replyCompletedAt = Date.now();
 
-    await saveMessage(admin, conversationId, "bot", aiReply, undefined, {
-      channel_id: channel.id, channel_name: channel.name,
-    });
-    if (linkMsg) {
-      await saveMessage(admin, conversationId, "bot", linkMsg, undefined, { quote_link: true, quote_code: rag.quoteCode });
+    if (delivered) {
+      const botSaveStartedAt = Date.now();
+      await saveMessage(admin, conversationId, "bot", replyText, undefined, {
+        channel_id: channel.id, channel_name: channel.name,
+        quote_link: Boolean(linkMsg), quote_code: rag.quoteCode,
+      });
+      phaseTimings.bot_save_ms = Date.now() - botSaveStartedAt;
     }
   }
+  runInBackground("LINE telemetry", updateLineTelemetry(admin, {
+    requestId,
+    routingVariant,
+    lineReplyMs,
+    endToEndMs: replyCompletedAt - eventStartedAt,
+    phaseTimings: { ...phaseTimings },
+  }));
 }
