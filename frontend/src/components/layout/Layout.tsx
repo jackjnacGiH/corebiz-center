@@ -8,11 +8,18 @@ import BackToTop from '../BackToTop';
 import { cn } from '@/lib/utils';
 import { prefetchList, CK } from '../../lib/cache';
 import { productsApi, customersApi, categoriesApi, warehousesApi } from '../../lib/api';
+import type { TopBarPageContent } from './TopBar';
+
+export interface LayoutOutletContext {
+    setTopBarContent: React.Dispatch<React.SetStateAction<TopBarPageContent | null>>;
+}
 
 const Layout: React.FC = () => {
     const { collapsed, mobileOpen, isMobile, toggleCollapsed, openMobile, closeMobile, setMobileOpen } =
         useSidebar();
     const location = useLocation();
+    const [topBarContent, setTopBarContent] = React.useState<TopBarPageContent | null>(null);
+    const outletContext = React.useMemo<LayoutOutletContext>(() => ({ setTopBarContent }), []);
 
     // Auto-close mobile drawer when route changes
     React.useEffect(() => {
@@ -56,9 +63,10 @@ const Layout: React.FC = () => {
                     isMobile={isMobile}
                     onToggleSidebar={toggleCollapsed}
                     onOpenMobileMenu={openMobile}
+                    pageContent={topBarContent}
                 />
                 <div className="page-content">
-                    <Outlet />
+                    <Outlet context={outletContext} />
                 </div>
                 <BackToTop />
             </main>

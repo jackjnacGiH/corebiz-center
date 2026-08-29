@@ -37,6 +37,14 @@ export interface TopBarProps {
     isMobile: boolean;
     onToggleSidebar: () => void;   // desktop: collapse/expand
     onOpenMobileMenu: () => void;  // mobile: open Sheet drawer
+    pageContent?: TopBarPageContent | null;
+}
+
+export interface TopBarPageContent {
+    title: string;
+    subtitle?: string;
+    icon?: React.ReactNode;
+    actions?: React.ReactNode;
 }
 
 // ─── Notification icon style per type ────────────────────────────────────
@@ -64,7 +72,12 @@ function relativeTime(iso: string): string {
 
 // ─── TopBar ─────────────────────────────────────────────────────────────
 
-const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobileMenu }) => {
+const TopBar: React.FC<TopBarProps> = ({
+    isMobile,
+    onToggleSidebar,
+    onOpenMobileMenu,
+    pageContent,
+}) => {
     const { language, setLanguage, t } = useLanguage();
     const { profile } = useAuth();
     const navigate = useNavigate();
@@ -118,10 +131,37 @@ const TopBar: React.FC<TopBarProps> = ({ isMobile, onToggleSidebar, onOpenMobile
                     {isMobile ? <Menu size={18} /> : <PanelLeft size={18} />}
                 </button>
 
+                {pageContent && (
+                    <>
+                        <div className="hidden h-7 w-px flex-shrink-0 bg-neutral-200 sm:block" />
+                        <div className="flex min-w-0 items-center gap-2">
+                            {pageContent.icon && (
+                                <div className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 text-white">
+                                    {pageContent.icon}
+                                </div>
+                            )}
+                            <div className="min-w-0">
+                                <h1 className="truncate text-sm font-bold leading-4 text-neutral-900">
+                                    {pageContent.title}
+                                </h1>
+                                {pageContent.subtitle && (
+                                    <div className="hidden truncate text-[11px] leading-4 text-neutral-500 xl:block">
+                                        {pageContent.subtitle}
+                                    </div>
+                                )}
+                            </div>
+                            {pageContent.actions && (
+                                <div className="flex flex-shrink-0 items-center">
+                                    {pageContent.actions}
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
             </div>
 
             {/* Right: language, help, notifications, profile */}
-            <div className="header-actions">
+            <div className="header-actions flex-shrink-0">
                 {!isMobile && (
                     <div
                         className="language-switch"

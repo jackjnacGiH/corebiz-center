@@ -18,6 +18,7 @@ import {
     useCallback,
     useEffect,
     useLayoutEffect,
+    useMemo,
     useRef,
     useState,
     type ChangeEvent,
@@ -25,7 +26,7 @@ import {
     type FormEvent,
     type ReactNode,
 } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 import {
     MessageSquare,
     Search,
@@ -73,6 +74,7 @@ import QuickReplyButton from '../components/chat/QuickReplyButton';
 import ImageCropModal, { captureScreen } from '../components/chat/ImageCropModal';
 import ProductCardButton from '../components/chat/ProductCardButton';
 import StickerButton from '../components/chat/StickerButton';
+import type { LayoutOutletContext } from '../components/layout/Layout';
 
 const CHANNEL_LABEL: Record<ChatChannel, string> = {
     livechat: 'Web Chat',
@@ -272,6 +274,7 @@ function messagePreview(content: string): string {
 export default function Chat() {
     const { t } = useLanguage();
     const { profile } = useAuth();
+    const { setTopBarContent } = useOutletContext<LayoutOutletContext>();
     const [searchParams, setSearchParams] = useSearchParams();
     const urlId = searchParams.get('id');
     // Name shown to the customer + in the inbox when this admin replies.
@@ -464,6 +467,34 @@ export default function Chat() {
             setLoadingList(false);
         }
     }, []);
+
+    const topBarContent = useMemo(() => ({
+        title: t.chat.title,
+        subtitle: t.chat.subtitle,
+        icon: <MessageSquare size={16} />,
+        actions: (
+            <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void loadConvs()}
+                className="h-8 gap-1.5 bg-white px-2"
+                disabled={loadingList}
+                aria-label="รีเฟรชรายการแชท"
+                aria-busy={loadingList}
+                title="Refresh"
+            >
+                <RefreshCw size={13} className={loadingList ? 'animate-spin' : ''} />
+                <span className="hidden sm:inline">Refresh</span>
+            </Button>
+        ),
+    }), [loadConvs, loadingList, t.chat.subtitle, t.chat.title]);
+
+    useLayoutEffect(() => {
+        setTopBarContent(topBarContent);
+        return () => {
+            setTopBarContent((current) => current === topBarContent ? null : current);
+        };
+    }, [setTopBarContent, topBarContent]);
 
     const scheduleConversationRefresh = useCallback(() => {
         if (conversationRefreshTimerRef.current) {
@@ -966,28 +997,6 @@ export default function Chat() {
             className="animate-fade-in flex flex-col"
             style={{ height: 'calc(100vh - 56px - 48px)' }}
         >
-            {/* Page header */}
-            <header className="flex items-center justify-between pb-4 mb-4 border-b border-neutral-200">
-                <div className="flex items-center gap-3 min-w-0">
-                    <div className="grid place-items-center w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 text-white flex-shrink-0">
-                        <MessageSquare size={20} />
-                    </div>
-                    <div className="min-w-0">
-                        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">{t.chat.title}</h1>
-                        <p className="text-sm text-neutral-500">{t.chat.subtitle}</p>
-                    </div>
-                </div>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void loadConvs()}
-                    className="gap-2"
-                    disabled={loadingList}
-                >
-                    <RefreshCw size={13} className={loadingList ? 'animate-spin' : ''} /> Refresh
-                </Button>
-            </header>
-
             {/* Two-pane */}
             <div className="flex gap-4 flex-1 min-h-0">
                 {/* List — full-width on phone; hidden on phone once a chat is open */}
@@ -1163,7 +1172,7 @@ export default function Chat() {
                     {selectedConv && (
                         <>
                             {/* Thread header */}
-                            <div className="px-4 py-3 border-b border-neutral-200 flex items-center gap-3">
+                            <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 px-3 py-2 md:flex-nowrap">
                                 <button
                                     type="button"
                                     onClick={() => setSelectedId(null)}
@@ -1193,11 +1202,11 @@ export default function Chat() {
                                 >
                                     <User size={16} />
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-semibold text-neutral-900 truncate">
+                                <div className="min-w-0 flex-1">
+                                    <div className="truncate text-sm font-semibold text-neutral-900">
                                         {selectedConv.display_name}
                                     </div>
-                                    <div className="text-xs text-neutral-500 flex items-center gap-1.5">
+                                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-neutral-500">
                                         <span
                                             className={cn(
                                                 'inline-flex items-center gap-1 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border',
@@ -1208,24 +1217,24 @@ export default function Chat() {
                                         </span>
                                         <span>·</span>
                                         <span>{statusLabel(selectedConv.status, t.chat)}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowQuoteCustomerPreview(true)}
+                                            className={cn(
+                                                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1',
+                                                quoteCustomerReady
+                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                                    : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100',
+                                            )}
+                                            aria-label="ดูข้อมูลลูกค้าสำหรับใบเสนอราคา"
+                                        >
+                                            {quoteCustomerReady ? <BadgeCheck size={11} /> : <AlertCircle size={11} />}
+                                            {quoteCustomerReady ? 'ผูก CRM แล้ว' : 'รอข้อมูลออกบิล'}
+                                        </button>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowQuoteCustomerPreview(true)}
-                                        className={cn(
-                                            'mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors',
-                                            quoteCustomerReady
-                                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                                : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100',
-                                        )}
-                                        aria-label="ดูข้อมูลลูกค้าสำหรับใบเสนอราคา"
-                                    >
-                                        {quoteCustomerReady ? <BadgeCheck size={11} /> : <AlertCircle size={11} />}
-                                        {quoteCustomerReady ? 'ผูก CRM แล้ว' : 'รอข้อมูลออกบิล'}
-                                    </button>
                                 </div>
                                 {/* Status toggle — any → any direction */}
-                                <div className="inline-flex rounded-md border border-neutral-200 p-0.5 bg-neutral-50">
+                                <div className="order-last inline-flex w-full rounded-md border border-neutral-200 bg-neutral-50 p-0.5 md:order-none md:w-auto">
                                     {ACTIVE_STATUSES.map((s) => {
                                         const isCurrent =
                                             selectedConv.status === s ||
@@ -1238,7 +1247,7 @@ export default function Chat() {
                                                     if (!isCurrent) void handleSetStatus(s);
                                                 }}
                                                 className={cn(
-                                                    'text-xs px-3 h-7 rounded transition font-medium',
+                                                    'h-7 flex-1 rounded px-3 text-xs font-medium transition md:flex-none',
                                                     isCurrent
                                                         ? 'bg-indigo-600 text-white shadow-sm'
                                                         : 'text-neutral-600 hover:bg-white hover:text-neutral-900',
