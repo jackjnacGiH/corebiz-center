@@ -107,7 +107,11 @@ function CompanyLogo({
       />
     );
   }
-  return <div className="text-[21px] font-black tracking-tight">J NAC</div>;
+  return (
+    <div className="flex h-[14mm] w-[14mm] items-center justify-center rounded-full border-[2px] border-[#1696f4] text-[18px] font-black text-[#1696f4]">
+      J
+    </div>
+  );
 }
 
 function ShippingLabelPage({
@@ -160,28 +164,34 @@ function ShippingLabelPage({
       aria-label={`ตัวอย่างใบปะหน้าขนส่ง กล่อง ${parcelNumber}/${parcelTotal}`}
       className="shipping-label-document box-border flex h-[150mm] w-[100mm] flex-col overflow-hidden border-2 border-black bg-white font-sans text-black"
     >
-      <header className="grid h-[22mm] grid-cols-[1fr_1fr] border-b-2 border-black">
-        <div className="flex min-w-0 items-start gap-2 border-r-2 border-black px-[3mm] py-[2mm]">
+      <header className="relative flex h-[22mm] items-center gap-[3mm] border-b-[3px] border-black px-[3mm] pb-[1.5mm] pt-[3mm]">
+        <span
+          className="absolute inset-x-0 top-0 h-[1.8mm]"
+          style={{
+            background: `linear-gradient(90deg, #1696f4 0%, #1696f4 58%, ${carrier.accent} 58%, ${carrier.accent} 100%)`,
+          }}
+        />
+        <div className="flex min-w-0 flex-1 items-center gap-[2.5mm]">
           <CompanyLogo
             companyName={companyName || "J NAC (THAILAND) CO., LTD."}
             logoUrl={companyLogoUrl}
           />
           <div className="min-w-0">
-            <p className="text-[8px] font-black uppercase tracking-wider">
-              ผู้ส่งสินค้า
+            <p className="text-[17px] font-black leading-none tracking-tight text-[#0b315d]">
+              J NAC
             </p>
-            <p className="line-clamp-2 text-[7px] leading-tight">
+            <p className="mt-1 line-clamp-2 text-[6.5px] font-bold leading-tight text-neutral-700">
               {companyName || "J NAC (THAILAND) CO., LTD."}
             </p>
           </div>
         </div>
-        <div className="relative flex min-w-0 items-center justify-center overflow-hidden px-[2mm] py-[1.5mm] text-center">
+        <div className="relative flex h-[14mm] w-[36mm] shrink-0 items-center justify-center overflow-hidden rounded-[2.5mm] border-[1.5px] border-neutral-300 bg-neutral-50 px-[2mm] text-center">
           <span
-            className="absolute inset-y-0 left-0 w-[2.3mm]"
+            className="absolute inset-y-0 left-0 w-[1.5mm]"
             style={{ background: carrier.accent }}
           />
           <div className="flex flex-col items-center">
-            <p className="mb-1 text-[7px] font-black uppercase tracking-[0.1em]">
+            <p className="mb-1 text-[6.5px] font-black uppercase tracking-[0.12em] text-neutral-500">
               ผู้ให้บริการขนส่ง
             </p>
             <CarrierLogo carrier={carrier} />
