@@ -154,6 +154,24 @@ Object.assign(shippingApi, {
     return copy({ shipment: old });
   },
   orderOptions: async () => ({ orders: [{ id: oid, code: "SO-DEMO-001" }] }),
+  recipientOptions: async (search) => {
+    const needle = String(search).trim().toLocaleLowerCase("th");
+    const seen = new Set();
+    const recipients = state.rows
+      .map((shipment) => ({
+        id: `history:${shipment.id}`,
+        source: "history",
+        address: shipment.draft.destination,
+      }))
+      .filter(({ address }) => {
+        const text = Object.values(address).join(" ").toLocaleLowerCase("th");
+        const key = `${address.fullname}|${address.telephone1}|${address.address}`;
+        if (!text.includes(needle) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    return copy({ recipients });
+  },
   orderDraft: async () => {
     const draft = emptyDraft();
     draft.purpose = "SO-DEMO-001";

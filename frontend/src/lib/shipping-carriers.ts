@@ -12,16 +12,25 @@ const BRANDS: Array<[RegExp, ShippingCarrierBrand]> = [
       name: "Flash Express",
       shortName: "FLASH",
       accent: "#f5a400",
+      logoUrl: "/center/shipping-carriers/flash.svg",
     },
   ],
-  [/^BEST/, { name: "Best Express", shortName: "BEST", accent: "#e1251b" }],
+  [
+    /^BEST/,
+    {
+      name: "Best Express",
+      shortName: "BEST",
+      accent: "#e1251b",
+      logoUrl: "/center/shipping-carriers/best.png",
+    },
+  ],
   [
     /^KEX|^KERRY/,
     {
       name: "KEX Express",
       shortName: "KEX",
       accent: "#f37021",
-      logoUrl: "https://th.kex-express.com/images/logo.png",
+      logoUrl: "/center/shipping-carriers/kex.png",
     },
   ],
   [
@@ -30,7 +39,7 @@ const BRANDS: Array<[RegExp, ShippingCarrierBrand]> = [
       name: "J&T Express",
       shortName: "J&T",
       accent: "#d71920",
-      logoUrl: "https://www.jtexpress.com/icons/logo.png",
+      logoUrl: "/center/shipping-carriers/jnt.png",
     },
   ],
   [
@@ -39,23 +48,35 @@ const BRANDS: Array<[RegExp, ShippingCarrierBrand]> = [
       name: "Thailand Post",
       shortName: "THP",
       accent: "#d61f2c",
-      logoUrl:
-        "https://www.thailandpost.co.th/library/template/thailandpost/standard5/theme/images/logo-thailandpost-hor.png",
+      logoUrl: "/center/shipping-carriers/thailand-post.png",
     },
   ],
-  [/^DHL/, { name: "DHL Express", shortName: "DHL", accent: "#d40511" }],
+  [
+    /^DHL/,
+    {
+      name: "DHL Express",
+      shortName: "DHL",
+      accent: "#d40511",
+      logoUrl: "/center/shipping-carriers/dhl.svg",
+    },
+  ],
   [
     /^SPX|^SHOPEE/,
     {
       name: "SPX Express",
       shortName: "SPX",
       accent: "#ee4d2d",
-      logoUrl: "https://spx.co.th/logo/spx-express.svg",
+      logoUrl: "/center/shipping-carriers/spx.svg",
     },
   ],
   [
     /^LAZADA/,
-    { name: "Lazada Logistics", shortName: "LEX", accent: "#111c4e" },
+    {
+      name: "Lazada Logistics",
+      shortName: "LEX",
+      accent: "#111c4e",
+      logoUrl: "/center/shipping-carriers/lazada.svg",
+    },
   ],
   [/^RTT/, { name: "RTT Express", shortName: "RTT", accent: "#1769aa" }],
 ];
@@ -90,4 +111,35 @@ export function shippingCarrierBrand(code: string): ShippingCarrierBrand {
       accent: "#111827",
     }
   );
+}
+
+/**
+ * Public carrier tracking pages. The query forms are limited to URLs accepted
+ * by the carriers' public websites; pages without a stable prefill contract
+ * still open the correct public tracking form.
+ */
+export function shippingTrackingUrl(
+  carrierCode: string,
+  trackingNumber: string,
+): string | null {
+  const carrier = carrierCode.trim().toUpperCase();
+  const tracking = trackingNumber.trim();
+  if (!carrier || !/^[A-Za-z0-9-]{5,80}$/.test(tracking)) return null;
+  const value = encodeURIComponent(tracking);
+  if (/^FLASH/.test(carrier))
+    return `https://www.flashexpress.co.th/fle/tracking?se=${value}`;
+  if (/^BEST/.test(carrier))
+    return `https://www.best-inc.co.th/track?waybill=${value}`;
+  if (/^KEX|^KERRY/.test(carrier))
+    return `https://th.kex-express.com/th/track/?action=search&code=${value}`;
+  if (/^J&T/.test(carrier))
+    return `https://www.jtexpress.co.th/service/track?waybillNo=${value}`;
+  if (/^EMS|^POSTSABUY|^THAIPOST/.test(carrier))
+    return "https://track.thailandpost.co.th/";
+  if (/^DHL/.test(carrier))
+    return `https://www.dhl.com/th-th/home/tracking.html?awb=${value}&brand=dhl`;
+  if (/^SPX|^SHOPEE/.test(carrier)) return "https://spx.co.th/th";
+  if (/^LAZADA/.test(carrier))
+    return "https://www.lazada.co.th/helpcenter/where-is-my-order.html";
+  return null;
 }
