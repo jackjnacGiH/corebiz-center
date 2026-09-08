@@ -716,16 +716,14 @@ export default function Shipping() {
               )}
               {shipment && (
                 <div className="flex flex-wrap gap-2">
-                  {shipment.tracking_number && (
-                    <Button
-                      variant="outline"
-                      disabled={busy || dirty}
-                      onClick={() => setLabelOpen(true)}
-                    >
-                      <Printer size={16} />
-                      {c.labelPreview}
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline"
+                    disabled={busy || dirty}
+                    onClick={() => setLabelOpen(true)}
+                  >
+                    <Printer size={16} />
+                    {c.labelPreview}
+                  </Button>
                   {shipment.status === "draft" && (
                     <>
                       <Button
