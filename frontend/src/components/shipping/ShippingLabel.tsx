@@ -269,12 +269,18 @@ function ShippingLabelPage({
           <strong>บริการ:</strong> {carrier.name} ·{" "}
           {shipment.draft.carrier_code || "—"}
         </p>
-        <p className="mt-1 line-clamp-2 text-[8px]">
-          <strong>สินค้า:</strong>{" "}
-          {shipment.draft.products
-            .map((item) => `${item.name || "—"} ×${item.qty}`)
-            .join(", ")}
-        </p>
+        <p className="mt-1 text-[7px] font-bold">สินค้าในกล่อง:</p>
+        <ul className="mt-[0.5mm] space-y-[0.25mm] text-[6.5px] font-semibold leading-tight">
+          {shipment.draft.products.slice(0, 5).map((item, index) => (
+            <li key={index} className="truncate">
+              {item.code ? `${item.code} · ` : ""}
+              {item.name || "—"} ×{item.qty}
+            </li>
+          ))}
+          {shipment.draft.products.length > 5 && (
+            <li>+ อีก {shipment.draft.products.length - 5} รายการ</li>
+          )}
+        </ul>
       </section>
 
       <footer className="flex min-h-[14mm] items-center justify-center border-t-[3px] border-black bg-black px-[3mm] py-[2mm] text-center text-white">
