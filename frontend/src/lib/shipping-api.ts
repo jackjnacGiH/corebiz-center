@@ -41,6 +41,11 @@ export interface ShippingEvent {
   new_status: string | null;
   created_at: string;
 }
+export interface ShippingRecipientOption {
+  id: string;
+  source: "history" | "customer";
+  address: ShippingAddress;
+}
 async function invoke<T>(
   action: string,
   payload: Record<string, unknown> = {},
@@ -89,6 +94,10 @@ export const shippingApi = {
     }>("quote", { id: s.id }),
   orderOptions: (search: string) =>
     invoke<{ orders: { id: string; code: string }[] }>("order_options", {
+      search,
+    }),
+  recipientOptions: (search: string) =>
+    invoke<{ recipients: ShippingRecipientOption[] }>("recipient_options", {
       search,
     }),
   orderDraft: (order_id: string) =>

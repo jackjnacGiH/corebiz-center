@@ -10,6 +10,7 @@ import {
   moneyMinor,
   acceptStatus,
   type Shipment,
+  type ShippingAddress,
 } from "../_shared/shipping-domain.ts";
 import {
   assertProviderReady,
@@ -36,6 +37,28 @@ const record = (v: unknown): Record<string, unknown> =>
     : {};
 const small = (v: unknown, max = 100) =>
   typeof v === "string" ? v.trim().slice(0, max) : "";
+const recipientAddress = (
+  value: unknown,
+  fallback: Record<string, unknown> = {},
+): ShippingAddress => {
+  const a = record(value);
+  const addressText = typeof value === "string" ? value : undefined;
+  return {
+    fullname: small(a.fullname ?? a.name ?? fallback.fullname, 150),
+    address: small(a.address ?? a.line ?? a.line1 ?? addressText, 500),
+    county: small(a.county ?? a.subdistrict, 150),
+    city: small(a.city ?? a.district, 150),
+    state: small(a.state ?? a.province, 150),
+    postcode: small(a.postcode ?? a.postal_code, 150),
+    email: small(a.email ?? fallback.email, 150),
+    telephone1: small(
+      a.telephone1 ?? a.phone ?? fallback.telephone1 ?? fallback.phone,
+      150,
+    ),
+  };
+};
+const recipientHaystack = (address: ShippingAddress) =>
+  Object.values(address).join(" ").toLocaleLowerCase("th");
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -194,6 +217,69 @@ Deno.serve(async (req) => {
       if (error) throw error;
       return reply({ orders: data });
     }
+    if (action === "recipient_options") {
+      const search = small(b.search, 80).toLocaleLowerCase("th");
+      if (search.length < 3) return reply({ recipients: [] });
+      const tokens = search.split(/\s+/).filter(Boolean);
+      const [historyResult, customerResult] = await Promise.all([
+        db
+          .from("shipments")
+          .select("id,draft,created_at")
+          .order("created_at", { ascending: false })
+          .limit(200),
+        db
+          .from("customers")
+          .select(
+            "id,name,contact_name,email,phone,mobile,shipping_address,created_at",
+          )
+          .order("created_at", { ascending: false })
+          .limit(500),
+      ]);
+      if (historyResult.error || customerResult.error)
+        throw historyResult.error ?? customerResult.error;
+      const recipients: {
+        id: string;
+        source: "history" | "customer";
+        address: ShippingAddress;
+      }[] = [];
+      const seen = new Set<string>();
+      const add = (
+        id: string,
+        source: "history" | "customer",
+        address: ShippingAddress,
+      ) => {
+        if (!address.fullname || (!address.address && !address.telephone1)) return;
+        if (tokens.some((token) => !recipientHaystack(address).includes(token)))
+          return;
+        const key = [
+          address.fullname,
+          address.telephone1,
+          address.address,
+          address.postcode,
+        ]
+          .join("|")
+          .toLocaleLowerCase("th");
+        if (seen.has(key) || recipients.length >= 30) return;
+        seen.add(key);
+        recipients.push({ id, source, address });
+      };
+      for (const row of historyResult.data ?? []) {
+        const draft = record(row.draft);
+        add(`history:${row.id}`, "history", recipientAddress(draft.destination));
+      }
+      for (const row of customerResult.data ?? []) {
+        add(
+          `customer:${row.id}`,
+          "customer",
+          recipientAddress(row.shipping_address, {
+            fullname: row.contact_name ?? row.name,
+            email: row.email,
+            phone: row.phone ?? row.mobile,
+          }),
+        );
+      }
+      return reply({ recipients });
+    }
     if (action === "order_draft") {
       if (!isUuid(b.order_id)) return fail("invalid_order");
       const { data: order, error } = await db
@@ -216,7 +302,9 @@ Deno.serve(async (req) => {
         order.customer_id
           ? db
               .from("customers")
-              .select("name,email,phone,shipping_address")
+              .select(
+                "name,contact_name,email,phone,mobile,shipping_address",
+              )
               .eq("id", order.customer_id)
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
@@ -225,18 +313,14 @@ Deno.serve(async (req) => {
       if (!items?.length || items.length > 100) return fail("invalid_items");
       const draft = emptyDraft();
       draft.purpose = order.code;
-      const a = record(order.shipping_address ?? customer?.shipping_address);
-      draft.destination = {
-        ...emptyAddress(),
-        fullname: small(a.fullname ?? customer?.name, 150),
-        address: small(a.address ?? a.line1, 500),
-        county: small(a.county ?? a.subdistrict, 150),
-        city: small(a.city ?? a.district, 150),
-        state: small(a.state ?? a.province, 150),
-        postcode: small(a.postcode ?? a.postal_code, 150),
-        email: small(a.email ?? customer?.email, 150),
-        telephone1: small(a.telephone1 ?? a.phone ?? customer?.phone, 150),
-      };
+      draft.destination = recipientAddress(
+        order.shipping_address ?? customer?.shipping_address,
+        {
+          fullname: customer?.contact_name ?? customer?.name,
+          email: customer?.email,
+          phone: customer?.phone ?? customer?.mobile,
+        },
+      );
       draft.products = items.map((i) => ({
         name: i.product_name,
         code: i.sku ?? "",

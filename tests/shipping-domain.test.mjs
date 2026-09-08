@@ -14,7 +14,10 @@ import {
   signQuery,
   requestProvider,
 } from "../supabase/functions/_shared/promptspeed.ts";
-import { shippingCarrierBrand } from "../frontend/src/lib/shipping-carriers.ts";
+import {
+  shippingCarrierBrand,
+  shippingTrackingUrl,
+} from "../frontend/src/lib/shipping-carriers.ts";
 
 function ready() {
   const d = emptyDraft();
@@ -101,6 +104,26 @@ test("label-only fields are bounded and carrier branding follows the selected se
   );
   assert.equal(shippingCarrierBrand("BEST_EXPRESS_SPEED").shortName, "BEST");
   assert.equal(shippingCarrierBrand("NEW_CARRIER").name, "NEW_CARRIER");
+});
+test("tracking links use the selected carrier and reject unsafe tracking values", () => {
+  assert.equal(
+    shippingTrackingUrl("FLASH_EXPRESS_SPEED", "TH1234567890"),
+    "https://www.flashexpress.co.th/fle/tracking?se=TH1234567890",
+  );
+  assert.equal(
+    shippingTrackingUrl("BEST_EXPRESS_SPEED", "BEST-12345"),
+    "https://www.best-inc.co.th/track?waybill=BEST-12345",
+  );
+  assert.match(
+    shippingTrackingUrl("KEX_SPEED", "KEX12345"),
+    /^https:\/\/th\.kex-express\.com\//,
+  );
+  assert.match(
+    shippingTrackingUrl("J&T_EXPRESS_SPEED", "JT12345"),
+    /^https:\/\/www\.jtexpress\.co\.th\//,
+  );
+  assert.equal(shippingTrackingUrl("FLASH_EXPRESS_SPEED", "<script>"), null);
+  assert.equal(shippingTrackingUrl("UNKNOWN", "SAFE12345"), null);
 });
 test("bad quantities, unknown addresses and oversized names are rejected", () => {
   for (const mutate of [

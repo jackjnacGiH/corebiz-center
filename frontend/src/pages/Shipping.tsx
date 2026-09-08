@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Truck, Plus, RefreshCw, ArrowLeft, Printer, X } from "lucide-react";
+import {
+  Truck,
+  Plus,
+  RefreshCw,
+  ArrowLeft,
+  Printer,
+  X,
+  Check,
+  Copy,
+  ExternalLink,
+  Loader2,
+} from "lucide-react";
 import { useLanguage } from "@/i18n";
 import {
   shippingApi,
@@ -8,6 +19,7 @@ import {
   type ShippingDraft,
   type ShippingBootstrap,
   type ShippingEvent,
+  type ShippingRecipientOption,
 } from "@/lib/shipping-api";
 import {
   emptyDraft,
@@ -23,8 +35,54 @@ import ShippingSettings from "@/components/shipping/ShippingSettings";
 import ShippingLabel, {
   SHIPPING_LABEL_ID,
 } from "@/components/shipping/ShippingLabel";
-import { SHIPPING_CARRIER_OPTIONS } from "@/lib/shipping-carriers";
+import {
+  SHIPPING_CARRIER_OPTIONS,
+  shippingCarrierBrand,
+  shippingTrackingUrl,
+} from "@/lib/shipping-carriers";
 import { printElement } from "@/lib/print";
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("clipboard_unavailable");
+}
+
+function CarrierCardLogo({
+  brand,
+}: {
+  brand: ReturnType<typeof shippingCarrierBrand>;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [brand.logoUrl]);
+  if (brand.logoUrl && !failed)
+    return (
+      <img
+        src={brand.logoUrl}
+        alt={brand.name}
+        className="h-9 w-[88px] object-contain"
+        onError={() => setFailed(true)}
+      />
+    );
+  return (
+    <strong
+      className="text-base font-black italic"
+      style={{ color: brand.accent }}
+    >
+      {brand.shortName}
+    </strong>
+  );
+}
 
 export default function Shipping() {
   const { t, language } = useLanguage(),
@@ -49,6 +107,12 @@ export default function Shipping() {
       { id: string; code: string }[]
     >([]),
     [selectedOrder, setSelectedOrder] = useState("");
+  const [recipientSearch, setRecipientSearch] = useState(""),
+    [recipientOptions, setRecipientOptions] = useState<
+      ShippingRecipientOption[]
+    >([]),
+    [recipientBusy, setRecipientBusy] = useState(false),
+    [recipientSearched, setRecipientSearched] = useState(false);
   const [events, setEvents] = useState<ShippingEvent[]>([]),
     [rates, setRates] = useState<
       { carrier: string; total: string; delivery_time: string }[]
@@ -57,6 +121,7 @@ export default function Shipping() {
   const [labelOpen, setLabelOpen] = useState(false);
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
+  const recipientRequest = useRef(0);
   const dirty = view === "editor" && JSON.stringify(draft) !== baseline;
   const reportError = useCallback((e: unknown) => {
     setError(e instanceof Error ? e.message : "shipping_error");
@@ -65,6 +130,13 @@ export default function Shipping() {
   const reload = useCallback(async () => {
     const b = await shippingApi.bootstrap();
     setBootstrap(b);
+  }, []);
+  const resetRecipientLookup = useCallback(() => {
+    recipientRequest.current += 1;
+    setRecipientSearch("");
+    setRecipientOptions([]);
+    setRecipientSearched(false);
+    setRecipientBusy(false);
   }, []);
   useEffect(() => {
     let active = true;
@@ -99,6 +171,34 @@ export default function Shipping() {
     };
   }, [bootstrap, page, search, view, reportError]);
   useEffect(() => {
+    const query = recipientSearch.trim();
+    if (view !== "editor" || query.length < 3) {
+      recipientRequest.current += 1;
+      setRecipientOptions([]);
+      setRecipientSearched(false);
+      setRecipientBusy(false);
+      return;
+    }
+    const request = ++recipientRequest.current;
+    const timer = window.setTimeout(() => {
+      setRecipientBusy(true);
+      shippingApi
+        .recipientOptions(query)
+        .then((result) => {
+          if (request !== recipientRequest.current) return;
+          setRecipientOptions(result.recipients);
+          setRecipientSearched(true);
+        })
+        .catch((reason) => {
+          if (request === recipientRequest.current) reportError(reason);
+        })
+        .finally(() => {
+          if (request === recipientRequest.current) setRecipientBusy(false);
+        });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [recipientSearch, view, reportError]);
+  useEffect(() => {
     if (!dirty) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
@@ -119,6 +219,7 @@ export default function Shipping() {
     setOrderCode(s.order_code ?? "");
     setRates([]);
     setLabelLink("");
+    resetRecipientLookup();
   };
   useEffect(() => {
     const id = params.get("order");
@@ -137,13 +238,20 @@ export default function Shipping() {
         setOrderId(id);
         setOrderCode(r.order_code);
         setShipment(null);
+        resetRecipientLookup();
         draftId.current = crypto.randomUUID();
         setView("editor");
         if (r.previous.length) setNotice(c.duplicateOrder);
       })
       .catch(reportError)
       .finally(() => setBusy(false));
-  }, [bootstrap, params, c.duplicateOrder, reportError]);
+  }, [
+    bootstrap,
+    params,
+    c.duplicateOrder,
+    reportError,
+    resetRecipientLookup,
+  ]);
   async function run(task: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -175,6 +283,7 @@ export default function Shipping() {
     setOrderCode("");
     setEvents([]);
     setRates([]);
+    resetRecipientLookup();
     setNotice("");
     setError("");
     draftId.current = crypto.randomUUID();
@@ -187,6 +296,20 @@ export default function Shipping() {
     setDraft((d) => ({ ...d, [key]: value }));
     setRates([]);
   };
+  const changeDestination = (next: ShippingDraft["destination"]) => {
+    const changedSearch = [
+      [next.telephone1, draft.destination.telephone1],
+      [next.fullname, draft.destination.fullname],
+      [next.address, draft.destination.address],
+    ].find(([nextValue, previousValue]) => nextValue !== previousValue)?.[0];
+    change("destination", next);
+    if (changedSearch !== undefined) setRecipientSearch(changedSearch);
+  };
+  const selectRecipient = (option: ShippingRecipientOption) => {
+    change("destination", { ...emptyAddress(), ...option.address });
+    resetRecipientLookup();
+    setNotice(c.recipientLoaded);
+  };
   let issues: string[] = [];
   try {
     issues = readyIssues(parseDraft(draft));
@@ -194,6 +317,13 @@ export default function Shipping() {
     issues = ["invalid_payload"];
   }
   const locked = !!shipment && shipment.status !== "draft";
+  const trackingUrl =
+    shipment?.tracking_number && shipment.draft.carrier_code
+      ? shippingTrackingUrl(
+          shipment.draft.carrier_code,
+          shipment.tracking_number,
+        )
+      : null;
   const errorMessage =
     error === "forbidden"
       ? c.noPermission
@@ -228,6 +358,7 @@ export default function Shipping() {
     setOrderId(selectedOrder);
     setOrderCode(r.order_code);
     setRates([]);
+    resetRecipientLookup();
     if (r.previous.length) setNotice(c.duplicateOrder);
   }
   const status = (s: Shipment) => c.statuses[s.status];
@@ -467,6 +598,7 @@ export default function Shipping() {
                             },
                           });
                           setBaseline("");
+                          resetRecipientLookup();
                         }
                       }}
                     >
@@ -533,27 +665,150 @@ export default function Shipping() {
                       prefix="recipient"
                       title={c.destination}
                       value={draft.destination}
-                      onChange={(a) => change("destination", a)}
+                      onChange={changeDestination}
+                      beforeFields={
+                        <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-3">
+                          <label className="block text-sm font-medium">
+                            {c.recipientSearch}
+                            <span className="relative mt-1 block">
+                              <Input
+                                value={recipientSearch}
+                                autoComplete="off"
+                                placeholder={c.recipientSearch}
+                                onChange={(e) =>
+                                  setRecipientSearch(e.target.value)
+                                }
+                                className="bg-white pr-10"
+                              />
+                              {recipientBusy && (
+                                <Loader2
+                                  aria-label={c.loading}
+                                  size={16}
+                                  className="absolute right-3 top-3 animate-spin text-blue-700"
+                                />
+                              )}
+                            </span>
+                          </label>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {c.recipientSearchHint}
+                          </p>
+                          {!!recipientOptions.length && (
+                            <div
+                              role="listbox"
+                              className="mt-2 max-h-64 divide-y overflow-y-auto rounded-md border bg-white shadow-sm"
+                            >
+                              {recipientOptions.map((option) => (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected="false"
+                                  className="block w-full px-3 py-2 text-left hover:bg-blue-50 focus:bg-blue-50"
+                                  onClick={() => selectRecipient(option)}
+                                >
+                                  <span className="flex items-center justify-between gap-2">
+                                    <strong className="truncate text-sm">
+                                      {option.address.fullname}
+                                    </strong>
+                                    <small className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px]">
+                                      {option.source === "customer"
+                                        ? c.recipientCustomer
+                                        : c.recipientHistory}
+                                    </small>
+                                  </span>
+                                  <span className="block text-xs text-muted-foreground">
+                                    {option.address.telephone1 || "—"} ·{" "}
+                                    {[
+                                      option.address.county,
+                                      option.address.city,
+                                      option.address.state,
+                                      option.address.postcode,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" ") || option.address.address}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {recipientSearched &&
+                            !recipientBusy &&
+                            !recipientOptions.length && (
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {c.recipientEmpty}
+                              </p>
+                            )}
+                        </div>
+                      }
                     />
                   </div>
                   <section className="rounded-xl border p-4 space-y-3">
                     <h2 className="font-semibold">{c.parcel}</h2>
-                    <label className="block text-sm space-y-1">
-                      {c.carrier_code}
-                      <Input
-                        value={draft.carrier_code}
-                        list="shipping-carrier-options"
-                        maxLength={80}
-                        onChange={(e) => change("carrier_code", e.target.value)}
-                      />
-                      <datalist id="shipping-carrier-options">
-                        {SHIPPING_CARRIER_OPTIONS.map(([code, name]) => (
-                          <option key={code} value={code}>
-                            {name}
-                          </option>
-                        ))}
-                      </datalist>
-                    </label>
+                    <div className="space-y-2">
+                      <div>
+                        <p className="text-sm font-medium">{c.carrier_code}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {c.carrierHint}
+                        </p>
+                      </div>
+                      <div
+                        role="radiogroup"
+                        aria-label={c.carrier_code}
+                        className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3"
+                      >
+                        {SHIPPING_CARRIER_OPTIONS.map(([code, name]) => {
+                          const brand = shippingCarrierBrand(code);
+                          const selected = draft.carrier_code === code;
+                          return (
+                            <button
+                              key={code}
+                              type="button"
+                              role="radio"
+                              aria-checked={selected}
+                              onClick={() => change("carrier_code", code)}
+                              className={`relative flex min-h-20 items-center gap-3 overflow-hidden rounded-xl border-2 bg-white px-3 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring ${
+                                selected
+                                  ? "shadow-sm ring-1 ring-offset-1"
+                                  : "border-neutral-200"
+                              }`}
+                              style={
+                                selected
+                                  ? {
+                                      borderColor: brand.accent,
+                                      boxShadow: `0 0 0 1px ${brand.accent}`,
+                                    }
+                                  : undefined
+                              }
+                            >
+                              <span
+                                aria-hidden="true"
+                                className="absolute inset-y-0 left-0 w-1.5"
+                                style={{ backgroundColor: brand.accent }}
+                              />
+                              <span className="relative flex h-11 w-24 shrink-0 items-center justify-center rounded-lg bg-white p-1.5">
+                                <CarrierCardLogo brand={brand} />
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <strong className="block truncate text-sm">
+                                  {name}
+                                </strong>
+                                <small className="block truncate text-[10px] text-muted-foreground">
+                                  {code}
+                                </small>
+                              </span>
+                              {selected && (
+                                <span
+                                  className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-white"
+                                  style={{ backgroundColor: brand.accent }}
+                                >
+                                  <Check size={14} strokeWidth={3} />
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                     <label className="block max-w-sm text-sm space-y-1">
                       {c.parcelTotal}
                       <Input
@@ -781,6 +1036,33 @@ export default function Shipping() {
                   )}
                   {shipment.tracking_number && (
                     <>
+                      {trackingUrl && (
+                        <>
+                          <Button
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() =>
+                              void run(async () => {
+                                await copyText(trackingUrl);
+                                setNotice(c.trackingCopied);
+                              })
+                            }
+                          >
+                            <Copy size={16} />
+                            {c.copyTrackingLink}
+                          </Button>
+                          <Button asChild variant="outline">
+                            <a
+                              href={trackingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <ExternalLink size={16} />
+                              {c.openTracking}
+                            </a>
+                          </Button>
+                        </>
+                      )}
                       <Button
                         variant="outline"
                         disabled={busy || !bootstrap.readReady}

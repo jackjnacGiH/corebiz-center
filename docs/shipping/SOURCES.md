@@ -38,7 +38,9 @@ SHA-256 สำหรับตรวจว่ากำลังอ้างอิ
 - S4 หน้า 6 / S5 หน้า 8: หน้าลงนามไม่เพียงพอให้ผู้จัดทำเอกสารรับรองสถานะสัญญาหรือการเปิดบัญชี ให้ผู้ดูแลสัญญายืนยันฉบับที่ใช้จริง
 - ไม่ได้เปิดลิงก์ตารางราคาหรือพื้นที่บริการภายนอกที่อ้างถึงใน PDF จึงไม่สรุปว่าอัตราหรือพื้นที่นั้นยังใช้ปัจจุบัน
 
-## S6: Repository ที่ตรวจ
+## S6: Repository ณ รอบสำรวจก่อนพัฒนา
+
+ส่วนนี้เป็น snapshot ก่อนเริ่มพัฒนา เก็บไว้เพื่ออธิบายว่าระบบเดิมมีอะไรและขาดอะไร สถานะหลังพัฒนาอยู่ที่ S9
 
 - [GitHub repository](https://github.com/jackjnacGiH/corebiz-center)
 - ตรวจ branch `main` ผ่าน GitHub connector และตรวจ local HEAD: ตรงกันที่ `d5640bd9bba67ae21c5966e55bd5885f7d7633a8`
@@ -66,6 +68,19 @@ SHA-256 สำหรับตรวจว่ากำลังอ้างอิ
 - [Supabase: Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security): ใช้ policy จำกัดการเข้าถึงข้อมูลในตารางที่ expose
 - [Supabase changelog](https://supabase.com/changelog): ตรวจประกอบการวางแผน ณ วันสำรวจ ไม่ได้ใช้ติดตั้งหรือปรับ configuration ใด
 
-## สิ่งที่ไม่ได้ตรวจในรอบนี้
+## S8: แหล่งลิงก์ติดตามและตราขนส่งใน UI
+
+ลิงก์ติดตามชี้หน้า public ของผู้ให้บริการและไม่พาลูกค้าเข้า CoreBiz: [Flash Express](https://www.flashexpress.co.th/fle/tracking), [BEST Express](https://www.best-inc.co.th/track), [KEX](https://th.kex-express.com/th/track-parcel), [J&T Express](https://www.jtexpress.co.th/service/track), [Thailand Post](https://track.thailandpost.co.th/), [DHL](https://www.dhl.com/th-th/home/tracking.html) และ [SPX Express](https://spx.co.th/th) บริการที่ไม่พบรูปแบบ URL เติมเลข Tracking ที่เสถียรจะเปิดหน้าค้นหาหลักให้ลูกค้ากรอกเลขเอง
+
+ไฟล์ตราใน `frontend/public/shipping-carriers/` ใช้เพื่อระบุผู้ให้บริการในหน้าภายใน J NAC และมี text fallback เสมอเมื่อไฟล์โหลดไม่ได้ เครื่องหมายการค้าเป็นของเจ้าของแต่ละราย; อย่าใช้ไฟล์เหล่านี้เป็นหลักฐานว่าบัญชี J NAC เปิดบริการนั้นแล้ว
+
+## S9: หลักฐานระบบที่ติดตั้ง
+
+- โมดูลฐานถูก merge และ deploy ผ่าน GitHub/Vercel; production route คือ `/center/shipping` และผู้ไม่ login ถูกส่งไปหน้า login
+- migration `20260908062224_shipping_module.sql` ถูกใช้กับ Supabase project ของ CoreBiz และ `shipping-api` ถูก deploy โดยคง JWT verification
+- การตั้งค่าปลอดภัยเริ่มที่ UAT, billing mode ยังไม่ยืนยัน, merchant ว่าง และ provider reads/mutations ปิด จึงไม่เกิดคำขอคิดค่าบริการจากการเปิดหน้า/บันทึกร่าง
+- ค่าใน response example ของ S1 ไม่ถือเป็น credential ของบัญชี J NAC และไม่ได้ถูกนำไปตั้งเป็น secret
+
+## สิ่งที่ไม่ได้ตรวจในรอบสำรวจเอกสาร
 
 ไม่ได้อ่านค่าลับจาก `.env` ไม่ได้ตรวจบัญชีขนส่งจริง ไม่ได้เรียก endpoint ขนส่งทั้ง UAT/production ไม่ได้ตรวจ Supabase schema/RLS/functions ที่ deployed และไม่ได้รับรองสถานะใช้งานจริงของ carrier, อัตราค่าบริการ, สัญญา หรือบัญชี COD
