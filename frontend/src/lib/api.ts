@@ -4195,3 +4195,6 @@ export const aiReviewApi = {
   },
 };
 
+
+// Shipping lives in a separate module to keep provider credentials server-side.
+export { shippingApi } from './shipping-api';

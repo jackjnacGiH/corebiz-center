@@ -56,6 +56,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         { name: t.nav.inventory, path: '/inventory', icon: <Package size={20} /> },
         { name: t.nav.imageStudio, path: '/image-studio', icon: <Images size={20} /> },
         { name: t.nav.orders, path: '/orders', icon: <Truck size={20} /> },
+        ...(['owner', 'admin', 'staff'].includes(role ?? '') ? [{ name: t.shipping.title, path: '/shipping', icon: <Package size={20} /> }] : []),
         { name: t.nav.crm, path: '/crm', icon: <Users size={20} /> },
         { name: t.nav.chat, path: '/chat', icon: <MessageSquare size={20} /> },
         { name: t.nav.marketing, path: '/marketing', icon: <TrendingUp size={20} /> },
