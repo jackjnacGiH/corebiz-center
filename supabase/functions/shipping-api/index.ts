@@ -280,6 +280,29 @@ Deno.serve(async (req) => {
       }
       return reply({ recipients });
     }
+    if (action === "product_options") {
+      const search = small(b.search, 80).replace(/[%_\\]/g, "");
+      if (search.length < 2) return reply({ products: [] });
+      const { data, error } = await db
+        .from("products")
+        .select("id,sku,name_th,weight_kg")
+        .eq("status", "active")
+        .ilike("sku", `%${search}%`)
+        .order("sku")
+        .limit(20);
+      if (error) throw error;
+      return reply({
+        products: (data ?? []).map((product) => ({
+          id: product.id,
+          code: product.sku,
+          name: product.name_th,
+          weight: Math.max(
+            0,
+            Math.round(Number(product.weight_kg ?? 0) * 1000),
+          ),
+        })),
+      });
+    }
     if (action === "order_draft") {
       if (!isUuid(b.order_id)) return fail("invalid_order");
       const { data: order, error } = await db

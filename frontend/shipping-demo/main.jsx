@@ -172,6 +172,25 @@ Object.assign(shippingApi, {
       });
     return copy({ recipients });
   },
+  productOptions: async (search) => {
+    const products = [
+      {
+        id: "00000000-0000-4000-8000-000000000011",
+        code: "JNAC-ABR-001",
+        name: "สินค้าขัด J NAC ตัวอย่าง",
+        weight: 250,
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000012",
+        code: "JNAC-TOOL-002",
+        name: "เครื่องมือลม J NAC ตัวอย่าง",
+        weight: 1200,
+      },
+    ].filter((product) =>
+      product.code.toLowerCase().includes(String(search).toLowerCase()),
+    );
+    return copy({ products });
+  },
   orderDraft: async () => {
     const draft = emptyDraft();
     draft.purpose = "SO-DEMO-001";

@@ -20,6 +20,7 @@ import {
   type ShippingBootstrap,
   type ShippingEvent,
   type ShippingRecipientOption,
+  type ShippingProductOption,
 } from "@/lib/shipping-api";
 import {
   emptyDraft,
@@ -113,6 +114,12 @@ export default function Shipping() {
     >([]),
     [recipientBusy, setRecipientBusy] = useState(false),
     [recipientSearched, setRecipientSearched] = useState(false);
+  const [activeProductIndex, setActiveProductIndex] = useState<number | null>(
+      null,
+    ),
+    [productOptions, setProductOptions] = useState<ShippingProductOption[]>([]),
+    [productBusy, setProductBusy] = useState(false),
+    [productSearched, setProductSearched] = useState(false);
   const [events, setEvents] = useState<ShippingEvent[]>([]),
     [rates, setRates] = useState<
       { carrier: string; total: string; delivery_time: string }[]
@@ -122,6 +129,7 @@ export default function Shipping() {
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
+  const productRequest = useRef(0);
   const dirty = view === "editor" && JSON.stringify(draft) !== baseline;
   const reportError = useCallback((e: unknown) => {
     setError(e instanceof Error ? e.message : "shipping_error");
@@ -137,6 +145,13 @@ export default function Shipping() {
     setRecipientOptions([]);
     setRecipientSearched(false);
     setRecipientBusy(false);
+  }, []);
+  const resetProductLookup = useCallback(() => {
+    productRequest.current += 1;
+    setActiveProductIndex(null);
+    setProductOptions([]);
+    setProductSearched(false);
+    setProductBusy(false);
   }, []);
   useEffect(() => {
     let active = true;
@@ -198,6 +213,80 @@ export default function Shipping() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [recipientSearch, view, reportError]);
+  const activeProductCode =
+    activeProductIndex === null
+      ? ""
+      : (draft.products[activeProductIndex]?.code ?? "").trim();
+  useEffect(() => {
+    if (
+      view !== "editor" ||
+      activeProductIndex === null ||
+      activeProductCode.length < 2
+    ) {
+      productRequest.current += 1;
+      setProductOptions([]);
+      setProductSearched(false);
+      setProductBusy(false);
+      return;
+    }
+    const index = activeProductIndex;
+    const code = activeProductCode;
+    const request = ++productRequest.current;
+    const timer = window.setTimeout(() => {
+      setProductBusy(true);
+      shippingApi
+        .productOptions(code)
+        .then((result) => {
+          if (request !== productRequest.current) return;
+          const exact = result.products.find(
+            (product) => product.code.toLocaleLowerCase() === code.toLocaleLowerCase(),
+          );
+          if (exact) {
+            setDraft((current) => ({
+              ...current,
+              products: current.products.map((item, itemIndex) =>
+                itemIndex === index
+                  ? {
+                      ...item,
+                      code: exact.code,
+                      name: exact.name,
+                      weight: exact.weight || item.weight,
+                    }
+                  : item,
+              ),
+            }));
+            setRates([]);
+            setProductOptions([]);
+            setProductSearched(false);
+            setActiveProductIndex(null);
+            return;
+          }
+          setProductOptions(result.products);
+          setProductSearched(true);
+        })
+        .catch((reason) => {
+          if (request === productRequest.current) reportError(reason);
+        })
+        .finally(() => {
+          if (request === productRequest.current) setProductBusy(false);
+        });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [activeProductCode, activeProductIndex, view, reportError]);
+  useEffect(() => {
+    if (activeProductIndex === null) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(`[data-shipping-product="${activeProductIndex}"]`)
+      )
+        return;
+      setActiveProductIndex(null);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [activeProductIndex]);
   useEffect(() => {
     if (!dirty) return;
     const handler = (e: BeforeUnloadEvent) => {
@@ -220,6 +309,7 @@ export default function Shipping() {
     setRates([]);
     setLabelLink("");
     resetRecipientLookup();
+    resetProductLookup();
   };
   useEffect(() => {
     const id = params.get("order");
@@ -251,6 +341,7 @@ export default function Shipping() {
     c.duplicateOrder,
     reportError,
     resetRecipientLookup,
+    resetProductLookup,
   ]);
   async function run(task: () => Promise<void>) {
     setBusy(true);
@@ -284,6 +375,7 @@ export default function Shipping() {
     setEvents([]);
     setRates([]);
     resetRecipientLookup();
+    resetProductLookup();
     setNotice("");
     setError("");
     draftId.current = crypto.randomUUID();
@@ -309,6 +401,38 @@ export default function Shipping() {
     change("destination", { ...emptyAddress(), ...option.address });
     resetRecipientLookup();
     setNotice(c.recipientLoaded);
+  };
+  const changeProductCode = (index: number, code: string) => {
+    productRequest.current += 1;
+    setDraft((current) => ({
+      ...current,
+      products: current.products.map((item, itemIndex) =>
+        itemIndex === index
+          ? { ...item, code, name: "", weight: 0 }
+          : item,
+      ),
+    }));
+    setRates([]);
+    setActiveProductIndex(index);
+    setProductOptions([]);
+    setProductSearched(false);
+  };
+  const selectProduct = (index: number, product: ShippingProductOption) => {
+    setDraft((current) => ({
+      ...current,
+      products: current.products.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              code: product.code,
+              name: product.name,
+              weight: product.weight || item.weight,
+            }
+          : item,
+      ),
+    }));
+    setRates([]);
+    resetProductLookup();
   };
   let issues: string[] = [];
   try {
@@ -359,6 +483,7 @@ export default function Shipping() {
     setOrderCode(r.order_code);
     setRates([]);
     resetRecipientLookup();
+    resetProductLookup();
     if (r.previous.length) setNotice(c.duplicateOrder);
   }
   const status = (s: Shipment) => c.statuses[s.status];
@@ -852,43 +977,113 @@ export default function Shipping() {
                     {draft.products.map((item, index) => (
                       <div
                         key={index}
-                        className="border-b pb-4 grid grid-cols-2 lg:grid-cols-6 gap-2"
+                        className="grid grid-cols-2 items-end gap-2 border-b pb-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)_100px_150px_auto]"
                       >
-                        {(
-                          ["name", "code", "qty", "price", "weight"] as const
-                        ).map((k) => (
-                          <label
-                            key={k}
-                            className={
-                              "text-sm space-y-1 " +
-                              (k === "name" ? "col-span-2 lg:col-span-2" : "")
+                        <label
+                          data-shipping-product={index}
+                          className="relative col-span-2 space-y-1 text-sm lg:col-span-1"
+                        >
+                          <span>{c.code}</span>
+                          <Input
+                            aria-label={`${c.code} ${index + 1}`}
+                            autoComplete="off"
+                            value={item.code}
+                            maxLength={100}
+                            placeholder={c.productSearchHint}
+                            onFocus={() => {
+                              if (item.code.trim().length >= 2)
+                                setActiveProductIndex(index);
+                            }}
+                            onChange={(event) =>
+                              changeProductCode(index, event.target.value)
                             }
-                          >
-                            <span>{k === "name" ? c.itemName : c[k]}</span>
-                            <Input
-                              aria-label={`${k === "name" ? c.itemName : c[k]} ${index + 1}`}
-                              value={item[k]}
-                              type={
-                                ["qty", "weight"].includes(k)
-                                  ? "number"
-                                  : "text"
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                resetProductLookup();
+                                return;
                               }
-                              inputMode={k === "price" ? "decimal" : undefined}
+                              if (event.key === "Enter" && productOptions[0]) {
+                                event.preventDefault();
+                                selectProduct(index, productOptions[0]);
+                              }
+                            }}
+                          />
+                          {activeProductIndex === index &&
+                            item.code.trim().length >= 2 && (
+                              <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-lg border bg-white shadow-xl">
+                                {productBusy && (
+                                  <p className="px-3 py-2 text-xs text-muted-foreground">
+                                    {c.productSearching}
+                                  </p>
+                                )}
+                                {!productBusy &&
+                                  productOptions.map((product) => (
+                                    <button
+                                      key={product.id}
+                                      type="button"
+                                      className="block w-full border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted focus:bg-muted focus:outline-none"
+                                      onMouseDown={(event) =>
+                                        event.preventDefault()
+                                      }
+                                      onClick={() =>
+                                        selectProduct(index, product)
+                                      }
+                                    >
+                                      <strong className="block text-sm">
+                                        {product.code}
+                                      </strong>
+                                      <span className="block text-xs text-muted-foreground">
+                                        {product.name}
+                                      </span>
+                                    </button>
+                                  ))}
+                                {!productBusy &&
+                                  productSearched &&
+                                  !productOptions.length && (
+                                    <p className="px-3 py-2 text-xs text-muted-foreground">
+                                      {c.productEmpty}
+                                    </p>
+                                  )}
+                              </div>
+                            )}
+                        </label>
+                        <label className="col-span-2 space-y-1 text-sm lg:col-span-1">
+                          <span>{c.itemName}</span>
+                          <Input
+                            aria-label={`${c.itemName} ${index + 1}`}
+                            value={item.name}
+                            maxLength={100}
+                            onChange={(event) =>
+                              change(
+                                "products",
+                                draft.products.map((value, itemIndex) =>
+                                  itemIndex === index
+                                    ? { ...value, name: event.target.value }
+                                    : value,
+                                ),
+                              )
+                            }
+                          />
+                        </label>
+                        {(["qty", "weight"] as const).map((key) => (
+                          <label key={key} className="space-y-1 text-sm">
+                            <span>{c[key]}</span>
+                            <Input
+                              aria-label={`${c[key]} ${index + 1}`}
+                              value={item[key]}
+                              type="number"
                               min="0"
                               step="1"
-                              maxLength={100}
-                              onChange={(e) =>
+                              onChange={(event) =>
                                 change(
                                   "products",
-                                  draft.products.map((v, i) =>
-                                    i === index
+                                  draft.products.map((value, itemIndex) =>
+                                    itemIndex === index
                                       ? {
-                                          ...v,
-                                          [k]: ["qty", "weight"].includes(k)
-                                            ? Number(e.target.value)
-                                            : e.target.value,
+                                          ...value,
+                                          [key]: Number(event.target.value),
                                         }
-                                      : v,
+                                      : value,
                                   ),
                                 )
                               }
@@ -899,12 +1094,13 @@ export default function Shipping() {
                           type="button"
                           variant="outline"
                           disabled={draft.products.length === 1}
-                          onClick={() =>
+                          onClick={() => {
+                            resetProductLookup();
                             change(
                               "products",
                               draft.products.filter((_, i) => i !== index),
-                            )
-                          }
+                            );
+                          }}
                         >
                           {c.remove}
                         </Button>
@@ -913,8 +1109,9 @@ export default function Shipping() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={draft.products.length >= 100}
-                      onClick={() =>
+                      disabled={draft.products.length >= 5}
+                      onClick={() => {
+                        resetProductLookup();
                         change("products", [
                           ...draft.products,
                           {
@@ -924,11 +1121,14 @@ export default function Shipping() {
                             price: "0.00",
                             weight: 0,
                           },
-                        ])
-                      }
+                        ]);
+                      }}
                     >
                       {c.addItem}
                     </Button>
+                    <p className="text-xs text-muted-foreground">
+                      {c.itemLimit}
+                    </p>
                   </section>
                   <section className="rounded-xl border p-4 space-y-3">
                     <h2 className="font-semibold">{c.cod}</h2>
