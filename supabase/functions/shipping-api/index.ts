@@ -100,13 +100,36 @@ Deno.serve(async (req) => {
         Deno.env.get("PROMPTSPEED_MUTATIONS_ENABLED") === "true",
     };
     if (action === "bootstrap") {
-      const { data: accounts, error } = await db
-        .from("shipping_cod_accounts")
-        .select(manager ? "*" : "id,label")
-        .eq("environment", settings.environment)
-        .eq("merchant_code", settings.merchant_code)
-        .eq("active", true);
-      if (error) throw error;
+      const [accountResult, orgResult] = await Promise.all([
+        db
+          .from("shipping_cod_accounts")
+          .select(manager ? "*" : "id,label")
+          .eq("environment", settings.environment)
+          .eq("merchant_code", settings.merchant_code)
+          .eq("active", true),
+        db
+          .from("org_settings")
+          .select("business_name,logo_url")
+          .eq("id", true)
+          .maybeSingle(),
+      ]);
+      if (accountResult.error || orgResult.error)
+        throw accountResult.error ?? orgResult.error;
+      const logo = small(orgResult.data?.logo_url, 500);
+      let logoUrl: string | null = null;
+      if (logo) {
+        try {
+          const parsed = new URL(logo);
+          if (
+            parsed.protocol === "https:" &&
+            !parsed.username &&
+            !parsed.password
+          )
+            logoUrl = parsed.toString();
+        } catch {
+          /* Text fallback is always available. */
+        }
+      }
       let readReady = false,
         sendReady = false;
       try {
@@ -120,13 +143,19 @@ Deno.serve(async (req) => {
       }
       return reply({
         manager,
+        brand: {
+          name:
+            small(orgResult.data?.business_name, 150) ||
+            "J NAC (THAILAND) CO., LTD.",
+          logo_url: logoUrl,
+        },
         settings: {
           environment: settings.environment,
           billing_mode: settings.billing_mode,
           merchant_code: settings.merchant_code,
           origin: settings.origin,
         },
-        accounts,
+        accounts: accountResult.data,
         readReady,
         sendReady,
       });
@@ -301,18 +330,16 @@ Deno.serve(async (req) => {
           typeof a.active !== "boolean"
         )
           return fail("invalid_cod_account");
-        const { error } = await db
-          .from("shipping_cod_accounts")
-          .upsert({
-            id: a.id,
-            label: small(a.label, 150),
-            provider_account_id: small(a.provider_account_id),
-            environment: settings.environment,
-            merchant_code: settings.merchant_code,
-            active: a.active,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          });
+        const { error } = await db.from("shipping_cod_accounts").upsert({
+          id: a.id,
+          label: small(a.label, 150),
+          provider_account_id: small(a.provider_account_id),
+          environment: settings.environment,
+          merchant_code: settings.merchant_code,
+          active: a.active,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        });
         if (error) throw error;
         return reply({ ok: true });
       }
@@ -325,13 +352,11 @@ Deno.serve(async (req) => {
       if (error || !target || target.role !== "staff")
         return fail("invalid_user");
       if (action === "grant" && !target.is_active) return fail("invalid_user");
-      const { error: writeErr } = await db
-        .from("shipping_permissions")
-        .upsert({
-          user_id: b.user_id,
-          granted_by: userId,
-          updated_at: new Date().toISOString(),
-        });
+      const { error: writeErr } = await db.from("shipping_permissions").upsert({
+        user_id: b.user_id,
+        granted_by: userId,
+        updated_at: new Date().toISOString(),
+      });
       if (writeErr) throw writeErr;
       if (action === "revoke") {
         const { error } = await db
@@ -505,15 +530,13 @@ Deno.serve(async (req) => {
       // Claim the draft before calling the provider. Concurrent submissions cannot both win.
       await mutate({ status: "submitting" }, ["draft"]);
       const attemptId = crypto.randomUUID();
-      const { error: attemptErr } = await db
-        .from("shipping_attempts")
-        .insert({
-          id: attemptId,
-          shipment_id: shipment.id,
-          operation: "create",
-          outcome: "pending",
-          created_by: userId,
-        });
+      const { error: attemptErr } = await db.from("shipping_attempts").insert({
+        id: attemptId,
+        shipment_id: shipment.id,
+        operation: "create",
+        outcome: "pending",
+        created_by: userId,
+      });
       if (attemptErr) throw new Error("outcome_unknown");
       let outcome = "outcome_unknown",
         tracking: string | null = null,

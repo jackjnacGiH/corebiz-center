@@ -14,6 +14,7 @@ import {
   signQuery,
   requestProvider,
 } from "../supabase/functions/_shared/promptspeed.ts";
+import { shippingCarrierBrand } from "../frontend/src/lib/shipping-carriers.ts";
 
 function ready() {
   const d = emptyDraft();
@@ -54,6 +55,7 @@ test("draft normalization strips caller-controlled privileged properties", () =>
   assert.equal("status" in d, false);
   assert.equal("wallet_balance" in d, false);
   assert.equal(d.products[0].price, "12.50");
+  assert.equal(d.handling_note, "กรุณาอย่าโยน • ระวังของแตก");
 });
 test("draft can be incomplete but cannot submit", () => {
   assert.ok(readyIssues(parseDraft(emptyDraft())).length);
@@ -76,6 +78,20 @@ test("COD needs an approved reference and normalizes no actual payout state", ()
   assert.equal(p.external_id, "00000000-0000-4000-8000-000000000001");
   assert.equal(p.cod_amount, 500);
   assert.equal("payment_status" in p, false);
+  assert.equal("handling_note" in p, false);
+});
+test("handling note is bounded and carrier branding follows the selected service", () => {
+  const d = ready();
+  d.handling_note = "ห้ามวางซ้อน";
+  assert.equal(parseDraft(d).handling_note, "ห้ามวางซ้อน");
+  d.handling_note = "x".repeat(121);
+  assert.throws(() => parseDraft(d));
+  assert.equal(
+    shippingCarrierBrand("FLASH_EXPRESS_SPEED").name,
+    "Flash Express",
+  );
+  assert.equal(shippingCarrierBrand("BEST_EXPRESS_SPEED").shortName, "BEST");
+  assert.equal(shippingCarrierBrand("NEW_CARRIER").name, "NEW_CARRIER");
 });
 test("bad quantities, unknown addresses and oversized names are rejected", () => {
   for (const mutate of [

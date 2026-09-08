@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Truck, Plus, RefreshCw, ArrowLeft } from "lucide-react";
+import { Truck, Plus, RefreshCw, ArrowLeft, Printer, X } from "lucide-react";
 import { useLanguage } from "@/i18n";
 import {
   shippingApi,
@@ -20,6 +20,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import AddressFields from "@/components/shipping/AddressFields";
 import ShippingSettings from "@/components/shipping/ShippingSettings";
+import ShippingLabel, {
+  SHIPPING_LABEL_ID,
+} from "@/components/shipping/ShippingLabel";
+import { SHIPPING_CARRIER_OPTIONS } from "@/lib/shipping-carriers";
+import { printElement } from "@/lib/print";
 
 export default function Shipping() {
   const { t, language } = useLanguage(),
@@ -49,6 +54,7 @@ export default function Shipping() {
       { carrier: string; total: string; delivery_time: string }[]
     >([]);
   const [labelLink, setLabelLink] = useState("");
+  const [labelOpen, setLabelOpen] = useState(false);
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const dirty = view === "editor" && JSON.stringify(draft) !== baseline;
@@ -101,9 +107,14 @@ export default function Shipping() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
   const editResult = (s: Shipment) => {
+    const normalizedDraft = {
+      ...emptyDraft(),
+      ...s.draft,
+      handling_note: s.draft.handling_note || emptyDraft().handling_note,
+    };
     setShipment(s);
-    setDraft(s.draft);
-    setBaseline(JSON.stringify(s.draft));
+    setDraft(normalizedDraft);
+    setBaseline(JSON.stringify(normalizedDraft));
     setOrderId(s.order_id);
     setOrderCode(s.order_code ?? "");
     setRates([]);
@@ -480,6 +491,37 @@ export default function Shipping() {
                       onChange={(e) => change("purpose", e.target.value)}
                     />
                   </label>
+                  <section className="rounded-xl border p-4 space-y-3">
+                    <label className="block text-sm space-y-1">
+                      {c.handlingNote}
+                      <Input
+                        value={draft.handling_note}
+                        maxLength={120}
+                        placeholder={c.handlingPlaceholder}
+                        onChange={(e) =>
+                          change("handling_note", e.target.value)
+                        }
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {[c.fragilePreset, c.throwPreset, c.stackPreset].map(
+                        (note) => (
+                          <Button
+                            key={note}
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => change("handling_note", note)}
+                          >
+                            {note}
+                          </Button>
+                        ),
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {c.handlingHint}
+                    </p>
+                  </section>
                   <div className="grid xl:grid-cols-2 gap-6 rounded-xl border p-4">
                     <AddressFields
                       prefix="sender"
@@ -500,9 +542,17 @@ export default function Shipping() {
                       {c.carrier_code}
                       <Input
                         value={draft.carrier_code}
+                        list="shipping-carrier-options"
                         maxLength={80}
                         onChange={(e) => change("carrier_code", e.target.value)}
                       />
+                      <datalist id="shipping-carrier-options">
+                        {SHIPPING_CARRIER_OPTIONS.map(([code, name]) => (
+                          <option key={code} value={code}>
+                            {name}
+                          </option>
+                        ))}
+                      </datalist>
                     </label>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       {(
@@ -650,6 +700,16 @@ export default function Shipping() {
               )}
               {shipment && (
                 <div className="flex flex-wrap gap-2">
+                  {shipment.tracking_number && (
+                    <Button
+                      variant="outline"
+                      disabled={busy || dirty}
+                      onClick={() => setLabelOpen(true)}
+                    >
+                      <Printer size={16} />
+                      {c.labelPreview}
+                    </Button>
+                  )}
                   {shipment.status === "draft" && (
                     <>
                       <Button
@@ -717,7 +777,7 @@ export default function Shipping() {
                           })
                         }
                       >
-                        {c.print}
+                        {c.carrierPrint}
                       </Button>
                       <Button
                         variant="outline"
@@ -748,7 +808,7 @@ export default function Shipping() {
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  {c.print} ↗
+                  {c.carrierPrint} ↗
                 </a>
               )}
               {!!rates.length && (
@@ -775,6 +835,47 @@ export default function Shipping() {
             </div>
           )}
         </>
+      )}
+      {labelOpen && shipment && bootstrap && (
+        <div
+          className="fixed inset-0 z-[100] flex flex-col bg-black/70 p-2 sm:p-5"
+          role="dialog"
+          aria-modal="true"
+          aria-label={c.labelPreview}
+        >
+          <div className="mx-auto mb-3 flex w-full max-w-[100mm] items-center justify-between gap-2 rounded-lg bg-white p-2 shadow-lg">
+            <strong className="text-sm">{c.labelPreview} · 100 × 150 mm</strong>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() =>
+                  printElement(SHIPPING_LABEL_ID, {
+                    title: `${c.labelPreview} ${shipment.tracking_number || shipment.reference_no}`,
+                    pageSize: "label-100x150",
+                  })
+                }
+              >
+                <Printer size={15} />
+                {c.printLabel}
+              </Button>
+              <Button
+                size="icon"
+                variant="outline"
+                aria-label={c.close}
+                onClick={() => setLabelOpen(false)}
+              >
+                <X size={16} />
+              </Button>
+            </div>
+          </div>
+          <div className="mx-auto min-h-0 max-w-full flex-1 overflow-auto bg-neutral-200 p-1 shadow-2xl">
+            <ShippingLabel
+              shipment={shipment}
+              companyName={bootstrap.brand.name}
+              companyLogoUrl={bootstrap.brand.logo_url}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

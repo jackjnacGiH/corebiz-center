@@ -18,6 +18,7 @@ export interface ShippingItem {
 }
 export interface ShippingDraft {
   purpose: string;
+  handling_note: string;
   carrier_code: string;
   origin: ShippingAddress;
   destination: ShippingAddress;
@@ -67,6 +68,7 @@ export const emptyAddress = (): ShippingAddress => ({
 });
 export const emptyDraft = (): ShippingDraft => ({
   purpose: "",
+  handling_note: "กรุณาอย่าโยน • ระวังของแตก",
   carrier_code: "",
   origin: emptyAddress(),
   destination: emptyAddress(),
@@ -137,6 +139,8 @@ export function parseDraft(v: unknown): ShippingDraft {
     throw new Error("invalid_cod_account");
   return {
     purpose: text(d.purpose, 300),
+    // Optional for backwards compatibility with drafts saved before labels existed.
+    handling_note: text(d.handling_note ?? "", 120),
     carrier_code: text(d.carrier_code, 80),
     origin: addressFrom(d.origin),
     destination: addressFrom(d.destination),
@@ -185,8 +189,14 @@ export function providerPayload(
   codAccount: string | null,
 ): Record<string, unknown> {
   if (readyIssues(s.draft).length) throw new Error("shipment_incomplete");
-  const { purpose: _purpose, cod_account_id: _account, ...d } = s.draft;
+  const {
+    purpose: _purpose,
+    handling_note: _handlingNote,
+    cod_account_id: _account,
+    ...d
+  } = s.draft;
   void _purpose;
+  void _handlingNote;
   void _account;
   return {
     ...d,

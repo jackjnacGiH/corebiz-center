@@ -24,6 +24,7 @@ export interface CodAccount {
 export interface ShippingBootstrap {
   manager: boolean;
   settings: ShippingSettings;
+  brand: { name: string; logo_url: string | null };
   accounts: CodAccount[];
   readReady: boolean;
   sendReady: boolean;
