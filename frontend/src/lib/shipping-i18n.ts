@@ -54,7 +54,7 @@ export const shippingTranslations = {
     cod: "เก็บเงินปลายทาง (COD)",
     cod_amount: "ยอดเรียกเก็บ (บาท)",
     codAccount: "บัญชีรับ COD ที่อนุมัติแล้ว",
-    noCod: "ไม่มีเก็บเงินปลายทาง / ไม่มีบัญชี",
+    noCod: "ไม่มีเก็บเงิน / ไม่มีบัญชี",
     codHint: "ส่งสำเร็จไม่ได้หมายถึงโอนเงิน COD แล้ว",
     status: "สถานะ",
     reference: "เลขรายการ",

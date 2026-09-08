@@ -247,7 +247,7 @@ function ShippingLabelPage({
           <p className="text-[18px] font-black leading-tight">
             {cod > 0
               ? `${cod.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`
-              : "ไม่มีเก็บเงินปลายทาง"}
+              : "ไม่มีเก็บเงิน"}
           </p>
         </div>
         <div className="flex flex-col justify-center px-[3mm] py-[2mm] text-center">
