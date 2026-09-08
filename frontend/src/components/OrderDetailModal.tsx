@@ -1,3 +1,6 @@
+import { useNavigate } from 'react-router-dom';
+import { useLanguage } from '../i18n';
+import { useAuth } from '../lib/AuthProvider';
 import { useEffect, useState } from 'react';
 import { ShoppingBag, Loader2, Pencil } from 'lucide-react';
 import { ordersApi, orgSettingsApi, productsApi, tierApi, type OrderWithCustomer, type ProductWithInventory } from '../lib/api';
@@ -60,6 +63,9 @@ export default function OrderDetailModal({
     onClose,
     onStatusChange,
 }: Props) {
+    const navigate = useNavigate();
+    const { t } = useLanguage();
+    const { profile } = useAuth();
     const [order, setOrder] = useState<OrderWithCustomer | null>(null);
     const [items, setItems] = useState<OrderItem[]>([]);
     const [loading, setLoading] = useState(false);
@@ -181,6 +187,9 @@ export default function OrderDetailModal({
                                 {order?.code ?? 'Loading...'}
                             </p>
                         </div>
+                        {order && ['owner', 'admin', 'staff'].includes(profile?.role ?? '') && (
+                            <Button variant="outline" onClick={() => { onClose(); navigate('/shipping?order=' + order.id); }}>{t.shipping.newDraft}</Button>
+                        )}
                         {order && (
                             <span className={cn('px-3 py-1.5 rounded-md text-xs font-bold border flex-shrink-0', STATUS_STYLES[order.status as OrderStatus] ?? STATUS_STYLES.pending)}>
                                 {STATUS_LABELS[order.status as OrderStatus] ?? order.status}

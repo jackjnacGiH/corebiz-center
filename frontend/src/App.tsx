@@ -13,6 +13,7 @@ const Ecommerce = lazy(() => import('./pages/Ecommerce'));
 const Inventory = lazy(() => import('./pages/Inventory'));
 const ImageStudio = lazy(() => import('./pages/ImageStudio'));
 const Orders = lazy(() => import('./pages/Orders'));
+const Shipping = lazy(() => import('./pages/Shipping'));
 const CRM = lazy(() => import('./pages/CRM'));
 const Chat = lazy(() => import('./pages/Chat'));
 const Marketing = lazy(() => import('./pages/Marketing'));
@@ -73,6 +74,7 @@ function App() {
                 <Route path="inventory" element={<Inventory />} />
                 <Route path="image-studio" element={<ImageStudio />} />
                 <Route path="orders" element={<Orders />} />
+                <Route path="shipping" element={<ProtectedRoute roles={['owner', 'admin', 'staff']}><Shipping /></ProtectedRoute>} />
                 <Route path="crm" element={<CRM />} />
                 <Route path="chat" element={<Chat />} />
                 <Route path="marketing" element={<Marketing />} />

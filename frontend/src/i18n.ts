@@ -1,9 +1,11 @@
+import { shippingTranslations } from './lib/shipping-i18n';
 import { createContext, useContext } from 'react';
 
 export type Language = 'th' | 'en';
 
 export const translations = {
   en: {
+    shipping: shippingTranslations.en,
     common: {
       languageLabel: 'Language',
       thai: 'TH',
@@ -337,6 +339,7 @@ export const translations = {
     },
   },
   th: {
+    shipping: shippingTranslations.th,
     common: {
       languageLabel: 'ภาษา',
       thai: 'TH',
