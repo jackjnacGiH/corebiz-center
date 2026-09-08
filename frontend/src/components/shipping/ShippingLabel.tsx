@@ -180,7 +180,7 @@ function ShippingLabelPage({
             <p className="text-[17px] font-black leading-none tracking-tight text-[#0b315d]">
               J NAC
             </p>
-            <p className="mt-1 line-clamp-2 text-[6.5px] font-bold leading-tight text-neutral-700">
+            <p className="mt-1 line-clamp-2 text-[8px] font-black leading-tight text-neutral-800">
               {companyName || "J NAC (THAILAND) CO., LTD."}
             </p>
           </div>
