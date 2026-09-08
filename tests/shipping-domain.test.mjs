@@ -56,6 +56,7 @@ test("draft normalization strips caller-controlled privileged properties", () =>
   assert.equal("wallet_balance" in d, false);
   assert.equal(d.products[0].price, "12.50");
   assert.equal(d.handling_note, "กรุณาอย่าโยน • ระวังของแตก");
+  assert.equal(d.parcel_total, 1);
 });
 test("draft can be incomplete but cannot submit", () => {
   assert.ok(readyIssues(parseDraft(emptyDraft())).length);
@@ -79,12 +80,20 @@ test("COD needs an approved reference and normalizes no actual payout state", ()
   assert.equal(p.cod_amount, 500);
   assert.equal("payment_status" in p, false);
   assert.equal("handling_note" in p, false);
+  assert.equal("parcel_total" in p, false);
 });
-test("handling note is bounded and carrier branding follows the selected service", () => {
+test("label-only fields are bounded and carrier branding follows the selected service", () => {
   const d = ready();
   d.handling_note = "ห้ามวางซ้อน";
+  d.parcel_total = 3;
   assert.equal(parseDraft(d).handling_note, "ห้ามวางซ้อน");
+  assert.equal(parseDraft(d).parcel_total, 3);
   d.handling_note = "x".repeat(121);
+  assert.throws(() => parseDraft(d));
+  d.handling_note = "";
+  d.parcel_total = 0;
+  assert.throws(() => parseDraft(d));
+  d.parcel_total = 100;
   assert.throws(() => parseDraft(d));
   assert.equal(
     shippingCarrierBrand("FLASH_EXPRESS_SPEED").name,

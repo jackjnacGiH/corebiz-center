@@ -36,6 +36,9 @@ export const shippingTranslations = {
     stackPreset: "ห้ามวางซ้อน",
     carrier_code: "รหัสบริการขนส่ง",
     parcel: "กล่องพัสดุ",
+    parcelTotal: "จำนวนกล่องที่ส่งไปปลายทางเดียวกัน",
+    parcelTotalHint:
+      "ระบบจะสร้างลาเบลเรียงลำดับให้อัตโนมัติ เช่น 1/3, 2/3 และ 3/3",
     box_width: "กว้าง (ซม.)",
     box_height: "สูง (ซม.)",
     box_length: "ยาว (ซม.)",
@@ -51,7 +54,7 @@ export const shippingTranslations = {
     cod: "เก็บเงินปลายทาง (COD)",
     cod_amount: "ยอดเรียกเก็บ (บาท)",
     codAccount: "บัญชีรับ COD ที่อนุมัติแล้ว",
-    noCod: "ไม่เก็บเงินปลายทาง / ไม่มีบัญชี",
+    noCod: "ไม่มีเก็บเงินปลายทาง / ไม่มีบัญชี",
     codHint: "ส่งสำเร็จไม่ได้หมายถึงโอนเงิน COD แล้ว",
     status: "สถานะ",
     reference: "เลขรายการ",
@@ -161,6 +164,9 @@ export const shippingTranslations = {
     stackPreset: "DO NOT STACK",
     carrier_code: "Carrier service code",
     parcel: "Parcel",
+    parcelTotal: "Boxes for the same destination",
+    parcelTotalHint:
+      "Labels are numbered automatically, for example 1/3, 2/3 and 3/3",
     box_width: "Width (cm)",
     box_height: "Height (cm)",
     box_length: "Length (cm)",

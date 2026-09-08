@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import JsBarcode from "jsbarcode";
 import type { Shipment, ShippingAddress } from "@/lib/shipping-api";
 import { shippingCarrierBrand } from "@/lib/shipping-carriers";
+import lineAddQrUrl from "@/assets/line-add-jnac.jpg";
 
-export const SHIPPING_LABEL_ID = "shipping-label-document";
+export const SHIPPING_LABEL_ID = "shipping-label-batch";
 
 function addressLine(a: ShippingAddress) {
   return [a.address, a.county, a.city, a.state, a.postcode]
@@ -15,14 +16,16 @@ function ContactBlock({
   title,
   address,
   receiver = false,
+  embedded = false,
 }: {
   title: string;
   address: ShippingAddress;
   receiver?: boolean;
+  embedded?: boolean;
 }) {
   return (
     <section
-      className={`border-b-2 border-black px-[4mm] py-[2.5mm] ${receiver ? "min-h-[31mm]" : "min-h-[24mm]"}`}
+      className={`${embedded ? "" : "border-b-2 border-black"} px-[4mm] py-[2.5mm] ${receiver ? "min-h-[31mm]" : "min-h-[24mm]"}`}
     >
       <p className="text-[9px] font-bold uppercase tracking-[0.12em]">
         {title}
@@ -107,14 +110,18 @@ function CompanyLogo({
   return <div className="text-[21px] font-black tracking-tight">J NAC</div>;
 }
 
-export default function ShippingLabel({
+function ShippingLabelPage({
   shipment,
   companyName,
   companyLogoUrl,
+  parcelNumber,
+  parcelTotal,
 }: {
   shipment: Shipment;
   companyName?: string | null;
   companyLogoUrl?: string | null;
+  parcelNumber: number;
+  parcelTotal: number;
 }) {
   const barcodeRef = useRef<SVGSVGElement>(null);
   const carrier = shippingCarrierBrand(shipment.draft.carrier_code);
@@ -150,12 +157,11 @@ export default function ShippingLabel({
 
   return (
     <article
-      id={SHIPPING_LABEL_ID}
-      aria-label="ตัวอย่างใบปะหน้าขนส่ง"
+      aria-label={`ตัวอย่างใบปะหน้าขนส่ง กล่อง ${parcelNumber}/${parcelTotal}`}
       className="shipping-label-document box-border flex h-[150mm] w-[100mm] flex-col overflow-hidden border-2 border-black bg-white font-sans text-black"
     >
       <header className="grid h-[22mm] grid-cols-[1fr_1fr] border-b-2 border-black">
-        <div className="flex min-w-0 items-center gap-2 border-r-2 border-black px-[3mm] py-[2mm]">
+        <div className="flex min-w-0 items-start gap-2 border-r-2 border-black px-[3mm] py-[2mm]">
           <CompanyLogo
             companyName={companyName || "J NAC (THAILAND) CO., LTD."}
             logoUrl={companyLogoUrl}
@@ -169,12 +175,17 @@ export default function ShippingLabel({
             </p>
           </div>
         </div>
-        <div className="relative flex min-w-0 items-center justify-center overflow-hidden px-[2mm] text-center">
+        <div className="relative flex min-w-0 items-center justify-center overflow-hidden px-[2mm] py-[1.5mm] text-center">
           <span
             className="absolute inset-y-0 left-0 w-[2.3mm]"
             style={{ background: carrier.accent }}
           />
-          <CarrierLogo carrier={carrier} />
+          <div className="flex flex-col items-center">
+            <p className="mb-1 text-[7px] font-black uppercase tracking-[0.1em]">
+              ผู้ให้บริการขนส่ง
+            </p>
+            <CarrierLogo carrier={carrier} />
+          </div>
         </div>
       </header>
 
@@ -193,11 +204,29 @@ export default function ShippingLabel({
         <p className="mt-1 text-[7px] font-semibold">{barcodeValue}</p>
       </section>
 
-      <ContactBlock
-        title="ผู้รับ (TO)"
-        address={shipment.draft.destination}
-        receiver
-      />
+      <section className="grid h-[34mm] grid-cols-[1fr_26mm] border-b-2 border-black">
+        <ContactBlock
+          title="ผู้รับ (TO)"
+          address={shipment.draft.destination}
+          receiver
+          embedded
+        />
+        <aside className="grid grid-rows-[11mm_1fr] border-l-2 border-black">
+          <div className="flex items-center justify-center bg-black text-white">
+            <p className="text-[23px] font-black leading-none">
+              {parcelNumber}/{parcelTotal}
+            </p>
+          </div>
+          <div className="flex flex-col items-center justify-center py-[1mm]">
+            <img
+              src={lineAddQrUrl}
+              alt="QR เพิ่มเพื่อน LINE @jnac"
+              className="h-[18mm] w-[18mm] object-contain"
+            />
+            <p className="text-[6px] font-black leading-none">LINE @jnac</p>
+          </div>
+        </aside>
+      </section>
       <ContactBlock title="ผู้ส่ง (FROM)" address={shipment.draft.origin} />
 
       <section className="grid min-h-[15mm] grid-cols-[1.3fr_.7fr] border-b-2 border-black">
@@ -208,7 +237,7 @@ export default function ShippingLabel({
           <p className="text-[18px] font-black leading-tight">
             {cod > 0
               ? `${cod.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`
-              : "ไม่เก็บเงินปลายทาง"}
+              : "ไม่มีเก็บเงินปลายทาง"}
           </p>
         </div>
         <div className="flex flex-col justify-center px-[3mm] py-[2mm] text-center">
@@ -220,13 +249,10 @@ export default function ShippingLabel({
       </section>
 
       <section className="min-h-0 flex-1 px-[4mm] py-[2.5mm]">
-        <div className="flex items-start justify-between gap-2 text-[8px]">
+        <div className="flex items-start gap-2 text-[8px]">
           <p>
             <strong>อ้างอิง:</strong>{" "}
             {shipment.order_code || shipment.reference_no}
-          </p>
-          <p className="shrink-0">
-            <strong>กล่อง:</strong> 1/1
           </p>
         </div>
         <p className="mt-1 text-[8px]">
@@ -249,5 +275,39 @@ export default function ShippingLabel({
         </p>
       </footer>
     </article>
+  );
+}
+
+export default function ShippingLabel({
+  shipment,
+  companyName,
+  companyLogoUrl,
+}: {
+  shipment: Shipment;
+  companyName?: string | null;
+  companyLogoUrl?: string | null;
+}) {
+  const parcelTotal = Math.max(
+    1,
+    Math.min(99, Math.trunc(shipment.draft.parcel_total || 1)),
+  );
+
+  return (
+    <div id={SHIPPING_LABEL_ID} className="shipping-label-batch">
+      {Array.from({ length: parcelTotal }, (_, index) => (
+        <div
+          key={index}
+          className="shipping-label-page mb-3 last:mb-0"
+        >
+          <ShippingLabelPage
+            shipment={shipment}
+            companyName={companyName}
+            companyLogoUrl={companyLogoUrl}
+            parcelNumber={index + 1}
+            parcelTotal={parcelTotal}
+          />
+        </div>
+      ))}
+    </div>
   );
 }

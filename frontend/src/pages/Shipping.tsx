@@ -554,6 +554,22 @@ export default function Shipping() {
                         ))}
                       </datalist>
                     </label>
+                    <label className="block max-w-sm text-sm space-y-1">
+                      {c.parcelTotal}
+                      <Input
+                        type="number"
+                        min="1"
+                        max="99"
+                        step="1"
+                        value={draft.parcel_total}
+                        onChange={(e) =>
+                          change("parcel_total", Number(e.target.value))
+                        }
+                      />
+                      <span className="block text-xs text-muted-foreground">
+                        {c.parcelTotalHint}
+                      </span>
+                    </label>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       {(
                         [
@@ -844,7 +860,11 @@ export default function Shipping() {
           aria-label={c.labelPreview}
         >
           <div className="mx-auto mb-3 flex w-full max-w-[100mm] items-center justify-between gap-2 rounded-lg bg-white p-2 shadow-lg">
-            <strong className="text-sm">{c.labelPreview} · 100 × 150 mm</strong>
+            <strong className="text-sm">
+              {c.labelPreview} · 100 × 150 mm ·{" "}
+              {shipment.draft.parcel_total || 1}{" "}
+              {language === "th" ? "ใบ" : "labels"}
+            </strong>
             <div className="flex gap-2">
               <Button
                 size="sm"

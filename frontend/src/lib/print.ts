@@ -89,6 +89,9 @@ export function printElement(
       // Fill the printable A4 height (297 − 12·2 = 273mm; 270 leaves a hair so no
       // blank trailing page) and push the signature block to the very bottom.
       `.qd-root{display:flex;flex-direction:column;min-height:270mm}` +
+      `.shipping-label-batch{display:block!important}` +
+      `.shipping-label-page{width:100mm!important;height:150mm!important;margin:0!important;break-after:page;page-break-after:always}` +
+      `.shipping-label-page:last-child{break-after:auto;page-break-after:auto}` +
       `.shipping-label-document{width:100mm!important;height:150mm!important;min-height:150mm!important;max-height:150mm!important;margin:0!important;box-shadow:none!important}` +
       `.doc-signatures{margin-top:auto;padding-top:8mm}</style>` +
       `</head><body><div id="print-root">${sections}</div></body></html>`,

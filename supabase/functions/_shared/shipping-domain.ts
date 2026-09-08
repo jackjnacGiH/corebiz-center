@@ -26,6 +26,7 @@ export interface ShippingDraft {
   box_height: number;
   box_length: number;
   box_weight: number;
+  parcel_total: number;
   cod_amount: string;
   cod_account_id: string | null;
   products: ShippingItem[];
@@ -76,6 +77,7 @@ export const emptyDraft = (): ShippingDraft => ({
   box_height: 0,
   box_length: 0,
   box_weight: 0,
+  parcel_total: 1,
   cod_amount: "0.00",
   cod_account_id: null,
   products: [{ name: "", code: "", qty: 1, price: "0.00", weight: 0 }],
@@ -137,6 +139,8 @@ export function parseDraft(v: unknown): ShippingDraft {
   moneyMinor(d.cod_amount);
   if (d.cod_account_id !== null && !isUuid(d.cod_account_id))
     throw new Error("invalid_cod_account");
+  const parcelTotal = quantity(d.parcel_total ?? 1, 99, true);
+  if (parcelTotal < 1) throw new Error("invalid_quantity");
   return {
     purpose: text(d.purpose, 300),
     // Optional for backwards compatibility with drafts saved before labels existed.
@@ -148,6 +152,7 @@ export function parseDraft(v: unknown): ShippingDraft {
     box_height: quantity(d.box_height, 1000),
     box_length: quantity(d.box_length, 1000),
     box_weight: quantity(d.box_weight, 1000000, true),
+    parcel_total: parcelTotal,
     cod_amount: String(d.cod_amount),
     cod_account_id: d.cod_account_id as string | null,
     products: d.products.map((v) => {
@@ -192,11 +197,13 @@ export function providerPayload(
   const {
     purpose: _purpose,
     handling_note: _handlingNote,
+    parcel_total: _parcelTotal,
     cod_account_id: _account,
     ...d
   } = s.draft;
   void _purpose;
   void _handlingNote;
+  void _parcelTotal;
   void _account;
   return {
     ...d,

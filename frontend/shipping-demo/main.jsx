@@ -60,6 +60,7 @@ if (!Array.isArray(state.rows) || state.rows.length === 0) {
   draft.box_height = 20;
   draft.box_length = 35;
   draft.box_weight = 1200;
+  draft.parcel_total = 3;
   draft.products = [
     {
       name: "สินค้าตัวอย่าง",
@@ -169,6 +170,7 @@ Object.assign(shippingApi, {
     draft.box_height = 20;
     draft.box_length = 35;
     draft.box_weight = 1200;
+    draft.parcel_total = 3;
     draft.products = [
       {
         name: "สินค้าตัวอย่าง",
