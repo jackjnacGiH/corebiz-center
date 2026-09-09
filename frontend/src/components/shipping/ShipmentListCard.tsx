@@ -1,11 +1,11 @@
-import { MapPin, Phone, Package, Truck } from "lucide-react";
+import { MapPin, Phone, Package, Truck, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/i18n";
 import { SHIPPING_CARRIER_OPTIONS, shippingCarrierBrand } from "@/lib/shipping-carriers";
 import { shippingParcels, summarizeShippingItems, type Shipment, type ShippingAddress } from "../../../../supabase/functions/_shared/shipping-domain";
 const addressLine = (address: ShippingAddress) => [address.address, address.county, address.city, address.state, address.postcode].filter(Boolean).join(" ");
 
-export default function ShipmentListCard({ shipment: s, busy, onOpen }: { shipment: Shipment; busy: boolean; onOpen: () => void }) {
+export default function ShipmentListCard({ shipment: s, busy, onOpen, onDelete }: { shipment: Shipment; busy: boolean; onOpen: () => void; onDelete: () => void }) {
   const { t, language } = useLanguage();
   const c = t.shipping;
   const recipient = s.draft.destination;
@@ -14,15 +14,19 @@ export default function ShipmentListCard({ shipment: s, busy, onOpen }: { shipme
   const parcels = shippingParcels(s.draft);
   const items = summarizeShippingItems(s.draft.products);
   const carrier = SHIPPING_CARRIER_OPTIONS.find(([code]) => code === s.draft.carrier_code)?.[1] || shippingCarrierBrand(s.draft.carrier_code).name;
+  const editableDraft = s.status === "draft" && !s.tracking_number;
   return <article className="overflow-hidden rounded-xl border bg-card" aria-label={s.reference_no}>
     <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3">
       <div className="min-w-0">
         <p className="break-all text-sm font-semibold">{s.reference_no}</p>
         <p className="mt-1 text-xs text-muted-foreground">{s.order_code || c.manual} · {new Date(s.created_at).toLocaleString(language === "th" ? "th-TH" : "en-GB")}</p>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">{c.statuses[s.status]}</span>
-        <Button variant="outline" disabled={busy} onClick={onOpen}>{c.open}</Button>
+        <Button variant="outline" disabled={busy} onClick={onOpen}>{editableDraft && <Pencil size={15} />}{editableDraft ? t.common.edit : c.open}</Button>
+        {editableDraft && <Button variant="outline" className="text-destructive hover:text-destructive" disabled={busy} onClick={onDelete}>
+          <Trash2 size={15} />{c.deleteDraft}
+        </Button>}
       </div>
     </div>
     <div className="grid gap-5 p-4 md:grid-cols-2 xl:grid-cols-[1.25fr_1fr_0.85fr]">

@@ -181,6 +181,7 @@ Deno.serve(async (req) => {
       let query = db
         .from("shipments")
         .select("*,orders(customers(name))", { count: "exact" })
+        .neq("status", "archived")
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(page * 25, page * 25 + 24);
@@ -217,6 +218,7 @@ Deno.serve(async (req) => {
         db
           .from("shipments")
           .select("id,draft,created_at")
+          .neq("status", "archived")
           .order("created_at", { ascending: false })
           .order("id")
           .limit(200),
@@ -563,10 +565,12 @@ Deno.serve(async (req) => {
       return reply({
         shipment: await mutate({ draft: parseDraftUpdate(b.draft, shipment.draft) }, ["draft"]),
       });
-    if (action === "archive")
+    if (action === "archive") {
+      if (shipment.tracking_number) return fail("conflict", 409);
       return reply({
         shipment: await mutate({ status: "archived" }, ["draft"]),
       });
+    }
     if (
       row.environment !== settings.environment ||
       row.merchant_code !== settings.merchant_code
