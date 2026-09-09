@@ -8,6 +8,12 @@ export const shippingTranslations = {
     back: "กลับรายการ",
     prepareOnly: "บันทึกร่างได้ — การส่งเข้าขนส่งยังไม่เปิดใช้งาน",
     ready: "พร้อมเชื่อมขนส่ง",
+    readsReady: "เช็กราคาได้ — การสร้างพัสดุยังไม่เปิดใช้งาน",
+    quoteGuide:
+      "กรอกข้อมูลให้ครบ เลือกขนส่ง แล้วบันทึกร่างก่อนกดเช็กราคา การเช็กราคาไม่ใช่การสร้างพัสดุ",
+    uatNote: "บัญชีทดสอบ UAT: ราคาและผลลัพธ์ใช้ทดสอบเท่านั้น ไม่ใช่ราคาส่งจริง",
+    accountChanged:
+      "ร่างนี้ผูกกับบัญชีขนส่งเดิม กรุณาสร้างร่างใหม่เพื่อใช้บัญชีปัจจุบัน ร่างเดิมยังเก็บไว้ใช้อ้างอิงได้",
     saved: "บันทึกแล้ว",
     save: "บันทึกร่าง",
     source: "ที่มาของรายการ",
@@ -154,6 +160,12 @@ export const shippingTranslations = {
     back: "Back to list",
     prepareOnly: "Drafts available — carrier submission is not enabled",
     ready: "Carrier connection ready",
+    readsReady: "Rate checks available — shipment creation is not enabled",
+    quoteGuide:
+      "Complete the details, select a carrier and save the draft before checking rates. A rate check does not create a shipment.",
+    uatNote: "UAT test account: rates and results are for testing, not live shipping prices.",
+    accountChanged:
+      "This draft belongs to the previous carrier account. Create a new draft for the current account; the existing draft remains available for reference.",
     saved: "Saved",
     save: "Save draft",
     source: "Source",

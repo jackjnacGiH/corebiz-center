@@ -1,6 +1,6 @@
 # คู่มือ API ขนส่ง V3 สำหรับเตรียมเชื่อม CoreBiz
 
-อ้างอิง S1 ใน [SOURCES.md](SOURCES.md) เท่านั้นสำหรับข้อเท็จจริง API; ยังไม่ทดสอบกับบริการจริง
+รายละเอียดสเปกอ้างอิง S1 ใน [SOURCES.md](SOURCES.md) ผลทดสอบกับบริการ UAT วันที่ 9 กันยายน 2026 แยกไว้ใน [UAT_CONNECTION.md](UAT_CONNECTION.md): ยืนยัน OP01, OP06 และ OP10 ตามขอบเขตที่ทดสอบ ไม่ใช่การรับรอง operations อื่นหรือ Production
 
 ## API ภายใน CoreBiz ที่พัฒนาแล้ว
 
