@@ -168,6 +168,44 @@ export function parseDraft(v: unknown): ShippingDraft {
     }),
   };
 }
+export type QuoteIssue =
+  | `${"origin" | "destination"}_${"county" | "city" | "state" | "postcode"}`
+  | "carrier_required"
+  | "box_width"
+  | "box_height"
+  | "box_length"
+  | "box_weight";
+
+// Rates use the delivery area and packed parcel, before shipment/COD setup.
+export function quoteIssues(d: ShippingDraft): QuoteIssue[] {
+  const issues: QuoteIssue[] = [];
+  for (const side of ["origin", "destination"] as const) {
+    for (const field of ["county", "city", "state"] as const)
+      if (!d[side][field].trim()) issues.push(`${side}_${field}`);
+    if (!/^\d{5}$/.test(d[side].postcode)) issues.push(`${side}_postcode`);
+  }
+  if (!d.carrier_code.trim()) issues.push("carrier_required");
+  for (const field of ["box_width", "box_height", "box_length", "box_weight"] as const)
+    if (!Number.isFinite(d[field]) || d[field] <= 0) issues.push(field);
+  return issues;
+}
+
+export function quotePayload(d: ShippingDraft): Record<string, unknown> {
+  if (quoteIssues(d).length) throw new Error("quote_incomplete");
+  const area = ({ county, city, state, postcode }: ShippingAddress) => ({
+    county, city, state, postcode,
+  });
+  return {
+    box_width: d.box_width,
+    box_height: d.box_height,
+    box_length: d.box_length,
+    box_weight: d.box_weight,
+    carriers_code: [d.carrier_code],
+    origin: area(d.origin),
+    destination: area(d.destination),
+  };
+}
+
 export function readyIssues(d: ShippingDraft): string[] {
   const issues: string[] = [];
   for (const side of ["origin", "destination"] as const) {

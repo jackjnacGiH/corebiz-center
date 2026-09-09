@@ -5,6 +5,8 @@ import {
   emptyDraft,
   parseDraft,
   readyIssues,
+  quoteIssues,
+  quotePayload,
   moneyMinor,
   canUseShipping,
   acceptStatus,
@@ -64,6 +66,51 @@ test("draft normalization strips caller-controlled privileged properties", () =>
 test("draft can be incomplete but cannot submit", () => {
   assert.ok(readyIssues(parseDraft(emptyDraft())).length);
   assert.deepEqual(readyIssues(parseDraft(ready())), []);
+});
+test("rates work with packed weight before item weights, contacts or COD account are ready", () => {
+  const d = ready();
+  d.products[0].weight = 0;
+  d.cod_amount = "350.00";
+  for (const side of ["origin", "destination"])
+    for (const field of ["fullname", "address", "email", "telephone1"])
+      d[side][field] = "";
+  const parsed = parseDraft(d);
+  assert.deepEqual(quoteIssues(parsed), []);
+  assert.ok(readyIssues(parsed).includes("items_incomplete"));
+  assert.ok(readyIssues(parsed).includes("cod_account_required"));
+  assert.ok(readyIssues(parsed).includes("destination_email"));
+  assert.throws(() => providerPayload({ draft: parsed }, null), /shipment_incomplete/);
+  assert.equal(quotePayload(parsed).box_weight, 1200);
+});
+test("rates require each delivery area, a carrier and positive packed dimensions and weight", () => {
+  for (const side of ["origin", "destination"])
+    for (const field of ["county", "city", "state", "postcode"]) {
+      const d = ready();
+      d[side][field] = "";
+      assert.deepEqual(quoteIssues(d), [`${side}_${field}`]);
+      assert.throws(() => quotePayload(d), /quote_incomplete/);
+    }
+  for (const field of ["box_width", "box_height", "box_length", "box_weight"])
+    for (const value of [0, -1, NaN, Infinity]) {
+      const d = ready();
+      d[field] = value;
+      assert.deepEqual(quoteIssues(d), [field]);
+    }
+  const d = ready();
+  d.carrier_code = "";
+  d.destination.postcode = "1028";
+  assert.deepEqual(quoteIssues(d), ["destination_postcode", "carrier_required"]);
+});
+test("rate payload sends only areas and packed parcel data, excluding contacts, products and COD", () => {
+  const d = ready();
+  d.cod_amount = "350.00";
+  const payload = quotePayload(d);
+  assert.deepEqual(payload, {
+    box_width: 20, box_height: 10, box_length: 30, box_weight: 1200,
+    carriers_code: ["EMS_SPEED"],
+    origin: { county: "Test", city: "Test", state: "Test", postcode: "10230" },
+    destination: { county: "Test", city: "Test", state: "Test", postcode: "10230" },
+  });
 });
 test("COD needs an approved reference and normalizes no actual payout state", () => {
   const d = ready();
