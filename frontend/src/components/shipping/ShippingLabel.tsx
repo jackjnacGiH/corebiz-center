@@ -3,6 +3,7 @@ import JsBarcode from "jsbarcode";
 import type { Shipment, ShippingAddress } from "@/lib/shipping-api";
 import { shippingCarrierBrand } from "@/lib/shipping-carriers";
 import lineAddQrUrl from "@/assets/line-add-jnac.jpg";
+import shippingCompanyLogoUrl from "@/assets/shipping/jnac-logo.png";
 
 export const SHIPPING_LABEL_ID = "shipping-label-batch";
 
@@ -87,29 +88,24 @@ function CarrierLogo({
 
 function CompanyLogo({
   companyName,
-  logoUrl,
 }: {
   companyName: string;
-  logoUrl?: string | null;
 }) {
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => setFailed(false), [logoUrl]);
-
-  if (logoUrl && !failed) {
+  if (!failed) {
     return (
       <img
-        src={logoUrl}
+        src={shippingCompanyLogoUrl}
         alt={companyName}
-        className="h-[14mm] max-w-[25mm] object-contain"
-        crossOrigin="anonymous"
+        className="h-[12mm] w-[40mm] max-w-full object-contain object-left"
         onError={() => setFailed(true)}
       />
     );
   }
   return (
-    <div className="flex h-[14mm] w-[14mm] items-center justify-center rounded-full border-[2px] border-[#1696f4] text-[18px] font-black text-[#1696f4]">
-      J
+    <div className="flex h-[12mm] items-center text-[20px] font-black text-[#1696f4]">
+      J NAC
     </div>
   );
 }
@@ -117,13 +113,11 @@ function CompanyLogo({
 function ShippingLabelPage({
   shipment,
   companyName,
-  companyLogoUrl,
   parcelNumber,
   parcelTotal,
 }: {
   shipment: Shipment;
   companyName?: string | null;
-  companyLogoUrl?: string | null;
   parcelNumber: number;
   parcelTotal: number;
 }) {
@@ -171,19 +165,13 @@ function ShippingLabelPage({
             background: `linear-gradient(90deg, #1696f4 0%, #1696f4 58%, ${carrier.accent} 58%, ${carrier.accent} 100%)`,
           }}
         />
-        <div className="flex min-w-0 flex-1 items-center gap-[2.5mm]">
+        <div className="flex min-w-0 flex-1 flex-col items-start gap-[0.5mm]">
           <CompanyLogo
             companyName={companyName || "J NAC (THAILAND) CO., LTD."}
-            logoUrl={companyLogoUrl}
           />
-          <div className="min-w-0">
-            <p className="text-[17px] font-black leading-none tracking-tight text-[#0b315d]">
-              J NAC
-            </p>
-            <p className="mt-1 line-clamp-2 text-[8px] font-black leading-tight text-neutral-800">
-              {companyName || "J NAC (THAILAND) CO., LTD."}
-            </p>
-          </div>
+          <p className="line-clamp-2 text-[8px] font-black leading-tight text-neutral-800">
+            {companyName || "J NAC (THAILAND) CO., LTD."}
+          </p>
         </div>
         <div className="relative flex h-[14mm] w-[36mm] shrink-0 items-center justify-center overflow-hidden rounded-[2.5mm] border-[1.5px] border-neutral-300 bg-neutral-50 px-[2mm] text-center">
           <span
@@ -297,11 +285,9 @@ function ShippingLabelPage({
 export default function ShippingLabel({
   shipment,
   companyName,
-  companyLogoUrl,
 }: {
   shipment: Shipment;
   companyName?: string | null;
-  companyLogoUrl?: string | null;
 }) {
   const parcelTotal = Math.max(
     1,
@@ -318,7 +304,6 @@ export default function ShippingLabel({
           <ShippingLabelPage
             shipment={shipment}
             companyName={companyName}
-            companyLogoUrl={companyLogoUrl}
             parcelNumber={index + 1}
             parcelTotal={parcelTotal}
           />
