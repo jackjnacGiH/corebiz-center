@@ -457,11 +457,13 @@ export default function Shipping() {
           ? c.conflict
           : error === "provider_not_ready"
             ? c.prepareOnly
-            : error === "outcome_unknown"
-              ? c.unknown
-              : error.startsWith("invalid_") || error === "shipment_incomplete"
-                ? c.missing
-                : c.genericError;
+            : error === "account_changed"
+              ? c.accountChanged
+              : error === "outcome_unknown"
+                ? c.unknown
+                : error.startsWith("invalid_") || error === "shipment_incomplete"
+                  ? c.missing
+                  : c.genericError;
   async function save() {
     const d = parseDraft(draft);
     const r = shipment
@@ -547,11 +549,26 @@ export default function Shipping() {
       {bootstrap && (
         <>
           <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-            <strong>{bootstrap.sendReady ? c.ready : c.prepareOnly}</strong>
+            <strong>
+              {bootstrap.sendReady
+                ? c.ready
+                : bootstrap.readReady
+                  ? c.readsReady
+                  : c.prepareOnly}
+            </strong>
             <span className="ml-2 uppercase">
               {bootstrap.settings.environment}
             </span>
-            <p className="mt-1 text-muted-foreground">{c.providerNote}</p>
+            <p className="mt-1 text-muted-foreground">
+              {!bootstrap.readReady
+                ? c.providerNote
+                : bootstrap.settings.environment === "uat"
+                  ? c.uatNote
+                  : c.estimated}
+            </p>
+            {bootstrap.readReady && (
+              <p className="mt-1 text-muted-foreground">{c.quoteGuide}</p>
+            )}
           </div>
           {view === "settings" && bootstrap.manager && (
             <ShippingSettings
@@ -1309,6 +1326,9 @@ export default function Shipping() {
               )}
               {!!rates.length && (
                 <div className="p-4 border rounded-lg">
+                  {bootstrap.settings.environment === "uat" && (
+                    <p className="mb-2 font-medium text-amber-800">{c.uatNote}</p>
+                  )}
                   <p className="text-sm text-muted-foreground">{c.estimated}</p>
                   {rates.map((r, i) => (
                     <p key={i}>
