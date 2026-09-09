@@ -74,6 +74,7 @@ export default function AddressFields({
         maxLength={key === "address" ? 500 : 150}
         autoComplete="off"
         type={key === "email" ? "email" : "text"}
+        placeholder={key === "fullname" ? c.contactNameHint : undefined}
         inputMode={key === "telephone1" ? "tel" : undefined}
         onChange={(e) => onChange({ ...value, [key]: e.target.value })}
       />
@@ -82,7 +83,7 @@ export default function AddressFields({
 
   return (
     <section className="space-y-3 min-w-0">
-      <h2 className="font-semibold">{title}</h2>
+      <h2 className="section-heading">{title}</h2>
       {beforeFields}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {field("fullname")}

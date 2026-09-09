@@ -4,6 +4,9 @@ import {
   parseDraftUpdate,
   emptyDraft,
   emptyAddress,
+  normalizeShippingContact,
+  recipientAddress,
+  shipmentWithContactFields,
   isUuid,
   canUseShipping,
   readyIssues,
@@ -40,27 +43,6 @@ const record = (v: unknown): Record<string, unknown> =>
     : {};
 const small = (v: unknown, max = 100) =>
   typeof v === "string" ? v.trim().slice(0, max) : "";
-const recipientAddress = (
-  value: unknown,
-  fallback: Record<string, unknown> = {},
-): ShippingAddress => {
-  const a = record(value);
-  const addressText = typeof value === "string" ? value : undefined;
-  return {
-    company: small(a.company ?? a.company_name ?? fallback.company, 150),
-    fullname: small(a.fullname ?? a.name ?? fallback.fullname, 150),
-    address: small(a.address ?? a.line ?? a.line1 ?? addressText, 500),
-    county: small(a.county ?? a.subdistrict, 150),
-    city: small(a.city ?? a.district, 150),
-    state: small(a.state ?? a.province, 150),
-    postcode: small(a.postcode ?? a.postal_code, 150),
-    email: small(a.email ?? fallback.email, 150),
-    telephone1: small(
-      a.telephone1 ?? a.phone ?? fallback.telephone1 ?? fallback.phone,
-      150,
-    ),
-  };
-};
 const recipientHaystack = (address: ShippingAddress) =>
   Object.values(address).join(" ").toLocaleLowerCase("th");
 
@@ -180,7 +162,7 @@ Deno.serve(async (req) => {
           environment: settings.environment,
           billing_mode: settings.billing_mode,
           merchant_code: settings.merchant_code,
-          origin: settings.origin,
+          origin: normalizeShippingContact({ ...emptyAddress(), ...settings.origin }),
         },
         accounts: accountResult.data,
         readReady,
@@ -208,7 +190,7 @@ Deno.serve(async (req) => {
       if (error) throw error;
       return reply({
         shipments: (data ?? []).map(({ orders, ...shipment }) => ({
-          ...shipment,
+          ...shipmentWithContactFields(shipment as Shipment),
           recipient_company: small(record(record(orders).customers).name, 150),
         })),
         count,
@@ -236,13 +218,15 @@ Deno.serve(async (req) => {
           .from("shipments")
           .select("id,draft,created_at")
           .order("created_at", { ascending: false })
+          .order("id")
           .limit(200),
         db
           .from("customers")
           .select(
-            "id,name,contact_name,email,phone,mobile,shipping_address,created_at",
+            "id,name,contact_name,customer_type,email,phone,mobile,shipping_address,created_at",
           )
           .order("created_at", { ascending: false })
+          .order("id")
           .limit(500),
       ]);
       if (historyResult.error || customerResult.error)
@@ -258,10 +242,11 @@ Deno.serve(async (req) => {
         source: "history" | "customer",
         address: ShippingAddress,
       ) => {
-        if (!address.fullname || (!address.address && !address.telephone1)) return;
+        if ((!address.fullname && !address.company) || (!address.address && !address.telephone1)) return;
         if (tokens.some((token) => !recipientHaystack(address).includes(token)))
           return;
         const key = [
+          address.company,
           address.fullname,
           address.telephone1,
           address.address,
@@ -282,8 +267,8 @@ Deno.serve(async (req) => {
           `customer:${row.id}`,
           "customer",
           recipientAddress(row.shipping_address, {
-            company: row.name,
-            fullname: row.contact_name ?? row.name,
+            company: row.customer_type === "individual" ? "" : row.name,
+            fullname: row.contact_name || (row.customer_type === "individual" ? row.name : ""),
             email: row.email,
             phone: row.phone ?? row.mobile,
           }),
@@ -337,7 +322,7 @@ Deno.serve(async (req) => {
           ? db
               .from("customers")
               .select(
-                "name,contact_name,email,phone,mobile,shipping_address",
+                "name,contact_name,customer_type,email,phone,mobile,shipping_address",
               )
               .eq("id", order.customer_id)
               .maybeSingle()
@@ -350,8 +335,8 @@ Deno.serve(async (req) => {
       draft.destination = recipientAddress(
         order.shipping_address ?? customer?.shipping_address,
         {
-          company: customer?.name,
-          fullname: customer?.contact_name ?? customer?.name,
+          company: customer?.customer_type === "individual" ? "" : customer?.name,
+          fullname: customer?.contact_name || (customer?.customer_type === "individual" ? customer?.name : ""),
           email: customer?.email,
           phone: customer?.phone ?? customer?.mobile,
         },
@@ -549,7 +534,7 @@ Deno.serve(async (req) => {
         .order("id", { ascending: false })
         .limit(50);
       if (error) throw error;
-      return reply({ shipment, events });
+      return reply({ shipment: shipmentWithContactFields(shipment), events });
     }
     const mutate = async (
       patch: Record<string, unknown>,

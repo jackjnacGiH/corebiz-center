@@ -10,7 +10,7 @@ export interface PageHeaderProps {
     actions?: ReactNode;
     /** Additional className for the wrapper */
     className?: string;
-    /** Hide bottom border (default: shown) */
+    /** Hide the accent border (default: shown) */
     noBorder?: boolean;
 }
 
@@ -36,23 +36,23 @@ export default function PageHeader({
     return (
         <header
             className={cn(
-                'flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-5',
-                !noBorder && 'border-b border-neutral-200',
+                'page-header flex flex-col md:flex-row md:items-center md:justify-between gap-4',
+                noBorder && 'page-header--no-border',
                 className,
             )}
         >
             <div className="flex items-start gap-3 min-w-0">
                 {icon && (
-                    <div className="grid place-items-center w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex-shrink-0">
+                    <div className="page-header-icon grid place-items-center w-10 h-10 rounded-lg flex-shrink-0">
                         {icon}
                     </div>
                 )}
                 <div className="min-w-0">
-                    <h1 className="text-2xl font-bold tracking-tight text-neutral-900 truncate">
+                    <h1 className="text-2xl font-bold tracking-tight break-words">
                         {title}
                     </h1>
                     {subtitle && (
-                        <p className="text-sm text-neutral-500 mt-1">{subtitle}</p>
+                        <p className="page-header-subtitle text-sm mt-1">{subtitle}</p>
                     )}
                 </div>
             </div>
@@ -60,7 +60,7 @@ export default function PageHeader({
                 /* On mobile the actions row wraps below the title and takes
                    full width so search inputs / buttons don't get truncated.
                    From md up it pins right of the title like before. */
-                <div className="flex flex-wrap items-center gap-2 w-full md:flex-1 md:flex-nowrap md:justify-end">
+                <div className="page-header-actions flex flex-wrap items-center gap-2 w-full md:w-auto md:justify-end">
                     {actions}
                 </div>
             )}

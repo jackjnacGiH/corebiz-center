@@ -5,6 +5,9 @@ import {
   emptyDraft,
   parseDraft,
   parseDraftUpdate,
+  normalizeShippingContact,
+  recipientAddress,
+  shipmentWithContactFields,
   readyIssues,
   quoteIssues,
   quotePayload,
@@ -129,6 +132,54 @@ test("company is optional on older drafts and is carried into provider recipient
   const payload = providerPayload({ draft: parseDraft(d), id: "test", reference_no: "test" }, null);
   assert.equal(payload.destination.fullname, "Customer Company / Test contact");
   assert.equal("company" in payload.destination, false);
+});
+test("legacy company names move to company while unknown contacts stay blank", () => {
+  for (const company of ["บริษัท เจ แนค (ประเทศไทย) จำกัด", "หจก. ทดสอบ", "ACME Co., Ltd."]) {
+    const original = { ...ready().origin, company: "", fullname: company };
+    const corrected = normalizeShippingContact(original);
+    assert.equal(corrected.company, company);
+    assert.equal(corrected.fullname, "");
+    assert.equal(original.fullname, company);
+    assert.equal(normalizeShippingContact({ ...corrected, fullname: company }).fullname, "");
+  }
+});
+test("real contacts and individual customer names are preserved", () => {
+  const address = { ...ready().destination, company: "บริษัท ตัวอย่าง จำกัด", fullname: "คุณพัชรี" };
+  assert.deepEqual(normalizeShippingContact(address), address);
+  assert.deepEqual(normalizeShippingContact({ ...address, company: "คุณวริษา นวลวิลัย", fullname: "คุณวริษา นวลวิลัย" }), {
+    ...address, company: "", fullname: "คุณวริษา นวลวิลัย",
+  });
+  const conflict = { ...address, fullname: "บริษัท คนละแห่ง จำกัด" };
+  assert.deepEqual(normalizeShippingContact(conflict), conflict);
+});
+test("order and recipient mapping uses real contacts rather than company fallbacks", () => {
+  const company = "บริษัท ทาลอน เอ็นจิเนียริ่ง แอนด์ ซัพพลาย จำกัด";
+  const oldAddress = { ...ready().destination, company: "", fullname: company };
+  // Old address snapshots often contain an empty company string.
+  const unknown = recipientAddress(oldAddress, { company, fullname: null });
+  assert.equal(unknown.company, company);
+  assert.equal(unknown.fullname, "");
+  assert.equal(recipientAddress(oldAddress, { company, fullname: "คุณแจ็ค" }).fullname, "คุณแจ็ค");
+  const named = recipientAddress({ ...oldAddress, fullname: "คุณพัชรี" }, { company, fullname: "คุณแจ็ค" });
+  assert.equal(named.fullname, "คุณพัชรี");
+  assert.equal(named.company, company);
+  const plainAddress = recipientAddress("84 หมู่ 2", { company, fullname: "", phone: "0800161700" });
+  assert.equal(plainAddress.company, company);
+  assert.equal(plainAddress.fullname, "");
+  assert.equal(plainAddress.telephone1, "0800161700");
+});
+test("draft read correction leaves storage objects and submitted snapshots untouched", () => {
+  const s = { status: "draft", draft: ready() };
+  s.draft.origin.fullname = "บริษัท เจ แนค (ประเทศไทย) จำกัด";
+  const original = structuredClone(s);
+  const corrected = shipmentWithContactFields(s);
+  assert.equal(corrected.draft.origin.fullname, "");
+  assert.deepEqual(s, original);
+  assert.equal(shipmentWithContactFields({ ...s, status: "waiting" }).draft, s.draft);
+  assert.equal(parseDraft(s.draft).origin.company, s.draft.origin.fullname);
+  assert.deepEqual(quoteIssues(corrected.draft), []);
+  assert.ok(readyIssues(s.draft).includes("origin_incomplete"));
+  assert.throws(() => providerPayload(s, null), /shipment_incomplete/);
 });
 test("parcel sizes are validated separately and unknown legacy boxes are not silently cloned", () => {
   const d = ready();

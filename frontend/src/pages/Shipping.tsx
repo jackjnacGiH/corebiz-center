@@ -376,6 +376,7 @@ export default function Shipping() {
     const changedSearch = [
       [next.telephone1, draft.destination.telephone1],
       [next.fullname, draft.destination.fullname],
+      [next.company, draft.destination.company],
       [next.address, draft.destination.address],
     ].find(([nextValue, previousValue]) => nextValue !== previousValue)?.[0];
     change("destination", next);
@@ -652,7 +653,7 @@ export default function Shipping() {
                   disabled={busy}
                   className="border rounded-xl p-4 space-y-3"
                 >
-                  <h2 className="font-semibold">
+                  <h2 className="section-heading">
                     {c.source}: {orderCode || c.manual}
                   </h2>
                   <div className="flex flex-wrap gap-2">
@@ -820,7 +821,7 @@ export default function Shipping() {
                                 >
                                   <span className="flex items-center justify-between gap-2">
                                     <strong className="truncate text-sm">
-                                      {option.address.fullname}
+                                      {option.address.company || option.address.fullname}
                                     </strong>
                                     <small className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px]">
                                       {option.source === "customer"
@@ -828,6 +829,9 @@ export default function Shipping() {
                                         : c.recipientHistory}
                                     </small>
                                   </span>
+                                  {!!option.address.company && !!option.address.fullname && (
+                                    <span className="block text-xs">{c.fullname}: {option.address.fullname}</span>
+                                  )}
                                   <span className="block text-xs text-muted-foreground">
                                     {option.address.telephone1 || "—"} ·{" "}
                                     {[
@@ -867,7 +871,7 @@ export default function Shipping() {
                     onSelect={(code) => change("carrier_code", code)}
                   />}
                   <section className="rounded-xl border p-4 space-y-3">
-                    <h2 className="font-semibold">3. {c.items}</h2>
+                    <h2 className="section-heading">3. {c.items}</h2>
                     <p className="text-sm text-muted-foreground">{draft.products.length} {c.itemRows} · {summarizeShippingItems(draft.products).totalQuantity} {c.pieceUnit}</p>
                     {draft.products.map((item, index) => (
                       <div
@@ -1026,7 +1030,7 @@ export default function Shipping() {
                     </p>
                   </section>
                   <section className="rounded-xl border p-4 space-y-3">
-                    <h2 className="font-semibold">{c.cod}</h2>
+                    <h2 className="section-heading">{c.cod}</h2>
                     <div className="grid sm:grid-cols-2 gap-3">
                       <label className="text-sm space-y-1">
                         {c.cod_amount}
@@ -1188,7 +1192,7 @@ export default function Shipping() {
               )}
               {!!events.length && (
                 <section className="border rounded-xl p-4">
-                  <h2 className="font-semibold">{c.history}</h2>
+                  <h2 className="section-heading">{c.history}</h2>
                   {events.map((e, i) => (
                     <p key={i} className="text-sm text-muted-foreground py-1">
                       {new Date(e.created_at).toLocaleString()} ·{" "}
