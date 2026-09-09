@@ -6,6 +6,7 @@ import {
   isUuid,
   canUseShipping,
   readyIssues,
+  quotePayload,
   providerPayload,
   moneyMinor,
   acceptStatus,
@@ -578,16 +579,7 @@ Deno.serve(async (req) => {
     if (action === "quote") {
       assertProviderReady(config, false);
       const d = parseDraft(shipment.draft);
-      if (readyIssues(d).length) return fail("shipment_incomplete");
-      const r = await requestProvider(config, "quote", {
-        box_width: d.box_width,
-        box_height: d.box_height,
-        box_length: d.box_length,
-        box_weight: d.box_weight,
-        carriers_code: [d.carrier_code],
-        origin: d.origin,
-        destination: d.destination,
-      });
+      const r = await requestProvider(config, "quote", quotePayload(d));
       if (r.status !== 200 || !Array.isArray(r.data.data))
         return fail("provider_rejected", 502);
       return reply({
@@ -759,6 +751,7 @@ Deno.serve(async (req) => {
       "conflict",
       "provider_not_ready",
       "shipment_incomplete",
+      "quote_incomplete",
       "outcome_unknown",
       "provider_response_invalid",
     ];

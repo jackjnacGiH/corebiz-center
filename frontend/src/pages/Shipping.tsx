@@ -27,6 +27,8 @@ import {
   emptyAddress,
   parseDraft,
   readyIssues,
+  quoteIssues,
+  type QuoteIssue,
 } from "../../../supabase/functions/_shared/shipping-domain";
 import PageHeader from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -122,7 +124,7 @@ export default function Shipping() {
     [productSearched, setProductSearched] = useState(false);
   const [events, setEvents] = useState<ShippingEvent[]>([]),
     [rates, setRates] = useState<
-      { carrier: string; total: string; delivery_time: string }[]
+      { carrier: string; carrier_code: string; total: string; delivery_time: string }[]
     >([]);
   const [labelLink, setLabelLink] = useState("");
   const [labelOpen, setLabelOpen] = useState(false);
@@ -435,11 +437,19 @@ export default function Shipping() {
     resetProductLookup();
   };
   let issues: string[] = [];
+  let rateIssues: QuoteIssue[] = [];
+  let invalidDraft = false;
   try {
-    issues = readyIssues(parseDraft(draft));
+    const parsed = parseDraft(draft);
+    issues = readyIssues(parsed);
+    rateIssues = quoteIssues(parsed);
   } catch {
     issues = ["invalid_payload"];
+    invalidDraft = true;
   }
+  const quoteBlockers = invalidDraft
+    ? [c.quoteInvalid]
+    : rateIssues.map((issue) => c.quoteIssues[issue]);
   const locked = !!shipment && shipment.status !== "draft";
   const trackingUrl =
     shipment?.tracking_number && shipment.draft.carrier_code
@@ -461,9 +471,11 @@ export default function Shipping() {
               ? c.accountChanged
               : error === "outcome_unknown"
                 ? c.unknown
-                : error.startsWith("invalid_") || error === "shipment_incomplete"
-                  ? c.missing
-                  : c.genericError;
+                : error === "quote_incomplete"
+                  ? c.quoteMissing
+                  : error.startsWith("invalid_") || error === "shipment_incomplete"
+                    ? c.missing
+                    : c.genericError;
   async function save() {
     const d = parseDraft(draft);
     const r = shipment
@@ -1186,6 +1198,35 @@ export default function Shipping() {
               {issues.length > 0 && !locked && (
                 <p className="text-sm text-muted-foreground">{c.missing}</p>
               )}
+              {!locked && (
+                <div
+                  id="shipping-quote-status"
+                  className="rounded-lg border p-3 text-sm"
+                  aria-live="polite"
+                >
+                  {quoteBlockers.length > 0 ? (
+                    <>
+                      <p className="font-medium">{c.quoteMissing}</p>
+                      <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+                        {quoteBlockers.map((message) => (
+                          <li key={message}>{message}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p>
+                      {!shipment || dirty
+                        ? c.quoteSaveFirst
+                        : !bootstrap.readReady
+                          ? c.providerNote
+                          : c.quoteReady}
+                    </p>
+                  )}
+                  {shipment && (
+                    <p className="mt-1 text-muted-foreground">{c.draftTrackingNote}</p>
+                  )}
+                </div>
+              )}
               {shipment && (
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -1203,13 +1244,15 @@ export default function Shipping() {
                         disabled={
                           busy ||
                           dirty ||
-                          issues.length > 0 ||
+                          quoteBlockers.length > 0 ||
                           !bootstrap.readReady
                         }
+                        aria-describedby="shipping-quote-status"
                         onClick={() =>
                           void run(async () => {
                             const r = await shippingApi.quote(shipment);
                             setRates(r.rates);
+                            setNotice(r.rates.length ? c.quoteReceived : c.quoteEmpty);
                           })
                         }
                       >
@@ -1325,14 +1368,16 @@ export default function Shipping() {
                 </a>
               )}
               {!!rates.length && (
-                <div className="p-4 border rounded-lg">
+                <div className="p-4 border rounded-lg" role="status">
+                  <p className="mb-2 font-semibold">{c.quoteResult}</p>
                   {bootstrap.settings.environment === "uat" && (
                     <p className="mb-2 font-medium text-amber-800">{c.uatNote}</p>
                   )}
                   <p className="text-sm text-muted-foreground">{c.estimated}</p>
                   {rates.map((r, i) => (
                     <p key={i}>
-                      {r.carrier} · {r.total} · {r.delivery_time}
+                      {shippingCarrierBrand(r.carrier_code).name} · {r.total}{" "}
+                      {c.baht} · {r.delivery_time}
                     </p>
                   ))}
                 </div>
