@@ -10,6 +10,7 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import { useLanguage } from "@/i18n";
 import {
@@ -119,6 +120,7 @@ export default function Shipping() {
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
   const productRequest = useRef(0);
+  const deletingDraft = useRef(false);
   const serializedDraft = useMemo(() => JSON.stringify(draft), [draft]);
   const dirty = view === "editor" && serializedDraft !== baseline;
   const reportError = useCallback((e: unknown) => {
@@ -352,6 +354,32 @@ export default function Shipping() {
       reportError(e);
     } finally {
       setBusy(false);
+    }
+  }
+  async function deleteDraft(target: Shipment) {
+    if (busy || deletingDraft.current || target.status !== "draft" || target.tracking_number) return;
+    const unsaved = view === "editor" && shipment?.id === target.id && dirty;
+    const confirmation = `${c.confirmDeleteDraft}\n\n${target.reference_no}${unsaved ? `\n\n${c.deleteUnsaved}` : ""}`;
+    if (!window.confirm(confirmation)) return;
+    deletingDraft.current = true;
+    try {
+      await run(async () => {
+        await shippingApi.action("archive", target);
+        // Only leave the editor after the versioned archive is accepted.
+        // A conflict/failure above keeps all unsaved input available to staff.
+        setShipment(null);
+        setLabelOpen(false);
+        setView("list");
+        setParams({});
+        setPage(0);
+        setRows([]);
+        setCount(0);
+        setListLoading(true);
+        setListRevision((revision) => revision + 1);
+        setNotice(c.draftDeleted);
+      });
+    } finally {
+      deletingDraft.current = false;
     }
   }
   function leave(next: "list" | "settings") {
@@ -622,7 +650,7 @@ export default function Shipping() {
                         setEvents(r.events);
                         setView("editor");
                       })
-                    } />
+                    } onDelete={() => void deleteDraft(s)} />
                   ))}
                 </div>
               )}
@@ -1126,21 +1154,14 @@ export default function Shipping() {
                       >
                         {c.submit}
                       </Button>
-                      <Button
+                      {!shipment.tracking_number && <Button
                         variant="outline"
-                        disabled={busy || dirty}
-                        onClick={() => {
-                          if (window.confirm(c.confirmArchive))
-                            void run(async () =>
-                              editResult(
-                                (await shippingApi.action("archive", shipment))
-                                  .shipment,
-                              ),
-                            );
-                        }}
+                        className="text-destructive hover:text-destructive"
+                        disabled={busy}
+                        onClick={() => void deleteDraft(shipment)}
                       >
-                        {c.archive}
-                      </Button>
+                        <Trash2 size={16} />{c.deleteDraft}
+                      </Button>}
                     </>
                   )}
                   {shipment.tracking_number && (
