@@ -185,7 +185,7 @@ function ShippingLabelPage({
         </div>
       </header>
 
-      <section className="grid min-h-0 grid-rows-[2.4mm_5.3mm_24mm_2.4mm] content-center gap-y-[0.1mm] border-b-2 border-black px-[3mm] text-center">
+      <section className="grid min-h-0 grid-rows-[2.4mm_5.3mm_24mm_2.4mm] content-center gap-y-[0.1mm] border-b-2 border-black px-[4mm] text-center">
         <p className="text-[8px] font-bold uppercase leading-[9px] tracking-[0.15em]">
           Tracking Number
         </p>
@@ -195,7 +195,6 @@ function ShippingLabelPage({
         <svg
           ref={barcodeRef}
           aria-label={`Barcode ${barcodeValue}`}
-          preserveAspectRatio="none"
           className="block h-[24mm] w-full"
         />
         <p className="text-[7px] font-semibold leading-[9px]">{barcodeValue}</p>
