@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from 'react';
+import { useEffect, useRef, useState, type ComponentType } from 'react';
 import {
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     Area, AreaChart, BarChart, Bar, ReferenceLine,
@@ -14,7 +14,7 @@ import {
     type ActivityEvent,
     type QuoteStats, type AIMetrics, type PaymentBreakdown, type PendingQuote,
 } from '../lib/api';
-import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { useRealtimeRefresh, useRealtimeTable } from '../lib/useRealtimeTable';
 import { useLanguage } from '../i18n';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -179,7 +179,11 @@ const Dashboard = () => {
     const [loading, setLoading]       = useState(true);
     const [err, setErr]               = useState<string | null>(null);
 
+    const loadVersion = useRef<symbol | null>(null);
     async function load() {
+        const version = Symbol();
+        loadVersion.current = version;
+        const isCurrent = () => version === loadVersion.current;
         setLoading(true);
         setErr(null);
         try {
@@ -192,6 +196,7 @@ const Dashboard = () => {
                 dashboardApi.getKPI(),
                 orgSettingsApi.get(),
             ]);
+            if (!isCurrent()) return;
             setQuoteStats(qs);
             setAiMetrics(ai);
             setPayments(pay);
@@ -200,17 +205,21 @@ const Dashboard = () => {
             setLowStock(kpi.low_stock_count);
             if (org?.monthly_revenue_target) setTarget(Number(org.monthly_revenue_target));
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         } finally {
-            setLoading(false);
+            if (isCurrent()) setLoading(false);
         }
     }
 
-    useEffect(() => { void load(); }, []);
-    useRealtimeTable('quotes',    () => void load());
-    useRealtimeTable('orders',    () => void load());
-    useRealtimeTable('customers', () => void load());
-    useRealtimeTable('inventory', () => void load());
+    useEffect(() => {
+        void load();
+        return () => { loadVersion.current = null; };
+    }, []);
+    const refreshRealtime = useRealtimeRefresh(load);
+    useRealtimeTable('quotes',    refreshRealtime);
+    useRealtimeTable('orders',    refreshRealtime);
+    useRealtimeTable('customers', refreshRealtime);
+    useRealtimeTable('inventory', refreshRealtime);
 
     // Chart data
     const chartData = (quoteStats?.monthly_series ?? []).map(m => ({

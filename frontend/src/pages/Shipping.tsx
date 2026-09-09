@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Truck,
@@ -41,13 +41,21 @@ import ShippingSettings from "@/components/shipping/ShippingSettings";
 import ShippingParcels from "@/components/shipping/ShippingParcels";
 import ShippingRateComparison from "@/components/shipping/ShippingRateComparison";
 import ShipmentListCard from "@/components/shipping/ShipmentListCard";
-import ShippingLabel, {
-  SHIPPING_LABEL_ID,
-} from "@/components/shipping/ShippingLabel";
 import {
   shippingTrackingUrl,
 } from "@/lib/shipping-carriers";
 import { printElement } from "@/lib/print";
+
+type ShippingLabelModule = typeof import("@/components/shipping/ShippingLabel");
+let labelModulePromise: Promise<ShippingLabelModule> | undefined;
+const loadShippingLabel = () => {
+  // The list does not need barcode code. Share an editor warm-up with preview.
+  labelModulePromise ??= import("@/components/shipping/ShippingLabel").catch((error) => {
+    labelModulePromise = undefined;
+    throw error;
+  });
+  return labelModulePromise;
+};
 
 async function copyText(value: string) {
   if (navigator.clipboard?.writeText) {
@@ -104,12 +112,15 @@ export default function Shipping() {
     [rates, setRates] = useState<ShippingRate[]>([]);
   const [labelLink, setLabelLink] = useState("");
   const [labelOpen, setLabelOpen] = useState(false);
+  const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
+  const [listRevision, setListRevision] = useState(0);
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
   const productRequest = useRef(0);
-  const dirty = view === "editor" && JSON.stringify(draft) !== baseline;
+  const serializedDraft = useMemo(() => JSON.stringify(draft), [draft]);
+  const dirty = view === "editor" && serializedDraft !== baseline;
   const reportError = useCallback((e: unknown) => {
     setError(e instanceof Error ? e.message : "shipping_error");
     setNotice("");
@@ -117,6 +128,7 @@ export default function Shipping() {
   const reload = useCallback(async () => {
     const b = await shippingApi.bootstrap();
     setBootstrap(b);
+    setListRevision((revision) => revision + 1);
   }, []);
   const resetRecipientLookup = useCallback(() => {
     recipientRequest.current += 1;
@@ -147,7 +159,9 @@ export default function Shipping() {
     };
   }, [reportError]);
   useEffect(() => {
-    if (!bootstrap || view !== "list") return;
+    // Both endpoints authorize independently; keep display gated by bootstrap,
+    // but let list data arrive in parallel instead of waiting for another trip.
+    if (view !== "list") return;
     let active = true;
     const timer = window.setTimeout(() => {
       setListLoading(true);
@@ -162,7 +176,15 @@ export default function Shipping() {
         .finally(() => { if (active) setListLoading(false); });
     }, search.trim() ? 250 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [bootstrap, page, search, view, reportError]);
+  }, [listRevision, page, search, view, reportError]);
+  useEffect(() => {
+    if (view !== "editor" || labelModule) return;
+    let active = true;
+    void loadShippingLabel().then((module) => {
+      if (active) setLabelModule(module);
+    }).catch(() => { /* Preview can retry an interrupted background download. */ });
+    return () => { active = false; };
+  }, [view, labelModule]);
   useEffect(() => {
     const query = recipientSearch.trim();
     if (view !== "editor" || query.length < 3) {
@@ -417,17 +439,14 @@ export default function Shipping() {
     }));
     resetProductLookup();
   };
-  let issues: string[] = [];
-  let rateIssues: QuoteIssue[] = [];
-  let invalidDraft = false;
-  try {
-    const parsed = parseDraft(draft);
-    issues = readyIssues(parsed);
-    rateIssues = quoteIssues(parsed);
-  } catch {
-    issues = ["invalid_payload"];
-    invalidDraft = true;
-  }
+  const { issues, rateIssues, invalidDraft } = useMemo(() => {
+    try {
+      const parsed = parseDraft(draft);
+      return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), invalidDraft: false };
+    } catch {
+      return { issues: ["invalid_payload"], rateIssues: [] as QuoteIssue[], invalidDraft: true };
+    }
+  }, [draft]);
   const quoteBlockers = invalidDraft
     ? [c.quoteInvalid]
     : rateIssues.map((issue) => c.quoteIssues[issue]);
@@ -489,6 +508,7 @@ export default function Shipping() {
   const status = (s: Shipment) => c.statuses[s.status];
   const selectClass =
     "h-10 w-full border border-input rounded-md bg-background px-3";
+  const ShippingLabel = labelModule?.default;
   return (
     <div className="space-y-5 min-w-0" data-testid="shipping-page">
       <PageHeader
@@ -1074,7 +1094,13 @@ export default function Shipping() {
                   <Button
                     variant="outline"
                     disabled={busy || dirty}
-                    onClick={() => setLabelOpen(true)}
+                    onClick={() => {
+                      setLabelOpen(true);
+                      if (!labelModule) void loadShippingLabel().then(setLabelModule).catch((reason) => {
+                        setLabelOpen(false);
+                        reportError(reason);
+                      });
+                    }}
                   >
                     <Printer size={16} />
                     {c.labelPreview}
@@ -1221,8 +1247,9 @@ export default function Shipping() {
             <div className="flex gap-2">
               <Button
                 size="sm"
+                disabled={!labelModule}
                 onClick={() =>
-                  printElement(SHIPPING_LABEL_ID, {
+                  labelModule && printElement(labelModule.SHIPPING_LABEL_ID, {
                     title: `${c.labelPreview} ${shipment.tracking_number || shipment.reference_no}`,
                     pageSize: "label-100x150",
                   })
@@ -1242,10 +1269,10 @@ export default function Shipping() {
             </div>
           </div>
           <div className="mx-auto min-h-0 max-w-full flex-1 overflow-auto bg-neutral-200 p-1 shadow-2xl">
-            <ShippingLabel
+            {ShippingLabel ? <ShippingLabel
               shipment={shipment}
               companyName={bootstrap.brand.name}
-            />
+            /> : <p role="status" className="p-4 text-sm">{c.loading}</p>}
           </div>
         </div>
       )}

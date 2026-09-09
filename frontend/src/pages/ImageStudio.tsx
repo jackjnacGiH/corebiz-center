@@ -3,10 +3,10 @@ import {
   AlignCenter, AlignLeft, AlignRight, Check, ChevronDown, Download, ImageIcon,
   Images, Layers3, Loader2, Plus, RotateCcw, Save, Search, Trash2, Upload, Copy,
 } from 'lucide-react';
-import JSZip from 'jszip';
 import PageHeader from '../components/PageHeader';
 import { productsApi, type ProductWithInventory } from '../lib/api';
 import { uploadProductImage } from '../lib/storage';
+import './image-studio-fonts.css';
 
 type TextAlign = 'left' | 'center' | 'right';
 type StickerShape = 'rounded' | 'pill' | 'circle' | 'tag' | 'outline' | 'burst' | 'ribbon' | 'speech';
@@ -318,6 +318,7 @@ export default function ImageStudio() {
     if (!targets.length) { setMessage('กรุณาเลือกสินค้าอย่างน้อย 1 รายการ'); return; }
     setExporting(true); setMessage('กำลังสร้างภาพ...');
     try {
+      const { default: JSZip } = await import('jszip');
       const zip = new JSZip();
       for (const product of targets) {
         const blob = await renderProduct(product, layers, sourceImages[product.id]);

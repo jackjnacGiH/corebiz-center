@@ -2,10 +2,8 @@
    CoreBiz Center — Design System
    Tailwind v4 + shadcn/ui + custom component classes (JNAC / Neutral / Status)
    ========================================================================= */
-
-@import url('https://fonts.googleapis.com/css2?family=Athiti:wght@400;600;700&family=Bai+Jamjuree:wght@400;600;700&family=Chakra+Petch:wght@400;600;700&family=Charm:wght@400;700&family=Charmonman:wght@400;700&family=Chonburi&family=Fahkwang:wght@400;600;700&family=IBM+Plex+Sans+Thai:wght@400;600;700&family=Itim&family=K2D:wght@400;600;700&family=Kanit:ital,wght@0,400;0,600;0,800;1,600&family=Kodchasan:wght@400;600;700&family=KoHo:wght@400;600;700&family=Krub:wght@400;600;700&family=Maitree:wght@400;600;700&family=Mali:wght@400;600;700&family=Mitr:wght@400;500;600&family=Niramit:wght@400;600;700&family=Noto+Sans+Thai:wght@400;600;800&family=Pattaya&family=Pridi:wght@400;600;700&family=Prompt:ital,wght@0,400;0,600;0,800;1,600&family=Sarabun:ital,wght@0,400;0,600;0,800;1,600&family=Sriracha&family=Taviraj:wght@400;600;700&family=Thasadith:wght@400;700&family=Trirong:wght@400;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Black&family=Barlow+Condensed:wght@400;600;800&family=Bebas+Neue&family=DM+Sans:wght@400;600;800&family=Lobster&family=Montserrat:ital,wght@0,400;0,600;0,800;1,600&family=Oswald:wght@400;600;700&family=Pacifico&family=Playfair+Display:ital,wght@0,400;0,700;1,700&family=Poppins:ital,wght@0,400;0,600;0,800;1,600&family=Roboto+Slab:wght@400;600;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Anek+Thai:wght@400;600;800&family=Anuphan:wght@400;600;700&family=Baloo+2:wght@400;600;800&family=Bubblegum+Sans&family=Chewy&family=Coiny&family=DynaPuff:wght@400;600;700&family=Fredoka:wght@400;600;700&family=Grandstander:wght@400;600;800&family=Noto+Serif+Thai:wght@400;600;800&family=Nunito:wght@400;600;800&family=Quicksand:wght@400;600;700&family=Rasa:wght@400;600;700&family=Srisakdi:wght@400;700&display=swap');
+/* Keep the UI's existing fonts here; the design catalog loads with Image Studio. */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;600;800&family=Sarabun:ital,wght@0,400;0,600;0,800;1,600&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 
