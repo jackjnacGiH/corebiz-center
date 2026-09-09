@@ -1,11 +1,14 @@
 import { Document, Page, Text, View, Image, StyleSheet, PDFViewer, Font, pdf } from '@react-pdf/renderer';
+import sarabunRegular from '../assets/fonts/sarabun/Sarabun-Regular.ttf';
+import sarabunBold from '../assets/fonts/sarabun/Sarabun-Bold.ttf';
 
-// Register Sarabun font for Thai support (Google Fonts CDN)
+// Ship the existing font family with the PDF feature: old CDN version URLs
+// can expire, and these assets are only fetched when a document is generated.
 Font.register({
   family: 'Sarabun',
   fonts: [
-    { src: 'https://fonts.gstatic.com/s/sarabun/v15/DtVjJx26TKEr37c9YL5rXFI.ttf', fontWeight: 400 },
-    { src: 'https://fonts.gstatic.com/s/sarabun/v15/DtVmJx26TKEr37c9aBBx_nxOQFs.ttf', fontWeight: 700 },
+    { src: sarabunRegular, fontWeight: 400 },
+    { src: sarabunBold, fontWeight: 700 },
   ],
 });
 

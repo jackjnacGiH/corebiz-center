@@ -10,26 +10,47 @@
  * No external library — just a module-level Map (lives for the SPA session).
  */
 
-type Entry<T = unknown> = { data: T; at: number; inflight?: Promise<unknown> };
+type Entry<T = unknown> = { data: T; at: number };
+type Pending = { promise: Promise<unknown>; listeners: Set<(data: unknown) => void> };
 
 const store = new Map<string, Entry>();
+const pending = new Map<string, Pending>();
 
 const DEFAULT_STALE_MS = 30_000;
 
-function backgroundRevalidate<T>(key: string, fetcher: () => Promise<T>, onFresh?: (d: T) => void) {
-  const cur = store.get(key);
-  if (cur?.inflight) return; // a refresh is already running — don't stack
-  const p = fetcher()
+/** Share reads already in progress, but explicit reloads always start a new
+ * generation: a request started before a write must not satisfy its reload. */
+function fetchList<T>(key: string, fetcher: () => Promise<T>, force = false, onFresh?: (d: T) => void): Promise<T> {
+  const active = pending.get(key);
+  const listener = onFresh as ((data: unknown) => void) | undefined;
+  if (active && !force) {
+    if (listener) active.listeners.add(listener);
+    return active.promise as Promise<T>;
+  }
+
+  const request: Pending = {
+    promise: Promise.resolve(),
+    // A forced refresh supersedes the earlier generation; its subscribers
+    // should receive the newer result as well.
+    listeners: new Set(active?.listeners),
+  };
+  if (listener) request.listeners.add(listener);
+  pending.set(key, request);
+  request.promise = Promise.resolve().then(fetcher)
     .then((data) => {
-      store.set(key, { data, at: Date.now() });
-      onFresh?.(data);
+      // Invalidation or a newer forced request makes this result obsolete.
+      if (pending.get(key) === request) {
+        store.set(key, { data, at: Date.now() });
+        for (const notify of request.listeners) {
+          try { notify(data); } catch { /* one view must not block the others */ }
+        }
+      }
+      return data;
     })
-    .catch(() => { /* keep the stale copy on failure */ })
     .finally(() => {
-      const e = store.get(key);
-      if (e) e.inflight = undefined;
+      if (pending.get(key) === request) pending.delete(key);
     });
-  if (cur) cur.inflight = p;
+  return request.promise as Promise<T>;
 }
 
 /**
@@ -45,26 +66,36 @@ export async function swrList<T>(
   const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
   const hit = store.get(key) as Entry<T> | undefined;
   if (!opts.force && hit) {
-    if (Date.now() - hit.at > staleMs) backgroundRevalidate(key, fetcher, opts.onFresh);
+    if (Date.now() - hit.at > staleMs) {
+      void fetchList(key, fetcher, false, opts.onFresh)
+        .catch(() => { /* keep the stale copy on failure */ });
+    }
     return hit.data;
   }
-  const data = await fetcher();
-  store.set(key, { data, at: Date.now() });
-  return data;
+  return fetchList(key, fetcher, opts.force);
 }
 
 /** Warm the cache ahead of time (e.g. right after login) so the first visit to
  *  a heavy page is instant. No-op if already cached. */
 export function prefetchList<T>(key: string, fetcher: () => Promise<T>): void {
   if (store.has(key)) return;
-  void fetcher()
-    .then((data) => store.set(key, { data, at: Date.now() }))
+  void fetchList(key, fetcher)
     .catch(() => { /* best-effort */ });
 }
 
 /** Drop a cached list (e.g. after a write) so the next read fetches fresh. */
 export function invalidateList(...keys: string[]): void {
-  for (const k of keys) store.delete(k);
+  for (const k of keys) {
+    store.delete(k);
+    pending.delete(k);
+  }
+}
+
+/** Detach cached and pending reads before the authenticated identity changes.
+ * A late response from the previous account cannot refill the new cache. */
+export function clearListCache(): void {
+  store.clear();
+  pending.clear();
 }
 
 /** True if a list is already cached — use to skip the cold-load spinner. */

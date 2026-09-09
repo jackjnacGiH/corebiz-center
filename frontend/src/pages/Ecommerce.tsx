@@ -35,9 +35,8 @@ import {
   type CustomerBenefit,
 } from '../lib/api';
 import type { Category, Customer } from '../lib/database.types';
-import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { useRealtimeRefresh, useRealtimeTable } from '../lib/useRealtimeTable';
 import { swrList, CK, hasCache } from '../lib/cache';
-import { downloadQuotation } from '../components/QuotationPDF';
 import ProductImagePreview from '../components/ProductImagePreview';
 import CustomerPickerModal from '../components/CustomerPickerModal';
 import QuotePreviewPanel, { type PreviewLine } from '../components/QuotePreviewPanel';
@@ -56,18 +55,22 @@ interface CartItem {
   madeToOrder?: boolean;
 }
 
-function formatCurrency(value: number): string {
-  // Always 2 decimals for money — so 15 → "฿15.00", 14.55 → "฿14.55".
-  return new Intl.NumberFormat('th-TH', {
+// Reuse locale formatters across rows and filter renders.
+const currencyFormatter = new Intl.NumberFormat('th-TH', {
     style: 'currency',
     currency: 'THB',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value);
+});
+const numberFormatter = new Intl.NumberFormat('th-TH');
+
+function formatCurrency(value: number): string {
+  // Always 2 decimals for money — so 15 → "฿15.00", 14.55 → "฿14.55".
+  return currencyFormatter.format(value);
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat('th-TH').format(value);
+  return numberFormatter.format(value);
 }
 
 function deriveLeadTime(qty: number): LeadTimeKey {
@@ -219,32 +222,49 @@ export default function Ecommerce() {
 
   // force=true skips the cache (Reload / realtime / after a write). On a plain
   // navigation it serves the cached lists instantly + revalidates in background.
+  const loadVersion = useRef<symbol | null>(null);
   async function load(force = false) {
+    const version = Symbol();
+    loadVersion.current = version;
+    const isCurrent = () => version === loadVersion.current;
+    const refreshed = { products: false, categories: false, customers: false };
     if (!force && !hasCache(CK.products)) setLoading(true);
     setErr(null);
     try {
       const [p, c, cust, org] = await Promise.all([
-        swrList(CK.products, () => productsApi.list(), { force, onFresh: (d) => setProducts(d.filter((x) => x.status === 'active')) }),
-        swrList(CK.categories, () => categoriesApi.list(), { force, onFresh: setCategories }),
-        swrList(CK.customers, () => customersApi.list(), { force, onFresh: setCustomers }).catch(() => [] as Customer[]),
+        swrList(CK.products, () => productsApi.list(), { force, onFresh: d => {
+          if (isCurrent()) { refreshed.products = true; setProducts(d.filter(x => x.status === 'active')); }
+        } }),
+        swrList(CK.categories, () => categoriesApi.list(), { force, onFresh: d => {
+          if (isCurrent()) { refreshed.categories = true; setCategories(d); }
+        } }),
+        swrList(CK.customers, () => customersApi.list(), { force, onFresh: d => {
+          if (isCurrent()) { refreshed.customers = true; setCustomers(d); }
+        } }).catch(() => [] as Customer[]),
         orgSettingsApi.get().catch(() => null),
       ]);
-      setProducts(p.filter(x => x.status === 'active'));
-      setCategories(c);
-      setCustomers(cust);
+      if (!isCurrent()) return;
+      // Fresh list callbacks can arrive while the organization query is pending.
+      if (!refreshed.products) setProducts(p.filter(x => x.status === 'active'));
+      if (!refreshed.categories) setCategories(c);
+      if (!refreshed.customers) setCustomers(cust);
       setQuoteOrg(org);
     } catch (e) {
-      setErr((e as Error).message);
+      if (isCurrent()) setErr((e as Error).message);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    return () => { loadVersion.current = null; };
+  }, []);
   // Realtime — refresh when products/inventory change (force fresh)
-  useRealtimeTable('products', () => void load(true));
-  useRealtimeTable('inventory', () => void load(true));
-  useRealtimeTable('product_groups', () => void load(true));
+  const refreshRealtime = useRealtimeRefresh(() => load(true));
+  useRealtimeTable('products', refreshRealtime);
+  useRealtimeTable('inventory', refreshRealtime);
+  useRealtimeTable('product_groups', refreshRealtime);
 
   /**
    * Set of group ids that are currently expanded. Persisted in memory only
@@ -761,7 +781,10 @@ export default function Ecommerce() {
               <button
                 onClick={async () => {
                   try {
-                    const { quote, items } = await quoteRecordApi.getWithItems(savedQuoteId);
+                    const [{ quote, items }, { downloadQuotation }] = await Promise.all([
+                      quoteRecordApi.getWithItems(savedQuoteId),
+                      import('../components/QuotationPDF'),
+                    ]);
                     await downloadQuotation({
                       code: quote.code,
                       customer_name: quote.customer?.name,

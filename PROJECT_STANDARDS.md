@@ -111,6 +111,7 @@ The active RAG path uses the CoreBiz Supabase project: `knowledge_chunks`, the `
 ### 3.3 State, caching & realtime
 - **Stale-while-revalidate** via `lib/cache.ts` (no external lib): `swrList(key, fetcher, { force, onFresh })` returns the cached copy instantly and revalidates in the background, pushing fresh data through `onFresh`. Cache keys are centralized in `CK` (e.g. `CK.products`). `prefetchList()` warms caches ~1.2s after the shell mounts; `invalidateList()` after writes; `hasCache()` skips the cold spinner.
 - **Realtime:** `lib/useRealtimeTable.ts` subscribes to `postgres_changes` on a table and calls `onChange()`. Used by Omni-Chat (messages/conversations) and list pages.
+- Cold reads and prefetch share in-flight requests; explicit force reloads start a new generation. Auth identity changes call `clearListCache()`. Keep page request-version guards (including `onFresh`) so old responses cannot overwrite fresh UI. Use one `useRealtimeRefresh` callback across a page's table subscriptions to run immediately and coalesce overlapping events into trailing reads.
 - Don't introduce Redux/Zustand/React-Query — match the existing SWR-map + context approach.
 
 ### 3.4 Auth & routing
@@ -127,6 +128,7 @@ The active RAG path uses the CoreBiz Supabase project: `knowledge_chunks`, the `
 - Use `cn()` from `@/lib/utils` (clsx + tailwind-merge) for conditional classes. Import the `@/components/ui/*` primitives and `lucide-react` icons.
 - **Tailwind v4 — there is NO `tailwind.config`.** The theme/tokens live in `frontend/src/index.css` via `@theme inline` + CSS variables. Brand palette follows **JNAC navy and blue** (`--brand-navy: #0C3C63`, `--brand-blue: #1696F4`); primary buttons use the darker `--primary-500: #0077B6` for readable white text. Reuse `PageHeader`, `.section-heading`, and semantic tokens; keep status colors distinct. Use `tabular-nums` for money, `whitespace-pre-wrap` for chat.
 - **PDF pitfall:** `@react-pdf/renderer`'s `<PDFViewer>` (iframe) renders **blank** on mobile / inside collapsed flex containers. For on-screen quote/document views, render **HTML** (the shared `QuoteDocument` component) and offer the PDF via **download or print** (`lib/print.ts` → `printElement`). Lazy-load the heavy `@react-pdf` bundle only on the download action.
+- Keep only UI fonts in `index.css`; the complete design font catalog belongs to `pages/image-studio-fonts.css` and loads with Image Studio. PDF Sarabun fonts are bundled with their OFL license so document generation does not depend on versioned CDN URLs.
 
 ---
 

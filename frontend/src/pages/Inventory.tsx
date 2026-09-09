@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Package, Plus, Search, Edit2, Trash2, Copy, AlertTriangle, RefreshCw,
   ArrowUpDown, ArrowUp, ArrowDown, MapPin, Box, Tag, ChevronDown,
@@ -17,7 +17,7 @@ import {
   type InventorySyncLog,
 } from '../lib/api';
 import type { Category, Warehouse } from '../lib/database.types';
-import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { useRealtimeRefresh, useRealtimeTable } from '../lib/useRealtimeTable';
 import { swrList, CK, hasCache } from '../lib/cache';
 import { useLanguage } from '../i18n';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
@@ -55,20 +55,23 @@ const PRODUCT_STATUS_META: Record<string, { label: string; dot: string; text: st
   archived: { label: 'Archived', dot: 'bg-slate-300',   text: 'text-slate-500'   },
 };
 
+const currencyFormatter = new Intl.NumberFormat('th-TH', {
+  style: 'currency',
+  currency: 'THB',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+const numberFormatter = new Intl.NumberFormat('th-TH');
+
 function formatTHB(value: number, options: { compact?: boolean } = {}): string {
   if (options.compact && value >= 1_000_000) return `฿${(value / 1_000_000).toFixed(2)}M`;
   if (options.compact && value >= 1_000)     return `฿${(value / 1_000).toFixed(1)}K`;
   // 0 decimals for round numbers, up to 2 for fractional (e.g. 15 - 3%)
-  return new Intl.NumberFormat('th-TH', {
-    style: 'currency',
-    currency: 'THB',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(value);
+  return currencyFormatter.format(value);
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat('th-TH').format(value);
+  return numberFormatter.format(value);
 }
 
 function relativeTime(iso: string): string {
@@ -118,22 +121,37 @@ export default function Inventory() {
 
   // force=true skips the cache (Reload / realtime / after a write). Plain
   // navigation serves cached lists instantly + revalidates in background.
+  const loadVersion = useRef<symbol | null>(null);
   async function load(force = false) {
+    const version = Symbol();
+    loadVersion.current = version;
+    const isCurrent = () => version === loadVersion.current;
+    const refreshed = { products: false, categories: false, warehouses: false };
     if (!force && !hasCache(CK.products)) setLoading(true);
     setErr(null);
     try {
       const [p, c, w, sl] = await Promise.all([
-        swrList(CK.products, () => productsApi.list(), { force, onFresh: setProducts }),
-        swrList(CK.categories, () => categoriesApi.list(), { force, onFresh: setCategories }),
-        swrList(CK.warehouses, () => warehousesApi.list(), { force, onFresh: setWarehouses }),
+        swrList(CK.products, () => productsApi.list(), { force, onFresh: d => {
+          if (isCurrent()) { refreshed.products = true; setProducts(d); }
+        } }),
+        swrList(CK.categories, () => categoriesApi.list(), { force, onFresh: d => {
+          if (isCurrent()) { refreshed.categories = true; setCategories(d); }
+        } }),
+        swrList(CK.warehouses, () => warehousesApi.list(), { force, onFresh: d => {
+          if (isCurrent()) { refreshed.warehouses = true; setWarehouses(d); }
+        } }),
         inventorySyncApi.latestLog().catch(() => null),
       ]);
-      setProducts(p); setCategories(c); setWarehouses(w);
+      if (!isCurrent()) return;
+      // Revalidation may finish before the independent sync-log request.
+      if (!refreshed.products) setProducts(p);
+      if (!refreshed.categories) setCategories(c);
+      if (!refreshed.warehouses) setWarehouses(w);
       setLastSync(sl);
     } catch (e) {
-      setErr((e as Error).message);
+      if (isCurrent()) setErr((e as Error).message);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
@@ -170,10 +188,14 @@ export default function Inventory() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
-  useRealtimeTable('products', () => void load(true));
-  useRealtimeTable('inventory', () => void load(true));
-  useRealtimeTable('product_groups', () => void load(true));
+  useEffect(() => {
+    void load();
+    return () => { loadVersion.current = null; };
+  }, []);
+  const refreshRealtime = useRealtimeRefresh(() => load(true));
+  useRealtimeTable('products', refreshRealtime);
+  useRealtimeTable('inventory', refreshRealtime);
+  useRealtimeTable('product_groups', refreshRealtime);
 
   // Filter + sort
   const searchTokens = useMemo(

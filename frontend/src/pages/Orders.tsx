@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Eye, ShoppingCart, RefreshCw, FileText, CheckCircle2 } from 'lucide-react';
 import {
     ordersApi,
@@ -7,7 +7,7 @@ import {
     type QuoteListItem,
 } from '../lib/api';
 import { useLanguage } from '../i18n';
-import { useRealtimeTable } from '../lib/useRealtimeTable';
+import { useRealtimeRefresh, useRealtimeTable } from '../lib/useRealtimeTable';
 import { swrList, hasCache } from '../lib/cache';
 import OrderDetailModal from '../components/OrderDetailModal';
 import QuoteDetailModal from '../components/QuoteDetailModal';
@@ -110,28 +110,42 @@ export default function Orders() {
 
     // force=true skips the cache (Reload / realtime / after a write). Plain
     // navigation serves the cached lists instantly + revalidates in background.
+    const loadVersion = useRef<symbol | null>(null);
     async function load(force = false) {
+        const version = Symbol();
+        loadVersion.current = version;
+        const isCurrent = () => version === loadVersion.current;
+        const refreshed = { orders: false, quotes: false };
         if (!force && !hasCache('orders')) setLoading(true);
         setErr(null);
         try {
             // Pull both in parallel — both are small tables relative to UI
             // page size; we filter / paginate client-side.
             const [o, q] = await Promise.all([
-                swrList('orders', () => ordersApi.list(), { force, onFresh: setOrders }),
-                swrList('quotes', () => quoteRecordApi.list().catch(() => []), { force, onFresh: setQuotes }),
+                swrList('orders', () => ordersApi.list(), { force, onFresh: d => {
+                    if (isCurrent()) { refreshed.orders = true; setOrders(d); }
+                } }),
+                swrList('quotes', () => quoteRecordApi.list().catch(() => []), { force, onFresh: d => {
+                    if (isCurrent()) { refreshed.quotes = true; setQuotes(d); }
+                } }),
             ]);
-            setOrders(o);
-            setQuotes(q);
+            if (!isCurrent()) return;
+            if (!refreshed.orders) setOrders(o);
+            if (!refreshed.quotes) setQuotes(q);
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         } finally {
-            setLoading(false);
+            if (isCurrent()) setLoading(false);
         }
     }
 
-    useEffect(() => { void load(); }, []);
-    useRealtimeTable('orders', () => void load(true));
-    useRealtimeTable('quotes', () => void load(true));
+    useEffect(() => {
+        void load();
+        return () => { loadVersion.current = null; };
+    }, []);
+    const refreshRealtime = useRealtimeRefresh(() => load(true));
+    useRealtimeTable('orders', refreshRealtime);
+    useRealtimeTable('quotes', refreshRealtime);
 
     /** Merge orders + quotes into a single, sortable, filterable view. */
     const rows: UnifiedRow[] = useMemo(() => {
