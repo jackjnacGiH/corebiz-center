@@ -1,6 +1,6 @@
 # คู่มือ API ขนส่ง V3 สำหรับเตรียมเชื่อม CoreBiz
 
-รายละเอียดสเปกอ้างอิง S1 ใน [SOURCES.md](SOURCES.md) ผลทดสอบกับบริการ UAT วันที่ 9 กันยายน 2026 แยกไว้ใน [UAT_CONNECTION.md](UAT_CONNECTION.md): ยืนยัน OP01, OP06 และ OP10 ตามขอบเขตที่ทดสอบ ไม่ใช่การรับรอง operations อื่นหรือ Production
+รายละเอียดสเปกอ้างอิง S1 ใน [SOURCES.md](SOURCES.md) ผลทดสอบกับบริการ UAT วันที่ 9 กันยายน 2026 แยกไว้ใน [UAT_CONNECTION.md](UAT_CONNECTION.md): ยืนยัน OP01, OP06, OP07 และ OP10 ตามขอบเขตที่ทดสอบ ไม่ใช่การรับรอง operations อื่นหรือ Production
 
 ## API ภายใน CoreBiz ที่พัฒนาแล้ว
 
@@ -245,7 +245,9 @@ GET <CONFIRMED_BASE>/api/v3/shipment?viewpoint=all&limit=10&page=1&search=<TRACK
 
 **ข้อมูลรับเข้า:** `postcode` schema integer คำอธิบาย Required, `carrier_code` string คำอธิบาย Required, `limit` integer default 10; example ใช้ `THAIPOST` ขณะที่รายการบริการใช้ `EMS_SPEED` ต้องขอ mapping carrier family กับ service code
 
-**ตอบกลับ:** 200 `application/json` แต่ content ไม่มี schema/example จึงยังไม่มีรายชื่อฟิลด์ผลตรวจที่ยืนยันได้
+**ตอบกลับตามสเปก:** 200 `application/json` แต่ content ไม่มี schema/example
+
+**ผลทดสอบ UAT เพิ่มเติม 9 กันยายน 2026:** Flash (`FLASH_EXPRESS_SPEED`) กับรหัส 10280 ตอบ HTTP 200 มี `success`, `count`, `data`, `request_id`; รายการใน `data` มี `state`, `city`, `county`, `zipcode` รวม 6 รายการตรงกับ Portal ไม่มีข้อมูลพื้นที่พิเศษใน response ที่ตรวจ รายละเอียดและขอบเขตอยู่ใน [UAT_CONNECTION.md](UAT_CONNECTION.md)
 
 **ผิดพลาด/ข้อจำกัด:** ไม่ระบุ error, ผลที่อยู่ไม่ตรง, หลายตำบลต่อรหัสไปรษณีย์ หรือ coverage เสนอเก็บ postcode เป็น string ภายในและแปลงที่ adapter ตามสเปกที่ยืนยัน ไม่อนุมาน API ส่งกลับค่าพื้นที่ห่างไกลจากชื่อ endpoint
 
