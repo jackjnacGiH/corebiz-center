@@ -85,7 +85,7 @@ export default function ShippingSettings({
         }}
         className="space-y-4 border rounded-xl p-4"
       >
-        <h2 className="font-semibold">{c.settings}</h2>
+        <h2 className="section-heading">{c.settings}</h2>
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="text-sm space-y-1">
             {c.environment}
@@ -142,7 +142,7 @@ export default function ShippingSettings({
         <Button type="submit">{c.saveSettings}</Button>
       </form>
       <section className="border rounded-xl p-4 space-y-3">
-        <h2 className="font-semibold">{c.permissions}</h2>
+        <h2 className="section-heading">{c.permissions}</h2>
         <p className="text-sm text-muted-foreground">{c.grantHint}</p>
         {!loaded ? (
           <p>{c.loading}</p>
@@ -188,7 +188,7 @@ export default function ShippingSettings({
           });
         }}
       >
-        <h2 className="font-semibold">{c.codAccounts}</h2>
+        <h2 className="section-heading">{c.codAccounts}</h2>
         <div className="grid sm:grid-cols-2 gap-3">
           <label className="text-sm space-y-1">
             {c.label}

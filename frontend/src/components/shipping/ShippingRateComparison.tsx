@@ -31,7 +31,7 @@ export default function ShippingRateComparison({ rates, selected, parcelCount, b
   }).format(Number(value));
   return (
     <section className="rounded-xl border p-3 space-y-3 sm:p-4" aria-label={c.compareRates}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="section-heading flex-wrap justify-between gap-3">
         <div>
           <h2 className="font-semibold">2. {c.compareAndChoose}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{c.compareHint}</p>

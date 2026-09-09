@@ -77,6 +77,63 @@ export const emptyAddress = (): ShippingAddress => ({
   email: "",
   telephone1: "",
 });
+const sameName = (a: string, b: string) =>
+  a.replace(/[\s.,()]/g, "").toLocaleLowerCase("th") ===
+  b.replace(/[\s.,()]/g, "").toLocaleLowerCase("th");
+const organizationName = (name: string) =>
+  /^(บริษัท|ห้างหุ้นส่วน|หจก\.?|บจก\.?|บมจ\.?|หน่วยงาน|สำนักงาน|โรงเรียน|โรงพยาบาล|มหาวิทยาลัย|เทศบาล|องค์การ)/.test(name) ||
+  /\b(company|co\.?\s*,?\s*ltd\.?|limited|corporation|corp\.?|inc\.?|llc)\b/i.test(name);
+
+// Repair unambiguous legacy company/contact mix-ups without inventing a person.
+// Conflicting company names are left intact for staff to review.
+export function normalizeShippingContact(address: ShippingAddress): ShippingAddress {
+  let company = (address.company ?? "").trim();
+  let fullname = address.fullname.trim();
+  if (company && fullname && sameName(company, fullname)) {
+    if (/^(คุณ|นาย|นางสาว|นาง)\s*\S/.test(fullname) && !organizationName(fullname)) company = "";
+    else fullname = "";
+  } else if (!company && organizationName(fullname)) {
+    company = fullname;
+    fullname = "";
+  }
+  return { ...address, company, fullname };
+}
+
+export function recipientAddress(
+  value: unknown,
+  fallback: Record<string, unknown> = {},
+): ShippingAddress {
+  const a = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  const small = (v: unknown, max = 150) => typeof v === "string" ? v.trim().slice(0, max) : "";
+  const address = normalizeShippingContact({
+    company: small(a.company) || small(a.company_name) || small(fallback.company),
+    fullname: small(a.fullname ?? a.contact_name ?? a.name),
+    address: small(a.address ?? a.line ?? a.line1 ?? (typeof value === "string" ? value : ""), 500),
+    county: small(a.county ?? a.subdistrict),
+    city: small(a.city ?? a.district),
+    state: small(a.state ?? a.province),
+    postcode: small(a.postcode ?? a.postal_code),
+    email: small(a.email ?? fallback.email),
+    telephone1: small(a.telephone1 ?? a.phone ?? fallback.telephone1 ?? fallback.phone),
+  });
+  const fallbackContact = normalizeShippingContact({
+    ...emptyAddress(), company: address.company, fullname: small(fallback.fullname),
+  });
+  // A real contact in the saved delivery address takes precedence over CRM.
+  return normalizeShippingContact({
+    ...address,
+    fullname: address.fullname || (organizationName(fallbackContact.fullname) ? "" : fallbackContact.fullname),
+  });
+}
+
+export function shipmentWithContactFields(s: Shipment): Shipment {
+  if (s.status !== "draft") return s; // Keep submitted shipment snapshots unchanged.
+  return { ...s, draft: { ...s.draft,
+    origin: normalizeShippingContact(s.draft.origin),
+    destination: normalizeShippingContact(s.draft.destination),
+  } };
+}
 export const emptyDraft = (): ShippingDraft => ({
   purpose: "",
   handling_note: "กรุณาอย่าโยน • ระวังของแตก",
@@ -147,12 +204,12 @@ function quantity(v: unknown, max: number, integer = false): number {
 }
 export function addressFrom(v: unknown): ShippingAddress {
   const a = object(v);
-  return Object.fromEntries(
+  return normalizeShippingContact(Object.fromEntries(
     Object.keys(emptyAddress()).map((k) => [
       k,
       text(k === "company" ? a[k] ?? "" : a[k], k === "address" ? 500 : 150),
     ]),
-  ) as unknown as ShippingAddress;
+  ) as unknown as ShippingAddress);
 }
 // Whitelist fields; never persist caller-supplied status, prices from provider or external IDs.
 export function parseDraft(v: unknown): ShippingDraft {
@@ -267,8 +324,8 @@ export function readyIssues(d: ShippingDraft): string[] {
   const issues: string[] = [];
   if (d.parcel_total > 1) issues.push("multi_parcel_submission_unavailable");
   for (const side of ["origin", "destination"] as const) {
-    const a = d[side];
-    if ([a.fullname, a.address, a.county, a.city, a.state, a.postcode, a.email, a.telephone1].some((v) => !v))
+    const a = normalizeShippingContact(d[side]);
+    if (organizationName(a.fullname) || [a.fullname, a.address, a.county, a.city, a.state, a.postcode, a.email, a.telephone1].some((v) => !v))
       issues.push(`${side}_incomplete`);
     if (!/^\d{5}$/.test(a.postcode)) issues.push(`${side}_postcode`);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email))

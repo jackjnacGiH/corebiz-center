@@ -136,7 +136,7 @@ const TopBar: React.FC<TopBarProps> = ({
                         <div className="hidden h-7 w-px flex-shrink-0 bg-neutral-200 sm:block" />
                         <div className="flex min-w-0 items-center gap-2">
                             {pageContent.icon && (
-                                <div className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 text-white">
+                                <div className="workspace-brand-icon grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg">
                                     {pageContent.icon}
                                 </div>
                             )}

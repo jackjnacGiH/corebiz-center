@@ -14,7 +14,7 @@ export default function ShippingParcels({ draft, onChange }: {
   return (
     <section className="rounded-xl border p-4 space-y-4">
       <div>
-        <h2 className="font-semibold">1. {c.parcel}</h2>
+        <h2 className="section-heading">1. {c.parcel}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{c.parcelBeforeCarrier}</p>
       </div>
       <label className="block max-w-sm space-y-1 text-sm">
