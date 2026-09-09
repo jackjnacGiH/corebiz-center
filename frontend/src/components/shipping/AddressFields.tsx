@@ -85,10 +85,9 @@ export default function AddressFields({
       <h2 className="font-semibold">{title}</h2>
       {beforeFields}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {field("company", "sm:col-span-2")}
         {field("fullname")}
         {field("telephone1")}
-        {field("email", "sm:col-span-2")}
+        {field("company", "sm:col-span-2")}
         {field("address", "sm:col-span-2")}
         <label
           htmlFor={`${prefix}-postcode`}
@@ -183,6 +182,15 @@ export default function AddressFields({
           )}
         </label>
       </div>
+      <details className="rounded-md border px-3 py-2 text-sm">
+        <summary className="cursor-pointer font-medium">
+          {c.additionalContact}
+        </summary>
+        <div className="mt-3 space-y-2">
+          {field("email", "block")}
+          <p className="text-xs text-muted-foreground">{c.emailHint}</p>
+        </div>
+      </details>
     </section>
   );
 }
