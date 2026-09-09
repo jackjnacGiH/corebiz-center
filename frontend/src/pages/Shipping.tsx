@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   Printer,
   X,
-  Check,
   Copy,
   ExternalLink,
   Loader2,
@@ -29,18 +28,23 @@ import {
   readyIssues,
   quoteIssues,
   type QuoteIssue,
+  type ShippingParcel,
+  summarizeShippingItems,
+  shippingQuoteKey,
 } from "../../../supabase/functions/_shared/shipping-domain";
+import type { ShippingRate } from "../../../supabase/functions/_shared/shipping-rates";
 import PageHeader from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import AddressFields from "@/components/shipping/AddressFields";
 import ShippingSettings from "@/components/shipping/ShippingSettings";
+import ShippingParcels from "@/components/shipping/ShippingParcels";
+import ShippingRateComparison from "@/components/shipping/ShippingRateComparison";
+import ShipmentListCard from "@/components/shipping/ShipmentListCard";
 import ShippingLabel, {
   SHIPPING_LABEL_ID,
 } from "@/components/shipping/ShippingLabel";
 import {
-  SHIPPING_CARRIER_OPTIONS,
-  shippingCarrierBrand,
   shippingTrackingUrl,
 } from "@/lib/shipping-carriers";
 import { printElement } from "@/lib/print";
@@ -59,32 +63,6 @@ async function copyText(value: string) {
   const copied = document.execCommand("copy");
   textarea.remove();
   if (!copied) throw new Error("clipboard_unavailable");
-}
-
-function CarrierCardLogo({
-  brand,
-}: {
-  brand: ReturnType<typeof shippingCarrierBrand>;
-}) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [brand.logoUrl]);
-  if (brand.logoUrl && !failed)
-    return (
-      <img
-        src={brand.logoUrl}
-        alt={brand.name}
-        className="h-9 w-[88px] object-contain"
-        onError={() => setFailed(true)}
-      />
-    );
-  return (
-    <strong
-      className="text-base font-black italic"
-      style={{ color: brand.accent }}
-    >
-      {brand.shortName}
-    </strong>
-  );
 }
 
 export default function Shipping() {
@@ -123,11 +101,10 @@ export default function Shipping() {
     [productBusy, setProductBusy] = useState(false),
     [productSearched, setProductSearched] = useState(false);
   const [events, setEvents] = useState<ShippingEvent[]>([]),
-    [rates, setRates] = useState<
-      { carrier: string; carrier_code: string; total: string; delivery_time: string }[]
-    >([]);
+    [rates, setRates] = useState<ShippingRate[]>([]);
   const [labelLink, setLabelLink] = useState("");
   const [labelOpen, setLabelOpen] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
@@ -172,20 +149,19 @@ export default function Shipping() {
   useEffect(() => {
     if (!bootstrap || view !== "list") return;
     let active = true;
-    shippingApi
-      .list(page, search)
-      .then((r) => {
-        if (active) {
-          setRows(r.shipments);
-          setCount(r.count);
-        }
-      })
-      .catch((e) => {
-        if (active) reportError(e);
-      });
-    return () => {
-      active = false;
-    };
+    const timer = window.setTimeout(() => {
+      setListLoading(true);
+      shippingApi.list(page, search)
+        .then((r) => {
+          if (active) {
+            setRows(r.shipments);
+            setCount(r.count);
+          }
+        })
+        .catch((e) => { if (active) reportError(e); })
+        .finally(() => { if (active) setListLoading(false); });
+    }, search.trim() ? 250 : 0);
+    return () => { active = false; window.clearTimeout(timer); };
   }, [bootstrap, page, search, view, reportError]);
   useEffect(() => {
     const query = recipientSearch.trim();
@@ -257,7 +233,6 @@ export default function Shipping() {
                   : item,
               ),
             }));
-            setRates([]);
             setProductOptions([]);
             setProductSearched(false);
             setActiveProductIndex(null);
@@ -387,8 +362,15 @@ export default function Shipping() {
     key: K,
     value: ShippingDraft[K],
   ) => {
-    setDraft((d) => ({ ...d, [key]: value }));
-    setRates([]);
+    const affectsRates = shippingQuoteKey(draft) !== shippingQuoteKey({ ...draft, [key]: value });
+    setDraft((d) => ({ ...d, [key]: value, ...(affectsRates ? { carrier_code: "" } : {}) }));
+    if (affectsRates) setRates([]);
+  };
+  const changeParcels = (parcels: ShippingParcel[]) => {
+    const next = { ...draft, ...parcels[0], parcels, parcel_total: parcels.length };
+    const affectsRates = shippingQuoteKey(draft) !== shippingQuoteKey(next);
+    setDraft({ ...next, ...(affectsRates ? { carrier_code: "" } : {}) });
+    if (affectsRates) setRates([]);
   };
   const changeDestination = (next: ShippingDraft["destination"]) => {
     const changedSearch = [
@@ -414,7 +396,6 @@ export default function Shipping() {
           : item,
       ),
     }));
-    setRates([]);
     setActiveProductIndex(index);
     setProductOptions([]);
     setProductSearched(false);
@@ -433,7 +414,6 @@ export default function Shipping() {
           : item,
       ),
     }));
-    setRates([]);
     resetProductLookup();
   };
   let issues: string[] = [];
@@ -459,11 +439,15 @@ export default function Shipping() {
         )
       : null;
   const errorMessage =
-    error === "forbidden"
+    error === "carrier_unavailable"
+      ? c.carrierUnavailable
+      : error === "provider_rejected"
+        ? c.providerRejected
+    : error === "forbidden"
       ? c.noPermission
       : error === "shipping_not_installed"
         ? c.notInstalled
-        : error === "conflict"
+        : error === "conflict" || error === "client_outdated"
           ? c.conflict
           : error === "provider_not_ready"
             ? c.prepareOnly
@@ -482,6 +466,7 @@ export default function Shipping() {
       ? await shippingApi.save(shipment, d)
       : await shippingApi.create(draftId.current, d, orderId);
     editResult(r.shipment);
+    setRates(rates);
     setNotice(c.saved);
   }
   async function loadOrder() {
@@ -590,60 +575,33 @@ export default function Shipping() {
             />
           )}
           {view === "list" && (
-            <section className="space-y-3">
+            <section className="space-y-3" aria-busy={listLoading}>
               <Input
                 aria-label={c.search}
                 placeholder={c.search}
+                maxLength={80}
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
                   setPage(0);
                 }}
               />
+              {listLoading && <p role="status" className="text-sm text-muted-foreground">{c.loading}</p>}
               {!rows.length ? (
                 <p className="py-12 text-center text-muted-foreground">
-                  {c.empty}
+                  {listLoading ? c.loading : c.empty}
                 </p>
               ) : (
                 <div className="grid gap-3">
                   {rows.map((s) => (
-                    <article
-                      key={s.id}
-                      className="rounded-xl border p-4 flex flex-wrap items-center justify-between gap-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium break-all text-sm">
-                          {s.reference_no}
-                        </p>
-                        <p className="text-sm text-muted-foreground break-words">
-                          {s.order_code || c.manual} ·{" "}
-                          {s.draft.destination.fullname || "—"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(s.created_at).toLocaleString(
-                            language === "th" ? "th-TH" : "en-GB",
-                          )}{" "}
-                          · {s.tracking_number || "—"}
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-muted px-3 py-1 text-sm">
-                        {status(s)}
-                      </span>
-                      <Button
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() =>
-                          void run(async () => {
-                            const r = await shippingApi.get(s.id);
-                            editResult(r.shipment);
-                            setEvents(r.events);
-                            setView("editor");
-                          })
-                        }
-                      >
-                        {c.open}
-                      </Button>
-                    </article>
+                    <ShipmentListCard key={s.id} shipment={s} busy={busy} onOpen={() =>
+                      void run(async () => {
+                        const r = await shippingApi.get(s.id);
+                        editResult(r.shipment);
+                        setEvents(r.events);
+                        setView("editor");
+                      })
+                    } />
                   ))}
                 </div>
               )}
@@ -896,113 +854,21 @@ export default function Shipping() {
                       }
                     />
                   </div>
+                  <ShippingParcels draft={draft} onChange={changeParcels} />
+                  {!locked && <ShippingRateComparison
+                    rates={rates} selected={draft.carrier_code} parcelCount={draft.parcel_total}
+                    blockers={quoteBlockers} readReady={bootstrap.readReady} busy={busy}
+                    environment={bootstrap.settings.environment}
+                    onCompare={() => void run(async () => {
+                      const r = await shippingApi.compare(parseDraft(draft));
+                      setRates(r.rates);
+                      setNotice(r.rates.some((rate) => rate.available) ? c.quoteReceived : c.quoteEmpty);
+                    })}
+                    onSelect={(code) => change("carrier_code", code)}
+                  />}
                   <section className="rounded-xl border p-4 space-y-3">
-                    <h2 className="font-semibold">{c.parcel}</h2>
-                    <div className="space-y-2">
-                      <div>
-                        <p className="text-sm font-medium">{c.carrier_code}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {c.carrierHint}
-                        </p>
-                      </div>
-                      <div
-                        role="radiogroup"
-                        aria-label={c.carrier_code}
-                        className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3"
-                      >
-                        {SHIPPING_CARRIER_OPTIONS.map(([code, name]) => {
-                          const brand = shippingCarrierBrand(code);
-                          const selected = draft.carrier_code === code;
-                          return (
-                            <button
-                              key={code}
-                              type="button"
-                              role="radio"
-                              aria-checked={selected}
-                              onClick={() => change("carrier_code", code)}
-                              className={`relative flex min-h-20 items-center gap-3 overflow-hidden rounded-xl border-2 bg-white px-3 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring ${
-                                selected
-                                  ? "shadow-sm ring-1 ring-offset-1"
-                                  : "border-neutral-200"
-                              }`}
-                              style={
-                                selected
-                                  ? {
-                                      borderColor: brand.accent,
-                                      boxShadow: `0 0 0 1px ${brand.accent}`,
-                                    }
-                                  : undefined
-                              }
-                            >
-                              <span
-                                aria-hidden="true"
-                                className="absolute inset-y-0 left-0 w-1.5"
-                                style={{ backgroundColor: brand.accent }}
-                              />
-                              <span className="relative flex h-11 w-24 shrink-0 items-center justify-center rounded-lg bg-white p-1.5">
-                                <CarrierCardLogo brand={brand} />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <strong className="block truncate text-sm">
-                                  {name}
-                                </strong>
-                                <small className="block truncate text-[10px] text-muted-foreground">
-                                  {code}
-                                </small>
-                              </span>
-                              {selected && (
-                                <span
-                                  className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-white"
-                                  style={{ backgroundColor: brand.accent }}
-                                >
-                                  <Check size={14} strokeWidth={3} />
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <label className="block max-w-sm text-sm space-y-1">
-                      {c.parcelTotal}
-                      <Input
-                        type="number"
-                        min="1"
-                        max="99"
-                        step="1"
-                        value={draft.parcel_total}
-                        onChange={(e) =>
-                          change("parcel_total", Number(e.target.value))
-                        }
-                      />
-                      <span className="block text-xs text-muted-foreground">
-                        {c.parcelTotalHint}
-                      </span>
-                    </label>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      {(
-                        [
-                          "box_width",
-                          "box_height",
-                          "box_length",
-                          "box_weight",
-                        ] as const
-                      ).map((k) => (
-                        <label key={k} className="text-sm space-y-1">
-                          {c[k]}
-                          <Input
-                            type="number"
-                            min="0"
-                            step={k === "box_weight" ? 1 : "any"}
-                            value={draft[k]}
-                            onChange={(e) => change(k, Number(e.target.value))}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </section>
-                  <section className="rounded-xl border p-4 space-y-3">
-                    <h2 className="font-semibold">{c.items}</h2>
+                    <h2 className="font-semibold">3. {c.items}</h2>
+                    <p className="text-sm text-muted-foreground">{draft.products.length} {c.itemRows} · {summarizeShippingItems(draft.products).totalQuantity} {c.pieceUnit}</p>
                     {draft.products.map((item, index) => (
                       <div
                         key={index}
@@ -1198,35 +1064,7 @@ export default function Shipping() {
               {issues.length > 0 && !locked && (
                 <p className="text-sm text-muted-foreground">{c.missing}</p>
               )}
-              {!locked && (
-                <div
-                  id="shipping-quote-status"
-                  className="rounded-lg border p-3 text-sm"
-                  aria-live="polite"
-                >
-                  {quoteBlockers.length > 0 ? (
-                    <>
-                      <p className="font-medium">{c.quoteMissing}</p>
-                      <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-                        {quoteBlockers.map((message) => (
-                          <li key={message}>{message}</li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : (
-                    <p>
-                      {!shipment || dirty
-                        ? c.quoteSaveFirst
-                        : !bootstrap.readReady
-                          ? c.providerNote
-                          : c.quoteReady}
-                    </p>
-                  )}
-                  {shipment && (
-                    <p className="mt-1 text-muted-foreground">{c.draftTrackingNote}</p>
-                  )}
-                </div>
-              )}
+              {shipment && !locked && <p className="text-sm text-muted-foreground">{c.draftTrackingNote}</p>}
               {shipment && (
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -1239,25 +1077,6 @@ export default function Shipping() {
                   </Button>
                   {shipment.status === "draft" && (
                     <>
-                      <Button
-                        variant="outline"
-                        disabled={
-                          busy ||
-                          dirty ||
-                          quoteBlockers.length > 0 ||
-                          !bootstrap.readReady
-                        }
-                        aria-describedby="shipping-quote-status"
-                        onClick={() =>
-                          void run(async () => {
-                            const r = await shippingApi.quote(shipment);
-                            setRates(r.rates);
-                            setNotice(r.rates.length ? c.quoteReceived : c.quoteEmpty);
-                          })
-                        }
-                      >
-                        {c.quote}
-                      </Button>
                       <Button
                         disabled={
                           busy ||
@@ -1366,21 +1185,6 @@ export default function Shipping() {
                 >
                   {c.carrierPrint} ↗
                 </a>
-              )}
-              {!!rates.length && (
-                <div className="p-4 border rounded-lg" role="status">
-                  <p className="mb-2 font-semibold">{c.quoteResult}</p>
-                  {bootstrap.settings.environment === "uat" && (
-                    <p className="mb-2 font-medium text-amber-800">{c.uatNote}</p>
-                  )}
-                  <p className="text-sm text-muted-foreground">{c.estimated}</p>
-                  {rates.map((r, i) => (
-                    <p key={i}>
-                      {shippingCarrierBrand(r.carrier_code).name} · {r.total}{" "}
-                      {c.baht} · {r.delivery_time}
-                    </p>
-                  ))}
-                </div>
               )}
               {!!events.length && (
                 <section className="border rounded-xl p-4">
