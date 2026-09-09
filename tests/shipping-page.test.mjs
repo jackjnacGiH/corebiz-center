@@ -68,6 +68,7 @@ function mount(query = '') {
       if (name === '@/lib/print') return { printElement: () => { throw new Error('Printing is outside this test'); } };
       if (name === '@/components/ui/button') return { Button: 'Button' };
       if (name === '@/components/ui/input') return { Input: 'Input' };
+      if (name === '@/components/ui/dialog') return Object.fromEntries(['Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle'].map(name => [name, name]));
       if (name === '@/components/shipping/ShippingLabel') return { default: 'ShippingLabel', SHIPPING_LABEL_ID: 'shipping-label-batch' };
       if (name.startsWith('@/components/')) return { default: name.split('/').at(-1) };
       throw new Error(`Unexpected dependency ${name}`);
@@ -93,6 +94,8 @@ function mount(query = '') {
   const nodes = (value, result = []) => {
     if (Array.isArray(value)) value.forEach(child => nodes(child, result));
     else if (value && typeof value === 'object') {
+      // The shared Dialog portal does not mount its children while closed.
+      if (value.type === 'Dialog' && !value.props.open) return result;
       if ('type' in value && value.props) result.push(value);
       for (const child of Object.values(value.props ?? {})) if (typeof child === 'object') nodes(child, result);
     }
@@ -149,10 +152,13 @@ async function editDraft(h, row) {
 
 test('canceling deletion retains the draft and does not send a mutation', async () => {
   const h = await readyList();
-  h.confirmWith(false);
   h.card('draft-1').props.onDelete();
-  assert.equal(h.confirmations.length, 1);
-  assert.ok(h.confirmations[0].includes('draft-1'));
+  assert.equal(h.confirmations.length, 0, 'Deletion must not open a native browser confirmation');
+  assert.ok(h.find(node => node.type === 'DialogContent' && node.props.role === 'alertdialog'));
+  assert.ok(h.find(node => node.type === 'p' && node.props.children === 'draft-1'));
+  assert.equal(h.requests.filter(request => request.action === 'action').length, 0, 'Opening confirmation is not authorization to delete');
+  h.button('cancel').props.onClick();
+  assert.equal(h.find(node => node.type === 'Dialog'), undefined);
   assert.equal(h.requests.filter(request => request.action === 'action').length, 0);
   assert.deepEqual(h.rows(), ['draft-1']);
   h.unmount();
@@ -163,7 +169,8 @@ test('successful deletion waits for versioned archive acceptance then refreshes 
   h.button('next').props.onClick(); h.runTimers();
   h.listRequests()[1].resolve({ shipments: [shipment('page-1')], count: 26 });
   await settle();
-  const remove = h.card('page-1').props.onDelete;
+  h.card('page-1').props.onDelete();
+  const remove = h.button('confirmDeleteAction').props.onClick;
   remove(); remove();
   const actions = h.requests.filter(request => request.action === 'action');
   assert.equal(actions.length, 1, 'Repeated clicks while deleting share one mutation');
@@ -187,10 +194,12 @@ test('dirty draft deletion requires explicit discard confirmation but never requ
   const h = await readyList([row]); await editDraft(h, row);
   const remove = h.button('deleteDraft');
   assert.equal(remove.props.disabled, false);
-  h.confirmWith(false); remove.props.onClick();
-  assert.ok(h.confirmations.at(-1).includes('deleteUnsaved'));
+  remove.props.onClick();
+  assert.ok(h.find(node => node.type === 'p' && node.props.children === 'deleteUnsaved'));
+  h.button('cancel').props.onClick();
   assert.equal(h.find(node => node.type === 'AddressFields' && node.props.prefix === 'sender').props.value.fullname, 'Unsaved contact');
-  h.confirmWith(true); h.button('deleteDraft').props.onClick();
+  h.button('deleteDraft').props.onClick();
+  h.button('confirmDeleteAction').props.onClick();
   const action = h.requests.at(-1);
   assert.equal(action.action, 'action');
   assert.equal(action.args[0], 'archive');
@@ -207,6 +216,7 @@ test('failed deletion and version conflict keep dirty editor input and do not re
     const row = shipment(`failed-${reason}`);
     const h = await readyList([row]); await editDraft(h, row);
     h.button('deleteDraft').props.onClick();
+    h.button('confirmDeleteAction').props.onClick();
     h.requests.at(-1).reject(new Error(reason));
     await settle(); h.runTimers();
     assert.equal(h.find(node => node.type === 'AddressFields' && node.props.prefix === 'sender').props.value.fullname, 'Unsaved contact');
@@ -225,6 +235,7 @@ test('deletion handler refuses non-drafts and any draft that already has trackin
     const row = shipment('protected', changes), h = await readyList([row]);
     h.card(row.id).props.onDelete();
     assert.equal(h.confirmations.length, 0);
+    assert.equal(h.find(node => node.type === 'Dialog'), undefined);
     assert.equal(h.requests.filter(request => request.action === 'action').length, 0);
     h.card(row.id).props.onOpen();
     h.requests.at(-1).resolve({ shipment: row, events: [] });

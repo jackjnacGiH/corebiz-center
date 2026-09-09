@@ -37,6 +37,7 @@ import type { ShippingRate } from "../../../supabase/functions/_shared/shipping-
 import PageHeader from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import AddressFields from "@/components/shipping/AddressFields";
 import ShippingSettings from "@/components/shipping/ShippingSettings";
 import ShippingParcels from "@/components/shipping/ShippingParcels";
@@ -116,6 +117,7 @@ export default function Shipping() {
   const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [listRevision, setListRevision] = useState(0);
+  const [pendingDelete, setPendingDelete] = useState<{ shipment: Shipment; unsaved: boolean } | null>(null);
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
@@ -356,12 +358,16 @@ export default function Shipping() {
       setBusy(false);
     }
   }
-  async function deleteDraft(target: Shipment) {
+  function deleteDraft(target: Shipment) {
     if (busy || deletingDraft.current || target.status !== "draft" || target.tracking_number) return;
     const unsaved = view === "editor" && shipment?.id === target.id && dirty;
-    const confirmation = `${c.confirmDeleteDraft}\n\n${target.reference_no}${unsaved ? `\n\n${c.deleteUnsaved}` : ""}`;
-    if (!window.confirm(confirmation)) return;
+    setPendingDelete({ shipment: target, unsaved });
+  }
+  async function confirmDeleteDraft() {
+    const target = pendingDelete?.shipment;
+    if (!target || busy || deletingDraft.current || target.status !== "draft" || target.tracking_number) return;
     deletingDraft.current = true;
+    setPendingDelete(null);
     try {
       await run(async () => {
         await shippingApi.action("archive", target);
@@ -1252,6 +1258,22 @@ export default function Shipping() {
           )}
         </>
       )}
+      <Dialog open={!!pendingDelete} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+        <DialogContent role="alertdialog" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{c.deleteDraft}</DialogTitle>
+            <DialogDescription>{c.confirmDeleteDraft}</DialogDescription>
+          </DialogHeader>
+          <p className="break-all rounded-md bg-muted px-3 py-2 text-sm font-semibold">{pendingDelete?.shipment.reference_no}</p>
+          {pendingDelete?.unsaved && <p className="text-sm text-amber-800">{c.deleteUnsaved}</p>}
+          <DialogFooter>
+            <Button variant="outline" autoFocus onClick={() => setPendingDelete(null)}>{t.common.cancel}</Button>
+            <Button variant="destructive" disabled={busy} onClick={() => void confirmDeleteDraft()}>
+              <Trash2 size={16} />{c.confirmDeleteAction}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {labelOpen && shipment && bootstrap && (
         <div
           className="fixed inset-0 z-[100] flex flex-col bg-black/70 p-2 sm:p-5"
