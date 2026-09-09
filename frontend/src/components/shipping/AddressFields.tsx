@@ -60,7 +60,7 @@ export default function AddressFields({
   }
 
   const field = (
-    key: "fullname" | "telephone1" | "email" | "address" | "state" | "city",
+    key: "company" | "fullname" | "telephone1" | "email" | "address" | "state" | "city",
     className = "",
   ) => (
     <label
@@ -70,7 +70,7 @@ export default function AddressFields({
       <span>{c[key]}</span>
       <Input
         id={`${prefix}-${key}`}
-        value={value[key]}
+        value={value[key] ?? ""}
         maxLength={key === "address" ? 500 : 150}
         autoComplete="off"
         type={key === "email" ? "email" : "text"}
@@ -85,6 +85,7 @@ export default function AddressFields({
       <h2 className="font-semibold">{title}</h2>
       {beforeFields}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {field("company", "sm:col-span-2")}
         {field("fullname")}
         {field("telephone1")}
         {field("email", "sm:col-span-2")}

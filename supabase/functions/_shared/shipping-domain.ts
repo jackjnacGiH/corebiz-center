@@ -1,5 +1,6 @@
 // Pure domain code shared by the shipping UI, Edge Function and offline tests.
 export interface ShippingAddress {
+  company?: string;
   fullname: string;
   address: string;
   county: string;
@@ -16,7 +17,14 @@ export interface ShippingItem {
   price: string;
   weight: number;
 }
+export interface ShippingParcel {
+  box_width: number;
+  box_height: number;
+  box_length: number;
+  box_weight: number;
+}
 export interface ShippingDraft {
+  parcels?: ShippingParcel[];
   purpose: string;
   handling_note: string;
   carrier_code: string;
@@ -45,6 +53,7 @@ export type ShippingStatus =
   | "canceled"
   | "archived";
 export interface Shipment {
+  recipient_company?: string;
   id: string;
   reference_no: string;
   order_id: string | null;
@@ -58,6 +67,7 @@ export interface Shipment {
   created_by: string;
 }
 export const emptyAddress = (): ShippingAddress => ({
+  company: "",
   fullname: "",
   address: "",
   county: "",
@@ -82,6 +92,23 @@ export const emptyDraft = (): ShippingDraft => ({
   cod_account_id: null,
   products: [{ name: "", code: "", qty: 1, price: "0.00", weight: 0 }],
 });
+export const emptyParcel = (): ShippingParcel => ({
+  box_width: 0, box_height: 0, box_length: 0, box_weight: 0,
+});
+export function shippingParcels(d: ShippingDraft): ShippingParcel[] {
+  if (d.parcels?.length) return d.parcels;
+  const count = Math.max(1, Math.min(99, Math.trunc(d.parcel_total || 1)));
+  return Array.from({ length: count }, (_, index) => index === 0 ? {
+    box_width: d.box_width, box_height: d.box_height,
+    box_length: d.box_length, box_weight: d.box_weight,
+  } : emptyParcel());
+}
+export function shippingQuoteKey(d: ShippingDraft): string {
+  return JSON.stringify({
+    areas: [d.origin, d.destination].map((a) => [a.county, a.city, a.state, a.postcode]),
+    parcels: shippingParcels(d).map((p) => [p.box_width, p.box_height, p.box_length, p.box_weight]),
+  });
+}
 export const isUuid = (v: unknown): v is string =>
   typeof v === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -123,7 +150,7 @@ export function addressFrom(v: unknown): ShippingAddress {
   return Object.fromEntries(
     Object.keys(emptyAddress()).map((k) => [
       k,
-      text(a[k], k === "address" ? 500 : 150),
+      text(k === "company" ? a[k] ?? "" : a[k], k === "address" ? 500 : 150),
     ]),
   ) as unknown as ShippingAddress;
 }
@@ -141,17 +168,32 @@ export function parseDraft(v: unknown): ShippingDraft {
     throw new Error("invalid_cod_account");
   const parcelTotal = quantity(d.parcel_total ?? 1, 99, true);
   if (parcelTotal < 1) throw new Error("invalid_quantity");
+  let parcels: ShippingParcel[] | undefined;
+  if (d.parcels !== undefined) {
+    if (!Array.isArray(d.parcels) || d.parcels.length !== parcelTotal)
+      throw new Error("invalid_parcels");
+    parcels = d.parcels.map((value) => {
+      const parcel = object(value);
+      return {
+        box_width: quantity(parcel.box_width, 1000),
+        box_height: quantity(parcel.box_height, 1000),
+        box_length: quantity(parcel.box_length, 1000),
+        box_weight: quantity(parcel.box_weight, 1000000, true),
+      };
+    });
+  }
   return {
+    ...(parcels ? { parcels } : {}),
     purpose: text(d.purpose, 300),
     // Optional for backwards compatibility with drafts saved before labels existed.
     handling_note: text(d.handling_note ?? "", 120),
     carrier_code: text(d.carrier_code, 80),
     origin: addressFrom(d.origin),
     destination: addressFrom(d.destination),
-    box_width: quantity(d.box_width, 1000),
-    box_height: quantity(d.box_height, 1000),
-    box_length: quantity(d.box_length, 1000),
-    box_weight: quantity(d.box_weight, 1000000, true),
+    box_width: quantity(parcels?.[0].box_width ?? d.box_width, 1000),
+    box_height: quantity(parcels?.[0].box_height ?? d.box_height, 1000),
+    box_length: quantity(parcels?.[0].box_length ?? d.box_length, 1000),
+    box_weight: quantity(parcels?.[0].box_weight ?? d.box_weight, 1000000, true),
     parcel_total: parcelTotal,
     cod_amount: String(d.cod_amount),
     cod_account_id: d.cod_account_id as string | null,
@@ -168,39 +210,54 @@ export function parseDraft(v: unknown): ShippingDraft {
     }),
   };
 }
+export function parseDraftUpdate(value: unknown, previous: ShippingDraft): ShippingDraft {
+  const input = object(value);
+  if (previous.parcels?.length && !("parcels" in input)) throw new Error("client_outdated");
+  const preserveCompany = (side: "origin" | "destination") => {
+    const address = object(input[side]);
+    return { ...address, company: "company" in address ? address.company : previous[side].company ?? "" };
+  };
+  return parseDraft({ ...input, origin: preserveCompany("origin"), destination: preserveCompany("destination") });
+}
 export type QuoteIssue =
   | `${"origin" | "destination"}_${"county" | "city" | "state" | "postcode"}`
   | "carrier_required"
   | "box_width"
   | "box_height"
   | "box_length"
-  | "box_weight";
+  | "box_weight"
+  | "parcels_incomplete";
 
 // Rates use the delivery area and packed parcel, before shipment/COD setup.
 export function quoteIssues(d: ShippingDraft): QuoteIssue[] {
   const issues: QuoteIssue[] = [];
+  const parcels = shippingParcels(d);
   for (const side of ["origin", "destination"] as const) {
     for (const field of ["county", "city", "state"] as const)
       if (!d[side][field].trim()) issues.push(`${side}_${field}`);
     if (!/^\d{5}$/.test(d[side].postcode)) issues.push(`${side}_postcode`);
   }
-  if (!d.carrier_code.trim()) issues.push("carrier_required");
   for (const field of ["box_width", "box_height", "box_length", "box_weight"] as const)
-    if (!Number.isFinite(d[field]) || d[field] <= 0) issues.push(field);
+    if (!Number.isFinite(parcels[0][field]) || parcels[0][field] <= 0) issues.push(field);
+  if (parcels.slice(1).some((parcel) => Object.values(parcel).some((v) => !Number.isFinite(v) || v <= 0)))
+    issues.push("parcels_incomplete");
   return issues;
 }
 
-export function quotePayload(d: ShippingDraft): Record<string, unknown> {
+export function quotePayload(
+  d: ShippingDraft,
+  carrierCodes = [d.carrier_code],
+  parcel: ShippingParcel = shippingParcels(d)[0],
+): Record<string, unknown> {
   if (quoteIssues(d).length) throw new Error("quote_incomplete");
+  if (!carrierCodes.length || carrierCodes.some((code) => !code.trim()))
+    throw new Error("carrier_required");
   const area = ({ county, city, state, postcode }: ShippingAddress) => ({
     county, city, state, postcode,
   });
   return {
-    box_width: d.box_width,
-    box_height: d.box_height,
-    box_length: d.box_length,
-    box_weight: d.box_weight,
-    carriers_code: [d.carrier_code],
+    ...parcel,
+    carriers_code: carrierCodes,
     origin: area(d.origin),
     destination: area(d.destination),
   };
@@ -208,9 +265,11 @@ export function quotePayload(d: ShippingDraft): Record<string, unknown> {
 
 export function readyIssues(d: ShippingDraft): string[] {
   const issues: string[] = [];
+  if (d.parcel_total > 1) issues.push("multi_parcel_submission_unavailable");
   for (const side of ["origin", "destination"] as const) {
     const a = d[side];
-    if (Object.values(a).some((v) => !v)) issues.push(`${side}_incomplete`);
+    if ([a.fullname, a.address, a.county, a.city, a.state, a.postcode, a.email, a.telephone1].some((v) => !v))
+      issues.push(`${side}_incomplete`);
     if (!/^\d{5}$/.test(a.postcode)) issues.push(`${side}_postcode`);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email))
       issues.push(`${side}_email`);
@@ -236,15 +295,19 @@ export function providerPayload(
     purpose: _purpose,
     handling_note: _handlingNote,
     parcel_total: _parcelTotal,
+    parcels: _parcels,
     cod_account_id: _account,
     ...d
   } = s.draft;
   void _purpose;
   void _handlingNote;
   void _parcelTotal;
+  void _parcels;
   void _account;
   return {
     ...d,
+    origin: providerAddress(d.origin),
+    destination: providerAddress(d.destination),
     reference_no: s.reference_no,
     external_id: s.id,
     cod_account: codAccount,
@@ -252,6 +315,43 @@ export function providerPayload(
     is_warranty: false,
     product_price: 0,
   };
+}
+function providerAddress({ company, ...a }: ShippingAddress): ShippingAddress {
+  return {
+    ...a,
+    fullname: company && company !== a.fullname
+      ? `${company} / ${a.fullname}`.slice(0, 150)
+      : a.fullname,
+  };
+}
+
+export function summarizeShippingItems(items: ShippingItem[], visibleLimit = 5) {
+  return {
+    visible: items.slice(0, visibleLimit),
+    remainingItems: Math.max(0, items.length - visibleLimit),
+    remainingQuantity: items.slice(visibleLimit).reduce((sum, item) => sum + item.qty, 0),
+    totalQuantity: items.reduce((sum, item) => sum + item.qty, 0),
+  };
+}
+
+// Quote literal filter values before Supabase URL-encodes them.
+export function shipmentSearchFilter(value: string): string | null {
+  const search = value.trim().slice(0, 80).replace(/[%_*]/g, "");
+  if (!search) return null;
+  const quote = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const pattern = quote(`%${search}%`);
+  const fields = [
+    "reference_no", "order_code", "tracking_number",
+    "draft->destination->>fullname", "draft->destination->>company",
+    "draft->destination->>address", "draft->destination->>telephone1",
+  ];
+  const filters = fields.map((field) => `${field}.ilike.${pattern}`);
+  if (/^[+\d\s()-]+$/.test(search)) {
+    const digits = search.replace(/\D/g, "");
+    if (digits.length >= 3)
+      filters.push(`draft->destination->>telephone1.ilike.${quote(`%${digits.split("").join("%")}%`)}`);
+  }
+  return filters.join(",");
 }
 export function canUseShipping(
   profile: { role: string; is_active: boolean } | null,

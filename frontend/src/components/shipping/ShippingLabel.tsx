@@ -4,6 +4,7 @@ import type { Shipment, ShippingAddress } from "@/lib/shipping-api";
 import { shippingCarrierBrand } from "@/lib/shipping-carriers";
 import lineAddQrUrl from "@/assets/line-add-jnac.jpg";
 import shippingCompanyLogoUrl from "@/assets/shipping/jnac-logo.png";
+import { summarizeShippingItems } from "../../../../supabase/functions/_shared/shipping-domain";
 
 export const SHIPPING_LABEL_ID = "shipping-label-batch";
 
@@ -35,7 +36,7 @@ function ContactBlock({
         <p
           className={`${receiver ? "mt-[0.25mm] text-[14px] leading-[16px]" : "text-[12px] leading-[13px]"} min-w-0 line-clamp-2 break-words pb-px font-black`}
         >
-          {address.fullname || "—"}
+          {[...new Set([address.company, address.fullname].filter(Boolean))].join(" / ") || "—"}
         </p>
       </div>
       <p
@@ -126,10 +127,8 @@ function ShippingLabelPage({
   const barcodeRef = useRef<SVGSVGElement>(null);
   const carrier = shippingCarrierBrand(shipment.draft.carrier_code);
   const barcodeValue = shipment.tracking_number || shipment.reference_no;
-  const quantity = shipment.draft.products.reduce(
-    (sum, item) => sum + item.qty,
-    0,
-  );
+  const itemSummary = summarizeShippingItems(shipment.draft.products);
+  const quantity = itemSummary.totalQuantity;
   const cod = Number(shipment.draft.cod_amount || 0);
   const handlingNote =
     shipment.draft.handling_note || "กรุณาอย่าโยน • ระวังของแตก";
@@ -237,7 +236,7 @@ function ShippingLabelPage({
           </p>
         </div>
         <div className="flex flex-col justify-center px-[3mm] py-[0.5mm] text-center">
-          <p className="text-[8px] font-bold leading-[9px]">จำนวนสินค้า</p>
+          <p className="text-[8px] font-bold leading-[9px]">{parcelTotal > 1 ? "สินค้ารวมทั้งชุด" : "จำนวนสินค้ารวม"}</p>
           <p className="text-[16px] font-black leading-[18px]">
             {quantity.toLocaleString("th-TH")}
           </p>
@@ -249,9 +248,9 @@ function ShippingLabelPage({
           <strong>อ้างอิง:</strong>{" "}
           {shipment.order_code || shipment.reference_no}
         </p>
-        <p className="mt-[0.25mm] text-[8px] font-bold leading-[11px]">สินค้าในกล่อง:</p>
+        <p className="mt-[0.25mm] text-[8px] font-bold leading-[11px]">{parcelTotal > 1 ? "รายการสินค้ารวมทั้งชุด:" : "สินค้าในกล่อง:"}</p>
         <ul className={`mt-[0.25mm] font-semibold ${shipment.draft.products.length > 5 ? "text-[7px] leading-[9px]" : "text-[8px] leading-[11px]"}`}>
-          {shipment.draft.products.slice(0, 5).map((item, index) => (
+          {itemSummary.visible.map((item, index) => (
             <li key={index} className="flex min-w-0 justify-between gap-[2mm]">
               <span className="truncate">
                 {item.code ? `${item.code} · ` : ""}
@@ -260,8 +259,11 @@ function ShippingLabelPage({
               <span className="shrink-0">×{item.qty}</span>
             </li>
           ))}
-          {shipment.draft.products.length > 5 && (
-            <li>+ อีก {shipment.draft.products.length - 5} รายการ</li>
+          {itemSummary.remainingItems > 0 && (
+            <li className="flex justify-between gap-[1mm] border-t border-black pt-px font-black">
+              <span>รายการอื่น ๆ ({itemSummary.remainingItems} รายการ)</span>
+              <span className="shrink-0">รวม {itemSummary.remainingQuantity} ชิ้น</span>
+            </li>
           )}
         </ul>
       </section>

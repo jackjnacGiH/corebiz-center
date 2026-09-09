@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import type { ShippingRate } from "../../../supabase/functions/_shared/shipping-rates";
 import type {
   Shipment,
   ShippingDraft,
@@ -74,6 +75,7 @@ async function invoke<T>(
 }
 export const shippingApi = {
   bootstrap: () => invoke<ShippingBootstrap>("bootstrap"),
+  compare: (draft: ShippingDraft) => invoke<{ rates: ShippingRate[]; parcel_count: number; quoted_at: string }>("compare_rates", { draft }),
   list: (page: number, search: string) =>
     invoke<{ shipments: Shipment[]; count: number }>("list", { page, search }),
   get: (id: string) =>

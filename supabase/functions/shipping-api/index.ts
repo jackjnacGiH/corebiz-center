@@ -1,12 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 import {
   parseDraft,
+  parseDraftUpdate,
   emptyDraft,
   emptyAddress,
   isUuid,
   canUseShipping,
   readyIssues,
-  quotePayload,
+  shipmentSearchFilter,
   providerPayload,
   moneyMinor,
   acceptStatus,
@@ -18,6 +19,7 @@ import {
   requestProvider,
   type ProviderConfig,
 } from "../_shared/promptspeed.ts";
+import { compareShippingRates } from "../_shared/shipping-rates.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +47,7 @@ const recipientAddress = (
   const a = record(value);
   const addressText = typeof value === "string" ? value : undefined;
   return {
+    company: small(a.company ?? a.company_name ?? fallback.company, 150),
     fullname: small(a.fullname ?? a.name ?? fallback.fullname, 150),
     address: small(a.address ?? a.line ?? a.line1 ?? addressText, 500),
     county: small(a.county ?? a.subdistrict, 150),
@@ -184,6 +187,10 @@ Deno.serve(async (req) => {
         sendReady,
       });
     }
+    if (action === "compare_rates") {
+      assertProviderReady(config, false);
+      return reply(await compareShippingRates(config, parseDraft(b.draft)));
+    }
     if (action === "list") {
       const page = Math.max(
         0,
@@ -191,19 +198,21 @@ Deno.serve(async (req) => {
       );
       let query = db
         .from("shipments")
-        .select("*", { count: "exact" })
+        .select("*,orders(customers(name))", { count: "exact" })
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(page * 25, page * 25 + 24);
-      const search = small(b.search, 80);
-      if (search)
-        query = query.ilike(
-          "reference_no",
-          "%" + search.replace(/[%_\\]/g, "") + "%",
-        );
+      const searchFilter = shipmentSearchFilter(small(b.search, 80));
+      if (searchFilter) query = query.or(searchFilter);
       const { data, error, count } = await query;
       if (error) throw error;
-      return reply({ shipments: data, count });
+      return reply({
+        shipments: (data ?? []).map(({ orders, ...shipment }) => ({
+          ...shipment,
+          recipient_company: small(record(record(orders).customers).name, 150),
+        })),
+        count,
+      });
     }
     if (action === "order_options") {
       const search = small(b.search, 60).replace(/[%_\\]/g, "");
@@ -273,6 +282,7 @@ Deno.serve(async (req) => {
           `customer:${row.id}`,
           "customer",
           recipientAddress(row.shipping_address, {
+            company: row.name,
             fullname: row.contact_name ?? row.name,
             email: row.email,
             phone: row.phone ?? row.mobile,
@@ -340,6 +350,7 @@ Deno.serve(async (req) => {
       draft.destination = recipientAddress(
         order.shipping_address ?? customer?.shipping_address,
         {
+          company: customer?.name,
           fullname: customer?.contact_name ?? customer?.name,
           email: customer?.email,
           phone: customer?.phone ?? customer?.mobile,
@@ -565,7 +576,7 @@ Deno.serve(async (req) => {
     };
     if (action === "save_draft")
       return reply({
-        shipment: await mutate({ draft: parseDraft(b.draft) }, ["draft"]),
+        shipment: await mutate({ draft: parseDraftUpdate(b.draft, shipment.draft) }, ["draft"]),
       });
     if (action === "archive")
       return reply({
@@ -579,20 +590,9 @@ Deno.serve(async (req) => {
     if (action === "quote") {
       assertProviderReady(config, false);
       const d = parseDraft(shipment.draft);
-      const r = await requestProvider(config, "quote", quotePayload(d));
-      if (r.status !== 200 || !Array.isArray(r.data.data))
-        return fail("provider_rejected", 502);
-      return reply({
-        rates: r.data.data.map((v) => {
-          const r = record(v);
-          return {
-            carrier: small(r.carrier),
-            carrier_code: small(r.carrier_code),
-            total: small(r.total),
-            delivery_time: small(r.delivery_time),
-          };
-        }),
-      });
+      if (!d.carrier_code) return fail("carrier_required");
+      const result = await compareShippingRates(config, d, [d.carrier_code]);
+      return reply({ ...result, rates: result.rates.filter((rate) => rate.available) });
     }
     if (action === "submit") {
       assertProviderReady(config, true);
@@ -752,12 +752,17 @@ Deno.serve(async (req) => {
       "provider_not_ready",
       "shipment_incomplete",
       "quote_incomplete",
+      "invalid_parcels",
+      "client_outdated",
+      "carrier_required",
+      "carrier_unavailable",
+      "provider_rejected",
       "outcome_unknown",
       "provider_response_invalid",
     ];
     return fail(
       safe.includes(message) ? message : "shipping_error",
-      message === "conflict"
+      message === "conflict" || message === "client_outdated"
         ? 409
         : message === "provider_not_ready"
           ? 503

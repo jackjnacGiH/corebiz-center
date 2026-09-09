@@ -4,9 +4,14 @@ import { createHmac } from "node:crypto";
 import {
   emptyDraft,
   parseDraft,
+  parseDraftUpdate,
   readyIssues,
   quoteIssues,
   quotePayload,
+  shippingParcels,
+  shippingQuoteKey,
+  summarizeShippingItems,
+  shipmentSearchFilter,
   moneyMinor,
   canUseShipping,
   acceptStatus,
@@ -82,7 +87,7 @@ test("rates work with packed weight before item weights, contacts or COD account
   assert.throws(() => providerPayload({ draft: parsed }, null), /shipment_incomplete/);
   assert.equal(quotePayload(parsed).box_weight, 1200);
 });
-test("rates require each delivery area, a carrier and positive packed dimensions and weight", () => {
+test("rate comparison requires delivery areas and packed parcels before selecting a carrier", () => {
   for (const side of ["origin", "destination"])
     for (const field of ["county", "city", "state", "postcode"]) {
       const d = ready();
@@ -99,7 +104,72 @@ test("rates require each delivery area, a carrier and positive packed dimensions
   const d = ready();
   d.carrier_code = "";
   d.destination.postcode = "1028";
-  assert.deepEqual(quoteIssues(d), ["destination_postcode", "carrier_required"]);
+  assert.deepEqual(quoteIssues(d), ["destination_postcode"]);
+  d.destination.postcode = "10230";
+  assert.deepEqual(quoteIssues(d), []);
+  assert.throws(() => quotePayload(d), /carrier_required/);
+  assert.deepEqual(quotePayload(d, ["EMS_SPEED", "FLASH_EXPRESS_SPEED"]).carriers_code, ["EMS_SPEED", "FLASH_EXPRESS_SPEED"]);
+});
+test("all imported items contribute to label totals and the overflow row", () => {
+  const d = ready();
+  d.products = [1, 2, 3, 4, 5, 2, 3, 5].map((qty, i) => ({ ...d.products[0], code: `SKU${i}`, qty }));
+  const parsed = parseDraft(d);
+  const summary = summarizeShippingItems(parsed.products);
+  assert.equal(parsed.products.length, 8);
+  assert.equal(summary.visible.length, 5);
+  assert.equal(summary.remainingItems, 3);
+  assert.equal(summary.remainingQuantity, 10);
+  assert.equal(summary.totalQuantity, 25);
+  assert.equal(summary.visible.reduce((sum, item) => sum + item.qty, 0) + summary.remainingQuantity, summary.totalQuantity);
+});
+test("company is optional on older drafts and is carried into provider recipient names", () => {
+  const d = ready();
+  assert.deepEqual(readyIssues(parseDraft(d)), []);
+  d.destination.company = "Customer Company";
+  const payload = providerPayload({ draft: parseDraft(d), id: "test", reference_no: "test" }, null);
+  assert.equal(payload.destination.fullname, "Customer Company / Test contact");
+  assert.equal("company" in payload.destination, false);
+});
+test("parcel sizes are validated separately and unknown legacy boxes are not silently cloned", () => {
+  const d = ready();
+  d.parcel_total = 3;
+  assert.equal(shippingParcels(d).length, 3);
+  assert.ok(quoteIssues(d).includes("parcels_incomplete"));
+  assert.equal(shippingParcels(d)[1].box_weight, 0);
+  d.parcels = Array.from({ length: 3 }, () => ({ box_width: 10, box_height: 20, box_length: 30, box_weight: 500 }));
+  assert.deepEqual(quoteIssues(d), []);
+  assert.equal(parseDraft(d).box_weight, 500);
+  assert.ok(readyIssues(d).includes("multi_parcel_submission_unavailable"));
+  assert.throws(() => providerPayload({ draft: d }, null), /shipment_incomplete/);
+  d.parcels.pop();
+  assert.throws(() => parseDraft(d), /invalid_parcels/);
+});
+test("shipment search safely quotes names and matches formatted phone digits", () => {
+  const filter = shipmentSearchFilter('ACME, (TH) "Store"');
+  assert.ok(filter.includes('draft->destination->>fullname.ilike."%ACME, (TH) \\"Store\\"%"'));
+  assert.ok(filter.includes('order_code.ilike.'));
+  assert.ok(filter.includes('tracking_number.ilike.'));
+  assert.ok(shipmentSearchFilter('089-7449729').includes('%0%8%9%7%4%4%9%7%2%9%'));
+  assert.equal(shipmentSearchFilter(' %_* '), null);
+});
+test("only price inputs invalidate comparisons; contact and product edits preserve them", () => {
+  const d = ready();
+  const before = shippingQuoteKey(d);
+  d.destination.email = "new@example.invalid";
+  d.destination.company = "Company";
+  d.products[0].qty = 20;
+  d.carrier_code = "FLASH_EXPRESS_SPEED";
+  assert.equal(shippingQuoteKey(d), before);
+  d.box_weight += 1;
+  assert.notEqual(shippingQuoteKey(d), before);
+});
+test("an older form cannot erase per-box measurements or company details", () => {
+  const previous = ready();
+  previous.destination.company = "Company retained";
+  const oldForm = ready();
+  assert.equal(parseDraftUpdate(oldForm, previous).destination.company, "Company retained");
+  previous.parcels = [shippingParcels(previous)[0]];
+  assert.throws(() => parseDraftUpdate(oldForm, previous), /client_outdated/);
 });
 test("rate payload sends only areas and packed parcel data, excluding contacts, products and COD", () => {
   const d = ready();
