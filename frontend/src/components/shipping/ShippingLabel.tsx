@@ -26,23 +26,25 @@ function ContactBlock({
 }) {
   return (
     <section
-      className={`${embedded ? "" : "border-b-2 border-black"} px-[4mm] py-[2.5mm] ${receiver ? "min-h-[31mm]" : "min-h-[24mm]"}`}
+      className={`${embedded ? "" : "border-b-2 border-black"} flex min-h-0 flex-col gap-[0.25mm] px-[3mm] py-[0.75mm]`}
     >
-      <p className="text-[9px] font-bold uppercase tracking-[0.12em]">
-        {title}
-      </p>
+      <div className={receiver ? "" : "flex items-baseline gap-[2mm]"}>
+        <p className="shrink-0 text-[8px] font-bold uppercase leading-[10px]">
+          {title}
+        </p>
+        <p
+          className={`${receiver ? "mt-[0.25mm] text-[14px] leading-[16px]" : "text-[12px] leading-[13px]"} min-w-0 line-clamp-2 break-words pb-px font-black`}
+        >
+          {address.fullname || "—"}
+        </p>
+      </div>
       <p
-        className={`${receiver ? "text-[16px]" : "text-[13px]"} line-clamp-2 break-words font-black leading-tight mt-1`}
-      >
-        {address.fullname || "—"}
-      </p>
-      <p
-        className={`${receiver ? "text-[12px]" : "text-[10px]"} line-clamp-3 break-words font-semibold leading-snug mt-1`}
+        className={`${receiver ? "text-[10px] leading-[12px]" : "text-[9px] leading-[10px]"} line-clamp-3 break-words pb-px font-semibold`}
       >
         {addressLine(address) || "—"}
       </p>
       <p
-        className={`${receiver ? "text-[13px]" : "text-[11px]"} font-black mt-1`}
+        className={`${receiver ? "text-[11px] leading-[13px]" : "text-[10px] leading-[11px]"} font-black`}
       >
         โทร {address.telephone1 || "—"}
       </p>
@@ -65,10 +67,10 @@ function CarrierLogo({
         <img
           src={carrier.logoUrl}
           alt={carrier.name}
-          className="h-[10mm] max-w-[38mm] object-contain"
+          className="h-[9mm] w-[32mm] max-w-full object-contain"
           onError={() => setFailed(true)}
         />
-        <p className="mt-1 text-[7px] font-bold uppercase tracking-wider">
+        <p className="mt-[0.5mm] text-[7px] font-bold uppercase leading-[8px] tracking-wider">
           {carrier.name}
         </p>
       </div>
@@ -98,13 +100,13 @@ function CompanyLogo({
       <img
         src={shippingCompanyLogoUrl}
         alt={companyName}
-        className="h-[12mm] w-[40mm] max-w-full object-contain object-left"
+        className="h-[10mm] w-[40mm] max-w-full object-contain object-left"
         onError={() => setFailed(true)}
       />
     );
   }
   return (
-    <div className="flex h-[12mm] items-center text-[20px] font-black text-[#1696f4]">
+    <div className="flex h-[10mm] items-center text-[20px] font-black text-[#1696f4]">
       J NAC
     </div>
   );
@@ -133,10 +135,10 @@ function ShippingLabelPage({
     shipment.draft.handling_note || "กรุณาอย่าโยน • ระวังของแตก";
   const handlingSize =
     handlingNote.length > 60
-      ? "text-[10px]"
+      ? "text-[9px] leading-[12px]"
       : handlingNote.length > 36
-        ? "text-[13px]"
-        : "text-[17px]";
+        ? "text-[13px] leading-[18px]"
+        : "text-[16px] leading-[20px]";
 
   useEffect(() => {
     if (!barcodeRef.current || !barcodeValue) return;
@@ -144,7 +146,7 @@ function ShippingLabelPage({
       JsBarcode(barcodeRef.current, barcodeValue, {
         format: "CODE128",
         displayValue: false,
-        height: 46,
+        height: 92,
         width: 1.55,
         margin: 0,
       });
@@ -156,9 +158,9 @@ function ShippingLabelPage({
   return (
     <article
       aria-label={`ตัวอย่างใบปะหน้าขนส่ง กล่อง ${parcelNumber}/${parcelTotal}`}
-      className="shipping-label-document box-border flex h-[150mm] w-[100mm] flex-col overflow-hidden border-2 border-black bg-white font-sans text-black"
+      className="shipping-label-document box-border grid h-[150mm] w-[100mm] grid-rows-[20mm_35mm_28mm_21mm_10mm_minmax(0,1fr)_12mm] overflow-hidden border-2 border-black bg-white font-sans text-black"
     >
-      <header className="relative flex h-[22mm] items-center gap-[3mm] border-b-[3px] border-black px-[3mm] pb-[1.5mm] pt-[3mm]">
+      <header className="relative flex min-h-0 items-center gap-[2mm] border-b-2 border-black px-[3mm] pb-[1mm] pt-[2.5mm]">
         <span
           className="absolute inset-x-0 top-0 h-[1.8mm]"
           style={{
@@ -169,17 +171,13 @@ function ShippingLabelPage({
           <CompanyLogo
             companyName={companyName || "J NAC (THAILAND) CO., LTD."}
           />
-          <p className="line-clamp-2 text-[8px] font-black leading-tight text-neutral-800">
+          <p className="line-clamp-2 pb-px text-[12px] font-black leading-[14px] text-neutral-800">
             {companyName || "J NAC (THAILAND) CO., LTD."}
           </p>
         </div>
-        <div className="relative flex h-[14mm] w-[36mm] shrink-0 items-center justify-center overflow-hidden rounded-[2.5mm] border-[1.5px] border-neutral-300 bg-neutral-50 px-[2mm] text-center">
-          <span
-            className="absolute inset-y-0 left-0 w-[1.5mm]"
-            style={{ background: carrier.accent }}
-          />
+        <div className="flex w-[32mm] shrink-0 items-center justify-center text-center">
           <div className="flex flex-col items-center">
-            <p className="mb-1 text-[6.5px] font-black uppercase tracking-[0.12em] text-neutral-500">
+            <p className="mb-[0.5mm] text-[7px] font-bold leading-[9px] text-neutral-600">
               ผู้ให้บริการขนส่ง
             </p>
             <CarrierLogo carrier={carrier} />
@@ -187,39 +185,40 @@ function ShippingLabelPage({
         </div>
       </header>
 
-      <section className="border-b-2 border-black px-[4mm] py-[2.5mm] text-center">
-        <p className="text-[8px] font-bold uppercase tracking-[0.15em]">
+      <section className="grid min-h-0 grid-rows-[2.4mm_5.3mm_24mm_2.4mm] content-center gap-y-[0.1mm] border-b-2 border-black px-[3mm] text-center">
+        <p className="text-[8px] font-bold uppercase leading-[9px] tracking-[0.15em]">
           Tracking Number
         </p>
-        <p className="my-1 break-all text-[20px] font-black leading-none tracking-[0.04em]">
+        <p className="truncate text-[17px] font-black leading-[20px] tracking-[0.04em]">
           {shipment.tracking_number || "ยังไม่มีเลข TRACKING"}
         </p>
         <svg
           ref={barcodeRef}
           aria-label={`Barcode ${barcodeValue}`}
-          className="mx-auto h-[12mm] max-w-full"
+          preserveAspectRatio="none"
+          className="block h-[24mm] w-full"
         />
-        <p className="mt-1 text-[7px] font-semibold">{barcodeValue}</p>
+        <p className="text-[7px] font-semibold leading-[9px]">{barcodeValue}</p>
       </section>
 
-      <section className="grid h-[34mm] grid-cols-[1fr_26mm] border-b-2 border-black">
+      <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_26mm] border-b-2 border-black">
         <ContactBlock
           title="ผู้รับ (TO)"
           address={shipment.draft.destination}
           receiver
           embedded
         />
-        <aside className="grid grid-rows-[11mm_1fr] border-l-2 border-black">
+        <aside className="grid min-h-0 grid-rows-[8mm_minmax(0,1fr)] border-l-2 border-black">
           <div className="flex items-center justify-center bg-black text-white">
             <p className="text-[23px] font-black leading-none">
               {parcelNumber}/{parcelTotal}
             </p>
           </div>
-          <div className="flex flex-col items-center justify-center py-[1mm]">
+          <div className="flex min-h-0 flex-col items-center justify-center">
             <img
               src={lineAddQrUrl}
               alt="QR เพิ่มเพื่อน LINE @jnac"
-              className="h-[18mm] w-[18mm] object-contain"
+              className="h-[17mm] w-[17mm] object-contain"
             />
             <p className="text-[6px] font-black leading-none">LINE @jnac</p>
           </div>
@@ -227,42 +226,39 @@ function ShippingLabelPage({
       </section>
       <ContactBlock title="ผู้ส่ง (FROM)" address={shipment.draft.origin} />
 
-      <section className="grid min-h-[15mm] grid-cols-[1.3fr_.7fr] border-b-2 border-black">
-        <div className="flex flex-col justify-center border-r-2 border-black px-[4mm] py-[2mm]">
-          <p className="text-[8px] font-bold uppercase">
+      <section className="grid min-h-0 grid-cols-[1.3fr_.7fr] border-b-2 border-black">
+        <div className="flex min-w-0 flex-col justify-center border-r-2 border-black px-[3mm] py-[0.5mm]">
+          <p className="text-[8px] font-bold uppercase leading-[9px]">
             เก็บเงินปลายทาง (COD)
           </p>
-          <p className="text-[18px] font-black leading-tight">
+          <p className="text-[16px] font-black leading-[18px]">
             {cod > 0
               ? `${cod.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`
               : "ไม่มีเก็บเงิน"}
           </p>
         </div>
-        <div className="flex flex-col justify-center px-[3mm] py-[2mm] text-center">
-          <p className="text-[8px] font-bold">จำนวนสินค้า</p>
-          <p className="text-[19px] font-black">
+        <div className="flex flex-col justify-center px-[3mm] py-[0.5mm] text-center">
+          <p className="text-[8px] font-bold leading-[9px]">จำนวนสินค้า</p>
+          <p className="text-[16px] font-black leading-[18px]">
             {quantity.toLocaleString("th-TH")}
           </p>
         </div>
       </section>
 
-      <section className="min-h-0 flex-1 px-[4mm] py-[2.5mm]">
-        <div className="flex items-start gap-2 text-[8px]">
-          <p>
-            <strong>อ้างอิง:</strong>{" "}
-            {shipment.order_code || shipment.reference_no}
-          </p>
-        </div>
-        <p className="mt-1 text-[8px]">
-          <strong>บริการ:</strong> {carrier.name} ·{" "}
-          {shipment.draft.carrier_code || "—"}
+      <section aria-label="อ้างอิงและสินค้า" className="min-h-0 px-[3mm] py-[1mm]">
+        <p className="break-words text-[8px] leading-[11px]">
+          <strong>อ้างอิง:</strong>{" "}
+          {shipment.order_code || shipment.reference_no}
         </p>
-        <p className="mt-1 text-[7px] font-bold">สินค้าในกล่อง:</p>
-        <ul className="mt-[0.5mm] space-y-[0.25mm] text-[6.5px] font-semibold leading-tight">
+        <p className="mt-[0.25mm] text-[8px] font-bold leading-[11px]">สินค้าในกล่อง:</p>
+        <ul className={`mt-[0.25mm] font-semibold ${shipment.draft.products.length > 5 ? "text-[7px] leading-[9px]" : "text-[8px] leading-[11px]"}`}>
           {shipment.draft.products.slice(0, 5).map((item, index) => (
-            <li key={index} className="truncate">
-              {item.code ? `${item.code} · ` : ""}
-              {item.name || "—"} ×{item.qty}
+            <li key={index} className="flex min-w-0 justify-between gap-[2mm]">
+              <span className="truncate">
+                {item.code ? `${item.code} · ` : ""}
+                {item.name || "—"}
+              </span>
+              <span className="shrink-0">×{item.qty}</span>
             </li>
           ))}
           {shipment.draft.products.length > 5 && (
@@ -271,9 +267,9 @@ function ShippingLabelPage({
         </ul>
       </section>
 
-      <footer className="flex min-h-[14mm] items-center justify-center border-t-[3px] border-black bg-black px-[3mm] py-[2mm] text-center text-white">
+      <footer className="flex min-h-0 items-center justify-center border-t-2 border-black bg-black px-[3mm] py-[0.75mm] text-center text-white">
         <p
-          className={`${handlingSize} line-clamp-3 break-words font-black leading-tight tracking-wide`}
+          className={`${handlingSize} line-clamp-3 break-words font-black`}
         >
           {handlingNote}
         </p>
