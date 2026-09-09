@@ -25,19 +25,31 @@ function ContactBlock({
   receiver?: boolean;
   embedded?: boolean;
 }) {
+  const company = address.company?.trim();
+  const contact = address.fullname.trim();
+  const companySize = receiver
+    ? (company?.length ?? 0) > 130 ? "text-[10px] leading-[12px]"
+      : (company?.length ?? 0) > 110 ? "text-[11px] leading-[13px]"
+      : (company?.length ?? 0) > 80 ? "text-[12px] leading-[14px]" : "text-[14px] leading-[16px]"
+    : (company?.length ?? 0) > 110 ? "text-[10px] leading-[11px]" : "text-[12px] leading-[13px]";
   return (
     <section
-      className={`${embedded ? "" : "border-b-2 border-black"} flex min-h-0 flex-col gap-[0.25mm] px-[3mm] py-[0.75mm]`}
+      aria-label={title}
+      className={`${embedded ? "" : "border-b-2 border-black"} shipping-label-contact flex min-h-0 flex-col gap-[0.25mm] px-[3mm] py-[0.75mm]`}
     >
       <div className={receiver ? "" : "flex items-baseline gap-[2mm]"}>
         <p className="shrink-0 text-[8px] font-bold uppercase leading-[10px]">
           {title}
         </p>
-        <p
-          className={`${receiver ? "mt-[0.25mm] text-[14px] leading-[16px]" : "text-[12px] leading-[13px]"} min-w-0 line-clamp-2 break-words pb-px font-black`}
-        >
-          {[...new Set([address.company, address.fullname].filter(Boolean))].join(" / ") || "—"}
-        </p>
+        <div className="min-w-0 flex-1">
+          {company && <p className={`${companySize} ${receiver ? "mt-[0.25mm]" : ""} shipping-label-company break-words pb-px font-black`}>
+            {company}
+          </p>}
+          {contact && contact !== company && <p className={`${receiver ? "text-[12px] leading-[14px]" : "text-[11px] leading-[13px]"} shipping-label-person break-words pb-px font-bold`}>
+            {contact}
+          </p>}
+          {!company && !contact && <p className="text-[12px] font-black">—</p>}
+        </div>
       </div>
       <p
         className={`${receiver ? "text-[10px] leading-[12px]" : "text-[9px] leading-[10px]"} line-clamp-3 break-words pb-px font-semibold`}
@@ -132,6 +144,9 @@ function ShippingLabelPage({
   const cod = Number(shipment.draft.cod_amount || 0);
   const handlingNote =
     shipment.draft.handling_note || "กรุณาอย่าโยน • ระวังของแตก";
+  // Reclaim unused padding, keeping the warning text size, when names need room.
+  const compactFooter = handlingNote === "กรุณาอย่าโยน • ระวังของแตก" &&
+    [shipment.draft.origin.company, shipment.draft.destination.company].some((name) => (name?.length ?? 0) > 80);
   const handlingSize =
     handlingNote.length > 60
       ? "text-[9px] leading-[12px]"
@@ -157,7 +172,8 @@ function ShippingLabelPage({
   return (
     <article
       aria-label={`ตัวอย่างใบปะหน้าขนส่ง กล่อง ${parcelNumber}/${parcelTotal}`}
-      className="shipping-label-document box-border grid h-[150mm] w-[100mm] grid-rows-[20mm_35mm_28mm_21mm_10mm_minmax(0,1fr)_12mm] overflow-hidden border-2 border-black bg-white font-sans text-black"
+      className="shipping-label-document box-border grid h-[150mm] w-[100mm] overflow-hidden border-2 border-black bg-white font-sans text-black"
+      style={{ gridTemplateRows: `20mm 35mm minmax(28mm,max-content) minmax(21mm,max-content) 10mm minmax(0,1fr) ${compactFooter ? "8mm" : "12mm"}` }}
     >
       <header className="relative flex min-h-0 items-center gap-[2mm] border-b-2 border-black px-[3mm] pb-[1mm] pt-[2.5mm]">
         <span
