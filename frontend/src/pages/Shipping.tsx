@@ -1372,7 +1372,6 @@ export default function Shipping() {
             <ShippingLabel
               shipment={shipment}
               companyName={bootstrap.brand.name}
-              companyLogoUrl={bootstrap.brand.logo_url}
             />
           </div>
         </div>
