@@ -138,6 +138,7 @@ export default function Shipping() {
   const productRequest = useRef(0);
   const deletingDraft = useRef(false);
   const listActionInFlight = useRef(false);
+  const labelReturnFocus = useRef<HTMLElement | null>(null);
   const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
   const revokeProviderLabel = useCallback(() => {
@@ -461,11 +462,14 @@ export default function Shipping() {
   }
   function openLabelPreview(target: Shipment) {
     if (busy) return;
+    const activeElement = document.activeElement as HTMLElement | null;
+    labelReturnFocus.current = activeElement && typeof activeElement.focus === "function"
+      ? activeElement
+      : null;
     setLabelShipment(target);
     setLabelOpen(true);
     if (!labelModule) void loadShippingLabel().then(setLabelModule).catch((reason) => {
       setLabelOpen(false);
-      setLabelShipment(null);
       reportError(reason);
     });
   }
@@ -1493,10 +1497,7 @@ export default function Shipping() {
       <Dialog
         open={labelOpen && !!labelShipment && !!bootstrap}
         onOpenChange={(open) => {
-          if (!open) {
-            setLabelOpen(false);
-            setLabelShipment(null);
-          }
+          if (!open) setLabelOpen(false);
         }}
       >
         {labelShipment && bootstrap && <DialogContent
@@ -1504,6 +1505,12 @@ export default function Shipping() {
           aria-label={c.labelPreview}
           showCloseButton={false}
           className="shipping-label-dialog"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            labelReturnFocus.current?.focus();
+            labelReturnFocus.current = null;
+            setLabelShipment(null);
+          }}
         >
           <DialogHeader className="sr-only">
             <DialogTitle>{c.labelPreview}</DialogTitle>
@@ -1533,10 +1540,7 @@ export default function Shipping() {
                 size="icon"
                 variant="outline"
                 aria-label={c.close}
-                onClick={() => {
-                  setLabelOpen(false);
-                  setLabelShipment(null);
-                }}
+                onClick={() => setLabelOpen(false)}
               >
                 <X size={16} />
               </Button>

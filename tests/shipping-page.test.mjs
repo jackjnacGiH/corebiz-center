@@ -32,6 +32,7 @@ function mount(query = '') {
   const slots = [], effects = [], requests = [], confirmations = [], clipboard = [], popups = [], prints = [];
   const timers = new Map();
   let cursor = 0, timerId = 0, tree, dirty = false;
+  let focusRestores = 0;
   let params = new URLSearchParams(query);
   let confirmResult = true;
   const sameDeps = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
@@ -106,7 +107,7 @@ function mount(query = '') {
       },
     },
     navigator: { clipboard: { writeText: async value => { clipboard.push(value); } } },
-    document: { addEventListener() {}, removeEventListener() {} },
+    document: { activeElement: { focus() { focusRestores++; } }, addEventListener() {}, removeEventListener() {} },
   });
   const render = () => {
     let passes = 0;
@@ -134,6 +135,7 @@ function mount(query = '') {
   render();
   return {
     requests, confirmations, clipboard, popups, prints, render, find, button,
+    focusRestores: () => focusRestores,
     confirmWith(value) { confirmResult = value; },
     card: id => find(node => node.type === 'ShipmentListCard' && node.props.shipment.id === id),
     listRequests: () => requests.filter(request => request.action === 'list'),
@@ -218,7 +220,8 @@ test('a list J NAC label preview waits for its lazy module then prints without p
   const baselineRequests = h.requests.length;
 
   h.card(row.id).props.onJnacLabel();
-  assert.ok(h.find(node => node.props.role === 'dialog' && node.props['aria-label'] === 'labelPreview'));
+  const dialogContent = h.find(node => node.props.role === 'dialog' && node.props['aria-label'] === 'labelPreview');
+  assert.ok(dialogContent);
   assert.equal(h.find(node => node.type === 'Dialog' && node.props.open).props.open, true, 'The shared dialog provides focus trapping and Escape handling');
   assert.equal(h.find(node => node.type === 'ShippingLabel'), undefined, 'The preview waits for the lazy label module');
   assert.equal(h.button('printLabel').props.disabled, true);
@@ -236,9 +239,13 @@ test('a list J NAC label preview waits for its lazy module then prints without p
   assert.equal(h.prints[0][1].pageSize, 'label-100x150');
   assert.equal(h.requests.length, baselineRequests, 'Printing a J NAC label must not call shippingApi.print or consume carrier credit');
   assert.equal(h.find(node => node.type === 'AddressFields'), undefined, 'The list action never opens the editor');
+  let focusDefaultPrevented = false;
   h.find(node => node.type === 'Dialog' && node.props.open).props.onOpenChange(false);
+  dialogContent.props.onCloseAutoFocus({ preventDefault: () => { focusDefaultPrevented = true; } });
   h.render();
   assert.equal(h.find(node => node.props.role === 'dialog' && node.props['aria-label'] === 'labelPreview'), undefined);
+  assert.equal(focusDefaultPrevented, true);
+  assert.equal(h.focusRestores(), 1, 'Closing returns keyboard focus to the originating list action');
   h.unmount();
 });
 
