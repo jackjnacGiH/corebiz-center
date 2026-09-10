@@ -1763,6 +1763,11 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   if (!openaiKey) throw new Error(MSG[lang].openaiKeyMissing);
 
   send({ type: "status", message: "thinking", channel });
+  // A short variant reply such as "5 นิ้ว เบอร์ 120" is still a product
+  // query when it immediately follows our size/grit clarification. Route the
+  // combined identity through the same product-only path as the original
+  // question so unrelated knowledge-base matches cannot distract the model.
+  const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history);
   let embed_ms = 0;
   let search_ms = 0;
   let matchedRows: Array<{ id: string; content: string; metadata: unknown; similarity: number; source_path: string; tags: string[]; title: string | null }> = [];
@@ -1770,7 +1775,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   let forcedRows: Array<{ source_path: string; chunk_index: number; title: string | null; content: string }> = [];
   let contextText: string | null = null;
 
-  if (query && images.length === 0 && !shouldSkipRAG(query)) {
+  if (query && images.length === 0 && !shouldSkipRAG(ragRoutingQuery)) {
     const t0 = Date.now();
     const queryEmbedding = await embedQueryOpenAI(openaiKey, query);
     embed_ms = Date.now() - t0;
@@ -1909,7 +1914,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     const sepNeeded = fullAnswer.trim() && !fullAnswer.endsWith("\n");
     appendAnswer((sepNeeded ? "\n" : "") + candidate);
   };
-  const contextualProductQuery = mergeFacetOnlyProductQuery(query, history);
+  const contextualProductQuery = ragRoutingQuery;
   const hasContextualProductQuery = contextualProductQuery !== query;
   let productSelectionPending = false;
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
