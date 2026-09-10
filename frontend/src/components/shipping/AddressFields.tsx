@@ -5,7 +5,10 @@ import { Input } from "@/components/ui/input";
 import { useLanguage } from "@/i18n";
 import { lookupZipcode, type ThaiAddressEntry } from "@/lib/thaiAddress";
 import type { ShippingAddress } from "@/lib/shipping-api";
-import { validProviderPhone } from "../../../../supabase/functions/_shared/shipping-domain";
+import {
+  validProviderEmail,
+  validProviderPhone,
+} from "../../../../supabase/functions/_shared/shipping-domain";
 
 export default function AddressFields({
   title,
@@ -28,6 +31,7 @@ export default function AddressFields({
   const [zipLookupFailed, setZipLookupFailed] = useState(false);
   const latestValue = useRef(value);
   const phoneInvalid = !!value.telephone1 && !validProviderPhone(value.telephone1);
+  const emailInvalid = !!value.email.trim() && !validProviderEmail(value.email);
   useEffect(() => {
     latestValue.current = value;
   }, [value]);
@@ -70,7 +74,13 @@ export default function AddressFields({
   const field = (
     key: "company" | "fullname" | "telephone1" | "email" | "address" | "state" | "city",
     className = "",
-  ) => (
+  ) => {
+    const invalid = key === "telephone1"
+      ? phoneInvalid
+      : key === "email"
+        ? emailInvalid
+        : false;
+    return (
     <label
       htmlFor={`${prefix}-${key}`}
       className={`text-sm space-y-1 ${className}`}
@@ -85,8 +95,8 @@ export default function AddressFields({
         placeholder={key === "fullname" ? c.contactNameHint : undefined}
         inputMode={key === "telephone1" ? "numeric" : undefined}
         pattern={key === "telephone1" ? "[0-9]*" : undefined}
-        aria-invalid={key === "telephone1" && phoneInvalid || undefined}
-        aria-describedby={key === "telephone1" && phoneInvalid ? `${prefix}-telephone1-error` : undefined}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? `${prefix}-${key}-error` : undefined}
         onChange={(e) => onChange({ ...value, [key]: e.target.value })}
       />
       {key === "telephone1" && phoneInvalid && (
@@ -94,8 +104,14 @@ export default function AddressFields({
           {c.phoneDigitsOnly}
         </span>
       )}
+      {key === "email" && emailInvalid && (
+        <span id={`${prefix}-email-error`} role="alert" className="block text-xs text-destructive">
+          {c.emailFormat}
+        </span>
+      )}
     </label>
-  );
+    );
+  };
 
   return (
     <section className="space-y-3 min-w-0">

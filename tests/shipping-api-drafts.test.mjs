@@ -292,6 +292,36 @@ test('a definite provider 4xx records rejection and safely restores the shipment
   assert.ok(h.tables.shipping_attempts[0].finished_at);
 });
 
+test('submit accepts blank optional emails and sends the documented address keys without inventing values', async () => {
+  const row = submittableShipment(1);
+  row.draft.origin.email = '';
+  row.draft.destination.email = '';
+  let createCalls = 0;
+  const h = api({
+    rows: [row],
+    settings: { billing_mode: 'prepaid' },
+    provider: {
+      request: async (_config, operation, body) => {
+        createCalls += 1;
+        assert.equal(operation, 'create');
+        assert.equal(body.origin.email, '');
+        assert.equal(body.destination.email, '');
+        return {
+          status: 201, ok: true,
+          data: { data: { tracking_number: 'TH1234567890' } },
+          requestId: 'request-optional-email', code: '201', message: 'success',
+        };
+      },
+    },
+  });
+
+  const result = await h.call('submit', { id: id(1), version: 7 });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.shipment.status, 'waiting');
+  assert.equal(result.body.shipment.tracking_number, 'TH1234567890');
+  assert.equal(createCalls, 1);
+});
+
 test('submit blocks formatted phone numbers before making a provider request', async () => {
   const row = submittableShipment(1);
   row.draft.origin.telephone1 = '02-183 8489';

@@ -20,6 +20,7 @@ import {
   canUseShipping,
   acceptStatus,
   providerPayload,
+  validProviderEmail,
 } from "../supabase/functions/_shared/shipping-domain.ts";
 import {
   signQuery,
@@ -87,7 +88,7 @@ test("packed weight is authoritative and item weight is optional for shipment re
   assert.deepEqual(quoteIssues(parsed), []);
   assert.equal(readyIssues(parsed).includes("items_incomplete"), false);
   assert.ok(readyIssues(parsed).includes("cod_account_required"));
-  assert.ok(readyIssues(parsed).includes("destination_email"));
+  assert.equal(readyIssues(parsed).includes("destination_email"), false);
   assert.throws(() => providerPayload({ draft: parsed }, null), /shipment_incomplete/);
   assert.equal(quotePayload(parsed).box_weight, 1200);
 });
@@ -103,6 +104,26 @@ test("provider payload keeps an optional zero item weight for API compatibility"
   );
   assert.equal(payload.box_weight, 1200);
   assert.equal(payload.products[0].weight, 0);
+});
+test("blank emails are optional while malformed emails still block submission", () => {
+  const d = ready();
+  d.origin.email = "";
+  d.destination.email = "   ";
+  const parsed = parseDraft(d);
+  assert.deepEqual(readyIssues(parsed), []);
+  assert.equal(validProviderEmail(""), true);
+  assert.equal(validProviderEmail("not-an-email"), false);
+  const payload = providerPayload(
+    { draft: parsed, id: "test", reference_no: "SHP-TEST" },
+    null,
+  );
+  // PromptSpeed documents email as an address key, so keep the key without
+  // inventing a customer email. The API receives the user's intentional blank.
+  assert.equal(payload.origin.email, "");
+  assert.equal(payload.destination.email, "");
+
+  d.destination.email = "not-an-email";
+  assert.ok(readyIssues(parseDraft(d)).includes("destination_email"));
 });
 test("rate comparison requires delivery areas and packed parcels before selecting a carrier", () => {
   for (const side of ["origin", "destination"])

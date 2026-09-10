@@ -114,6 +114,11 @@ export function validProviderPhone(value: string): boolean {
   return /^[0-9]{9,20}$/.test(value);
 }
 
+export function validProviderEmail(value: string): boolean {
+  const email = value.trim();
+  return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 export function recipientAddress(
   value: unknown,
   fallback: Record<string, unknown> = {},
@@ -352,10 +357,10 @@ export function readyIssues(d: ShippingDraft): string[] {
     const a = normalizeShippingContact(d[side]);
     const hasRecipientName = !!a.fullname || !!a.company;
     const hasRealContactName = !a.fullname || !organizationName(a.fullname);
-    if (!hasRecipientName || !hasRealContactName || [a.address, a.county, a.city, a.state, a.postcode, a.email, a.telephone1].some((v) => !v))
+    if (!hasRecipientName || !hasRealContactName || [a.address, a.county, a.city, a.state, a.postcode, a.telephone1].some((v) => !v))
       issues.push(`${side}_incomplete`);
     if (!/^\d{5}$/.test(a.postcode)) issues.push(`${side}_postcode`);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email))
+    if (!validProviderEmail(a.email))
       issues.push(`${side}_email`);
     if (!validProviderPhone(a.telephone1)) issues.push(`${side}_phone`);
   }
