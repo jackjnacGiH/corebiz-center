@@ -19,8 +19,10 @@ import {
 } from "../_shared/shipping-domain.ts";
 import {
   assertProviderReady,
+  ProviderRejectedError,
   providerCreateResult,
   providerDefinitiveRejection,
+  providerRejectionIssue,
   providerPrintLink,
   providerRows,
   reconcileCreatedShipment,
@@ -650,6 +652,7 @@ Deno.serve(async (req) => {
         tracking: string | null = null,
         http: number | null = null,
         requestId: string | null = null,
+        providerIssue: ReturnType<typeof providerRejectionIssue> | null = null,
         definitiveRejection = false,
         shouldReconcile = false;
       try {
@@ -660,7 +663,10 @@ Deno.serve(async (req) => {
         if (created) {
           tracking = created.trackingNumber;
           outcome = "waiting";
-        } else if (providerDefinitiveRejection(r)) definitiveRejection = true;
+        } else if (providerDefinitiveRejection(r)) {
+          definitiveRejection = true;
+          providerIssue = providerRejectionIssue(r);
+        }
         else shouldReconcile = true;
       } catch {
         /* Any uncertain mutation outcome remains blocked from retry. */
@@ -718,7 +724,12 @@ Deno.serve(async (req) => {
         .single();
       if (error || finishErr) throw new Error("outcome_unknown");
       if (definitiveRejection)
-        return reply({ error: "provider_rejected", shipment: data }, 502);
+        return reply({
+          error: "provider_rejected",
+          detail: providerIssue ?? "provider_validation_failed",
+          shipment: data,
+          ...(requestId ? { request_id: requestId } : {}),
+        }, 502);
       return reply({ shipment: data });
     }
     if (action === "print") {
@@ -770,6 +781,8 @@ Deno.serve(async (req) => {
     }
     return fail("unsupported_action");
   } catch (error) {
+    if (error instanceof ProviderRejectedError)
+      return reply({ error: "provider_rejected", detail: error.detail }, 502);
     const message = error instanceof Error ? error.message : "";
     const safe = [
       "invalid_money",

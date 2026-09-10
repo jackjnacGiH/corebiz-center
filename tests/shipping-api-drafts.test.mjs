@@ -105,8 +105,10 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
       if (name.endsWith('/shipping-domain.ts')) return domain;
       if (name.endsWith('/promptspeed.ts')) return {
         assertProviderReady: provider === null ? noProvider : () => {},
+        ProviderRejectedError: promptSpeed.ProviderRejectedError,
         providerCreateResult: promptSpeed.providerCreateResult,
         providerDefinitiveRejection: promptSpeed.providerDefinitiveRejection,
+        providerRejectionIssue: promptSpeed.providerRejectionIssue,
         providerPrintLink: promptSpeed.providerPrintLink,
         providerRows: promptSpeed.providerRows,
         reconcileCreatedShipment: reconcile,
@@ -257,6 +259,8 @@ test('a definite provider 4xx records rejection and safely restores the shipment
   const result = await h.call('submit', { id: id(1), version: 7 });
   assert.equal(result.status, 502);
   assert.equal(result.body.error, 'provider_rejected');
+  assert.equal(result.body.detail, 'wallet_insufficient');
+  assert.equal(result.body.request_id, 'request-wallet');
   assert.equal(result.body.shipment.status, 'draft');
   assert.equal(result.body.shipment.version, 9);
   assert.equal(reconciliations, 0, 'a definite rejection must not match an older provider shipment');
@@ -270,35 +274,27 @@ test('a definite provider 4xx records rejection and safely restores the shipment
   assert.ok(h.tables.shipping_attempts[0].finished_at);
 });
 
-test('submit sends normalized phone digits without rewriting the saved draft', async () => {
+test('submit blocks formatted phone numbers before making a provider request', async () => {
   const row = submittableShipment(1);
   row.draft.origin.telephone1 = '02-183 8489';
   row.draft.destination.telephone1 = '+66 81-442-0000';
-  let providerBody;
+  let providerCalls = 0;
   const h = api({
     rows: [row],
     settings: { billing_mode: 'prepaid' },
     provider: {
       request: async (_config, operation, body) => {
-        assert.equal(operation, 'create');
-        providerBody = structuredClone(body);
-        return {
-          status: 200, ok: true,
-          data: { data: { tracking_number: 'TH1234567890', charge: '28.0000', wallet_balance: '100.0000' } },
-          requestId: 'request-created', code: '200', message: 'success',
-        };
+        providerCalls += 1;
+        throw new Error(`unexpected ${operation}: ${JSON.stringify(body)}`);
       },
     },
   });
 
   const result = await h.call('submit', { id: id(1), version: 7 });
-  assert.equal(result.status, 200);
-  assert.equal(result.body.shipment.tracking_number, 'TH1234567890');
-  assert.equal(providerBody.origin.telephone1, '021838489');
-  assert.equal(providerBody.destination.telephone1, '66814420000');
-  assert.equal(result.body.shipment.draft.origin.telephone1, '02-183 8489');
-  assert.equal(result.body.shipment.draft.destination.telephone1, '+66 81-442-0000');
-  assert.equal(h.tables.shipping_attempts[0].outcome, 'success');
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, 'shipment_incomplete');
+  assert.equal(providerCalls, 0);
+  assert.equal(h.tables.shipping_attempts.length, 0);
 });
 
 test('print accepts the provider array PDF for the requested tracking number', async () => {

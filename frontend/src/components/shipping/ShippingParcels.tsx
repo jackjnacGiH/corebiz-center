@@ -44,17 +44,22 @@ export default function ShippingParcels({ draft, onChange }: {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {(["box_width", "box_height", "box_length", "box_weight"] as const).map((key) => {
                 const overLimit = key !== "box_weight" && parcel[key] > SHIPPING_BOX_DIMENSION_MAX_CM;
+                const invalidNumber = !Number.isFinite(parcel[key]) || parcel[key] <= 0;
+                const invalid = overLimit || invalidNumber;
                 const errorId = `shipping-box-${index}-${key}-error`;
                 return <label key={key} className="space-y-1 text-sm">
                   {c[key]}
-                  <Input aria-label={`${c[key]} ${c.box} ${index + 1}`} type="number" min="0"
+                  <Input aria-label={`${c[key]} ${c.box} ${index + 1}`} type="number"
+                    min={key === "box_weight" ? "1" : "0.01"}
                     max={key === "box_weight" ? 1000000 : SHIPPING_BOX_DIMENSION_MAX_CM}
                     step={key === "box_weight" ? 1 : "any"} value={parcel[key]}
-                    aria-invalid={overLimit || undefined}
-                    aria-describedby={overLimit ? errorId : undefined}
+                    aria-invalid={invalid || undefined}
+                    aria-describedby={invalid ? errorId : undefined}
                     onChange={(e) => onChange(parcels.map((p, i) => i === index ? { ...p, [key]: Number(e.target.value) } : p))} />
-                  {overLimit && <span id={errorId} role="alert" className="block text-xs text-destructive">
-                    {c.boxDimensionLimit}
+                  {invalid && <span id={errorId} role="alert" className="block text-xs text-destructive">
+                    {key === "box_weight"
+                      ? c.boxWeightInvalid
+                      : (c.quoteIssues as Record<string, string> | undefined)?.[key] ?? c.boxDimensionLimit}
                   </span>}
                 </label>;
               })}

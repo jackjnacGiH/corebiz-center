@@ -101,16 +101,17 @@ export function normalizeShippingContact(address: ShippingAddress): ShippingAddr
   return { ...address, company, fullname };
 }
 
-// PromptSpeed accepts phone numbers as digits. Keep the staff-entered format in
-// the draft, then remove the optional international prefix marker, spaces and
-// hyphens only when building the provider request.
+// PromptSpeed accepts phone numbers as digits. Readiness requires that exact
+// format; normalization remains as a final safeguard for older saved drafts.
 export function normalizeProviderPhone(value: string): string {
   return value.replace(/[\s-]/gu, "").replace(/^\+/, "");
 }
 
-function validProviderPhone(value: string): boolean {
-  return /^\+?[0-9\s-]+$/u.test(value) &&
-    /^[0-9]{9,20}$/.test(normalizeProviderPhone(value));
+export function validProviderPhone(value: string): boolean {
+  // PromptSpeed rejects punctuation inconsistently between carriers. Require
+  // the exact provider-safe representation in new/edited drafts so staff see
+  // the problem before a chargeable create request is sent.
+  return /^[0-9]{9,20}$/.test(value);
 }
 
 export function recipientAddress(
@@ -366,7 +367,10 @@ export function readyIssues(d: ShippingDraft): string[] {
     ))
   )
     issues.push("parcel_required");
-  if (d.products.some((i) => !i.name || i.qty < 1 || i.weight <= 0))
+  // PromptSpeed rates and shipment readiness use the packed parcel weight.
+  // Keep each product's weight in the draft/provider payload for backwards
+  // compatibility, but do not require staff to enter it separately.
+  if (d.products.some((i) => !i.name || i.qty < 1))
     issues.push("items_incomplete");
   if (moneyMinor(d.cod_amount) > 0 && !d.cod_account_id)
     issues.push("cod_account_required");

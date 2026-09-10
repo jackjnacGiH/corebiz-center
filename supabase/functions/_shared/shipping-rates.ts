@@ -1,5 +1,10 @@
 import { quoteIssues, quotePayload, shippingParcels, type ShippingDraft, type ShippingParcel } from "./shipping-domain.ts";
-import { providerRows, requestProvider, type ProviderConfig } from "./promptspeed.ts";
+import {
+  ProviderRejectedError,
+  providerRows,
+  requestProvider,
+  type ProviderConfig,
+} from "./promptspeed.ts";
 
 export interface ShippingCarrier {
   code: string;
@@ -91,7 +96,7 @@ export async function compareShippingRates(
   };
   const carrierResponse = await read("carriers", undefined, { limit: "100" });
   if (!carrierResponse.ok || !Array.isArray(carrierResponse.data.data))
-    throw new Error("provider_rejected");
+    throw new ProviderRejectedError(carrierResponse);
   const carrierRows = providerRows(carrierResponse);
   const carriers = carrierRows.map(record).map((row) => ({
     code: text(row.code), name: text(row.description) || text(row.name) || text(row.code),
@@ -120,11 +125,12 @@ export async function compareShippingRates(
       const group = queue[next++];
       const response = await read("quote", quotePayload(draft, codes, group.parcel));
       if (!response.ok || !Array.isArray(response.data.data))
-        throw new Error("provider_rejected");
+        throw new ProviderRejectedError(response);
       const rows = providerRows(response);
       for (const index of group.indexes) responses[index] = rows;
     }
   }));
-  if (results.some((result) => result.status === "rejected")) throw new Error("provider_rejected");
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (rejected) throw rejected.reason;
   return { rates: aggregateShippingRates(uniqueCarriers, responses), parcel_count: parcels.length, quoted_at: new Date().toISOString() };
 }

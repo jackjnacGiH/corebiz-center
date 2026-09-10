@@ -81,6 +81,7 @@ export default function Shipping() {
   const [params, setParams] = useSearchParams();
   const [bootstrap, setBootstrap] = useState<ShippingBootstrap | null>(null),
     [error, setError] = useState(""),
+    [errorDetail, setErrorDetail] = useState(""),
     [notice, setNotice] = useState("");
   const [rows, setRows] = useState<Shipment[]>([]),
     [count, setCount] = useState(0),
@@ -140,6 +141,11 @@ export default function Shipping() {
   const dirty = view === "editor" && serializedDraft !== baseline;
   const reportError = useCallback((e: unknown) => {
     setError(e instanceof Error ? e.message : "shipping_error");
+    setErrorDetail(
+      e && typeof e === "object" && typeof (e as { detail?: unknown }).detail === "string"
+        ? (e as { detail: string }).detail
+        : "",
+    );
     setNotice("");
   }, []);
   const reload = useCallback(async () => {
@@ -363,6 +369,7 @@ export default function Shipping() {
   async function run(task: () => Promise<void>) {
     setBusy(true);
     setError("");
+    setErrorDetail("");
     setNotice("");
     try {
       await task();
@@ -416,6 +423,7 @@ export default function Shipping() {
     if (dirty && !window.confirm(c.discard)) return;
     setView(next);
     setError("");
+    setErrorDetail("");
     setNotice("");
     setParams({});
   }
@@ -435,6 +443,7 @@ export default function Shipping() {
     resetProductLookup();
     setNotice("");
     setError("");
+    setErrorDetail("");
     draftId.current = crypto.randomUUID();
     setView("editor");
   }
@@ -505,12 +514,19 @@ export default function Shipping() {
         return [];
       }
     })();
+    const rawReadyIssues = (() => {
+      try {
+        return readyIssues(draft);
+      } catch {
+        return [];
+      }
+    })();
     try {
       const parsed = parseDraft(draft);
       return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), invalidDraft: false };
     } catch {
       return {
-        issues: ["invalid_payload"],
+        issues: rawReadyIssues.length ? rawReadyIssues : ["invalid_payload"],
         rateIssues: rawRateIssues,
         invalidDraft: true,
       };
@@ -521,6 +537,15 @@ export default function Shipping() {
     : invalidDraft
       ? [c.quoteInvalid]
       : [];
+  const submissionIssueCodes = [...new Set([...issues, ...rateIssues])];
+  const submissionIssueMessages = [
+    ...submissionIssueCodes.map((issue) =>
+      (c.submissionIssues as Record<string, string>)[issue] ??
+      (c.quoteIssues as Record<string, string>)[issue] ??
+      c.submissionInvalid
+    ),
+    ...(bootstrap && !bootstrap.sendReady ? [c.submissionConnectionNotReady] : []),
+  ];
   const locked = !!shipment && shipment.status !== "draft";
   const trackingUrl =
     shipment?.tracking_number && shipment.draft.carrier_code
@@ -529,28 +554,37 @@ export default function Shipping() {
           shipment.tracking_number,
         )
       : null;
-  const errorMessage =
-    error === "carrier_unavailable"
-      ? c.carrierUnavailable
-      : error === "provider_rejected"
-        ? c.providerRejected
-    : error === "forbidden"
-      ? c.noPermission
-      : error === "shipping_not_installed"
-        ? c.notInstalled
-        : error === "conflict" || error === "client_outdated"
-          ? c.conflict
-          : error === "provider_not_ready"
-            ? c.prepareOnly
-            : error === "account_changed"
-              ? c.accountChanged
-              : error === "outcome_unknown"
-                ? c.unknown
-                : error === "quote_incomplete"
-                  ? c.quoteMissing
-                  : error.startsWith("invalid_") || error === "shipment_incomplete"
-                    ? c.missing
-                    : c.genericError;
+  const providerIssueMessage = errorDetail
+    ? (c.providerIssues as Record<string, string>)[errorDetail]
+    : "";
+  const knownErrorMessages: Record<string, string> = {
+    carrier_unavailable: c.carrierUnavailable,
+    forbidden: c.noPermission,
+    shipping_not_installed: c.notInstalled,
+    conflict: c.conflict,
+    client_outdated: c.conflict,
+    provider_not_ready: c.prepareOnly,
+    account_changed: c.accountChanged,
+    outcome_unknown: c.unknown,
+    quote_incomplete: c.quoteMissing,
+    shipment_incomplete: c.submissionInvalid,
+    provider_timeout: c.providerTimeout,
+    provider_unreachable: c.providerUnreachable,
+    provider_response_invalid: c.providerResponseInvalid,
+    invalid_money: c.invalidMoney,
+    invalid_quantity: c.invalidQuantity,
+    invalid_items: c.invalidItems,
+    invalid_parcels: c.invalidParcels,
+    invalid_cod_account: c.invalidCodAccount,
+    invalid_order: c.invalidOrder,
+    carrier_required: c.carrierRequired,
+    tracking_required: c.trackingRequired,
+    invalid_tracking: c.invalidTracking,
+  };
+  const errorMessage = error === "provider_rejected"
+    ? providerIssueMessage || c.providerRejected
+    : knownErrorMessages[error] ??
+      (error.startsWith("invalid_") ? c.submissionInvalid : c.genericError);
   async function save() {
     const d = parseDraft(draft);
     const r = shipment
@@ -979,7 +1013,7 @@ export default function Shipping() {
                     {draft.products.map((item, index) => (
                       <div
                         key={index}
-                        className="grid grid-cols-2 items-end gap-2 border-b pb-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)_100px_150px_auto]"
+                        className="grid grid-cols-2 items-end gap-2 border-b pb-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)_100px_auto]"
                       >
                         <label
                           data-shipping-product={index}
@@ -1067,31 +1101,26 @@ export default function Shipping() {
                             }
                           />
                         </label>
-                        {(["qty", "weight"] as const).map((key) => (
-                          <label key={key} className="space-y-1 text-sm">
-                            <span>{c[key]}</span>
-                            <Input
-                              aria-label={`${c[key]} ${index + 1}`}
-                              value={item[key]}
-                              type="number"
-                              min="0"
-                              step="1"
-                              onChange={(event) =>
-                                change(
-                                  "products",
-                                  draft.products.map((value, itemIndex) =>
-                                    itemIndex === index
-                                      ? {
-                                          ...value,
-                                          [key]: Number(event.target.value),
-                                        }
-                                      : value,
-                                  ),
-                                )
-                              }
-                            />
-                          </label>
-                        ))}
+                        <label className="space-y-1 text-sm">
+                          <span>{c.qty}</span>
+                          <Input
+                            aria-label={`${c.qty} ${index + 1}`}
+                            value={item.qty}
+                            type="number"
+                            min="0"
+                            step="1"
+                            onChange={(event) =>
+                              change(
+                                "products",
+                                draft.products.map((value, itemIndex) =>
+                                  itemIndex === index
+                                    ? { ...value, qty: Number(event.target.value) }
+                                    : value,
+                                ),
+                              )
+                            }
+                          />
+                        </label>
                         <Button
                           type="button"
                           variant="outline"
@@ -1168,8 +1197,19 @@ export default function Shipping() {
                 </fieldset>
               </form>
               {dirty && <p className="text-sm text-amber-800">{c.dirty}</p>}
-              {issues.length > 0 && !locked && (
-                <p className="text-sm text-muted-foreground">{c.missing}</p>
+              {submissionIssueMessages.length > 0 && !locked && (
+                <div
+                  role="alert"
+                  data-testid="shipping-validation-summary"
+                  className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
+                >
+                  <strong>{c.submissionBlocked}</strong>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                    {submissionIssueMessages.map((message) => (
+                      <li key={message}>{message}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {shipment && !locked && <p className="text-sm text-muted-foreground">{c.draftTrackingNote}</p>}
               {shipment && (
@@ -1197,15 +1237,11 @@ export default function Shipping() {
                           issues.length > 0 ||
                           !bootstrap.sendReady
                         }
-                        onClick={() => {
-                          if (window.confirm(c.confirmSubmit))
-                            void run(async () =>
-                              editResult(
-                                (await shippingApi.action("submit", shipment))
-                                  .shipment,
-                              ),
-                            );
-                        }}
+                        onClick={() => void run(async () =>
+                          editResult(
+                            (await shippingApi.action("submit", shipment)).shipment,
+                          ),
+                        )}
                       >
                         {c.submit}
                       </Button>

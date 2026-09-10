@@ -1,5 +1,9 @@
 import { supabase } from "./supabase";
 import type { ShippingRate } from "../../../supabase/functions/_shared/shipping-rates";
+import {
+  isShippingProviderIssue,
+  type ShippingProviderIssue,
+} from "../../../supabase/functions/_shared/shipping-errors";
 import type {
   Shipment,
   ShippingDraft,
@@ -77,10 +81,16 @@ export interface ShippingProductOption {
 }
 export class ShippingApiError extends Error {
   shipment: Shipment | null;
-  constructor(code: string, shipment: Shipment | null = null) {
+  detail: ShippingProviderIssue | null;
+  constructor(
+    code: string,
+    shipment: Shipment | null = null,
+    detail: ShippingProviderIssue | null = null,
+  ) {
     super(code);
     this.name = "ShippingApiError";
     this.shipment = shipment;
+    this.detail = detail;
   }
 }
 const shipmentFromError = (value: unknown): Shipment | null => {
@@ -94,6 +104,11 @@ const shipmentFromError = (value: unknown): Shipment | null => {
     !(shipment as Shipment).draft || typeof (shipment as Shipment).draft !== "object"
   ) return null;
   return shipment as Shipment;
+};
+const detailFromError = (value: unknown): ShippingProviderIssue | null => {
+  if (!value || typeof value !== "object") return null;
+  const detail = (value as { detail?: unknown }).detail;
+  return isShippingProviderIssue(detail) ? detail : null;
 };
 async function invoke<T>(
   action: string,
@@ -112,10 +127,18 @@ async function invoke<T>(
     } catch {
       /* Generic error only. */
     }
-    throw new ShippingApiError(code, shipmentFromError(responseBody));
+    throw new ShippingApiError(
+      code,
+      shipmentFromError(responseBody),
+      detailFromError(responseBody),
+    );
   }
   if (data?.error)
-    throw new ShippingApiError(String(data.error), shipmentFromError(data));
+    throw new ShippingApiError(
+      String(data.error),
+      shipmentFromError(data),
+      detailFromError(data),
+    );
   return data as T;
 }
 export const shippingApi = {

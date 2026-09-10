@@ -21,7 +21,7 @@ const submittableShipment = id => {
   return shipment(id, { draft: {
     ...domain.emptyDraft(), carrier_code: 'EMS_SPEED', origin: address('origin'), destination: address('destination'),
     box_width: 10, box_height: 10, box_length: 10, box_weight: 100,
-    products: [{ name: 'Test item', code: 'SKU-1', qty: 1, price: '0.00', weight: 100 }],
+    products: [{ name: 'Test item', code: 'SKU-1', qty: 1, price: '0.00', weight: 0 }],
   } });
 };
 
@@ -61,7 +61,12 @@ function mount(query = '') {
     },
   };
   const words = new Proxy({}, { get: (_target, key) => key });
-  const shippingWords = new Proxy({ statuses: words, quoteIssues: words }, {
+  const shippingWords = new Proxy({
+    statuses: words,
+    quoteIssues: words,
+    submissionIssues: words,
+    providerIssues: words,
+  }, {
     get: (target, key) => key in target ? target[key] : key,
   });
   const api = new Proxy({}, { get: (_target, action) => (...args) => new Promise((resolve, reject) => requests.push({ action, args, resolve, reject })) });
@@ -250,7 +255,9 @@ test('definite submit rejection syncs the restored draft version before another 
   h.requests.at(-1).resolve({ shipment: row, events: [] });
   await settle(); h.render();
 
+  assert.equal(h.find(node => node.type === 'Input' && node.props['aria-label'] === 'weight 1'), undefined);
   h.button('submit').props.onClick();
+  assert.equal(h.confirmations.length, 0, 'Submit starts directly without a browser confirmation');
   const submit = h.requests.at(-1);
   assert.equal(submit.action, 'action');
   assert.equal(submit.args[0], 'submit');
@@ -264,6 +271,26 @@ test('definite submit rejection syncs the restored draft version before another 
   const nextAction = h.requests.at(-1);
   assert.equal(nextAction.args[0], 'archive');
   assert.equal(nextAction.args[1].version, 5, 'the page must use the restored server version');
+  h.unmount();
+});
+
+test('a safe provider rejection detail replaces the generic error with an actionable reason', async () => {
+  const row = submittableShipment('phone-rejected');
+  const h = mount(); h.runTimers();
+  h.requests[0].resolve({ ...bootstrap(), sendReady: true });
+  h.listRequests()[0].resolve({ shipments: [row], count: 1 });
+  await settle(); h.render();
+  h.card(row.id).props.onOpen();
+  h.requests.at(-1).resolve({ shipment: row, events: [] });
+  await settle(); h.render();
+
+  h.button('submit').props.onClick();
+  h.requests.at(-1).reject(Object.assign(new Error('provider_rejected'), {
+    shipment: { ...row, version: 5 }, detail: 'invalid_phone',
+  }));
+  await settle(); h.render();
+
+  assert.equal(h.find(node => node.props.role === 'alert').props.children, 'invalid_phone');
   h.unmount();
 });
 

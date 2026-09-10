@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { useLanguage } from "@/i18n";
 import { lookupZipcode, type ThaiAddressEntry } from "@/lib/thaiAddress";
 import type { ShippingAddress } from "@/lib/shipping-api";
+import { validProviderPhone } from "../../../../supabase/functions/_shared/shipping-domain";
 
 export default function AddressFields({
   title,
@@ -24,7 +25,9 @@ export default function AddressFields({
   const [zipOptions, setZipOptions] = useState<ThaiAddressEntry[]>([]);
   const [zipSearching, setZipSearching] = useState(false);
   const [zipNotFound, setZipNotFound] = useState(false);
+  const [zipLookupFailed, setZipLookupFailed] = useState(false);
   const latestValue = useRef(value);
+  const phoneInvalid = !!value.telephone1 && !validProviderPhone(value.telephone1);
   useEffect(() => {
     latestValue.current = value;
   }, [value]);
@@ -34,10 +37,12 @@ export default function AddressFields({
     if (!/^\d{5}$/.test(clean)) {
       setZipOptions([]);
       setZipNotFound(false);
+      setZipLookupFailed(false);
       return;
     }
     setZipSearching(true);
     setZipNotFound(false);
+    setZipLookupFailed(false);
     try {
       const matches = await lookupZipcode(clean);
       if (!matches.length) {
@@ -54,6 +59,9 @@ export default function AddressFields({
         state: first.province,
       });
       setZipOptions(matches.length > 1 ? matches : []);
+    } catch {
+      setZipOptions([]);
+      setZipLookupFailed(true);
     } finally {
       setZipSearching(false);
     }
@@ -75,9 +83,17 @@ export default function AddressFields({
         autoComplete="off"
         type={key === "email" ? "email" : "text"}
         placeholder={key === "fullname" ? c.contactNameHint : undefined}
-        inputMode={key === "telephone1" ? "tel" : undefined}
+        inputMode={key === "telephone1" ? "numeric" : undefined}
+        pattern={key === "telephone1" ? "[0-9]*" : undefined}
+        aria-invalid={key === "telephone1" && phoneInvalid || undefined}
+        aria-describedby={key === "telephone1" && phoneInvalid ? `${prefix}-telephone1-error` : undefined}
         onChange={(e) => onChange({ ...value, [key]: e.target.value })}
       />
+      {key === "telephone1" && phoneInvalid && (
+        <span id={`${prefix}-telephone1-error`} role="alert" className="block text-xs text-destructive">
+          {c.phoneDigitsOnly}
+        </span>
+      )}
     </label>
   );
 
@@ -107,6 +123,7 @@ export default function AddressFields({
                 const postcode = e.target.value.replace(/\D/g, "").slice(0, 5);
                 onChange({ ...value, postcode });
                 setZipNotFound(false);
+                setZipLookupFailed(false);
                 if (postcode.length === 5) void runZipLookup(postcode);
               }}
               onBlur={() => void runZipLookup(value.postcode)}
@@ -134,6 +151,11 @@ export default function AddressFields({
           {zipNotFound && (
             <span className="block text-xs text-amber-700">
               {c.zipNotFound}
+            </span>
+          )}
+          {zipLookupFailed && (
+            <span role="alert" className="block text-xs text-destructive">
+              {c.zipLookupFailed}
             </span>
           )}
         </label>
