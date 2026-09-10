@@ -169,6 +169,7 @@ async function readyList(rows = [shipment('draft-1')], count = rows.length) {
 test('list actions copy tracking, open a carrier label, and refresh a row without opening the editor', async () => {
   const row = shipment('tracked-list', {
     status: 'waiting', tracking_number: 'TRACK-1', version: 3,
+    recipient_company: 'List-only recipient company',
     draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
   });
   const h = await readyList([row]);
@@ -195,9 +196,15 @@ test('list actions copy tracking, open a carrier label, and refresh a row withou
   assert.equal(refresh.action, 'action');
   assert.equal(refresh.args[0], 'refresh_status');
   assert.equal(refresh.args[1].version, 3);
-  refresh.resolve({ shipment: { ...row, version: 4 } });
+  const { recipient_company: _listOnlyCompany, ...detailShipment } = row;
+  refresh.resolve({ shipment: { ...detailShipment, version: 4 } });
   await settle(); h.render();
   assert.equal(h.card(row.id).props.shipment.version, 4, 'The refreshed row is replaced in place');
+  assert.equal(
+    h.card(row.id).props.shipment.recipient_company,
+    'List-only recipient company',
+    'Status refresh must preserve list-only recipient details',
+  );
   assert.equal(h.find(node => node.props.role === 'status').props.children, 'statusChecked: waiting');
   assert.equal(h.requests.filter(request => request.action === 'get').length, 0);
   h.unmount();

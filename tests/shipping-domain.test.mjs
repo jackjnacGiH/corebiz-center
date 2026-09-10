@@ -148,7 +148,13 @@ test("blank emails are optional while malformed emails still block submission", 
   const parsed = parseDraft(d);
   assert.deepEqual(readyIssues(parsed), []);
   assert.equal(validProviderEmail(""), true);
-  assert.equal(validProviderEmail("not-an-email"), false);
+  for (const email of [
+    "not-an-email",
+    "abc@example..com",
+    ".abc@example.com",
+    "abc@-example.com",
+    "abc@example-.com",
+  ]) assert.equal(validProviderEmail(email), false, email);
   const payload = providerPayload(
     { draft: parsed, id: "test", reference_no: "SHP-TEST" },
     null,

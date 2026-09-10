@@ -225,7 +225,25 @@ export function validProviderPhone(value: string): boolean {
 
 export function validProviderEmail(value: string): boolean {
   const email = value.trim();
-  return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if (!email) return true;
+  if (email.length > 254) return false;
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at !== email.indexOf("@")) return false;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (
+    local.length > 64 ||
+    local.startsWith(".") ||
+    local.endsWith(".") ||
+    local.includes("..") ||
+    !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(local)
+  ) return false;
+  const labels = domain.split(".");
+  return labels.length >= 2 && labels.every((label) =>
+    label.length >= 1 &&
+    label.length <= 63 &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+  );
 }
 
 export function recipientAddress(

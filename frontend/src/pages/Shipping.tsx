@@ -843,7 +843,14 @@ export default function Shipping() {
                         void runListAction(s, "refresh_status", async () => {
                           const result = await shippingApi.action("refresh_status", s);
                           setRows((current) => current.map((row) =>
-                            row.id === s.id ? result.shipment : row
+                            row.id === s.id
+                              ? {
+                                  ...row,
+                                  ...result.shipment,
+                                  recipient_company:
+                                    result.shipment.recipient_company ?? row.recipient_company,
+                                }
+                              : row
                           ));
                           setNotice(`${c.statusChecked}: ${c.statuses[result.shipment.status]}`);
                         })
