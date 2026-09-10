@@ -1,12 +1,14 @@
 /**
- * rag-chat v51 — family and product-type locked alternatives
+ * rag-chat v52 — clarify catalog variants before staff handoff
  *
  * v50: product suggestions are filtered before reaching the LLM. A recognised
  * product family must match exactly; unknown families need a normalized-name
  * score of at least 70%. This prevents cross-type substitutions such as a
  * sanding belt being offered as a mounted flap wheel. v51 additionally locks
  * the meaningful product-type phrase (for example จานทราย vs ล้อทราย) before
- * evaluating the existing 70% fallback score.
+ * evaluating the existing 70% fallback score. v52 recognises exact catalog
+ * model codes (including spaced forms such as FA 331) and asks only for the
+ * size, grit, hole pattern or backing that is still missing before escalating.
  *
  * v35 — forced retrieval for payment/bank-account queries
  *
@@ -32,6 +34,13 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  buildProductSelection,
+  hasExactModelCodeMatch,
+  matchesExplicitProductVariant,
+  normalizeProductSearchQuery,
+  productIdentitySearchText,
+} from "../_shared/product-selection.mjs";
 
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -233,12 +242,12 @@ function shouldSkipRAG(query: string): boolean {
 const TOOL_DEFINITIONS = [
   {
     functionDeclarations: [
-      { name: "find_products", description: "Search products. Multi-word AND on (sku, name_th, name_en, brand). Stop-words are stripped server-side. Each result includes min_order_qty. Query is auto-rewritten using keyword_synonyms before search (alias to canonical). If result contains clarification_candidates the customer used an unrecognised name — ask which product they mean.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+      { name: "find_products", description: "Search products. Multi-word AND on (sku, name_th, name_en, brand). Stop-words are stripped server-side. Each result includes min_order_qty. Query is auto-rewritten using keyword_synonyms before search (alias to canonical). If selection_required=true, ask clarification_question_th/en and wait for the missing variant details; do not call capture_lead. If result contains clarification_candidates the customer used an unrecognised name — ask which product they mean.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
       { name: "get_product_detail", description: "Full product detail by SKU, including min_order_qty.", parameters: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"] } },
       { name: "list_product_groups", description: "All product groups.", parameters: { type: "object", properties: {} } },
       { name: "get_group_members", description: "SKUs in a product group.", parameters: { type: "object", properties: { group_name: { type: "string" } }, required: ["group_name"] } },
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
-      { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer shows buying intent, asks to be contacted, OR asks anything the bot cannot answer/verify itself (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
+      { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer asks to be contacted, OR asks anything the bot cannot answer/verify itself after using the relevant tools (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. Do NOT call while find_products reports selection_required; ask the customer for those missing variant details first. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
       { name: "link_quote_customer", description: "Link the current chat to CRM before creating a quotation. Call only when a quotation is pending and the customer supplies billing details in text or a clearly readable company document/image. Extract exactly what is visible; NEVER guess. Tax ID must contain exactly 13 digits and is the ONLY customer matching key. Require company_name and billing_address too. If any required field is missing or unclear, ask the customer instead of calling.", parameters: { type: "object", properties: { tax_id: { type: "string", description: "exact 13-digit Thai tax ID" }, company_name: { type: "string", description: "legal customer/company name" }, billing_address: { type: "string", description: "complete billing address as one string" }, branch: { type: "string", description: "head office or branch label/code if visible" }, phone: { type: "string", description: "phone if supplied" } }, required: ["tax_id", "company_name", "billing_address"] } },
       { name: "request_quote", description: "Create one REAL draft quotation for a DIRECT customer request with exact items and quantities. The chat MUST already be linked to a CRM customer with a valid 13-digit tax ID; otherwise the tool asks for company name, billing address, tax ID and branch. Pass EXACT SKUs from find_products/get_product_detail results. NEVER call for a thank-you or question about how to order. An image may lead to a quote only when it is the requested billing document and link_quote_customer succeeded in the same flow. The system reuses an existing draft with identical items in the same chat; only tell the customer a quote_code when quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
     ],
@@ -246,6 +255,10 @@ const TOOL_DEFINITIONS = [
 ];
 
 const PRODUCT_COLUMNS_CUSTOMER = "sku, name_th, name_en, brand, price, discount_value, discount_type, unit, status, weight_kg, feature_tags, tags, barcode, images, min_order_qty";
+const PRODUCT_MATCH_COLUMNS = "sku, name_th, name_en, brand, status, feature_tags, tags, barcode, group:product_groups(name)";
+const MAX_PRODUCT_MATCH_SCAN = 1_000;
+const MAX_PRODUCTS_IN_TOOL_RESULT = 25;
+const MAX_PRODUCTS_DURING_SELECTION = 12;
 
 function computeEffectivePrice(p: { price: unknown; discount_value: unknown; discount_type: unknown }) {
   const base = Number(p.price ?? 0);
@@ -454,11 +467,20 @@ type SafeProductMatch = {
   requestedProductType: string | null;
   candidateProductType: string | null;
   nameScore: number;
-  basis: "exact_sku" | "same_family" | "same_product_type" | "name_score" | "rejected";
+  basis: "exact_sku" | "exact_model" | "same_family" | "same_product_type" | "name_score" | "rejected";
 };
 
 function evaluateProductMatch(query: string, product: Record<string, unknown>): SafeProductMatch {
-  const candidateText = [product.name_th, product.name_en, (product.group as { name?: string } | null)?.name]
+  const candidateText = [
+    product.sku,
+    product.name_th,
+    product.name_en,
+    product.brand,
+    product.barcode,
+    ...(Array.isArray(product.tags) ? product.tags : []),
+    ...(Array.isArray(product.feature_tags) ? product.feature_tags : []),
+    (product.group as { name?: string } | null)?.name,
+  ]
     .filter(Boolean).join(" ");
   const requestedFamily = productFamilyFor(query);
   const candidateFamily = productFamilyFor(candidateText);
@@ -494,6 +516,10 @@ function evaluateProductMatch(query: string, product: Record<string, unknown>): 
     }
     return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
   }
+  if (hasExactModelCodeMatch(query, candidateText)) return {
+    safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+    nameScore: 1, basis: "exact_model",
+  };
   return nameScore >= 0.7
     ? { safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "name_score" }
     : { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
@@ -515,28 +541,48 @@ async function findProducts(admin: SupabaseClient, query: string) {
   if (!original) return { products: [], note: "empty query" };
 
   const { rewritten, applied } = await rewriteWithKeywords(admin, original);
-  const q = rewritten;
+  const q = normalizeProductSearchQuery(rewritten);
   const requestedFamily = productFamilyFor(q);
   const requestedProductType = productFamilyLabel(requestedFamily) ?? productTypeLabel(productTypeFor(q));
 
-  const rawTokens = q.split(/\s+/).filter(Boolean).slice(0, 12);
+  const identityQuery = productIdentitySearchText(q);
+  const rawTokens = identityQuery.split(/\s+/).filter(Boolean).slice(0, 12);
   if (rawTokens.length === 0) return { products: [], note: "empty query" };
   const tokens = stripStopWords(rawTokens).slice(0, 8);
 
-  let qb = admin.from("products").select(`${PRODUCT_COLUMNS_CUSTOMER}, category:categories(name_th, name_en), group:product_groups(name), inventory(quantity, reorder_level)`).eq("status", "active");
+  // Scan lightweight product identity fields before fetching customer-facing
+  // details. Variant clarification must consider the complete matching family,
+  // not an arbitrary first 25 rows, otherwise a size or grit can disappear.
+  let qb = admin.from("products")
+    .select(PRODUCT_MATCH_COLUMNS, { count: "exact" })
+    .eq("status", "active");
   for (const tok of tokens) {
     const pat = `%${escapeLike(tok)}%`;
     qb = qb.or(`sku.ilike.${pat},name_th.ilike.${pat},name_en.ilike.${pat},brand.ilike.${pat}`);
   }
-  qb = qb.limit(25);
-  const { data, error } = await qb;
+  qb = qb.order("name_th", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
+  const { data, error, count: rawMatchCount } = await qb;
   if (error) return { error: error.message };
 
   const directMatches = ((data ?? []) as Record<string, unknown>[])
     .map((p) => ({ p, match: evaluateProductMatch(q, p) }))
-    .filter(({ match }) => match.safe);
+    .filter(({ p, match }) => match.safe && matchesExplicitProductVariant(q, p));
 
   if (directMatches.length > 0) {
+    const selection = buildProductSelection(q, directMatches.map(({ p }) => p));
+    const selectedMatches = directMatches.slice(
+      0,
+      selection ? MAX_PRODUCTS_DURING_SELECTION : MAX_PRODUCTS_IN_TOOL_RESULT,
+    );
+    const selectedSkus = selectedMatches.map(({ p }) => String(p.sku ?? "")).filter(Boolean);
+    const { data: detailedRows, error: detailsError } = await admin.from("products")
+      .select(`${PRODUCT_COLUMNS_CUSTOMER}, category:categories(name_th, name_en), group:product_groups(name), inventory(quantity, reorder_level)`)
+      .eq("status", "active")
+      .in("sku", selectedSkus);
+    if (detailsError) return { error: detailsError.message };
+    const detailsBySku = new Map(
+      ((detailedRows ?? []) as Record<string, unknown>[]).map((product) => [String(product.sku ?? ""), product]),
+    );
     return {
       query: q, original_query: original !== q ? original : undefined,
       synonym_rewrites: applied.length > 0 ? applied : undefined,
@@ -545,7 +591,11 @@ async function findProducts(admin: SupabaseClient, query: string) {
       requested_product_family: requestedFamily,
       requested_product_type: requestedProductType,
       count: directMatches.length,
-      products: directMatches.map(({ p, match }) => formatSafeProductForLLM(p, match)),
+      match_scan_complete: (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN,
+      ...(selection ?? {}),
+      products: selectedMatches.map(({ p, match }) =>
+        formatSafeProductForLLM(detailsBySku.get(String(p.sku ?? "")) ?? p, match)
+      ),
     };
   }
 
@@ -555,7 +605,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
     }) as { data: Array<{ product_id: string; sku: string; name_th: string; name_en: string; sim: number }> | null };
     const safeFuzzy = (fuzzy ?? [])
       .map((p) => ({ p: p as unknown as Record<string, unknown>, match: evaluateProductMatch(q, p as unknown as Record<string, unknown>) }))
-      .filter(({ match }) => match.safe);
+      .filter(({ p, match }) => match.safe && matchesExplicitProductVariant(q, p));
     if (safeFuzzy.length > 0) {
       return {
         query: q, original_query: original !== q ? original : undefined,
@@ -1081,6 +1131,7 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
 3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ
 4. ห้ามเปิดเผยข้อมูลลับขององค์กร
 5. ห้ามตอบว่า ไม่สามารถ / ทำไม่ได้ / ตรวจสอบให้ไม่ได้ / ไม่ทราบ / ไม่มีข้อมูล เด็ดขาด — คำถามใดที่เอยตอบเองไม่ได้หรือเช็คจากระบบไม่ได้ (เช่น สถานะใบเสนอราคา สถานะการจัดส่ง เรื่องที่ทีมงานต้องยืนยัน) ให้รับเรื่องไว้เสมอ: ตอบประมาณว่า "เดี๋ยวเอยขอตรวจสอบ/ขอเช็คข้อมูลให้ก่อนนะคะ แล้วจะรีบแจ้งกลับโดยเร็วค่ะ 😊" แล้วเรียก capture_lead (ใส่คำถามของลูกค้าใน note) เพื่อให้ทีมงานติดตามแจ้งลูกค้าจริง — ห้ามผลักให้ลูกค้าไปติดต่อใครเองโดยไม่รับเรื่อง
+   ⚠️ การที่สินค้ามีหลายขนาด/หลายเบอร์/หลายแบบ ไม่ใช่เหตุให้ส่งต่อพนักงาน: ถ้า find_products ส่ง selection_required=true ให้ถามลูกค้าเฉพาะข้อมูลใน missing_fields ก่อน และห้ามเรียก capture_lead ในขั้นนี้
    ⚠️ เลขที่ขึ้นต้น QT- / SO- / DN- คือเลขที่เอกสาร (ใบเสนอราคา/ใบสั่งขาย/ใบส่งของ) ไม่ใช่รหัสสินค้า — ห้ามเอาไปค้น find_products ให้ทำตามข้อ 5 นี้ทันที (รับเรื่อง + capture_lead โดยใส่เลขเอกสารใน note)
    ⚠️ พูดรับเรื่องสั้นๆ เพียงครั้งเดียว — เรียก capture_lead ก่อนแล้วค่อยตอบลูกค้าหลังได้ผล tool ห้ามพูดประโยคเดิม/ความหมายเดิมซ้ำสองรอบในคำตอบเดียว
    💡 ถ้าเป็นเรื่องสถานะใบเสนอราคา/คำสั่งซื้อ ให้แนะนำเพิ่มท้ายคำตอบว่า ลูกค้าดูสถานะเองได้ตลอดเวลาที่หน้า "บัญชีของฉัน" https://www.jnac.online/account (เข้าสู่ระบบด้วยอีเมลที่ใช้ติดต่อ)
@@ -1094,6 +1145,7 @@ const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 3. Language: reply in same language as customer (Thai-Thai, English-English).
 4. Never disclose confidential org info.
 5. NEVER say "I can't / unable to / cannot check / I don't know". For anything you cannot answer or verify yourself (e.g. quote status, delivery status, matters staff must confirm), ALWAYS take ownership: reply like "Let me check on that and get back to you shortly 😊", then call capture_lead (put the customer's question in the note) so the team actually follows up — never just redirect the customer to contact someone themselves.
+   ⚠️ Multiple sizes, grits, or variants are not a reason to escalate. When find_products returns selection_required=true, ask only for missing_fields and do not call capture_lead yet.
    ⚠️ Numbers starting QT- / SO- / DN- are DOCUMENT numbers (quote / sales order / delivery note), NOT product SKUs — never search find_products for them; apply this rule immediately (own it + capture_lead with the doc number in the note).
    ⚠️ Acknowledge ONCE only — call capture_lead first, then reply after the tool result; never repeat the same sentence/meaning twice in one answer.
    💡 For quote/order status questions, also mention the customer can self-check anytime at "บัญชีของฉัน" https://www.jnac.online/account (log in with the e-mail they use with us).
@@ -1105,9 +1157,11 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 2. คำถามกว้างๆ → เรียก list_product_groups หรือ list_categories ก่อน
 3. ถ้าพูดว่า เดี๋ยวเช็คให้ → ต้อง CALL TOOL จริงใน reply เดียวกัน
 
+⚠️ ถ้า find_products ส่ง selection_required=true: ให้ถาม clarification_question_th เพียงคำถามเดียว รอคำตอบ แล้วค้นใหม่โดยรวมชื่อ/รุ่นเดิมกับข้อมูลที่ลูกค้าเพิ่งตอบ ห้ามเสนอราคา ห้ามเดา SKU และห้ามเรียก capture_lead จนกว่าจะถามข้อมูลที่ขาดและค้นซ้ำแล้วไม่พบสินค้าจริง
+
 🚫 ห้ามเสนอสินค้าเพียงเพราะขนาด เบอร์ หรือการใช้งานใกล้เคียงกัน หากเป็นคนละชนิดสินค้า. เมื่อไม่มีตัวเลือกที่ผ่านเงื่อนไข ให้บอกว่าจะตรวจสอบจัดหา/สั่งผลิตกับคุณเชอร์รี่ แทนการเดาสินค้าทดแทน
 
-4. Tool คืน 0 ผล + ไม่มี clarification_candidates → ห้ามบอกว่า ไม่มี/ไม่พบ ให้บอกว่าขอให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิต/จัดหาได้ไหม แล้วแจ้งกลับ
+4. Tool คืน 0 ผล + ไม่มี clarification_candidates และไม่มี selection_required หลังจากถามข้อมูลที่ขาดแล้ว → ห้ามบอกว่า ไม่มี/ไม่พบ ให้บอกว่าขอให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิต/จัดหาได้ไหม แล้วแจ้งกลับ
 5. ⚠️ ทุกครั้งที่เสนอตัวเลือกสินค้า, สินค้าทดแทน, สินค้าใกล้เคียง หรือรายการเบอร์/ขนาด/สเป็กสินค้าใดๆ ให้ลูกค้าเลือก (รวมถึงกรณีเสนอนำเสนอตัวเลือกเพื่อสั่งผลิต/สั่งซื้อ): ต้องจัดรูปแบบเป็นรายการลำดับตัวเลข "1.", "2.", "3." เสมอ (ห้ามใช้สัญลักษณ์หรืออีโมจิอื่นๆ เช่น ✨ หรือ • นำหน้าชื่อตัวเลือกเด็ดขาด) เพื่อให้หมายเลขตรงกับปุ่มกด Quick Reply
 6. เจอสินค้าแต่ in_stock=false → เสนอสั่งผลิตเสมอ ไม่ใช่ตอบแค่ หมด
 7. query: ใส่เฉพาะตัวระบุสินค้า (ชื่อ/SKU/ขนาด)
@@ -1130,12 +1184,12 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 🖼️ รูปสินค้า: ใช้ image_thumb เป็น ![ชื่อ SKU](url)
 
 🤝 เก็บ LEAD / ใบเสนอราคา (สำคัญมาก — โอกาสปิดการขาย)
-• ลูกค้าสนใจซื้อจริง / ถามซื้อจำนวนมาก / ฝากเบอร์ / ขอให้ติดต่อกลับ / ถามสิ่งที่เอยตอบไม่ได้ → เรียก capture_lead ทันที
+• เรียก capture_lead เมื่อ: ลูกค้าขอให้พนักงานติดต่อกลับโดยตรง, ฝากเบอร์เพื่อให้ติดต่อ, สั่งซื้อจำนวนมากพร้อมระบุจำนวน, หรือเป็นเรื่องที่ใช้ tool แล้วยังตอบ/ยืนยันไม่ได้เท่านั้น การบอกว่าสนใจสินค้า การถามราคา สต็อก รูป หรือรายละเอียดทั่วไปไม่ใช่เหตุให้เรียก capture_lead
 • ก่อนออกใบเสนอราคา ต้องมีลูกค้า CRM ที่ผูกด้วยเลขผู้เสียภาษี 13 หลักเสมอ ถ้า request_quote แจ้ง customer_details_required ให้ถามชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) แล้วรอข้อมูล ห้ามบอกว่าสร้างใบเสนอราคาแล้ว
 • เมื่อลูกค้าส่งข้อมูลออกบิลเป็นข้อความหรือรูปเอกสารที่อ่านชัด ให้เรียก link_quote_customer โดยคัดลอกข้อมูลตามจริง ห้ามเดาหรือเติมข้อมูลเอง เลขผู้เสียภาษีเป็นกุญแจเดียวที่ใช้ผูกลูกค้า
 • ถ้ารูปเป็นหนังสือรับรอง/ภ.พ.20/นามบัตรที่ส่งมาเพื่อตอบคำถามข้อมูลออกบิล ไม่ถือเป็น PO และสามารถเรียก link_quote_customer ได้ เมื่อข้อมูลบังคับครบและอ่านชัด
 • เรียก request_quote ได้เฉพาะเมื่อลูกค้าขอ "ออกใบเสนอราคา" โดยตรง และยืนยันสินค้า+จำนวนชัดเจนเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)\n• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน\n• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
-• ถ้าลูกค้าไม่ระบุสินค้าแน่ชัด/หา SKU ไม่ได้ → ใช้ capture_lead แทน อย่าเดา SKU
+• ถ้าลูกค้ายังไม่ระบุขนาด/เบอร์/รุ่นย่อย → ถามข้อมูลที่ขาดและค้นซ้ำก่อน; ใช้ capture_lead เฉพาะเมื่อค้นซ้ำแล้วยังหา SKU ที่ตรงไม่ได้ อย่าเดา SKU
 • tool เหล่านี้ ไม่ได้ ส่งข้อความหาลูกค้า แค่บันทึกในระบบ+แจ้งทีมขาย JNAC ภายใน
 • เรียก capture_lead แค่ครั้งเดียวต่อบทสนทนา
 • ห้ามสัญญาราคาพิเศษ/ส่วนลดเองถ้าไม่มีข้อมูลจริง`;
@@ -1144,8 +1198,9 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 1. Specific product → call find_products FIRST. Never say not available before calling. (Exception: QT-/SO-/DN- numbers are document numbers — use SAFETY rule 5.)
 2. Broad question → call list_product_groups / list_categories first.
 3. If you say let me check → you MUST call a tool in the SAME reply.
+⚠️ When find_products returns selection_required=true: ask clarification_question_en only, wait for the answer, then search again using the original product/model plus the new details. Do not quote a price, guess a SKU, or call capture_lead until the missing details have been asked and the refined search truly has no match.
 🚫 NEVER offer a product merely because its size, grit, or use is similar when it is a different product type. If no safe option exists, escalate for sourcing/made-to-order instead of guessing a substitute.
-4. 0 results + no candidates → offer made-to-order via Khun Cherry.
+4. 0 results + no candidates and no selection_required after clarification → offer made-to-order via Khun Cherry.
 5. ⚠️ Whenever offering product options, alternatives, similar items, or lists of sizes/grits/specs for the customer to choose from (including made-to-order variant choices): You MUST present them as a numbered list starting with "1.", "2.", "3." (do NOT use emojis like ✨ or bullet points like • for these lists under any circumstances) so that the numbers align exactly with the Quick Reply buttons.
 6. in_stock=false → offer made-to-order, never just out of stock.
 7. query: pass ONLY product identifier.
@@ -1164,12 +1219,12 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 📦 Fields: stock (0=oos), in_stock, min_order_qty (always use), unit.
 
 🤝 CAPTURE LEADS / QUOTES (sales opportunity)
-• Buying intent / bulk / leaves a phone / asks to be contacted / asks anything you cannot answer → call capture_lead.
+• Call capture_lead only when the customer explicitly requests human contact, leaves a phone number for contact, places a bulk request with quantity, or asks something the relevant tools still cannot verify. Mere product interest or a price, stock, image, or detail question is not a reason to call capture_lead.
 • A quotation requires a CRM customer linked by an exact 13-digit tax ID. If request_quote returns customer_details_required, ask for legal company name, billing address, 13-digit tax ID, and branch (if any). Do not claim a quote exists yet.
 • When the customer supplies readable billing details in text or a document image, call link_quote_customer with exact visible values. Never infer missing data. Tax ID is the only matching key.
 • A certificate/VAT registration/business card sent specifically to answer the billing-data request is not a PO and may be processed with link_quote_customer when all required fields are legible.
 • Call request_quote only for a DIRECT request to issue a quote with confirmed specific items+quantities. Never call it for a thank-you, an ordering-process question, or an image/document alone.\n• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
-• Items unclear / SKU unresolved → capture_lead instead; never guess SKUs.
+• If a size/grit/variant is still unclear, ask for it and search again first. Use capture_lead only after the refined search still cannot resolve a SKU; never guess SKUs.
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
 • Call capture_lead only ONCE per conversation. Never promise special prices yourself.`;
 

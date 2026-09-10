@@ -14,7 +14,14 @@ for (const test of cases) {
   const res = await fetch(`${url}/functions/v1/rag-chat`, {
     method: 'POST',
     headers: { apikey: anon, Authorization: `Bearer ${anon}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, stream: false, channel: 'default', match_count: 5, match_threshold: 0.3 }),
+    body: JSON.stringify({
+      query,
+      history: Array.isArray(test.history) ? test.history : [],
+      stream: false,
+      channel: 'default',
+      match_count: 5,
+      match_threshold: 0.3,
+    }),
   });
   let body = {};
   try { body = await res.json(); } catch { /* assertion below reports it */ }
