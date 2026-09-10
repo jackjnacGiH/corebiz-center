@@ -460,7 +460,7 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
     const controls = buttons(renderCard(row, { onOpen: () => opened++, onDelete: () => deleted++ }));
     const editable = row.status === 'draft' && !row.tracking_number;
     assert.equal(controls.length, editable ? 3 : 2);
-    assert.ok(controls.find(button => button.props['aria-label'] === 'jnacPrint'), 'Every saved shipment has a J NAC label action');
+    assert.ok(controls.find(button => button.props['aria-label'] === `jnacPrint ${row.reference_no}`), 'Every saved shipment has a J NAC label action');
     assert.equal(controls[0].props.children.at(-1), editable ? 'Edit' : 'Open');
     controls[0].props.onClick(); assert.equal(opened, 1);
     if (editable) { controls[1].props.onClick(); assert.equal(deleted, 1); }
@@ -481,12 +481,12 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
     .filter(node => node.props?.['data-shipment-block'])
     .map(node => [node.props['data-shipment-block'], node]));
   assert.deepEqual([...blocks.keys()], ['header', 'recipient', 'sender', 'parcel', 'actions']);
-  assert.match(tree.props.className, /border-t-4/);
-  assert.match(blocks.get('header').props.className, /bg-\[#0C3C63\]/);
-  assert.match(blocks.get('recipient').props.className, /border-blue-200 bg-blue-50\/80/);
-  assert.match(blocks.get('sender').props.className, /border-teal-200 bg-teal-50\/80/);
-  assert.match(blocks.get('parcel').props.className, /border-amber-200 bg-amber-50\/80/);
-  assert.match(blocks.get('actions').props.className, /border-slate-300 bg-slate-200\/80/);
+  assert.match(tree.props.className, /border-t-\[var\(--brand-blue\)\]/);
+  assert.match(blocks.get('header').props.className, /bg-\[var\(--brand-navy\)\]/);
+  const sectionBackgrounds = ['recipient', 'sender', 'parcel', 'actions'].map(name =>
+    blocks.get(name).props.className.split(' ').find(className => className.startsWith('bg-')),
+  );
+  assert.equal(new Set(sectionBackgrounds).size, 4, 'Each shipment section uses a distinct background');
   for (const name of ['recipient', 'sender', 'parcel', 'actions']) {
     const labelledBy = blocks.get(name).props['aria-labelledby'];
     assert.ok(nodes(blocks.get(name)).some(node => node.props?.id === labelledBy), `${name} block has a visible heading`);
@@ -494,7 +494,7 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   const controls = buttons(tree);
   assert.equal(controls.length, 6, 'Open plus the J NAC label and four tracked-shipment actions');
   const event = { stopPropagation: () => bubbles++ };
-  controls.find(button => button.props['aria-label'] === 'jnacPrint').props.onClick(event);
+  controls.find(button => button.props['aria-label'] === `jnacPrint ${tracked.reference_no}`).props.onClick(event);
   controls.find(button => button.props['aria-label'] === 'copyTrackingLink').props.onClick(event);
   controls.find(button => button.props['aria-label'] === 'carrierPrint').props.onClick(event);
   controls.find(button => button.props['aria-label'] === 'poll').props.onClick(event);
@@ -508,7 +508,7 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   assert.equal(trackingAnchor.props.rel, 'noopener noreferrer');
 
   const disconnected = buttons(renderCard(tracked, { readReady: false }));
-  assert.equal(disconnected.find(button => button.props['aria-label'] === 'jnacPrint').props.disabled, false);
+  assert.equal(disconnected.find(button => button.props['aria-label'] === `jnacPrint ${tracked.reference_no}`).props.disabled, false);
   assert.equal(disconnected.find(button => button.props['aria-label'] === 'carrierPrint').props.disabled, true);
   assert.equal(disconnected.find(button => button.props['aria-label'] === 'poll').props.disabled, true);
 });

@@ -65,8 +65,8 @@ export default function ShipmentListCard({
   const providerActionsReady = readReady && !!s.draft.carrier_code;
   const idPrefix = `shipment-${s.id}`;
   const stopPropagation = (event: SyntheticEvent) => event.stopPropagation();
-  return <article className="overflow-hidden rounded-xl border border-t-4 border-slate-300 border-t-[#1696F4] bg-slate-100/70 shadow-sm shadow-slate-200/70" aria-labelledby={`${idPrefix}-reference`}>
-    <header data-shipment-block="header" className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-900 bg-[#0C3C63] px-4 py-3 text-white">
+  return <article className="overflow-hidden rounded-xl border border-t-4 border-slate-300 border-t-[var(--brand-blue)] bg-slate-100/70 shadow-sm shadow-slate-200/70" aria-labelledby={`${idPrefix}-reference`}>
+    <header data-shipment-block="header" className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-900 bg-[var(--brand-navy)] px-4 py-3 text-white">
       <div className="min-w-0">
         <h2 id={`${idPrefix}-reference`} className="break-all text-sm font-semibold">{s.reference_no}</h2>
         <p className="mt-1 text-xs text-sky-100">{s.order_code || c.manual} · {new Date(s.created_at).toLocaleString(language === "th" ? "th-TH" : "en-GB")}</p>
@@ -111,8 +111,9 @@ export default function ShipmentListCard({
             type="button"
             size="sm"
             variant="outline"
+            className="border-blue-300 bg-blue-50 text-blue-950 hover:bg-blue-100 hover:text-blue-950"
             disabled={busy}
-            aria-label={c.jnacPrint}
+            aria-label={`${c.jnacPrint} ${s.reference_no}`}
             onClick={(event) => {
               stopPropagation(event);
               onJnacLabel();

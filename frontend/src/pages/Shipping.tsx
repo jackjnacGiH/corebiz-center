@@ -1521,7 +1521,10 @@ export default function Shipping() {
                 size="icon"
                 variant="outline"
                 aria-label={c.close}
-                onClick={() => setLabelOpen(false)}
+                onClick={() => {
+                  setLabelOpen(false);
+                  setLabelShipment(null);
+                }}
               >
                 <X size={16} />
               </Button>
