@@ -41,7 +41,9 @@ import AddressFields from "@/components/shipping/AddressFields";
 import ShippingSettings from "@/components/shipping/ShippingSettings";
 import ShippingParcels from "@/components/shipping/ShippingParcels";
 import ShippingRateComparison from "@/components/shipping/ShippingRateComparison";
-import ShipmentListCard from "@/components/shipping/ShipmentListCard";
+import ShipmentListCard, {
+  type ShipmentListAction,
+} from "@/components/shipping/ShipmentListCard";
 import {
   shippingTrackingUrl,
 } from "@/lib/shipping-carriers";
@@ -119,12 +121,18 @@ export default function Shipping() {
   const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [listRevision, setListRevision] = useState(0);
+  const [listAction, setListAction] = useState<{
+    shipmentId: string;
+    action: ShipmentListAction;
+  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ shipment: Shipment; unsaved: boolean } | null>(null);
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
   const productRequest = useRef(0);
   const deletingDraft = useRef(false);
+  const listActionInFlight = useRef(false);
+  const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
   const revokeProviderLabel = useCallback(() => {
     if (providerLabelObjectUrl.current) {
@@ -208,7 +216,11 @@ export default function Shipping() {
     }).catch(() => { /* Preview can retry an interrupted background download. */ });
     return () => { active = false; };
   }, [view, labelModule]);
-  useEffect(() => () => revokeProviderLabel(), [revokeProviderLabel]);
+  useEffect(() => () => {
+    revokeProviderLabel();
+    for (const url of listProviderLabelObjectUrls.current) URL.revokeObjectURL(url);
+    listProviderLabelObjectUrls.current.clear();
+  }, [revokeProviderLabel]);
   useEffect(() => {
     const query = recipientSearch.trim();
     if (view !== "editor" || query.length < 3) {
@@ -388,6 +400,52 @@ export default function Shipping() {
     } finally {
       setBusy(false);
     }
+  }
+  async function runListAction(
+    target: Shipment,
+    action: ShipmentListAction,
+    task: () => Promise<void>,
+  ) {
+    if (busy || listActionInFlight.current) return;
+    listActionInFlight.current = true;
+    setListAction({ shipmentId: target.id, action });
+    try {
+      await run(task);
+    } finally {
+      listActionInFlight.current = false;
+      setListAction(null);
+    }
+  }
+  function openListCarrierLabel(target: Shipment) {
+    if (busy || listActionInFlight.current) return;
+    // Reserve the tab during the user's click so popup blockers do not reject
+    // the provider label after the API request finishes.
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      reportError(new Error("popup_blocked"));
+      return;
+    }
+    popup.opener = null;
+    void runListAction(target, "carrier_label", async () => {
+      try {
+        const result = await shippingApi.print(target);
+        const resource = providerLabelResource(result.link);
+        if (resource.kind === "external") {
+          popup.location.replace(resource.href);
+          return;
+        }
+        const url = URL.createObjectURL(resource.blob);
+        listProviderLabelObjectUrls.current.add(url);
+        popup.location.replace(url);
+        window.setTimeout(() => {
+          URL.revokeObjectURL(url);
+          listProviderLabelObjectUrls.current.delete(url);
+        }, 60_000);
+      } catch (reason) {
+        popup.close();
+        throw reason;
+      }
+    });
   }
   function deleteDraft(target: Shipment) {
     if (busy || deletingDraft.current || target.status !== "draft" || target.tracking_number) return;
@@ -580,6 +638,7 @@ export default function Shipping() {
     carrier_required: c.carrierRequired,
     tracking_required: c.trackingRequired,
     invalid_tracking: c.invalidTracking,
+    popup_blocked: c.popupBlocked,
   };
   const errorMessage = error === "provider_rejected"
     ? providerIssueMessage || c.providerRejected
@@ -732,14 +791,38 @@ export default function Shipping() {
               ) : (
                 <div className="grid gap-3">
                   {rows.map((s) => (
-                    <ShipmentListCard key={s.id} shipment={s} busy={busy} onOpen={() =>
-                      void run(async () => {
-                        const r = await shippingApi.get(s.id);
-                        editResult(r.shipment);
-                        setEvents(r.events);
-                        setView("editor");
-                      })
-                    } onDelete={() => void deleteDraft(s)} />
+                    <ShipmentListCard
+                      key={s.id}
+                      shipment={s}
+                      busy={busy}
+                      readReady={bootstrap.readReady}
+                      activeAction={listAction?.shipmentId === s.id ? listAction.action : null}
+                      onOpen={() =>
+                        void run(async () => {
+                          const r = await shippingApi.get(s.id);
+                          editResult(r.shipment);
+                          setEvents(r.events);
+                          setView("editor");
+                        })
+                      }
+                      onDelete={() => void deleteDraft(s)}
+                      onCopyTracking={(url) =>
+                        void runListAction(s, "copy_tracking", async () => {
+                          await copyText(url);
+                          setNotice(c.trackingCopied);
+                        })
+                      }
+                      onCarrierLabel={() => openListCarrierLabel(s)}
+                      onRefreshStatus={() =>
+                        void runListAction(s, "refresh_status", async () => {
+                          const result = await shippingApi.action("refresh_status", s);
+                          setRows((current) => current.map((row) =>
+                            row.id === s.id ? result.shipment : row
+                          ));
+                          setNotice(`${c.statusChecked}: ${c.statuses[result.shipment.status]}`);
+                        })
+                      }
+                    />
                   ))}
                 </div>
               )}
