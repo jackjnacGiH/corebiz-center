@@ -1,4 +1,5 @@
 // PromptSpeed Open API V3 provider transport. No credentials or provider response bodies are logged.
+import type { ShippingProviderIssue } from "./shipping-errors.ts";
 export interface ProviderConfig {
   environment: "uat" | "production";
   appId: string;
@@ -15,6 +16,35 @@ export interface ProviderResponse {
   requestId: string | null;
   code: string | null;
   message: string | null;
+}
+
+// Convert provider wording into a small public enum before returning anything
+// to the browser. The raw body/message can contain implementation details and
+// must remain inside the Edge Function.
+export function providerRejectionIssue(response: ProviderResponse): ShippingProviderIssue {
+  const value = `${response.code ?? ""} ${response.message ?? ""}`.toLowerCase();
+  if (/telephone|phone|mobile|เบอร์/.test(value)) return "invalid_phone";
+  if (/box.{0,30}(?:length|width|height)|(?:length|width|height).{0,30}(?:box|cm)|dimension/.test(value))
+    return "box_dimension_exceeded";
+  if (/box.{0,20}weight|weight.{0,20}(?:box|gram|kg)/.test(value)) return "invalid_box_weight";
+  if (/post\s?code|postal|zip/.test(value)) return "invalid_postcode";
+  if (/address|county|district|province|subdistrict/.test(value)) return "invalid_address";
+  if (/wallet|balance|credit|insufficient fund/.test(value)) return "wallet_insufficient";
+  if (/\bauth\b|error_auth|unauthori[sz]ed|authentication|credential|signature|forbidden|api.?key/.test(value))
+    return "provider_authentication_failed";
+  if (response.status === 429 || /rate.?limit|too many requests/.test(value)) return "provider_rate_limited";
+  if (/carrier|service|route|rate version|not support|unavailable/.test(value))
+    return "carrier_service_unavailable";
+  return "provider_validation_failed";
+}
+
+export class ProviderRejectedError extends Error {
+  readonly detail: ShippingProviderIssue;
+  constructor(response: ProviderResponse) {
+    super("provider_rejected");
+    this.name = "ProviderRejectedError";
+    this.detail = providerRejectionIssue(response);
+  }
 }
 
 export interface ProviderArea {

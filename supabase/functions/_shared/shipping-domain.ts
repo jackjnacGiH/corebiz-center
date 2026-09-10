@@ -108,9 +108,11 @@ export function normalizeProviderPhone(value: string): string {
   return value.replace(/[\s-]/gu, "").replace(/^\+/, "");
 }
 
-function validProviderPhone(value: string): boolean {
-  return /^\+?[0-9\s-]+$/u.test(value) &&
-    /^[0-9]{9,20}$/.test(normalizeProviderPhone(value));
+export function validProviderPhone(value: string): boolean {
+  // PromptSpeed rejects punctuation inconsistently between carriers. Require
+  // the exact provider-safe representation in new/edited drafts so staff see
+  // the problem before a chargeable create request is sent.
+  return /^[0-9]{9,20}$/.test(value);
 }
 
 export function recipientAddress(

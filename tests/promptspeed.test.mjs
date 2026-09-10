@@ -7,6 +7,7 @@ import {
   providerCreateResult,
   providerDefinitiveRejection,
   providerPrintLink,
+  providerRejectionIssue,
   providerRows,
   reconcileCreatedShipment,
   requestProvider,
@@ -120,6 +121,34 @@ test("validation envelopes, invalid successful bodies and unsafe print URLs fail
     data: [{ tracking_number: "TH1234567890", link: `data:application/pdf;base64,JVBERi0${"A".repeat(1_900_001)}` }],
   }), "TH1234567890"), null);
   assert.equal(providerCancelAccepted(parseProviderResponse(204, "")), false);
+});
+
+test("provider rejection details are reduced to safe user-facing issue codes", () => {
+  const cases = [
+    [400, "Invalid telephone format.", "invalid_phone"],
+    [400, "The box length must be between 0 - 180 cm", "box_dimension_exceeded"],
+    [400, "Wallet balance is insufficient", "wallet_insufficient"],
+    [400, "Postcode does not match address", "invalid_postcode"],
+    [401, "Unauthorized signature", "provider_authentication_failed"],
+    [429, "Too many requests", "provider_rate_limited"],
+    [400, "Rate version not support in range", "carrier_service_unavailable"],
+    [400, "Unknown validation rule", "provider_validation_failed"],
+  ];
+  for (const [status, message, expected] of cases) {
+    const response = parseProviderResponse(status, JSON.stringify({
+      code: "ERROR_VALIDATION",
+      message,
+      request_id: "safe-request-id",
+    }));
+    assert.equal(providerRejectionIssue(response), expected, message);
+  }
+  const secret = "NEVER-RETURN-THIS-SECRET";
+  const response = parseProviderResponse(400, JSON.stringify({
+    code: "ERROR_AUTH",
+    message: `bad secret=${secret}`,
+  }), [secret]);
+  assert.equal(providerRejectionIssue(response), "provider_authentication_failed");
+  assert.ok(!JSON.stringify(providerRejectionIssue(response)).includes(secret));
 });
 
 test("only a definite non-transient 4xx provider envelope is safe to retry", () => {
