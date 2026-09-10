@@ -5,6 +5,9 @@ import {
   emptyDraft,
   SHIPPING_BOX_DIMENSION_MAX_CM,
   parseDraft,
+  draftFormatIssues,
+  isShippingDraftFieldIssue,
+  ShippingDraftFieldError,
   parseDraftUpdate,
   normalizeShippingContact,
   recipientAddress,
@@ -20,6 +23,7 @@ import {
   canUseShipping,
   acceptStatus,
   providerPayload,
+  validProviderEmail,
 } from "../supabase/functions/_shared/shipping-domain.ts";
 import {
   signQuery,
@@ -72,6 +76,39 @@ test("draft normalization strips caller-controlled privileged properties", () =>
   assert.equal(d.handling_note, "กรุณาอย่าโยน • ระวังของแตก");
   assert.equal(d.parcel_total, 1);
 });
+test("draft format errors identify exact fields, product rows and parcel numbers without values", () => {
+  const d = ready();
+  d.purpose = "x".repeat(301);
+  d.handling_note = `ระวัง${String.fromCharCode(1)}แตก`;
+  d.origin.address = 123;
+  d.cod_amount = "350,00";
+  d.parcel_total = 2;
+  d.parcels = [
+    { box_width: 20, box_height: 10, box_length: 30, box_weight: 1200 },
+    { box_width: 20, box_height: 10, box_length: 181, box_weight: 1200.5 },
+  ];
+  d.products.push({ ...d.products[0], name: 42, qty: 1.5 });
+
+  const issues = draftFormatIssues(d);
+  assert.ok(issues.every(isShippingDraftFieldIssue));
+  assert.deepEqual(issues, [
+    { field: "purpose", reason: "text_too_long", limit: 300 },
+    { field: "handling_note", reason: "unsupported_text_character" },
+    { field: "origin.address", reason: "invalid_text_type" },
+    { field: "parcels.box_length", reason: "number_above_max", index: 1, limit: 180 },
+    { field: "parcels.box_weight", reason: "whole_number_required", index: 1 },
+    { field: "cod_amount", reason: "invalid_money_format" },
+    { field: "products.name", reason: "invalid_text_type", index: 1 },
+    { field: "products.qty", reason: "whole_number_required", index: 1 },
+  ]);
+  assert.throws(() => parseDraft(d), error => {
+    assert.ok(error instanceof ShippingDraftFieldError);
+    assert.equal(error.message, "invalid_text"); // legacy callers remain compatible
+    assert.deepEqual(error.issue, issues[0]);
+    assert.equal(JSON.stringify(error.issue).includes("350,00"), false);
+    return true;
+  });
+});
 test("draft can be incomplete but cannot submit", () => {
   assert.ok(readyIssues(parseDraft(emptyDraft())).length);
   assert.deepEqual(readyIssues(parseDraft(ready())), []);
@@ -87,7 +124,7 @@ test("packed weight is authoritative and item weight is optional for shipment re
   assert.deepEqual(quoteIssues(parsed), []);
   assert.equal(readyIssues(parsed).includes("items_incomplete"), false);
   assert.ok(readyIssues(parsed).includes("cod_account_required"));
-  assert.ok(readyIssues(parsed).includes("destination_email"));
+  assert.equal(readyIssues(parsed).includes("destination_email"), false);
   assert.throws(() => providerPayload({ draft: parsed }, null), /shipment_incomplete/);
   assert.equal(quotePayload(parsed).box_weight, 1200);
 });
@@ -103,6 +140,41 @@ test("provider payload keeps an optional zero item weight for API compatibility"
   );
   assert.equal(payload.box_weight, 1200);
   assert.equal(payload.products[0].weight, 0);
+});
+test("blank emails are optional while malformed emails still block submission", () => {
+  const d = ready();
+  d.origin.email = "";
+  d.destination.email = "   ";
+  const parsed = parseDraft(d);
+  assert.deepEqual(readyIssues(parsed), []);
+  assert.equal(validProviderEmail(""), true);
+  for (const email of [
+    "not-an-email",
+    "abc@example..com",
+    ".abc@example.com",
+    "abc@-example.com",
+    "abc@example-.com",
+  ]) assert.equal(validProviderEmail(email), false, email);
+  const payload = providerPayload(
+    { draft: parsed, id: "test", reference_no: "SHP-TEST" },
+    null,
+  );
+  // PromptSpeed documents email as an address key, so keep the key without
+  // inventing a customer email. The API receives the user's intentional blank.
+  assert.equal(payload.origin.email, "");
+  assert.equal(payload.destination.email, "");
+
+  d.destination.email = "not-an-email";
+  assert.ok(readyIssues(parseDraft(d)).includes("destination_email"));
+});
+test("missing optional email keys are normalized to blank strings", () => {
+  const d = ready();
+  delete d.origin.email;
+  delete d.destination.email;
+  const parsed = parseDraft(d);
+  assert.equal(parsed.origin.email, "");
+  assert.equal(parsed.destination.email, "");
+  assert.deepEqual(readyIssues(parsed), []);
 });
 test("rate comparison requires delivery areas and packed parcels before selecting a carrier", () => {
   for (const side of ["origin", "destination"])

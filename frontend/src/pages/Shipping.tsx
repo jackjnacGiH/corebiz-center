@@ -26,9 +26,12 @@ import {
   emptyDraft,
   emptyAddress,
   parseDraft,
+  draftFormatIssues,
+  isShippingDraftFieldIssue,
   readyIssues,
   quoteIssues,
   type ShippingParcel,
+  type ShippingDraftFieldIssue,
   summarizeShippingItems,
   shippingQuoteKey,
 } from "../../../supabase/functions/_shared/shipping-domain";
@@ -41,12 +44,15 @@ import AddressFields from "@/components/shipping/AddressFields";
 import ShippingSettings from "@/components/shipping/ShippingSettings";
 import ShippingParcels from "@/components/shipping/ShippingParcels";
 import ShippingRateComparison from "@/components/shipping/ShippingRateComparison";
-import ShipmentListCard from "@/components/shipping/ShipmentListCard";
+import ShipmentListCard, {
+  type ShipmentListAction,
+} from "@/components/shipping/ShipmentListCard";
 import {
   shippingTrackingUrl,
 } from "@/lib/shipping-carriers";
 import { printElement } from "@/lib/print";
 import { providerLabelResource } from "@/lib/provider-label";
+import { shippingDraftFieldIssueMessage } from "@/lib/shipping-validation";
 
 type ShippingLabelModule = typeof import("@/components/shipping/ShippingLabel");
 let labelModulePromise: Promise<ShippingLabelModule> | undefined;
@@ -82,6 +88,7 @@ export default function Shipping() {
   const [bootstrap, setBootstrap] = useState<ShippingBootstrap | null>(null),
     [error, setError] = useState(""),
     [errorDetail, setErrorDetail] = useState(""),
+    [errorFieldIssue, setErrorFieldIssue] = useState<ShippingDraftFieldIssue | null>(null),
     [notice, setNotice] = useState("");
   const [rows, setRows] = useState<Shipment[]>([]),
     [count, setCount] = useState(0),
@@ -119,12 +126,18 @@ export default function Shipping() {
   const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [listRevision, setListRevision] = useState(0);
+  const [listAction, setListAction] = useState<{
+    shipmentId: string;
+    action: ShipmentListAction;
+  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ shipment: Shipment; unsaved: boolean } | null>(null);
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
   const productRequest = useRef(0);
   const deletingDraft = useRef(false);
+  const listActionInFlight = useRef(false);
+  const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
   const revokeProviderLabel = useCallback(() => {
     if (providerLabelObjectUrl.current) {
@@ -146,6 +159,11 @@ export default function Shipping() {
         ? (e as { detail: string }).detail
         : "",
     );
+    const fieldIssue = e && typeof e === "object"
+      ? (e as { fieldIssue?: unknown; issue?: unknown }).fieldIssue ??
+        (e as { issue?: unknown }).issue
+      : null;
+    setErrorFieldIssue(isShippingDraftFieldIssue(fieldIssue) ? fieldIssue : null);
     setNotice("");
   }, []);
   const reload = useCallback(async () => {
@@ -208,7 +226,11 @@ export default function Shipping() {
     }).catch(() => { /* Preview can retry an interrupted background download. */ });
     return () => { active = false; };
   }, [view, labelModule]);
-  useEffect(() => () => revokeProviderLabel(), [revokeProviderLabel]);
+  useEffect(() => () => {
+    revokeProviderLabel();
+    for (const url of listProviderLabelObjectUrls.current) URL.revokeObjectURL(url);
+    listProviderLabelObjectUrls.current.clear();
+  }, [revokeProviderLabel]);
   useEffect(() => {
     const query = recipientSearch.trim();
     if (view !== "editor" || query.length < 3) {
@@ -370,6 +392,7 @@ export default function Shipping() {
     setBusy(true);
     setError("");
     setErrorDetail("");
+    setErrorFieldIssue(null);
     setNotice("");
     try {
       await task();
@@ -388,6 +411,52 @@ export default function Shipping() {
     } finally {
       setBusy(false);
     }
+  }
+  async function runListAction(
+    target: Shipment,
+    action: ShipmentListAction,
+    task: () => Promise<void>,
+  ) {
+    if (busy || listActionInFlight.current) return;
+    listActionInFlight.current = true;
+    setListAction({ shipmentId: target.id, action });
+    try {
+      await run(task);
+    } finally {
+      listActionInFlight.current = false;
+      setListAction(null);
+    }
+  }
+  function openListCarrierLabel(target: Shipment) {
+    if (busy || listActionInFlight.current) return;
+    // Reserve the tab during the user's click so popup blockers do not reject
+    // the provider label after the API request finishes.
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      reportError(new Error("popup_blocked"));
+      return;
+    }
+    popup.opener = null;
+    void runListAction(target, "carrier_label", async () => {
+      try {
+        const result = await shippingApi.print(target);
+        const resource = providerLabelResource(result.link);
+        if (resource.kind === "external") {
+          popup.location.replace(resource.href);
+          return;
+        }
+        const url = URL.createObjectURL(resource.blob);
+        listProviderLabelObjectUrls.current.add(url);
+        popup.location.replace(url);
+        window.setTimeout(() => {
+          URL.revokeObjectURL(url);
+          listProviderLabelObjectUrls.current.delete(url);
+        }, 60_000);
+      } catch (reason) {
+        popup.close();
+        throw reason;
+      }
+    });
   }
   function deleteDraft(target: Shipment) {
     if (busy || deletingDraft.current || target.status !== "draft" || target.tracking_number) return;
@@ -424,6 +493,7 @@ export default function Shipping() {
     setView(next);
     setError("");
     setErrorDetail("");
+    setErrorFieldIssue(null);
     setNotice("");
     setParams({});
   }
@@ -444,6 +514,7 @@ export default function Shipping() {
     setNotice("");
     setError("");
     setErrorDetail("");
+    setErrorFieldIssue(null);
     draftId.current = crypto.randomUUID();
     setView("editor");
   }
@@ -506,7 +577,7 @@ export default function Shipping() {
     }));
     resetProductLookup();
   };
-  const { issues, rateIssues, invalidDraft } = useMemo(() => {
+  const { issues, rateIssues, formatIssues } = useMemo(() => {
     const rawRateIssues = (() => {
       try {
         return quoteIssues(draft);
@@ -523,29 +594,40 @@ export default function Shipping() {
     })();
     try {
       const parsed = parseDraft(draft);
-      return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), invalidDraft: false };
-    } catch {
+      return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), formatIssues: [] as ShippingDraftFieldIssue[] };
+    } catch (reason) {
+      const directIssue = reason && typeof reason === "object"
+        ? (reason as { issue?: unknown }).issue
+        : null;
+      const exactIssues = draftFormatIssues(draft);
       return {
-        issues: rawReadyIssues.length ? rawReadyIssues : ["invalid_payload"],
+        issues: rawReadyIssues,
         rateIssues: rawRateIssues,
-        invalidDraft: true,
+        formatIssues: exactIssues.length
+          ? exactIssues
+          : isShippingDraftFieldIssue(directIssue)
+            ? [directIssue]
+            : [{ field: "draft", reason: "missing_object" } satisfies ShippingDraftFieldIssue],
       };
     }
   }, [draft]);
-  const quoteBlockers = rateIssues.length
-    ? rateIssues.map((issue) => c.quoteIssues[issue])
-    : invalidDraft
-      ? [c.quoteInvalid]
-      : [];
+  const formatIssueMessages = formatIssues.map((issue) =>
+    shippingDraftFieldIssueMessage(issue, c)
+  );
+  const quoteBlockers = [...new Set([
+    ...rateIssues.map((issue) => c.quoteIssues[issue]),
+    ...formatIssueMessages,
+  ])];
   const submissionIssueCodes = [...new Set([...issues, ...rateIssues])];
-  const submissionIssueMessages = [
+  const submissionIssueMessages = [...new Set([
+    ...formatIssueMessages,
     ...submissionIssueCodes.map((issue) =>
       (c.submissionIssues as Record<string, string>)[issue] ??
       (c.quoteIssues as Record<string, string>)[issue] ??
       c.submissionInvalid
     ),
     ...(bootstrap && !bootstrap.sendReady ? [c.submissionConnectionNotReady] : []),
-  ];
+  ])];
   const locked = !!shipment && shipment.status !== "draft";
   const trackingUrl =
     shipment?.tracking_number && shipment.draft.carrier_code
@@ -580,11 +662,14 @@ export default function Shipping() {
     carrier_required: c.carrierRequired,
     tracking_required: c.trackingRequired,
     invalid_tracking: c.invalidTracking,
+    popup_blocked: c.popupBlocked,
   };
-  const errorMessage = error === "provider_rejected"
-    ? providerIssueMessage || c.providerRejected
-    : knownErrorMessages[error] ??
-      (error.startsWith("invalid_") ? c.submissionInvalid : c.genericError);
+  const errorMessage = errorFieldIssue
+    ? shippingDraftFieldIssueMessage(errorFieldIssue, c)
+    : error === "provider_rejected"
+      ? providerIssueMessage || c.providerRejected
+      : knownErrorMessages[error] ??
+        (error.startsWith("invalid_") ? c.submissionInvalid : c.genericError);
   async function save() {
     const d = parseDraft(draft);
     const r = shipment
@@ -732,14 +817,45 @@ export default function Shipping() {
               ) : (
                 <div className="grid gap-3">
                   {rows.map((s) => (
-                    <ShipmentListCard key={s.id} shipment={s} busy={busy} onOpen={() =>
-                      void run(async () => {
-                        const r = await shippingApi.get(s.id);
-                        editResult(r.shipment);
-                        setEvents(r.events);
-                        setView("editor");
-                      })
-                    } onDelete={() => void deleteDraft(s)} />
+                    <ShipmentListCard
+                      key={s.id}
+                      shipment={s}
+                      busy={busy}
+                      readReady={bootstrap.readReady}
+                      activeAction={listAction?.shipmentId === s.id ? listAction.action : null}
+                      onOpen={() =>
+                        void run(async () => {
+                          const r = await shippingApi.get(s.id);
+                          editResult(r.shipment);
+                          setEvents(r.events);
+                          setView("editor");
+                        })
+                      }
+                      onDelete={() => void deleteDraft(s)}
+                      onCopyTracking={(url) =>
+                        void runListAction(s, "copy_tracking", async () => {
+                          await copyText(url);
+                          setNotice(c.trackingCopied);
+                        })
+                      }
+                      onCarrierLabel={() => openListCarrierLabel(s)}
+                      onRefreshStatus={() =>
+                        void runListAction(s, "refresh_status", async () => {
+                          const result = await shippingApi.action("refresh_status", s);
+                          setRows((current) => current.map((row) =>
+                            row.id === s.id
+                              ? {
+                                  ...row,
+                                  ...result.shipment,
+                                  recipient_company:
+                                    result.shipment.recipient_company ?? row.recipient_company,
+                                }
+                              : row
+                          ));
+                          setNotice(`${c.statusChecked}: ${c.statuses[result.shipment.status]}`);
+                        })
+                      }
+                    />
                   ))}
                 </div>
               )}

@@ -25,6 +25,115 @@ export interface ShippingParcel {
 }
 export const SHIPPING_BOX_DIMENSION_MAX_CM = 180;
 const BOX_DIMENSION_FIELDS = ["box_width", "box_height", "box_length"] as const;
+
+export const SHIPPING_DRAFT_FIELD_NAMES = [
+  "draft",
+  "purpose",
+  "handling_note",
+  "carrier_code",
+  "origin",
+  "origin.company",
+  "origin.fullname",
+  "origin.address",
+  "origin.county",
+  "origin.city",
+  "origin.state",
+  "origin.postcode",
+  "origin.email",
+  "origin.telephone1",
+  "destination",
+  "destination.company",
+  "destination.fullname",
+  "destination.address",
+  "destination.county",
+  "destination.city",
+  "destination.state",
+  "destination.postcode",
+  "destination.email",
+  "destination.telephone1",
+  "box_width",
+  "box_height",
+  "box_length",
+  "box_weight",
+  "parcel_total",
+  "parcels",
+  "parcels.box_width",
+  "parcels.box_height",
+  "parcels.box_length",
+  "parcels.box_weight",
+  "cod_amount",
+  "cod_account_id",
+  "products",
+  "products.name",
+  "products.code",
+  "products.qty",
+  "products.price",
+  "products.weight",
+] as const;
+export type ShippingDraftFieldName = typeof SHIPPING_DRAFT_FIELD_NAMES[number];
+
+export const SHIPPING_DRAFT_FIELD_REASONS = [
+  "missing_object",
+  "invalid_array",
+  "invalid_count",
+  "count_mismatch",
+  "invalid_text_type",
+  "text_too_long",
+  "unsupported_text_character",
+  "invalid_number_type",
+  "number_below_zero",
+  "number_below_one",
+  "number_above_max",
+  "whole_number_required",
+  "invalid_money_format",
+  "invalid_identifier",
+] as const;
+export type ShippingDraftFieldReason = typeof SHIPPING_DRAFT_FIELD_REASONS[number];
+
+export interface ShippingDraftFieldIssue {
+  field: ShippingDraftFieldName;
+  reason: ShippingDraftFieldReason;
+  index?: number;
+  limit?: number;
+}
+
+const SHIPPING_DRAFT_FIELD_SET = new Set<string>(SHIPPING_DRAFT_FIELD_NAMES);
+const SHIPPING_DRAFT_REASON_SET = new Set<string>(SHIPPING_DRAFT_FIELD_REASONS);
+
+export function isShippingDraftFieldIssue(value: unknown): value is ShippingDraftFieldIssue {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const issue = value as Record<string, unknown>;
+  if (
+    typeof issue.field !== "string" || !SHIPPING_DRAFT_FIELD_SET.has(issue.field) ||
+    typeof issue.reason !== "string" || !SHIPPING_DRAFT_REASON_SET.has(issue.reason)
+  ) return false;
+  if (issue.index !== undefined && (
+    !Number.isInteger(issue.index) || Number(issue.index) < 0 || Number(issue.index) > 99
+  )) return false;
+  if (issue.limit !== undefined && (
+    typeof issue.limit !== "number" || !Number.isFinite(issue.limit) || issue.limit < 0 || issue.limit > 1000000
+  )) return false;
+  return true;
+}
+
+const legacyDraftErrorCode = (issue: ShippingDraftFieldIssue): string => {
+  if (issue.field === "draft") return "invalid_payload";
+  if (issue.field === "products") return "invalid_items";
+  if (issue.field === "parcels") return "invalid_parcels";
+  if (issue.field === "cod_amount" || issue.field === "products.price") return "invalid_money";
+  if (issue.field === "cod_account_id") return "invalid_cod_account";
+  if (issue.reason.includes("text")) return "invalid_text";
+  return "invalid_quantity";
+};
+
+export class ShippingDraftFieldError extends Error {
+  readonly issue: ShippingDraftFieldIssue;
+  constructor(issue: ShippingDraftFieldIssue) {
+    super(legacyDraftErrorCode(issue));
+    this.name = "ShippingDraftFieldError";
+    this.issue = issue;
+  }
+}
 export interface ShippingDraft {
   parcels?: ShippingParcel[];
   purpose: string;
@@ -114,6 +223,29 @@ export function validProviderPhone(value: string): boolean {
   return /^[0-9]{9,20}$/.test(value);
 }
 
+export function validProviderEmail(value: string): boolean {
+  const email = value.trim();
+  if (!email) return true;
+  if (email.length > 254) return false;
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at !== email.indexOf("@")) return false;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (
+    local.length > 64 ||
+    local.startsWith(".") ||
+    local.endsWith(".") ||
+    local.includes("..") ||
+    !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(local)
+  ) return false;
+  const labels = domain.split(".");
+  return labels.length >= 2 && labels.every((label) =>
+    label.length >= 1 &&
+    label.length <= 63 &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+  );
+}
+
 export function recipientAddress(
   value: unknown,
   fallback: Record<string, unknown> = {},
@@ -192,6 +324,160 @@ export function moneyMinor(v: unknown): number {
   const [whole, fraction = ""] = v.split(".");
   return Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
 }
+
+const draftRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+/**
+ * Reports every serialization/format problem with a server-generated field
+ * name. Values are deliberately omitted so API responses cannot echo customer
+ * data or provider credentials back to the browser.
+ */
+export function draftFormatIssues(value: unknown): ShippingDraftFieldIssue[] {
+  const issues: ShippingDraftFieldIssue[] = [];
+  const add = (
+    field: ShippingDraftFieldName,
+    reason: ShippingDraftFieldReason,
+    options: Pick<ShippingDraftFieldIssue, "index" | "limit"> = {},
+  ) => {
+    const issue: ShippingDraftFieldIssue = { field, reason };
+    if (options.index !== undefined) issue.index = options.index;
+    if (options.limit !== undefined) issue.limit = options.limit;
+    issues.push(issue);
+  };
+  const inspectText = (
+    input: unknown,
+    field: ShippingDraftFieldName,
+    max: number,
+    index?: number,
+  ) => {
+    if (typeof input !== "string") {
+      add(field, "invalid_text_type", { index });
+      return;
+    }
+    if (input.length > max) add(field, "text_too_long", { index, limit: max });
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(input))
+      add(field, "unsupported_text_character", { index });
+  };
+  const inspectQuantity = (
+    input: unknown,
+    field: ShippingDraftFieldName,
+    max: number,
+    integer = false,
+    minimum = 0,
+    index?: number,
+  ) => {
+    if (typeof input !== "number" || !Number.isFinite(input)) {
+      add(field, "invalid_number_type", { index });
+      return;
+    }
+    if (input < minimum)
+      add(field, minimum === 1 ? "number_below_one" : "number_below_zero", { index });
+    else if (input > max) add(field, "number_above_max", { index, limit: max });
+    if (integer && !Number.isInteger(input)) add(field, "whole_number_required", { index });
+  };
+  const inspectAddress = (input: unknown, side: "origin" | "destination") => {
+    const address = draftRecord(input);
+    if (!address) {
+      add(side, "missing_object");
+      return;
+    }
+    const fields = [
+      ["company", 150],
+      ["fullname", 150],
+      ["address", 500],
+      ["county", 150],
+      ["city", 150],
+      ["state", 150],
+      ["postcode", 150],
+      ["email", 150],
+      ["telephone1", 150],
+    ] as const;
+    for (const [field, max] of fields)
+      inspectText(
+        field === "company" || field === "email" ? address[field] ?? "" : address[field],
+        `${side}.${field}`,
+        max,
+      );
+  };
+  const inspectParcel = (input: unknown, index: number) => {
+    const parcel = draftRecord(input);
+    if (!parcel) {
+      add("parcels", "missing_object", { index });
+      return;
+    }
+    for (const field of BOX_DIMENSION_FIELDS)
+      inspectQuantity(
+        parcel[field],
+        `parcels.${field}`,
+        SHIPPING_BOX_DIMENSION_MAX_CM,
+        false,
+        0,
+        index,
+      );
+    inspectQuantity(parcel.box_weight, "parcels.box_weight", 1000000, true, 0, index);
+  };
+
+  const draft = draftRecord(value);
+  if (!draft) {
+    add("draft", "missing_object");
+    return issues;
+  }
+
+  inspectText(draft.purpose, "purpose", 300);
+  inspectText(draft.handling_note ?? "", "handling_note", 120);
+  inspectText(draft.carrier_code, "carrier_code", 80);
+  inspectAddress(draft.origin, "origin");
+  inspectAddress(draft.destination, "destination");
+
+  inspectQuantity(draft.parcel_total ?? 1, "parcel_total", 99, true, 1);
+  const parcelTotal = typeof draft.parcel_total === "number" &&
+      Number.isInteger(draft.parcel_total) && draft.parcel_total >= 1 && draft.parcel_total <= 99
+    ? draft.parcel_total
+    : draft.parcel_total === undefined
+      ? 1
+      : null;
+  if (draft.parcels !== undefined) {
+    if (!Array.isArray(draft.parcels)) add("parcels", "invalid_array");
+    else {
+      if (parcelTotal !== null && draft.parcels.length !== parcelTotal)
+        add("parcels", "count_mismatch", { limit: parcelTotal });
+      draft.parcels.slice(0, 100).forEach(inspectParcel);
+    }
+  } else {
+    for (const field of BOX_DIMENSION_FIELDS)
+      inspectQuantity(draft[field], field, SHIPPING_BOX_DIMENSION_MAX_CM);
+    inspectQuantity(draft.box_weight, "box_weight", 1000000, true);
+  }
+
+  if (typeof draft.cod_amount !== "string" || !/^\d{1,9}(\.\d{1,2})?$/.test(draft.cod_amount))
+    add("cod_amount", "invalid_money_format");
+  if (draft.cod_account_id !== null && !isUuid(draft.cod_account_id))
+    add("cod_account_id", "invalid_identifier");
+
+  if (!Array.isArray(draft.products)) add("products", "invalid_array");
+  else {
+    if (draft.products.length < 1 || draft.products.length > 100)
+      add("products", "invalid_count", { limit: 100 });
+    draft.products.slice(0, 100).forEach((input, index) => {
+      const item = draftRecord(input);
+      if (!item) {
+        add("products", "missing_object", { index });
+        return;
+      }
+      inspectText(item.name, "products.name", 100, index);
+      inspectText(item.code, "products.code", 100, index);
+      inspectQuantity(item.qty, "products.qty", 100000, true, 0, index);
+      if (typeof item.price !== "string" || !/^\d{1,9}(\.\d{1,2})?$/.test(item.price))
+        add("products.price", "invalid_money_format", { index });
+      inspectQuantity(item.weight, "products.weight", 1000000, true, 0, index);
+    });
+  }
+  return issues;
+}
+
 function text(v: unknown, max: number): string {
   if (
     typeof v !== "string" ||
@@ -222,12 +508,14 @@ export function addressFrom(v: unknown): ShippingAddress {
   return normalizeShippingContact(Object.fromEntries(
     Object.keys(emptyAddress()).map((k) => [
       k,
-      text(k === "company" ? a[k] ?? "" : a[k], k === "address" ? 500 : 150),
+      text(k === "company" || k === "email" ? a[k] ?? "" : a[k], k === "address" ? 500 : 150),
     ]),
   ) as unknown as ShippingAddress);
 }
 // Whitelist fields; never persist caller-supplied status, prices from provider or external IDs.
 export function parseDraft(v: unknown): ShippingDraft {
+  const fieldIssue = draftFormatIssues(v)[0];
+  if (fieldIssue) throw new ShippingDraftFieldError(fieldIssue);
   const d = object(v);
   if (
     !Array.isArray(d.products) ||
@@ -352,10 +640,10 @@ export function readyIssues(d: ShippingDraft): string[] {
     const a = normalizeShippingContact(d[side]);
     const hasRecipientName = !!a.fullname || !!a.company;
     const hasRealContactName = !a.fullname || !organizationName(a.fullname);
-    if (!hasRecipientName || !hasRealContactName || [a.address, a.county, a.city, a.state, a.postcode, a.email, a.telephone1].some((v) => !v))
+    if (!hasRecipientName || !hasRealContactName || [a.address, a.county, a.city, a.state, a.postcode, a.telephone1].some((v) => !v))
       issues.push(`${side}_incomplete`);
     if (!/^\d{5}$/.test(a.postcode)) issues.push(`${side}_postcode`);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email))
+    if (!validProviderEmail(a.email))
       issues.push(`${side}_email`);
     if (!validProviderPhone(a.telephone1)) issues.push(`${side}_phone`);
   }

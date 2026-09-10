@@ -59,6 +59,42 @@ test('phone field reports punctuation and explains the provider-safe format inli
   assert.equal(valid.some(node => node.props.role === 'alert'), false);
 });
 
+test('email field is optional but explains an invalid nonblank value inline', () => {
+  const exports = {};
+  runInNewContext(compile('../frontend/src/components/shipping/AddressFields.tsx'), {
+    exports,
+    require(name) {
+      if (name === 'react') return {
+        useEffect() {}, useRef: value => ({ current: value }), useState: value => [value, () => {}],
+      };
+      if (name === 'react/jsx-runtime') return jsx;
+      if (name === 'lucide-react') return { Loader2: 'Loader2', Search: 'Search' };
+      if (name === '@/components/ui/input') return { Input: 'Input' };
+      if (name === '@/i18n') return { useLanguage: () => ({ t: { shipping: new Proxy({
+        emailFormat: 'valid-email-or-blank',
+      }, { get: (target, key) => key in target ? target[key] : key }) } }) };
+      if (name === '@/lib/thaiAddress') return { lookupZipcode: async () => [] };
+      if (name.endsWith('/shipping-domain')) return domain;
+      throw new Error(`Unexpected dependency ${name}`);
+    },
+  });
+  const render = email => nodes(exports.default({
+    title: 'Recipient', prefix: 'recipient', beforeFields: null,
+    value: { ...domain.emptyAddress(), email }, onChange() {},
+  }));
+
+  for (const email of ['', 'recipient@example.com']) {
+    const rendered = render(email);
+    const input = rendered.find(node => node.type === 'Input' && node.props.id === 'recipient-email');
+    assert.equal(input.props['aria-invalid'], undefined);
+    assert.equal(rendered.some(node => node.props.id === 'recipient-email-error'), false);
+  }
+  const invalid = render('recipient-at-example');
+  const input = invalid.find(node => node.type === 'Input' && node.props.id === 'recipient-email');
+  assert.equal(input.props['aria-invalid'], true);
+  assert.equal(invalid.find(node => node.props.id === 'recipient-email-error').props.children, 'valid-email-or-blank');
+});
+
 test('parcel fields identify the exact side that exceeds 180 cm', () => {
   const exports = {};
   runInNewContext(compile('../frontend/src/components/shipping/ShippingParcels.tsx'), {
@@ -99,4 +135,26 @@ test('Thai and English summaries explain how to correct phone and dimension bloc
   }
   assert.match(shippingTranslations.th.submissionIssues.destination_phone, /ตัวเลข/);
   assert.match(shippingTranslations.th.providerIssues.invalid_phone, /ขีด/);
+  assert.match(shippingTranslations.th.email, /ไม่บังคับ/);
+  assert.match(shippingTranslations.th.emailHint, /สร้างพัสดุ/);
+  assert.doesNotMatch(shippingTranslations.th.missing, /อีเมล/);
+  assert.doesNotMatch(shippingTranslations.en.missing, /email/i);
+});
+
+test('draft format messages name the exact section, product row and box number', () => {
+  const exports = {};
+  runInNewContext(compile('../frontend/src/lib/shipping-validation.ts'), {
+    exports,
+    require(name) {
+      if (name.endsWith('/shipping-domain')) return domain;
+      throw new Error(`Unexpected dependency ${name}`);
+    },
+  });
+  const format = issue => exports.shippingDraftFieldIssueMessage(issue, shippingTranslations.th);
+
+  assert.match(format({ field: 'purpose', reason: 'text_too_long', limit: 300 }), /อ้างอิง\/วัตถุประสงค์.*300/);
+  assert.match(format({ field: 'origin.address', reason: 'invalid_text_type' }), /ที่อยู่ผู้ส่ง.*ข้อความ/);
+  assert.match(format({ field: 'products.name', reason: 'invalid_text_type', index: 3 }), /ชื่อสินค้าของสินค้ารายการที่ 4/);
+  assert.match(format({ field: 'products.qty', reason: 'whole_number_required', index: 1 }), /จำนวนสินค้าของสินค้ารายการที่ 2.*จำนวนเต็ม/);
+  assert.match(format({ field: 'parcels.box_length', reason: 'number_above_max', index: 1, limit: 180 }), /ความยาวของกล่องที่ 2.*180/);
 });

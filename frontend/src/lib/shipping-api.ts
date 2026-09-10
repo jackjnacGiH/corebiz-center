@@ -8,7 +8,9 @@ import type {
   Shipment,
   ShippingDraft,
   ShippingAddress,
+  ShippingDraftFieldIssue,
 } from "../../../supabase/functions/_shared/shipping-domain";
+import { isShippingDraftFieldIssue } from "../../../supabase/functions/_shared/shipping-domain";
 export type {
   Shipment,
   ShippingDraft,
@@ -82,15 +84,18 @@ export interface ShippingProductOption {
 export class ShippingApiError extends Error {
   shipment: Shipment | null;
   detail: ShippingProviderIssue | null;
+  fieldIssue: ShippingDraftFieldIssue | null;
   constructor(
     code: string,
     shipment: Shipment | null = null,
     detail: ShippingProviderIssue | null = null,
+    fieldIssue: ShippingDraftFieldIssue | null = null,
   ) {
     super(code);
     this.name = "ShippingApiError";
     this.shipment = shipment;
     this.detail = detail;
+    this.fieldIssue = fieldIssue;
   }
 }
 const shipmentFromError = (value: unknown): Shipment | null => {
@@ -109,6 +114,17 @@ const detailFromError = (value: unknown): ShippingProviderIssue | null => {
   if (!value || typeof value !== "object") return null;
   const detail = (value as { detail?: unknown }).detail;
   return isShippingProviderIssue(detail) ? detail : null;
+};
+const fieldIssueFromError = (value: unknown): ShippingDraftFieldIssue | null => {
+  if (!value || typeof value !== "object") return null;
+  const issue = (value as { field_issue?: unknown }).field_issue;
+  if (!isShippingDraftFieldIssue(issue)) return null;
+  return {
+    field: issue.field,
+    reason: issue.reason,
+    ...(issue.index === undefined ? {} : { index: issue.index }),
+    ...(issue.limit === undefined ? {} : { limit: issue.limit }),
+  };
 };
 async function invoke<T>(
   action: string,
@@ -131,6 +147,7 @@ async function invoke<T>(
       code,
       shipmentFromError(responseBody),
       detailFromError(responseBody),
+      fieldIssueFromError(responseBody),
     );
   }
   if (data?.error)
@@ -138,6 +155,7 @@ async function invoke<T>(
       String(data.error),
       shipmentFromError(data),
       detailFromError(data),
+      fieldIssueFromError(data),
     );
   return data as T;
 }

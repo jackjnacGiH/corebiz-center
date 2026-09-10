@@ -6,7 +6,7 @@ import ts from 'typescript';
 import * as domain from '../supabase/functions/_shared/shipping-domain.ts';
 
 const compiled = ts.transpileModule(readFileSync(new URL('../frontend/src/pages/Shipping.tsx', import.meta.url), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 const bootstrap = () => ({ manager: true, settings: { environment: 'uat', origin: domain.emptyAddress() },
@@ -29,7 +29,7 @@ const submittableShipment = id => {
 // JSX remains inspectable, so tests invoke the same handlers as user controls.
 // This deliberately does not simulate browser layout, printing, or network time.
 function mount(query = '') {
-  const slots = [], effects = [], requests = [], confirmations = [];
+  const slots = [], effects = [], requests = [], confirmations = [], clipboard = [], popups = [];
   const timers = new Map();
   let cursor = 0, timerId = 0, tree, dirty = false;
   let params = new URLSearchParams(query);
@@ -80,9 +80,12 @@ function mount(query = '') {
       if (name === 'lucide-react') return new Proxy({}, { get: (_target, key) => key });
       if (name === '@/i18n') return { useLanguage: () => ({ language: 'th', t: { shipping: shippingWords, common: words } }) };
       if (name === '@/lib/shipping-api') return { shippingApi: api };
+      if (name === '@/lib/shipping-validation') return {
+        shippingDraftFieldIssueMessage: issue => `${issue.field}:${issue.reason}`,
+      };
       if (name.endsWith('/shipping-domain')) return domain;
       if (name === '@/lib/shipping-carriers') return { shippingTrackingUrl: () => null };
-      if (name === '@/lib/provider-label') return { providerLabelResource: () => { throw new Error('Provider labels are outside this test'); } };
+      if (name === '@/lib/provider-label') return { providerLabelResource: link => ({ kind: 'external', href: link }) };
       if (name === '@/lib/print') return { printElement: () => { throw new Error('Printing is outside this test'); } };
       if (name === '@/components/ui/button') return { Button: 'Button' };
       if (name === '@/components/ui/input') return { Input: 'Input' };
@@ -96,7 +99,13 @@ function mount(query = '') {
       setTimeout: callback => { timers.set(++timerId, callback); return timerId; },
       clearTimeout: id => timers.delete(id),
       addEventListener() {}, removeEventListener() {}, confirm: message => { confirmations.push(message); return confirmResult; },
+      open() {
+        const popup = { opener: {}, href: '', closed: false, location: { replace(value) { popup.href = value; } }, close() { popup.closed = true; } };
+        popups.push(popup);
+        return popup;
+      },
     },
+    navigator: { clipboard: { writeText: async value => { clipboard.push(value); } } },
     document: { addEventListener() {}, removeEventListener() {} },
   });
   const render = () => {
@@ -124,7 +133,7 @@ function mount(query = '') {
     (node.props.children === label || (Array.isArray(node.props.children) && node.props.children.includes(label))));
   render();
   return {
-    requests, confirmations, render, find, button,
+    requests, confirmations, clipboard, popups, render, find, button,
     confirmWith(value) { confirmResult = value; },
     card: id => find(node => node.type === 'ShipmentListCard' && node.props.shipment.id === id),
     listRequests: () => requests.filter(request => request.action === 'list'),
@@ -156,6 +165,65 @@ async function readyList(rows = [shipment('draft-1')], count = rows.length) {
   await settle(); h.render();
   return h;
 }
+
+test('list actions copy tracking, open a carrier label, and refresh a row without opening the editor', async () => {
+  const row = shipment('tracked-list', {
+    status: 'waiting', tracking_number: 'TRACK-1', version: 3,
+    recipient_company: 'List-only recipient company',
+    draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
+  });
+  const h = await readyList([row]);
+  const card = h.card(row.id);
+
+  card.props.onCopyTracking('https://tracking.example.test/TRACK-1');
+  await settle(); h.render();
+  assert.deepEqual(h.clipboard, ['https://tracking.example.test/TRACK-1']);
+  assert.equal(h.find(node => node.props.role === 'status').props.children, 'trackingCopied');
+  assert.equal(h.requests.filter(request => request.action === 'get').length, 0, 'A list action must not open the editor');
+
+  h.card(row.id).props.onCarrierLabel();
+  assert.equal(h.popups.length, 1, 'The label tab is reserved during the click');
+  const print = h.requests.at(-1);
+  assert.equal(print.action, 'print');
+  assert.equal(print.args[0].id, row.id);
+  print.resolve({ link: 'https://labels.example.test/TRACK-1.pdf' });
+  await settle(); h.render();
+  assert.equal(h.popups[0].opener, null);
+  assert.equal(h.popups[0].href, 'https://labels.example.test/TRACK-1.pdf');
+
+  h.card(row.id).props.onRefreshStatus();
+  const refresh = h.requests.at(-1);
+  assert.equal(refresh.action, 'action');
+  assert.equal(refresh.args[0], 'refresh_status');
+  assert.equal(refresh.args[1].version, 3);
+  const { recipient_company: _listOnlyCompany, ...detailShipment } = row;
+  refresh.resolve({ shipment: { ...detailShipment, version: 4 } });
+  await settle(); h.render();
+  assert.equal(h.card(row.id).props.shipment.version, 4, 'The refreshed row is replaced in place');
+  assert.equal(
+    h.card(row.id).props.shipment.recipient_company,
+    'List-only recipient company',
+    'Status refresh must preserve list-only recipient details',
+  );
+  assert.equal(h.find(node => node.props.role === 'status').props.children, 'statusChecked: waiting');
+  assert.equal(h.requests.filter(request => request.action === 'get').length, 0);
+  h.unmount();
+});
+
+test('a carrier-label failure closes the reserved tab and reports the existing API error', async () => {
+  const row = shipment('label-error', {
+    status: 'waiting', tracking_number: 'TRACK-2',
+    draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
+  });
+  const h = await readyList([row]);
+  h.card(row.id).props.onCarrierLabel();
+  h.requests.at(-1).reject(new Error('provider_unreachable'));
+  await settle(); h.render();
+  assert.equal(h.popups[0].closed, true);
+  assert.equal(h.find(node => node.props.role === 'alert').props.children, 'providerUnreachable');
+  assert.equal(h.card(row.id).props.activeAction, null);
+  h.unmount();
+});
 
 async function editDraft(h, row) {
   h.card(row.id).props.onOpen();
@@ -306,7 +374,7 @@ test('an oversized box shows the specific dimension blocker before quote or subm
   await settle(); h.render();
 
   const comparison = h.find(node => node.type === 'ShippingRateComparison');
-  assert.deepEqual([...comparison.props.blockers], ['box_length']);
+  assert.deepEqual([...comparison.props.blockers], ['box_length', 'box_length:number_above_max']);
   assert.equal(h.button('submit').props.disabled, true);
   assert.equal(h.requests.filter(request => request.action === 'action').length, 0);
   h.unmount();
@@ -330,7 +398,7 @@ test('deletion handler refuses non-drafts and any draft that already has trackin
   }
 });
 
-test('actual list card offers edit/delete only for untracked drafts and open for protected shipments', () => {
+test('actual list card keeps draft controls and adds direct tracked-shipment actions without bubbling', () => {
   const cardCode = ts.transpileModule(readFileSync(new URL('../frontend/src/components/shipping/ShipmentListCard.tsx', import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
@@ -339,27 +407,63 @@ test('actual list card offers edit/delete only for untracked drafts and open for
     if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
     if (name === 'lucide-react') return new Proxy({}, { get: (_target, key) => key });
     if (name === '@/components/ui/button') return { Button: 'Button' };
-    if (name === '@/i18n') return { useLanguage: () => ({ language: 'en', t: { common: { edit: 'Edit' }, shipping: { open: 'Open', deleteDraft: 'Delete draft', statuses: {} } } }) };
-    if (name === '@/lib/shipping-carriers') return { SHIPPING_CARRIER_OPTIONS: [], shippingCarrierBrand: () => ({ name: '' }) };
+    if (name === '@/i18n') return { useLanguage: () => ({ language: 'en', t: { common: { edit: 'Edit' }, shipping: new Proxy({ open: 'Open', deleteDraft: 'Delete draft', statuses: {} }, { get: (target, key) => key in target ? target[key] : key }) } }) };
+    if (name === '@/lib/shipping-carriers') return {
+      SHIPPING_CARRIER_OPTIONS: [], shippingCarrierBrand: () => ({ name: '' }),
+      shippingTrackingUrl: (_carrier, tracking) => `https://tracking.example.test/${tracking}`,
+    };
     if (name.endsWith('/shipping-domain')) return domain;
     throw new Error(`Unexpected dependency ${name}`);
   } });
-  const buttons = value => {
-    if (Array.isArray(value)) return value.flatMap(buttons);
+  const nodes = value => {
+    if (Array.isArray(value)) return value.flatMap(nodes);
     if (!value || typeof value !== 'object') return [];
-    return value.type === 'Button' ? [value] : buttons(value.props?.children);
+    return [value, ...nodes(value.props?.children)];
   };
-  for (const changes of [{}, { status: 'waiting' }, { status: 'submitting' }, { status: 'outcome_unknown' }, { tracking_number: 'TRACK-1' }]) {
+  const buttons = value => nodes(value).filter(node => node.type === 'Button');
+  const renderCard = (row, changes = {}) => exports.default({
+    shipment: row, busy: false, readReady: true, activeAction: null,
+    onOpen() {}, onDelete() {}, onCopyTracking() {}, onCarrierLabel() {}, onRefreshStatus() {},
+    ...changes,
+  });
+  for (const changes of [{}, { status: 'waiting' }, { status: 'submitting' }, { status: 'outcome_unknown' }]) {
     let opened = 0, deleted = 0;
     const row = shipment('card', changes);
-    const controls = buttons(exports.default({ shipment: row, busy: false, onOpen: () => opened++, onDelete: () => deleted++ }));
+    const controls = buttons(renderCard(row, { onOpen: () => opened++, onDelete: () => deleted++ }));
     const editable = row.status === 'draft' && !row.tracking_number;
     assert.equal(controls.length, editable ? 2 : 1);
     assert.equal(controls[0].props.children.at(-1), editable ? 'Edit' : 'Open');
     controls[0].props.onClick(); assert.equal(opened, 1);
     if (editable) { controls[1].props.onClick(); assert.equal(deleted, 1); }
-    assert.ok(buttons(exports.default({ shipment: row, busy: true, onOpen() {}, onDelete() {} })).every(button => button.props.disabled));
+    assert.ok(buttons(renderCard(row, { busy: true })).every(button => button.props.disabled));
   }
+
+  const tracked = shipment('tracked', {
+    status: 'waiting', tracking_number: 'TRACK-1',
+    draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
+  });
+  let copied = '', labels = 0, refreshed = 0, bubbles = 0;
+  const tree = renderCard(tracked, {
+    onCopyTracking: url => { copied = url; },
+    onCarrierLabel: () => labels++, onRefreshStatus: () => refreshed++,
+  });
+  const controls = buttons(tree);
+  assert.equal(controls.length, 5, 'Open plus four direct shipment actions');
+  const event = { stopPropagation: () => bubbles++ };
+  controls.find(button => button.props['aria-label'] === 'copyTrackingLink').props.onClick(event);
+  controls.find(button => button.props['aria-label'] === 'carrierPrint').props.onClick(event);
+  controls.find(button => button.props['aria-label'] === 'poll').props.onClick(event);
+  const trackingAnchor = nodes(tree).find(node => node.type === 'a' && node.props['aria-label'] === 'openTracking');
+  trackingAnchor.props.onClick(event);
+  assert.equal(copied, 'https://tracking.example.test/TRACK-1');
+  assert.equal(labels, 1);
+  assert.equal(refreshed, 1);
+  assert.equal(bubbles, 4, 'Every list action stops the surrounding card event');
+  assert.equal(trackingAnchor.props.rel, 'noopener noreferrer');
+
+  const disconnected = buttons(renderCard(tracked, { readReady: false }));
+  assert.equal(disconnected.find(button => button.props['aria-label'] === 'carrierPrint').props.disabled, true);
+  assert.equal(disconnected.find(button => button.props['aria-label'] === 'poll').props.disabled, true);
 });
 
 test('a rejected bootstrap never reveals a completed list', async () => {

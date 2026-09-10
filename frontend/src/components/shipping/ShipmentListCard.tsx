@@ -1,11 +1,52 @@
-import { MapPin, Phone, Package, Truck, Pencil, Trash2 } from "lucide-react";
+import {
+  Copy,
+  ExternalLink,
+  Loader2,
+  MapPin,
+  Package,
+  Pencil,
+  Phone,
+  Printer,
+  RefreshCw,
+  Trash2,
+  Truck,
+} from "lucide-react";
+import type { SyntheticEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/i18n";
-import { SHIPPING_CARRIER_OPTIONS, shippingCarrierBrand } from "@/lib/shipping-carriers";
+import {
+  SHIPPING_CARRIER_OPTIONS,
+  shippingCarrierBrand,
+  shippingTrackingUrl,
+} from "@/lib/shipping-carriers";
 import { shippingParcels, summarizeShippingItems, type Shipment, type ShippingAddress } from "../../../../supabase/functions/_shared/shipping-domain";
 const addressLine = (address: ShippingAddress) => [address.address, address.county, address.city, address.state, address.postcode].filter(Boolean).join(" ");
 
-export default function ShipmentListCard({ shipment: s, busy, onOpen, onDelete }: { shipment: Shipment; busy: boolean; onOpen: () => void; onDelete: () => void }) {
+export type ShipmentListAction = "copy_tracking" | "carrier_label" | "refresh_status";
+
+interface ShipmentListCardProps {
+  shipment: Shipment;
+  busy: boolean;
+  readReady: boolean;
+  activeAction: ShipmentListAction | null;
+  onOpen: () => void;
+  onDelete: () => void;
+  onCopyTracking: (url: string) => void;
+  onCarrierLabel: () => void;
+  onRefreshStatus: () => void;
+}
+
+export default function ShipmentListCard({
+  shipment: s,
+  busy,
+  readReady,
+  activeAction,
+  onOpen,
+  onDelete,
+  onCopyTracking,
+  onCarrierLabel,
+  onRefreshStatus,
+}: ShipmentListCardProps) {
   const { t, language } = useLanguage();
   const c = t.shipping;
   const recipient = s.draft.destination;
@@ -15,6 +56,12 @@ export default function ShipmentListCard({ shipment: s, busy, onOpen, onDelete }
   const items = summarizeShippingItems(s.draft.products);
   const carrier = SHIPPING_CARRIER_OPTIONS.find(([code]) => code === s.draft.carrier_code)?.[1] || shippingCarrierBrand(s.draft.carrier_code).name;
   const editableDraft = s.status === "draft" && !s.tracking_number;
+  const trackingUrl = s.tracking_number && s.draft.carrier_code
+    ? shippingTrackingUrl(s.draft.carrier_code, s.tracking_number)
+    : null;
+  const hasTracking = !!s.tracking_number;
+  const providerActionsReady = readReady && !!s.draft.carrier_code;
+  const stopPropagation = (event: SyntheticEvent) => event.stopPropagation();
   return <article className="overflow-hidden rounded-xl border bg-card" aria-label={s.reference_no}>
     <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3">
       <div className="min-w-0">
@@ -52,5 +99,69 @@ export default function ShipmentListCard({ shipment: s, busy, onOpen, onDelete }
         <p>{Number(s.draft.cod_amount) > 0 ? `${c.cod}: ${Number(s.draft.cod_amount).toLocaleString()} ${c.baht}` : c.noCod}</p>
       </section>
     </div>
+    {hasTracking && <footer className="border-t bg-muted/10 px-4 py-3">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <p className="text-xs font-semibold uppercase text-muted-foreground">{c.actions}</p>
+        <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 sm:flex sm:flex-wrap sm:justify-end" aria-busy={activeAction !== null}>
+          {trackingUrl && <>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              aria-label={c.copyTrackingLink}
+              onClick={(event) => {
+                stopPropagation(event);
+                onCopyTracking(trackingUrl);
+              }}
+            >
+              {activeAction === "copy_tracking" ? <Loader2 className="animate-spin" /> : <Copy />}
+              {c.copyTrackingLink}
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <a
+                href={trackingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={c.openTracking}
+                onClick={stopPropagation}
+              >
+                <ExternalLink />{c.openTracking}
+              </a>
+            </Button>
+          </>}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy || !providerActionsReady}
+            title={!providerActionsReady ? c.actionsRequireConnection : undefined}
+            aria-label={c.carrierPrint}
+            onClick={(event) => {
+              stopPropagation(event);
+              onCarrierLabel();
+            }}
+          >
+            {activeAction === "carrier_label" ? <Loader2 className="animate-spin" /> : <Printer />}
+            {c.carrierPrint}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy || !providerActionsReady}
+            title={!providerActionsReady ? c.actionsRequireConnection : undefined}
+            aria-label={c.poll}
+            onClick={(event) => {
+              stopPropagation(event);
+              onRefreshStatus();
+            }}
+          >
+            {activeAction === "refresh_status" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {c.poll}
+          </Button>
+        </div>
+      </div>
+    </footer>}
   </article>;
 }
