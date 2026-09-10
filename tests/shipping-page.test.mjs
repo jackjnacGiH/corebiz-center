@@ -267,6 +267,24 @@ test('definite submit rejection syncs the restored draft version before another 
   h.unmount();
 });
 
+test('an oversized box shows the specific dimension blocker before quote or submit', async () => {
+  const row = submittableShipment('oversized-box');
+  row.draft.box_length = domain.SHIPPING_BOX_DIMENSION_MAX_CM + 1;
+  const h = mount(); h.runTimers();
+  h.requests[0].resolve({ ...bootstrap(), sendReady: true });
+  h.listRequests()[0].resolve({ shipments: [row], count: 1 });
+  await settle(); h.render();
+  h.card(row.id).props.onOpen();
+  h.requests.at(-1).resolve({ shipment: row, events: [] });
+  await settle(); h.render();
+
+  const comparison = h.find(node => node.type === 'ShippingRateComparison');
+  assert.deepEqual([...comparison.props.blockers], ['box_length']);
+  assert.equal(h.button('submit').props.disabled, true);
+  assert.equal(h.requests.filter(request => request.action === 'action').length, 0);
+  h.unmount();
+});
+
 test('deletion handler refuses non-drafts and any draft that already has tracking', async () => {
   for (const changes of [
     { status: 'submitting' }, { status: 'outcome_unknown' }, { status: 'waiting' },

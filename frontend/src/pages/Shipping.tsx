@@ -28,7 +28,6 @@ import {
   parseDraft,
   readyIssues,
   quoteIssues,
-  type QuoteIssue,
   type ShippingParcel,
   summarizeShippingItems,
   shippingQuoteKey,
@@ -499,16 +498,29 @@ export default function Shipping() {
     resetProductLookup();
   };
   const { issues, rateIssues, invalidDraft } = useMemo(() => {
+    const rawRateIssues = (() => {
+      try {
+        return quoteIssues(draft);
+      } catch {
+        return [];
+      }
+    })();
     try {
       const parsed = parseDraft(draft);
       return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), invalidDraft: false };
     } catch {
-      return { issues: ["invalid_payload"], rateIssues: [] as QuoteIssue[], invalidDraft: true };
+      return {
+        issues: ["invalid_payload"],
+        rateIssues: rawRateIssues,
+        invalidDraft: true,
+      };
     }
   }, [draft]);
-  const quoteBlockers = invalidDraft
-    ? [c.quoteInvalid]
-    : rateIssues.map((issue) => c.quoteIssues[issue]);
+  const quoteBlockers = rateIssues.length
+    ? rateIssues.map((issue) => c.quoteIssues[issue])
+    : invalidDraft
+      ? [c.quoteInvalid]
+      : [];
   const locked = !!shipment && shipment.status !== "draft";
   const trackingUrl =
     shipment?.tracking_number && shipment.draft.carrier_code

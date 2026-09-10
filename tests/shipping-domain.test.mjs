@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import {
   emptyDraft,
+  SHIPPING_BOX_DIMENSION_MAX_CM,
   parseDraft,
   parseDraftUpdate,
   normalizeShippingContact,
@@ -112,6 +113,35 @@ test("rate comparison requires delivery areas and packed parcels before selectin
   assert.deepEqual(quoteIssues(d), []);
   assert.throws(() => quotePayload(d), /carrier_required/);
   assert.deepEqual(quotePayload(d, ["EMS_SPEED", "FLASH_EXPRESS_SPEED"]).carriers_code, ["EMS_SPEED", "FLASH_EXPRESS_SPEED"]);
+});
+test("PromptSpeed box dimensions stop at 180 cm in legacy and per-parcel drafts", () => {
+  const boundary = ready();
+  for (const field of ["box_width", "box_height", "box_length"])
+    boundary[field] = SHIPPING_BOX_DIMENSION_MAX_CM;
+  assert.doesNotThrow(() => parseDraft(boundary));
+  assert.deepEqual(quoteIssues(boundary), []);
+  assert.deepEqual(readyIssues(boundary), []);
+  assert.equal(boundary.box_weight, 1200, "weight is measured in grams and does not use the cm limit");
+
+  for (const field of ["box_width", "box_height", "box_length"]) {
+    const legacy = ready();
+    legacy[field] = SHIPPING_BOX_DIMENSION_MAX_CM + 0.01;
+    assert.deepEqual(quoteIssues(legacy), [field]);
+    assert.ok(readyIssues(legacy).includes("parcel_required"));
+    assert.throws(() => parseDraft(legacy), /invalid_quantity/);
+
+    const perParcel = ready();
+    perParcel.parcels = [{
+      box_width: perParcel.box_width,
+      box_height: perParcel.box_height,
+      box_length: perParcel.box_length,
+      box_weight: perParcel.box_weight,
+      [field]: SHIPPING_BOX_DIMENSION_MAX_CM + 0.01,
+    }];
+    assert.deepEqual(quoteIssues(perParcel), [field]);
+    assert.ok(readyIssues(perParcel).includes("parcel_required"));
+    assert.throws(() => parseDraft(perParcel), /invalid_quantity/);
+  }
 });
 test("all imported items contribute to label totals and the overflow row", () => {
   const d = ready();

@@ -23,6 +23,8 @@ export interface ShippingParcel {
   box_length: number;
   box_weight: number;
 }
+export const SHIPPING_BOX_DIMENSION_MAX_CM = 180;
+const BOX_DIMENSION_FIELDS = ["box_width", "box_height", "box_length"] as const;
 export interface ShippingDraft {
   parcels?: ShippingParcel[];
   purpose: string;
@@ -244,9 +246,9 @@ export function parseDraft(v: unknown): ShippingDraft {
     parcels = d.parcels.map((value) => {
       const parcel = object(value);
       return {
-        box_width: quantity(parcel.box_width, 1000),
-        box_height: quantity(parcel.box_height, 1000),
-        box_length: quantity(parcel.box_length, 1000),
+        box_width: quantity(parcel.box_width, SHIPPING_BOX_DIMENSION_MAX_CM),
+        box_height: quantity(parcel.box_height, SHIPPING_BOX_DIMENSION_MAX_CM),
+        box_length: quantity(parcel.box_length, SHIPPING_BOX_DIMENSION_MAX_CM),
         box_weight: quantity(parcel.box_weight, 1000000, true),
       };
     });
@@ -259,9 +261,9 @@ export function parseDraft(v: unknown): ShippingDraft {
     carrier_code: text(d.carrier_code, 80),
     origin: addressFrom(d.origin),
     destination: addressFrom(d.destination),
-    box_width: quantity(parcels?.[0].box_width ?? d.box_width, 1000),
-    box_height: quantity(parcels?.[0].box_height ?? d.box_height, 1000),
-    box_length: quantity(parcels?.[0].box_length ?? d.box_length, 1000),
+    box_width: quantity(parcels?.[0].box_width ?? d.box_width, SHIPPING_BOX_DIMENSION_MAX_CM),
+    box_height: quantity(parcels?.[0].box_height ?? d.box_height, SHIPPING_BOX_DIMENSION_MAX_CM),
+    box_length: quantity(parcels?.[0].box_length ?? d.box_length, SHIPPING_BOX_DIMENSION_MAX_CM),
     box_weight: quantity(parcels?.[0].box_weight ?? d.box_weight, 1000000, true),
     parcel_total: parcelTotal,
     cod_amount: String(d.cod_amount),
@@ -306,9 +308,18 @@ export function quoteIssues(d: ShippingDraft): QuoteIssue[] {
       if (!d[side][field].trim()) issues.push(`${side}_${field}`);
     if (!/^\d{5}$/.test(d[side].postcode)) issues.push(`${side}_postcode`);
   }
-  for (const field of ["box_width", "box_height", "box_length", "box_weight"] as const)
-    if (!Number.isFinite(parcels[0][field]) || parcels[0][field] <= 0) issues.push(field);
-  if (parcels.slice(1).some((parcel) => Object.values(parcel).some((v) => !Number.isFinite(v) || v <= 0)))
+  for (const field of ["box_width", "box_height", "box_length", "box_weight"] as const) {
+    const value = parcels[0][field];
+    if (
+      !Number.isFinite(value) ||
+      value <= 0 ||
+      (field !== "box_weight" && value > SHIPPING_BOX_DIMENSION_MAX_CM)
+    ) issues.push(field);
+  }
+  if (parcels.slice(1).some((parcel) =>
+    Object.values(parcel).some((value) => !Number.isFinite(value) || value <= 0) ||
+    BOX_DIMENSION_FIELDS.some((field) => parcel[field] > SHIPPING_BOX_DIMENSION_MAX_CM)
+  ))
     issues.push("parcels_incomplete");
   return issues;
 }
@@ -334,6 +345,7 @@ export function quotePayload(
 
 export function readyIssues(d: ShippingDraft): string[] {
   const issues: string[] = [];
+  const parcels = shippingParcels(d);
   if (d.parcel_total > 1) issues.push("multi_parcel_submission_unavailable");
   for (const side of ["origin", "destination"] as const) {
     const a = normalizeShippingContact(d[side]);
@@ -346,7 +358,12 @@ export function readyIssues(d: ShippingDraft): string[] {
   }
   if (!d.carrier_code) issues.push("carrier_required");
   if (
-    [d.box_width, d.box_height, d.box_length, d.box_weight].some((v) => v <= 0)
+    [parcels[0].box_width, parcels[0].box_height, parcels[0].box_length, parcels[0].box_weight].some((v) =>
+      !Number.isFinite(v) || v <= 0
+    ) ||
+    parcels.some((parcel) => BOX_DIMENSION_FIELDS.some((field) =>
+      parcel[field] > SHIPPING_BOX_DIMENSION_MAX_CM
+    ))
   )
     issues.push("parcel_required");
   if (d.products.some((i) => !i.name || i.qty < 1 || i.weight <= 0))

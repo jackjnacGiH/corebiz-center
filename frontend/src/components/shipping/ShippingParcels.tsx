@@ -2,7 +2,13 @@ import { Copy } from "lucide-react";
 import { useLanguage } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { emptyParcel, shippingParcels, type ShippingDraft, type ShippingParcel } from "../../../../supabase/functions/_shared/shipping-domain";
+import {
+  emptyParcel,
+  SHIPPING_BOX_DIMENSION_MAX_CM,
+  shippingParcels,
+  type ShippingDraft,
+  type ShippingParcel,
+} from "../../../../supabase/functions/_shared/shipping-domain";
 
 export default function ShippingParcels({ draft, onChange }: {
   draft: ShippingDraft;
@@ -36,15 +42,22 @@ export default function ShippingParcels({ draft, onChange }: {
               </Button>}
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {(["box_width", "box_height", "box_length", "box_weight"] as const).map((key) => (
-                <label key={key} className="space-y-1 text-sm">
+              {(["box_width", "box_height", "box_length", "box_weight"] as const).map((key) => {
+                const overLimit = key !== "box_weight" && parcel[key] > SHIPPING_BOX_DIMENSION_MAX_CM;
+                const errorId = `shipping-box-${index}-${key}-error`;
+                return <label key={key} className="space-y-1 text-sm">
                   {c[key]}
                   <Input aria-label={`${c[key]} ${c.box} ${index + 1}`} type="number" min="0"
-                    max={key === "box_weight" ? 1000000 : 1000}
+                    max={key === "box_weight" ? 1000000 : SHIPPING_BOX_DIMENSION_MAX_CM}
                     step={key === "box_weight" ? 1 : "any"} value={parcel[key]}
+                    aria-invalid={overLimit || undefined}
+                    aria-describedby={overLimit ? errorId : undefined}
                     onChange={(e) => onChange(parcels.map((p, i) => i === index ? { ...p, [key]: Number(e.target.value) } : p))} />
-                </label>
-              ))}
+                  {overLimit && <span id={errorId} role="alert" className="block text-xs text-destructive">
+                    {c.boxDimensionLimit}
+                  </span>}
+                </label>;
+              })}
             </div>
           </div>
         ))}
