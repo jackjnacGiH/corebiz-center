@@ -1,5 +1,5 @@
 /**
- * rag-chat v52 — clarify catalog variants before staff handoff
+ * rag-chat v53 — read-only production evaluation without operational writes
  *
  * v50: product suggestions are filtered before reaching the LLM. A recognised
  * product family must match exactly; unknown families need a normalized-name
@@ -36,11 +36,23 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   buildProductSelection,
+  extractModelCodes,
   hasExactModelCodeMatch,
   matchesExplicitProductVariant,
   normalizeProductSearchQuery,
+  prioritizeProductToolCalls,
   productIdentitySearchText,
+  productSearchDisposition,
+  shouldSuppressToolForProductSearch,
 } from "../_shared/product-selection.mjs";
+import {
+  mergeFacetOnlyProductQuery,
+  pendingProductQuestion,
+} from "../_shared/product-turn-context.mjs";
+import {
+  readOnlyToolDecision,
+  resolveReadOnlyRequest,
+} from "../_shared/rag-read-only.mjs";
 
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -488,37 +500,36 @@ function evaluateProductMatch(query: string, product: Record<string, unknown>): 
   const candidateProductType = productTypeFor(candidateText);
   const sku = String(product.sku ?? "").trim();
   const exactSku = Boolean(sku) && query.toLowerCase().includes(sku.toLowerCase());
+  const requestedModelCodes = extractModelCodes(query);
   const nameScore = normalizedNameScore(query, candidateText);
   if (exactSku) return {
     safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
     nameScore: 1, basis: "exact_sku",
   };
-  // Once a product type is known, do not allow a high textual score to cross
-  // its boundary. A sanding belt must never become a mounted flap wheel.
-  if (requestedFamily) {
-    if (requestedFamily === candidateFamily) {
-      return {
-        safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
-        nameScore: Math.max(nameScore, 1), basis: "same_family",
-      };
-    }
+  const exactModel = requestedModelCodes.length > 0 && hasExactModelCodeMatch(query, candidateText);
+  // An explicit model is the first identity gate after an exact SKU. Reject a
+  // neighbouring code (SA3310/SA332) immediately, then still require any
+  // explicit family and product-type terms to agree with the catalog row.
+  if (requestedModelCodes.length > 0 && !exactModel) {
     return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
   }
-  // The customer's core product phrase is a hard gate before name scoring.
-  // This preserves the 0.70 fallback for truly unknown product types, while
-  // preventing จานทราย -> ล้อทราย and other cross-type suggestions.
-  if (requestedProductType) {
-    if (requestedProductType === candidateProductType) {
-      return {
-        safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
-        nameScore: Math.max(nameScore, 1), basis: "same_product_type",
-      };
-    }
+  if (requestedFamily && requestedFamily !== candidateFamily) {
     return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
   }
-  if (hasExactModelCodeMatch(query, candidateText)) return {
+  if (requestedProductType && requestedProductType !== candidateProductType) {
+    return { safe: false, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "rejected" };
+  }
+  if (exactModel) return {
     safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
     nameScore: 1, basis: "exact_model",
+  };
+  if (requestedFamily) return {
+    safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+    nameScore: Math.max(nameScore, 1), basis: "same_family",
+  };
+  if (requestedProductType) return {
+    safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType,
+    nameScore: Math.max(nameScore, 1), basis: "same_product_type",
   };
   return nameScore >= 0.7
     ? { safe: true, requestedFamily, candidateFamily, requestedProductType, candidateProductType, nameScore, basis: "name_score" }
@@ -1560,10 +1571,26 @@ Deno.serve(async (req: Request) => {
   const internalConversationId = internalServiceCall && isUuid(body.conversation_id)
     ? body.conversation_id
     : null;
+  const readOnlyState = resolveReadOnlyRequest({
+    requested: body.read_only === true,
+    internalServiceCall,
+    hasSessionId: Object.prototype.hasOwnProperty.call(body, "session_id"),
+    hasConversationId: Object.prototype.hasOwnProperty.call(body, "conversation_id"),
+  });
+  if (readOnlyState.error) {
+    return new Response(JSON.stringify({
+      error: readOnlyState.error,
+      read_only: false,
+    }), {
+      status: readOnlyState.status ?? 400,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
+  }
+  const readOnly = readOnlyState.enabled;
   let conversationId: string | null = internalConversationId;
-  const persistMessages = !internalConversationId;
-  if (!conversationId && sessionId) conversationId = await upsertLivechatConversation(admin, sessionId, displayName);
-  if (conversationId && persistMessages) {
+  const persistMessages = !internalConversationId && !readOnly;
+  if (!readOnly && !conversationId && sessionId) conversationId = await upsertLivechatConversation(admin, sessionId, displayName);
+  if (!readOnly && conversationId && persistMessages) {
     if (images.length > 0) {
       const url = await uploadImageToStorage(admin, conversationId, images[0].mimeType, images[0].data);
       const md = url ? `![image](${url})` : "";
@@ -1581,12 +1608,12 @@ Deno.serve(async (req: Request) => {
         const send = (event: Record<string, unknown>) => {
           try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); } catch (_e) { /* closed */ }
         };
-        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, telemetry, send); }
+        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, readOnly, telemetry, send); }
         catch (e) {
           const msg = (e as Error).message ?? String(e);
           const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
-          send({ type: "error", message: friendly });
-          recordFailedAiRun(admin, telemetry, conversationId, channel, e);
+          send({ type: "error", message: friendly, read_only: readOnly });
+          if (!readOnly) recordFailedAiRun(admin, telemetry, conversationId, channel, e);
         } finally { try { controller.close(); } catch (_e) { /* ignore */ } }
       },
     });
@@ -1594,12 +1621,12 @@ Deno.serve(async (req: Request) => {
   }
 
   const events: Array<Record<string, unknown>> = [];
-  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, telemetry, (e) => events.push(e)); }
+  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, readOnly, telemetry, (e) => events.push(e)); }
   catch (e) {
     const msg = (e as Error).message ?? String(e);
     const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
-    events.push({ type: "error", message: friendly });
-    recordFailedAiRun(admin, telemetry, conversationId, channel, e);
+    events.push({ type: "error", message: friendly, read_only: readOnly });
+    if (!readOnly) recordFailedAiRun(admin, telemetry, conversationId, channel, e);
   }
   const done = events.find((e) => e.type === "done") ?? {};
   const errEv = events.find((e) => e.type === "error");
@@ -1622,6 +1649,7 @@ Deno.serve(async (req: Request) => {
     request_id: (done as Record<string, unknown>).request_id ?? requestId,
     conversation_id: conversationId,
     channel,
+    read_only: readOnly,
     clarification_candidates,
     paused: pausedEv ? (pausedEv as Record<string, unknown>).reason : undefined,
     blocked: blockedAnswer ? "cost_query" : undefined,
@@ -1629,7 +1657,7 @@ Deno.serve(async (req: Request) => {
   }), { status: errEv ? 500 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 });
 
-async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, persistMessages: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
+async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, persistMessages: boolean, readOnly: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
   const botFlagsStartedAt = Date.now();
   const [globalOn, channelOn, convOn] = await Promise.all([
     isGlobalBotEnabled(admin),
@@ -1645,6 +1673,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     toolMs = 0,
     toolIterations = 0,
   ) => {
+    if (readOnly) return;
     const totalMs = Date.now() - telemetry.startedAt;
     runInBackground("chat_ai_runs", recordAiRun(admin, {
       requestId: telemetry.requestId,
@@ -1670,7 +1699,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   if (!globalOn || !channelOn || !convOn) {
     const reason = !globalOn ? "global" : !channelOn ? "channel" : "conversation";
     send({ type: "paused", reason });
-    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: `paused:${reason}`, tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: `paused:${reason}`, tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
     scheduleSimpleRun(`paused:${reason}`, "paused", null);
     return;
   }
@@ -1680,7 +1709,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     const firstTokenMs = Date.now() - telemetry.startedAt;
     send({ type: "blocked", reason: "cost_query", answer: refusal });
     if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", refusal, { blocked: "cost_query" });
-    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail", tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail", tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
     scheduleSimpleRun("guardrail", "cost_query", firstTokenMs);
     return;
   }
@@ -1691,17 +1720,31 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   if (query && images.length === 0 && isCallbackRequest(query)) {
     const toolStartedAt = Date.now();
     const args = { interest: lang === "th" ? "ขอให้ติดต่อกลับ" : "callback request", note: query };
-    const result = await captureLead(admin, args, channel, conversationId);
+    const decision = readOnlyToolDecision("capture_lead", readOnly);
+    const result = decision.execute
+      ? await captureLead(admin, args, channel, conversationId)
+      : decision.result;
     const toolMs = Date.now() - toolStartedAt;
-    const answer = lang === "th"
-      ? "เอยรับเรื่องให้ทีมงานติดต่อกลับแล้วนะคะ 😊"
-      : "I have asked our team to contact you back shortly. 😊";
-    const toolCalls = [{ name: "capture_lead", args, result_summary: JSON.stringify(result).slice(0, 200) }];
-    send({ type: "tool_call", name: "capture_lead", args });
+    const answer = readOnly
+      ? (lang === "th"
+        ? "โหมดทดสอบตรวจพบคำขอให้ติดต่อกลับ แต่ไม่ได้สร้างงานจริงค่ะ"
+        : "Read-only evaluation detected a callback request but did not create a task.")
+      : (lang === "th"
+        ? "เอยรับเรื่องให้ทีมงานติดต่อกลับแล้วนะคะ 😊"
+        : "I have asked our team to contact you back shortly. 😊");
+    const toolCalls = [{
+      name: "capture_lead",
+      args,
+      result_summary: JSON.stringify(result).slice(0, 200),
+      ...(!decision.execute ? {
+        result_meta: { read_only_suppressed: true, reason: "read_only" },
+      } : {}),
+    }];
+    if (decision.execute) send({ type: "tool_call", name: "capture_lead", args });
     const firstTokenMs = Date.now() - telemetry.startedAt;
     send({ type: "text", chunk: answer });
     if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", answer, { tool_calls: [{ name: "capture_lead", args }] });
-    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail:callback_lead", tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail:callback_lead", tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
     scheduleSimpleRun("guardrail:callback_lead", "callback_lead", firstTokenMs, ["capture_lead"], toolMs, 1);
     return;
   }
@@ -1826,67 +1869,157 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     { role: "user", parts: userParts },
   ];
   const usage = zeroTokens();
-  const allToolCalls: Array<{ name: string; args: Record<string, unknown>; result_summary?: string }> = [];
+  const allToolCalls: Array<{
+    name: string;
+    args: Record<string, unknown>;
+    result_summary?: string;
+    result_meta?: {
+      disposition?: string;
+      selection_required?: boolean;
+      missing_fields?: string[];
+      selected_skus?: string[];
+      read_only_suppressed?: boolean;
+      reason?: string;
+    };
+  }> = [];
   let usedModel = GEMINI_MODELS[0];
   let fullAnswer = "";
   let firstTokenMs: number | null = null;
   let llm_ms = 0;
   let tool_ms = 0;
   let toolIterations = 0;
-  // Image replies are buffered so a payment receipt can be sanitized before a
-  // single streamed token reaches any channel. Text payment notifications use
-  // the same path for consistent privacy protection.
-  const deferTextForPaymentSafety = images.length > 0 || PAYMENT_RECEIPT_QUERY_RE.test(query);
+  // Keep generated text private until all tool results and deterministic
+  // guards have chosen the final answer. This keeps streamed and persisted
+  // text identical even when a later lookup requires product clarification.
   const appendAnswer = (chunk: string) => {
     if (chunk && firstTokenMs === null) firstTokenMs = Date.now() - telemetry.startedAt;
     fullAnswer += chunk;
-    if (!deferTextForPaymentSafety) send({ type: "text", chunk });
   };
 
-  // Post-tool iterations are buffered (not streamed live) so a repeated
-  // acknowledgment — the model loves to re-say "เดี๋ยวเอยขอตรวจสอบ..." after
-  // the tool result — can be dropped instead of reaching the customer twice.
+  // Buffer each model iteration until its tool results are known. Product
+  // selection is then enforced by code, so an eager model cannot create a lead
+  // or quote while size/grit details are still missing.
   const normText = (s: string) => s.replace(/\s+/g, "").replace(/[.,!?;:()\[\]"'`~\-—·]/g, "");
+  const appendDistinctAnswer = (candidate: string) => {
+    if (!candidate) return;
+    const a = normText(fullAnswer);
+    const b = normText(candidate);
+    const duplicate = a.length > 0 && b.length > 0 && (a.includes(b) || b.includes(a));
+    if (duplicate) return;
+    const sepNeeded = fullAnswer.trim() && !fullAnswer.endsWith("\n");
+    appendAnswer((sepNeeded ? "\n" : "") + candidate);
+  };
+  const contextualProductQuery = mergeFacetOnlyProductQuery(query, history);
+  const hasContextualProductQuery = contextualProductQuery !== query;
+  let productSelectionPending = false;
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let iterText = "";
     const llmStartedAt = Date.now();
     const r = await streamGeminiWithFallback(geminiKey, systemPrompt, contents, (chunk) => {
       if (chunk && firstTokenMs === null) firstTokenMs = Date.now() - telemetry.startedAt;
-      if (iter === 0) {
-        appendAnswer(chunk);
-      } else {
-        iterText += chunk;
-      }
+      // Always hold the first model turn until its function calls are known.
+      // This prevents eager prose from reaching the customer before product
+      // selection and mutating-tool guards have been applied.
+      iterText += chunk;
     });
     llm_ms += Date.now() - llmStartedAt;
-    if (iter > 0 && iterText) {
-      const a = normText(fullAnswer);
-      const b = normText(iterText);
-      const duplicate = a.length > 0 && b.length > 0 && (a.includes(b) || b.includes(a));
-      if (!duplicate) {
-        const sepNeeded = fullAnswer.trim() && !fullAnswer.endsWith("\n");
-        const chunkOut = (sepNeeded ? "\n" : "") + iterText;
-        appendAnswer(chunkOut);
-      }
-    }
     usedModel = r.model;
     usage.prompt_tokens += r.usage.prompt_tokens;
     usage.completion_tokens += r.usage.completion_tokens;
     usage.total_tokens += r.usage.total_tokens;
-    if (r.toolCalls.length === 0) break;
+    if (r.toolCalls.length === 0) {
+      appendDistinctAnswer(iterText);
+      break;
+    }
     toolIterations += 1;
     contents.push({ role: "model", parts: r.allParts });
-    for (const tc of r.toolCalls) { send({ type: "tool_call", name: tc.name, args: tc.args }); }
     const toolsStartedAt = Date.now();
-    const responseParts = await Promise.all(
-      r.toolCalls.map(async (call) => {
-        const result = await dispatchTool(admin, call.name, call.args, send, channel, conversationId, query, images.length > 0);
-        allToolCalls.push({ name: call.name, args: call.args, result_summary: JSON.stringify(result).slice(0, 200) });
-        return { functionResponse: { name: call.name, response: result } };
-      }),
-    );
+    const responseParts: Array<{ functionResponse: { name: string; response: unknown } }> = new Array(r.toolCalls.length);
+    let forcedSelectionQuestion: string | null = null;
+    for (const { call, index } of prioritizeProductToolCalls(r.toolCalls)) {
+      const effectiveArgs = call.name === "find_products" && hasContextualProductQuery
+        ? { ...call.args, query: contextualProductQuery }
+        : call.args;
+      let result: unknown;
+      let executed = false;
+      const readOnlyDecision = readOnlyToolDecision(call.name, readOnly);
+      const readOnlySuppressed = !readOnlyDecision.execute && readOnlyDecision.recordSuppressed;
+      // Only an unresolved variant selection blocks workflow mutations. A
+      // resolved lookup may legitimately be followed by a bulk lead, explicit
+      // callback, draft quote, or quote-customer link in the same model turn.
+      if (readOnlySuppressed) {
+        result = readOnlyDecision.result;
+      } else if (shouldSuppressToolForProductSearch(
+        call.name,
+        productSelectionPending ? "needs_selection" : "none",
+      )) {
+        result = { ok: false, suppressed: true, reason: "product_selection_or_lookup_already_handled" };
+      } else {
+        send({ type: "tool_call", name: call.name, args: effectiveArgs });
+        result = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0);
+        executed = true;
+      }
+      responseParts[index] = { functionResponse: { name: call.name, response: result } };
+
+      let resultMeta: {
+        disposition: string;
+        selection_required: boolean;
+        missing_fields: string[];
+        selected_skus: string[];
+      } | undefined;
+      if (call.name === "find_products" || call.name === "get_product_detail") {
+        const lookupDisposition = productSearchDisposition(result);
+        if (lookupDisposition === "needs_selection") productSelectionPending = true;
+        const selection = result && typeof result === "object" ? result as Record<string, unknown> : null;
+        const productRows = Array.isArray(selection?.products)
+          ? selection.products as Array<Record<string, unknown>>
+          : [];
+        const clarificationRows = Array.isArray(selection?.clarification_candidates)
+          ? selection.clarification_candidates as Array<Record<string, unknown>>
+          : [];
+        const selectedSkus = [
+          typeof selection?.sku === "string" ? selection.sku : "",
+          ...productRows.map((product) => typeof product.sku === "string" ? product.sku : ""),
+          ...clarificationRows.map((product) => typeof product.sku === "string" ? product.sku : ""),
+        ]
+          .filter((sku, skuIndex, skus) => sku && skus.indexOf(sku) === skuIndex)
+          .slice(0, 12);
+        resultMeta = {
+          disposition: lookupDisposition,
+          selection_required: lookupDisposition === "needs_selection",
+          missing_fields: Array.isArray(selection?.missing_fields)
+            ? selection.missing_fields.filter((field): field is string => typeof field === "string")
+            : [],
+          selected_skus: selectedSkus,
+        };
+        if (lookupDisposition === "needs_selection" && !forcedSelectionQuestion) {
+          forcedSelectionQuestion = pendingProductQuestion(selection, lang);
+        }
+      }
+      if (executed) {
+        allToolCalls.push({
+          name: call.name,
+          args: effectiveArgs,
+          result_summary: JSON.stringify(result).slice(0, 200),
+          ...(resultMeta ? { result_meta: resultMeta } : {}),
+        });
+      } else if (readOnlySuppressed) {
+        allToolCalls.push({
+          name: call.name,
+          args: effectiveArgs,
+          result_summary: JSON.stringify(result).slice(0, 200),
+          result_meta: { read_only_suppressed: true, reason: "read_only" },
+        });
+      }
+    }
     tool_ms += Date.now() - toolsStartedAt;
     contents.push({ role: "user", parts: responseParts });
+    if (forcedSelectionQuestion) {
+      fullAnswer = "";
+      appendAnswer(forcedSelectionQuestion);
+      break;
+    }
+    appendDistinctAnswer(iterText);
     if (iter === MAX_TOOL_ITERATIONS - 1) {
       const msgText = MSG[lang].maxIterations;
       appendAnswer(msgText);
@@ -1894,7 +2027,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }
 
   fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);
-  if (deferTextForPaymentSafety && fullAnswer) send({ type: "text", chunk: fullAnswer });
+  if (fullAnswer) send({ type: "text", chunk: fullAnswer });
 
   const generationMs = Date.now() - generationStartedAt;
   const sources = [
@@ -1903,13 +2036,14 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   ];
   const elapsed = { embed: embed_ms, search: search_ms, llm: llm_ms };
   const toolNames = allToolCalls.map((t) => t.name);
-  const responseCriticalWrites: Promise<unknown>[] = [
+  const responseCriticalWrites: Promise<unknown>[] = [];
+  if (!readOnly) {
     // Keep this write on the response path. Moving a last-write-wins memory
     // upsert to waitUntil widens the chance that an older concurrent turn
     // overwrites the newer customer context.
-    saveConversationMemory(admin, conversationId, channel, query, toolNames, learningSettings),
-  ];
-  if (conversationId && fullAnswer.trim() && persistMessages) {
+    responseCriticalWrites.push(saveConversationMemory(admin, conversationId, channel, query, toolNames, learningSettings));
+  }
+  if (!readOnly && conversationId && fullAnswer.trim() && persistMessages) {
     responseCriticalWrites.push(saveMessage(admin, conversationId, "bot", fullAnswer, {
       model: usedModel, channel,
       tool_calls: allToolCalls.map((t) => ({ name: t.name, args: t.args })),
@@ -1918,9 +2052,10 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }
   await Promise.all(responseCriticalWrites);
   const totalMs = Date.now() - telemetry.startedAt;
-  send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel });
-  runInBackground("post_reply", Promise.all([
-    recordAiRun(admin, {
+  send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
+  if (!readOnly) {
+    runInBackground("post_reply", Promise.all([
+      recordAiRun(admin, {
       requestId: telemetry.requestId,
       conversationId,
       channel,
@@ -1946,14 +2081,15 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         tool_ms,
         generation_ms: generationMs,
       },
-    }),
-    recordLearningCandidate(admin, {
-      conversationId,
-      channel,
-      query,
-      sourceCount: matchedRows.length + forcedRows.length,
-      toolNames,
-      settings: learningSettings,
-    }),
-  ]));
+      }),
+      recordLearningCandidate(admin, {
+        conversationId,
+        channel,
+        query,
+        sourceCount: matchedRows.length + forcedRows.length,
+        toolNames,
+        settings: learningSettings,
+      }),
+    ]));
+  }
 }

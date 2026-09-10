@@ -1,7 +1,13 @@
 const MODEL_CODE_RE = /\b([A-Z]{2,6})[\s._/-]*(\d{2,}[A-Z0-9-]*)\b/g;
+const NON_MODEL_CODE_PREFIXES = new Set(["GRIT", "SIZE"]);
 const THAI_SEARCH_PREFIX_RE = /^(?:(?:ผม|ฉัน|หนู|เรา|ลูกค้า)\s*)?(?:(?:สนใจ(?:ซื้อ)?|ต้องการ|อยาก(?:ได้|หา|ทราบ(?:ราคา)?|รู้(?:ราคา)?)|กำลังหา|ขอ(?:ซื้อ|ราคา|รายละเอียด|สเป[กค]|spec)?|สอบถาม(?:ราคา|รายละเอียด)?|รบกวน(?:ช่วย)?(?:หา|เช็ก|เช็ค|ตรวจสอบ)?|ช่วย(?:หา|เช็ก|เช็ค|ตรวจสอบ)?|หา|เช็ก|เช็ค|ดู|สินค้า)\s*)+/iu;
 const THAI_SEARCH_SUFFIX_RE = /\s*(?:(?:มี)?(?:ไหม|มั้ย|หรือเปล่า)|หน่อย)?\s*(?:ครับ|ค่ะ|คะ|ฮะ|นะครับ|นะคะ|นะ)?\s*$/iu;
 const ENGLISH_SEARCH_PREFIX_RE = /^(?:(?:i|we)\s+)?(?:(?:am|are)\s+)?(?:interested\s+in|want|need|looking\s+for|find|show\s+me|check(?:\s+the)?(?:\s+price\s+of)?)\s+/i;
+const THAI_AVAILABILITY_PREFIX_RE = /^มี(?:สินค้า)?(?=\s|[A-Z]{2,6}[\s._/-]*\d{2,})\s*/iu;
+const DIMENSION_UNIT_SOURCE = '(?:"|นิ้ว|inch(?:es)?|in\\b|มม\\.?|mm\\b)\\.?';
+const DIMENSION_UNIT_SEPARATOR_SOURCE = '\\s*(?:[-‐‑‒–—]\\s*)?';
+const SCALAR_DIMENSION_SOURCE = `\\b\\d+(?:\\.\\d+)?${DIMENSION_UNIT_SEPARATOR_SOURCE}${DIMENSION_UNIT_SOURCE}`;
+const DIMENSION_TUPLE_SOURCE = `\\b\\d+(?:\\.\\d+)?(?:\\s*[x×*]\\s*\\d+(?:\\.\\d+)?){1,3}${DIMENSION_UNIT_SEPARATOR_SOURCE}${DIMENSION_UNIT_SOURCE}`;
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -21,9 +27,9 @@ function naturalSort(values) {
  */
 export function extractModelCodes(value) {
   const text = String(value ?? "").toUpperCase();
-  return unique([...text.matchAll(MODEL_CODE_RE)].map((match) =>
-    `${match[1]}${match[2]}`.replace(/[^A-Z0-9]/g, "")
-  ));
+  return unique([...text.matchAll(MODEL_CODE_RE)]
+    .filter((match) => !NON_MODEL_CODE_PREFIXES.has(match[1]))
+    .map((match) => `${match[1]}${match[2]}`.replace(/[^A-Z0-9]/g, "")));
 }
 
 export function hasExactModelCodeMatch(query, candidate) {
@@ -40,6 +46,7 @@ export function normalizeProductSearchQuery(value) {
   while (text && text !== previous) {
     previous = text;
     text = text
+      .replace(THAI_AVAILABILITY_PREFIX_RE, "")
       .replace(THAI_SEARCH_PREFIX_RE, "")
       .replace(ENGLISH_SEARCH_PREFIX_RE, "")
       .replace(THAI_SEARCH_SUFFIX_RE, "")
@@ -55,10 +62,15 @@ export function normalizeProductSearchQuery(value) {
  */
 export function productIdentitySearchText(value) {
   return String(value ?? "")
-    .replace(/\b\d+(?:\.\d+)?\s*(?:"|นิ้ว|inch(?:es)?|in\b|มม\.?|mm\b)/giu, " ")
+    .replace(new RegExp(DIMENSION_TUPLE_SOURCE, "giu"), " ")
+    .replace(new RegExp(SCALAR_DIMENSION_SOURCE, "giu"), " ")
+    .replace(/(?:เบอร์|grit)\s*[:=]?\s*#?\s*P\s*\d{1,5}[A-Z]?/gi, " ")
+    .replace(/\b\d{1,5}[A-Z]?\s*grit\b/gi, " ")
     .replace(/#\s*\d{1,5}[A-Z]?/gi, " ")
-    .replace(/(?:เบอร์|grit)\s*#?\s*\d{1,5}[A-Z]?/gi, " ")
+    .replace(/\bP\s*\d{1,5}[A-Z]?\b/gi, " ")
+    .replace(/(?:เบอร์|grit)\s*[:=]?\s*#?\s*\d{1,5}[A-Z]?/gi, " ")
     .replace(/(?:ไม่มีรู|ไม่เจาะรู|no\s*holes?|\b\d{1,3}\s*รู\b|\bholes?\s*[:=]?\s*\d{1,3}\b)/giu, " ")
+    .replace(/(?:^|\s)(?:ขนาด|ไซซ์|size|เบอร์|grit)\s*[:=]?(?=\s|$)/giu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -74,8 +86,17 @@ function sourceText(product) {
 function extractSizes(value) {
   const text = String(value ?? "");
   const dimensions = [];
-  const re = /\b(\d+(?:\.\d+)?)\s*("|นิ้ว|inch(?:es)?|in\b|มม\.?|mm\b)/giu;
-  for (const match of text.matchAll(re)) {
+  const tupleRe = new RegExp(`\\b(\\d+(?:\\.\\d+)?(?:\\s*[x×*]\\s*\\d+(?:\\.\\d+)?){1,3})${DIMENSION_UNIT_SEPARATOR_SOURCE}(${DIMENSION_UNIT_SOURCE})`, "giu");
+  const textWithoutTuples = text.replace(tupleRe, (full, tuple, rawUnit) => {
+    const values = String(tuple).split(/\s*[x×*]\s*/iu).map((part) => Number(part));
+    if (values.length >= 2 && values.every((part) => Number.isFinite(part) && part > 0)) {
+      const unit = /มม|mm/i.test(rawUnit) ? "มม." : "นิ้ว";
+      dimensions.push(`${values.join("x")}${unit}`);
+    }
+    return " ".repeat(full.length);
+  });
+  const re = new RegExp(`\\b(\\d+(?:\\.\\d+)?)${DIMENSION_UNIT_SEPARATOR_SOURCE}(${DIMENSION_UNIT_SOURCE})`, "giu");
+  for (const match of textWithoutTuples.matchAll(re)) {
     const number = Number(match[1]);
     if (!Number.isFinite(number) || number <= 0) continue;
     const unit = /มม|mm/i.test(match[2]) ? "มม." : "นิ้ว";
@@ -88,7 +109,9 @@ function extractGrits(value) {
   const text = String(value ?? "");
   const values = [];
   for (const match of text.matchAll(/#\s*(\d{1,5}[A-Z]?)/gi)) values.push(`#${match[1].toUpperCase()}`);
-  for (const match of text.matchAll(/(?:เบอร์|grit)\s*#?\s*(\d{1,5}[A-Z]?)/gi)) values.push(`#${match[1].toUpperCase()}`);
+  for (const match of text.matchAll(/\bP\s*(\d{1,5}[A-Z]?)\b/gi)) values.push(`#${match[1].toUpperCase()}`);
+  for (const match of text.matchAll(/(?:เบอร์|grit)\s*[:=]?\s*#?\s*(\d{1,5}[A-Z]?)/gi)) values.push(`#${match[1].toUpperCase()}`);
+  for (const match of text.matchAll(/\b(\d{1,5}[A-Z]?)\s*grit\b/gi)) values.push(`#${match[1].toUpperCase()}`);
   return unique(values);
 }
 
@@ -171,4 +194,34 @@ export function buildProductSelection(query, products) {
     clarification_question_th: `สินค้านี้มีหลายตัวเลือกค่ะ ${joinThai(questionsTh)}คะ`,
     clarification_question_en: `This product has several variants. Please tell me ${joinEnglish(questionsEn)}.`,
   };
+}
+
+export function productSearchDisposition(result) {
+  if (!result || typeof result !== "object") return "none";
+  if (result.selection_required === true) return "needs_selection";
+  if (Array.isArray(result.clarification_candidates) && result.clarification_candidates.length > 0) {
+    return "needs_selection";
+  }
+  if (Array.isArray(result.products) && result.products.length > 0) return "resolved";
+  if (result.sku && !result.error) return "resolved";
+  if (Number(result.count ?? 0) === 0) return "unresolved";
+  return "none";
+}
+
+/** Product lookup must run before tools that can mutate sales workflow state. */
+export function prioritizeProductToolCalls(calls) {
+  return calls
+    .map((call, index) => ({ call, index }))
+    .sort((left, right) => {
+      const leftPriority = left.call?.name === "find_products" || left.call?.name === "get_product_detail" ? 0 : 1;
+      const rightPriority = right.call?.name === "find_products" || right.call?.name === "get_product_detail" ? 0 : 1;
+      return leftPriority - rightPriority || left.index - right.index;
+    });
+}
+
+export function shouldSuppressToolForProductSearch(toolName, disposition) {
+  if (disposition !== "needs_selection") return false;
+  return toolName === "capture_lead" ||
+    toolName === "request_quote" ||
+    toolName === "link_quote_customer";
 }
