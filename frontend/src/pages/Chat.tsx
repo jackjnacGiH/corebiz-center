@@ -69,6 +69,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import ContactPanel from '../components/chat/ContactPanel';
+import ChatAvatar from '../components/chat/ChatAvatar';
 import EmojiButton from '../components/chat/EmojiButton';
 import QuickReplyButton from '../components/chat/QuickReplyButton';
 import ImageCropModal, { captureScreen } from '../components/chat/ImageCropModal';
@@ -1111,27 +1112,14 @@ export default function Chat() {
                                     </span>
                                 </div>
                                 <div className="flex items-start gap-2">
-                                    {c.avatar_url ? (
-                                        <img
-                                            src={c.avatar_url}
-                                            alt={c.display_name}
-                                            className="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
-                                            referrerPolicy="no-referrer"
-                                            loading="lazy"
-                                            onError={(e) => {
-                                                const img = e.currentTarget;
-                                                img.style.display = 'none';
-                                                const fallback = img.nextElementSibling as HTMLElement | null;
-                                                if (fallback) fallback.style.display = 'grid';
-                                            }}
-                                        />
-                                    ) : null}
-                                    <div
-                                        className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 grid place-items-center text-white text-sm font-bold flex-shrink-0"
-                                        style={{ display: c.avatar_url ? 'none' : 'grid' }}
-                                    >
-                                        {c.display_name.charAt(0).toUpperCase()}
-                                    </div>
+                                    <ChatAvatar
+                                        key={`${c.id}:${c.avatar_url ?? ''}`}
+                                        src={c.avatar_url}
+                                        alt={c.display_name}
+                                        imageClassName="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
+                                        fallbackClassName="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 grid place-items-center text-white text-sm font-bold flex-shrink-0"
+                                        fallback={c.display_name.charAt(0).toUpperCase()}
+                                    />
                                     <div className="flex-1 min-w-0">
                                         <div className="text-sm font-medium text-neutral-900 truncate">
                                             {c.display_name}
@@ -1181,27 +1169,15 @@ export default function Chat() {
                                 >
                                     <ChevronLeft size={20} />
                                 </button>
-                                {selectedConv.avatar_url ? (
-                                    <img
-                                        src={selectedConv.avatar_url}
-                                        alt={selectedConv.display_name}
-                                        className="w-9 h-9 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
-                                        referrerPolicy="no-referrer"
-                                        loading="lazy"
-                                        onError={(e) => {
-                                            const img = e.currentTarget;
-                                            img.style.display = 'none';
-                                            const fallback = img.nextElementSibling as HTMLElement | null;
-                                            if (fallback) fallback.style.display = 'grid';
-                                        }}
-                                    />
-                                ) : null}
-                                <div
-                                    className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white flex-shrink-0"
-                                    style={{ display: selectedConv.avatar_url ? 'none' : 'grid' }}
-                                >
-                                    <User size={16} />
-                                </div>
+                                <ChatAvatar
+                                    key={`${selectedConv.id}:${selectedConv.avatar_url ?? ''}`}
+                                    src={selectedConv.avatar_url}
+                                    alt={selectedConv.display_name}
+                                    imageClassName="w-9 h-9 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
+                                    fallbackClassName="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 grid place-items-center text-white flex-shrink-0"
+                                    fallback={<User size={16} />}
+                                    loading="eager"
+                                />
                                 <div className="min-w-0 flex-1">
                                     <div className="truncate text-sm font-semibold text-neutral-900">
                                         {selectedConv.display_name}
