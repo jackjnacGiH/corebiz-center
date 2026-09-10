@@ -263,11 +263,24 @@ export function providerCreateResult(response: ProviderResponse): {
   };
 }
 
-export function providerPrintLink(response: ProviderResponse): string | null {
-  if (!response.ok) return null;
-  const link = text(record(response.data.data).link, 2_000) ||
-    text(response.data.link, 2_000);
-  if (!link) return null;
+const PROVIDER_PDF_PREFIX = "data:application/pdf;base64,";
+const MAX_PROVIDER_PDF_BYTES = 1_400_000;
+
+function safePrintLink(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const link = value.trim();
+  if (link.startsWith(PROVIDER_PDF_PREFIX)) {
+    const encoded = link.slice(PROVIDER_PDF_PREFIX.length);
+    if (
+      !encoded.startsWith("JVBERi0") ||
+      encoded.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+    ) return null;
+    const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
+    const byteLength = encoded.length / 4 * 3 - padding;
+    return byteLength <= MAX_PROVIDER_PDF_BYTES ? link : null;
+  }
+  if (link.length > 2_000) return null;
   try {
     const url = new URL(link);
     return url.protocol === "https:" && !url.username && !url.password
@@ -276,6 +289,32 @@ export function providerPrintLink(response: ProviderResponse): string | null {
   } catch {
     return null;
   }
+}
+
+export function providerPrintLink(
+  response: ProviderResponse,
+  expectedTracking?: string,
+): string | null {
+  if (!response.ok) return null;
+  const providerData = response.data.data;
+  let rows = Array.isArray(providerData)
+    ? providerData.map(record)
+    : [record(providerData)];
+  if (!Array.isArray(providerData) && !rows[0].link)
+    rows.push(response.data);
+  if (expectedTracking) {
+    const exact = rows.filter((row) => row.tracking_number === expectedTracking);
+    rows = exact.length
+      ? exact
+      : rows.length === 1 && !text(rows[0].tracking_number, 80)
+        ? rows
+        : [];
+  }
+  for (const row of rows) {
+    const link = safePrintLink(row.link);
+    if (link) return link;
+  }
+  return null;
 }
 
 export function providerCancelAccepted(response: ProviderResponse): boolean {

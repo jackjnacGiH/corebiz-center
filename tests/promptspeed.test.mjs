@@ -77,6 +77,16 @@ test("V3 envelopes accept all 2xx statuses and expose only bounded parsed fields
   assert.equal(providerPrintLink(printed), "https://labels.example.test/a.pdf");
   assert.equal(printed.requestId, "request-print");
 
+  const pdf = Buffer.from("%PDF-1.4\n%%EOF").toString("base64");
+  const arrayPrint = envelope(200, { data: [
+    { tracking_number: "TH1234567890", parcel_id: "parcel-1", link: `data:application/pdf;base64,${pdf}` },
+  ] });
+  assert.equal(
+    providerPrintLink(arrayPrint, "TH1234567890"),
+    `data:application/pdf;base64,${pdf}`,
+  );
+  assert.equal(providerPrintLink(arrayPrint, "TH0000000000"), null);
+
   const listed = parseProviderResponse(206, JSON.stringify({
     data: [{ tracking_number: "TH1234567890", status: "waiting" }],
     request_id: "request-list",
@@ -103,6 +113,12 @@ test("validation envelopes, invalid successful bodies and unsafe print URLs fail
   assert.equal(parseProviderResponse(502, "gateway unavailable").code, "HTTP_502");
   assert.equal(providerPrintLink(parseProviderResponse(200,
     '{"data":{"link":"http://labels.example.test/a.pdf"}}')), null);
+  assert.equal(providerPrintLink(envelope(200, {
+    data: [{ tracking_number: "TH1234567890", link: "data:text/html;base64,PHNjcmlwdD4=" }],
+  }), "TH1234567890"), null);
+  assert.equal(providerPrintLink(envelope(200, {
+    data: [{ tracking_number: "TH1234567890", link: `data:application/pdf;base64,JVBERi0${"A".repeat(1_900_001)}` }],
+  }), "TH1234567890"), null);
   assert.equal(providerCancelAccepted(parseProviderResponse(204, "")), false);
 });
 

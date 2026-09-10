@@ -77,6 +77,7 @@ function mount(query = '') {
       if (name === '@/lib/shipping-api') return { shippingApi: api };
       if (name.endsWith('/shipping-domain')) return domain;
       if (name === '@/lib/shipping-carriers') return { shippingTrackingUrl: () => null };
+      if (name === '@/lib/provider-label') return { providerLabelResource: () => { throw new Error('Provider labels are outside this test'); } };
       if (name === '@/lib/print') return { printElement: () => { throw new Error('Printing is outside this test'); } };
       if (name === '@/components/ui/button') return { Button: 'Button' };
       if (name === '@/components/ui/input') return { Input: 'Input' };

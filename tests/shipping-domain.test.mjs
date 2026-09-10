@@ -133,6 +133,31 @@ test("company is optional on older drafts and is carried into provider recipient
   assert.equal(payload.destination.fullname, "Customer Company / Test contact");
   assert.equal("company" in payload.destination, false);
 });
+test("formatted phone numbers stay in drafts and are normalized only for PromptSpeed", () => {
+  const d = ready();
+  d.origin.telephone1 = "02-183 8489";
+  d.destination.telephone1 = "+66 81-442-0000";
+  const parsed = parseDraft(d);
+  assert.deepEqual(readyIssues(parsed), []);
+  assert.equal(parsed.origin.telephone1, "02-183 8489");
+  assert.equal(parsed.destination.telephone1, "+66 81-442-0000");
+
+  const payload = providerPayload(
+    { draft: parsed, id: "test", reference_no: "SHP-TEST" },
+    null,
+  );
+  assert.equal(payload.origin.telephone1, "021838489");
+  assert.equal(payload.destination.telephone1, "66814420000");
+  assert.equal(parsed.origin.telephone1, "02-183 8489");
+  assert.equal(parsed.destination.telephone1, "+66 81-442-0000");
+});
+test("phone validation counts normalized digits and rejects unsupported characters", () => {
+  for (const phone of ["02-18 34", "02-183-ABCD", "08(1442)0000", "66+814420000"]) {
+    const d = ready();
+    d.origin.telephone1 = phone;
+    assert.ok(readyIssues(parseDraft(d)).includes("origin_phone"), phone);
+  }
+});
 test("legacy company names move to company while unknown contacts stay blank", () => {
   for (const company of ["บริษัท เจ แนค (ประเทศไทย) จำกัด", "หจก. ทดสอบ", "ACME Co., Ltd."]) {
     const original = { ...ready().origin, company: "", fullname: company };

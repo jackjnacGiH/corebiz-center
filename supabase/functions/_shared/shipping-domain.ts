@@ -99,6 +99,18 @@ export function normalizeShippingContact(address: ShippingAddress): ShippingAddr
   return { ...address, company, fullname };
 }
 
+// PromptSpeed accepts phone numbers as digits. Keep the staff-entered format in
+// the draft, then remove the optional international prefix marker, spaces and
+// hyphens only when building the provider request.
+export function normalizeProviderPhone(value: string): string {
+  return value.replace(/[\s-]/gu, "").replace(/^\+/, "");
+}
+
+function validProviderPhone(value: string): boolean {
+  return /^\+?[0-9\s-]+$/u.test(value) &&
+    /^[0-9]{9,20}$/.test(normalizeProviderPhone(value));
+}
+
 export function recipientAddress(
   value: unknown,
   fallback: Record<string, unknown> = {},
@@ -330,7 +342,7 @@ export function readyIssues(d: ShippingDraft): string[] {
     if (!/^\d{5}$/.test(a.postcode)) issues.push(`${side}_postcode`);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email))
       issues.push(`${side}_email`);
-    if (!/^\+?[0-9 -]{9,20}$/.test(a.telephone1)) issues.push(`${side}_phone`);
+    if (!validProviderPhone(a.telephone1)) issues.push(`${side}_phone`);
   }
   if (!d.carrier_code) issues.push("carrier_required");
   if (
@@ -373,9 +385,12 @@ export function providerPayload(
     product_price: 0,
   };
 }
-function providerAddress({ company, ...a }: ShippingAddress): ShippingAddress {
+function providerAddress(
+  { company, telephone1, ...a }: ShippingAddress,
+): ShippingAddress {
   return {
     ...a,
+    telephone1: normalizeProviderPhone(telephone1),
     fullname: company && company !== a.fullname
       ? `${company} / ${a.fullname}`.slice(0, 150)
       : a.fullname,
