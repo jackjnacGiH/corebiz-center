@@ -80,6 +80,16 @@ test("facet-only follow-up carries the adjacent clarified product identity", () 
   }
 });
 
+test("facet-only product follow-up bypasses unrelated knowledge retrieval", () => {
+  const routingStart = source.indexOf("const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history)");
+  const routingEnd = source.indexOf("const systemPrompt", routingStart);
+  const routing = source.slice(routingStart, routingEnd);
+
+  assert.ok(routingStart >= 0);
+  assert.match(routing, /!shouldSkipRAG\(ragRoutingQuery\)/);
+  assert.match(source, /const contextualProductQuery = ragRoutingQuery/);
+});
+
 test("multi-turn product identity carry-forward fails closed across topic changes", () => {
   const clarificationHistory = [
     { role: "user", content: "สนใจกระดาษทราย DEERFOS SA331" },
