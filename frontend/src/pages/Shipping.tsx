@@ -93,7 +93,8 @@ export default function Shipping() {
   const [rows, setRows] = useState<Shipment[]>([]),
     [count, setCount] = useState(0),
     [page, setPage] = useState(0),
-    [search, setSearch] = useState("");
+    [search, setSearch] = useState(""),
+    [expandedShipmentId, setExpandedShipmentId] = useState<string | null>(null);
   const [view, setView] = useState<"list" | "editor" | "settings">("list"),
     [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<ShippingDraft>(emptyDraft),
@@ -141,6 +142,15 @@ export default function Shipping() {
   const labelReturnFocus = useRef<HTMLElement | null>(null);
   const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
+
+  useEffect(() => {
+    if (
+      expandedShipmentId &&
+      !rows.some((row) => row.id === expandedShipmentId)
+    ) {
+      setExpandedShipmentId(null);
+    }
+  }, [expandedShipmentId, rows]);
   const revokeProviderLabel = useCallback(() => {
     if (providerLabelObjectUrl.current) {
       URL.revokeObjectURL(providerLabelObjectUrl.current);
@@ -822,6 +832,7 @@ export default function Shipping() {
                 onChange={(e) => {
                   setSearch(e.target.value);
                   setPage(0);
+                  setExpandedShipmentId(null);
                 }}
               />
               {listLoading && <p role="status" className="text-sm text-muted-foreground">{c.loading}</p>}
@@ -835,9 +846,15 @@ export default function Shipping() {
                     <ShipmentListCard
                       key={s.id}
                       shipment={s}
+                      expanded={expandedShipmentId === s.id}
                       busy={busy}
                       readReady={bootstrap.readReady}
                       activeAction={listAction?.shipmentId === s.id ? listAction.action : null}
+                      onToggle={() =>
+                        setExpandedShipmentId((current) =>
+                          current === s.id ? null : s.id,
+                        )
+                      }
                       onOpen={() =>
                         void run(async () => {
                           const r = await shippingApi.get(s.id);
@@ -879,7 +896,10 @@ export default function Shipping() {
                 <Button
                   variant="outline"
                   disabled={!page || busy}
-                  onClick={() => setPage((p) => p - 1)}
+                  onClick={() => {
+                    setExpandedShipmentId(null);
+                    setPage((p) => p - 1);
+                  }}
                 >
                   {c.previous}
                 </Button>
@@ -889,7 +909,10 @@ export default function Shipping() {
                 <Button
                   variant="outline"
                   disabled={(page + 1) * 25 >= count || busy}
-                  onClick={() => setPage((p) => p + 1)}
+                  onClick={() => {
+                    setExpandedShipmentId(null);
+                    setPage((p) => p + 1);
+                  }}
                 >
                   {c.next}
                 </Button>

@@ -165,6 +165,7 @@ export type ShippingStatus =
   | "archived";
 export interface Shipment {
   recipient_company?: string;
+  order_shipping_fee?: number | null;
   id: string;
   reference_no: string;
   order_id: string | null;

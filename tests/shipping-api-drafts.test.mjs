@@ -145,6 +145,29 @@ test('active shipment list filters archived rows before exact count and paginati
   assert.equal(h.queries.some(query => query.patch), false);
 });
 
+test('shipment list exposes the billed order shipping fee without inventing a provider charge', async () => {
+  const billed = shipment(1, 'waiting', {
+    order_id: id(101), order_code: 'SO-TEST-1',
+    orders: { shipping_fee: 45.5, customers: { name: 'Billed recipient' } },
+  });
+  const free = shipment(2, 'waiting', {
+    order_id: id(102), order_code: 'SO-TEST-2',
+    orders: { shipping_fee: 0, customers: { name: 'Free-shipping recipient' } },
+  });
+  const manual = shipment(3);
+  const h = api({ rows: [billed, free, manual] });
+  const result = await h.call('list');
+
+  assert.equal(result.status, 200);
+  const byId = new Map(result.body.shipments.map(row => [row.id, row]));
+  assert.equal(byId.get(billed.id).order_shipping_fee, 45.5);
+  assert.equal(byId.get(billed.id).recipient_company, 'Billed recipient');
+  assert.equal(byId.get(free.id).order_shipping_fee, 0, 'A stored zero must not be dropped');
+  assert.equal(byId.get(manual.id).order_shipping_fee, null);
+  assert.equal('orders' in byId.get(billed.id), false, 'The nested order record is not exposed');
+  assert.match(h.queries.find(query => query.table === 'shipments').columns, /orders\(shipping_fee,customers\(name\)\)/);
+});
+
 test('archived history cannot fill the recipient window or reappear as a saved recipient', async () => {
   const archived = Array.from({ length: 210 }, (_, i) => shipment(i + 10, 'archived', { created_at: '2026-09-09T00:00:00Z' }));
   const h = api({ rows: [...archived, shipment(1), shipment(2, 'delivered')], customers: [
