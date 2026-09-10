@@ -5,6 +5,9 @@ import {
   emptyDraft,
   SHIPPING_BOX_DIMENSION_MAX_CM,
   parseDraft,
+  draftFormatIssues,
+  isShippingDraftFieldIssue,
+  ShippingDraftFieldError,
   parseDraftUpdate,
   normalizeShippingContact,
   recipientAddress,
@@ -72,6 +75,39 @@ test("draft normalization strips caller-controlled privileged properties", () =>
   assert.equal(d.products[0].price, "12.50");
   assert.equal(d.handling_note, "กรุณาอย่าโยน • ระวังของแตก");
   assert.equal(d.parcel_total, 1);
+});
+test("draft format errors identify exact fields, product rows and parcel numbers without values", () => {
+  const d = ready();
+  d.purpose = "x".repeat(301);
+  d.handling_note = `ระวัง${String.fromCharCode(1)}แตก`;
+  d.origin.address = 123;
+  d.cod_amount = "350,00";
+  d.parcel_total = 2;
+  d.parcels = [
+    { box_width: 20, box_height: 10, box_length: 30, box_weight: 1200 },
+    { box_width: 20, box_height: 10, box_length: 181, box_weight: 1200.5 },
+  ];
+  d.products.push({ ...d.products[0], name: 42, qty: 1.5 });
+
+  const issues = draftFormatIssues(d);
+  assert.ok(issues.every(isShippingDraftFieldIssue));
+  assert.deepEqual(issues, [
+    { field: "purpose", reason: "text_too_long", limit: 300 },
+    { field: "handling_note", reason: "unsupported_text_character" },
+    { field: "origin.address", reason: "invalid_text_type" },
+    { field: "parcels.box_length", reason: "number_above_max", index: 1, limit: 180 },
+    { field: "parcels.box_weight", reason: "whole_number_required", index: 1 },
+    { field: "cod_amount", reason: "invalid_money_format" },
+    { field: "products.name", reason: "invalid_text_type", index: 1 },
+    { field: "products.qty", reason: "whole_number_required", index: 1 },
+  ]);
+  assert.throws(() => parseDraft(d), error => {
+    assert.ok(error instanceof ShippingDraftFieldError);
+    assert.equal(error.message, "invalid_text"); // legacy callers remain compatible
+    assert.deepEqual(error.issue, issues[0]);
+    assert.equal(JSON.stringify(error.issue).includes("350,00"), false);
+    return true;
+  });
 });
 test("draft can be incomplete but cannot submit", () => {
   assert.ok(readyIssues(parseDraft(emptyDraft())).length);

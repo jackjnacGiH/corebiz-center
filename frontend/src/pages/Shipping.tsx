@@ -26,9 +26,12 @@ import {
   emptyDraft,
   emptyAddress,
   parseDraft,
+  draftFormatIssues,
+  isShippingDraftFieldIssue,
   readyIssues,
   quoteIssues,
   type ShippingParcel,
+  type ShippingDraftFieldIssue,
   summarizeShippingItems,
   shippingQuoteKey,
 } from "../../../supabase/functions/_shared/shipping-domain";
@@ -49,6 +52,7 @@ import {
 } from "@/lib/shipping-carriers";
 import { printElement } from "@/lib/print";
 import { providerLabelResource } from "@/lib/provider-label";
+import { shippingDraftFieldIssueMessage } from "@/lib/shipping-validation";
 
 type ShippingLabelModule = typeof import("@/components/shipping/ShippingLabel");
 let labelModulePromise: Promise<ShippingLabelModule> | undefined;
@@ -84,6 +88,7 @@ export default function Shipping() {
   const [bootstrap, setBootstrap] = useState<ShippingBootstrap | null>(null),
     [error, setError] = useState(""),
     [errorDetail, setErrorDetail] = useState(""),
+    [errorFieldIssue, setErrorFieldIssue] = useState<ShippingDraftFieldIssue | null>(null),
     [notice, setNotice] = useState("");
   const [rows, setRows] = useState<Shipment[]>([]),
     [count, setCount] = useState(0),
@@ -154,6 +159,11 @@ export default function Shipping() {
         ? (e as { detail: string }).detail
         : "",
     );
+    const fieldIssue = e && typeof e === "object"
+      ? (e as { fieldIssue?: unknown; issue?: unknown }).fieldIssue ??
+        (e as { issue?: unknown }).issue
+      : null;
+    setErrorFieldIssue(isShippingDraftFieldIssue(fieldIssue) ? fieldIssue : null);
     setNotice("");
   }, []);
   const reload = useCallback(async () => {
@@ -382,6 +392,7 @@ export default function Shipping() {
     setBusy(true);
     setError("");
     setErrorDetail("");
+    setErrorFieldIssue(null);
     setNotice("");
     try {
       await task();
@@ -482,6 +493,7 @@ export default function Shipping() {
     setView(next);
     setError("");
     setErrorDetail("");
+    setErrorFieldIssue(null);
     setNotice("");
     setParams({});
   }
@@ -502,6 +514,7 @@ export default function Shipping() {
     setNotice("");
     setError("");
     setErrorDetail("");
+    setErrorFieldIssue(null);
     draftId.current = crypto.randomUUID();
     setView("editor");
   }
@@ -564,7 +577,7 @@ export default function Shipping() {
     }));
     resetProductLookup();
   };
-  const { issues, rateIssues, invalidDraft } = useMemo(() => {
+  const { issues, rateIssues, formatIssues } = useMemo(() => {
     const rawRateIssues = (() => {
       try {
         return quoteIssues(draft);
@@ -581,29 +594,40 @@ export default function Shipping() {
     })();
     try {
       const parsed = parseDraft(draft);
-      return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), invalidDraft: false };
-    } catch {
+      return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), formatIssues: [] as ShippingDraftFieldIssue[] };
+    } catch (reason) {
+      const directIssue = reason && typeof reason === "object"
+        ? (reason as { issue?: unknown }).issue
+        : null;
+      const exactIssues = draftFormatIssues(draft);
       return {
-        issues: rawReadyIssues.length ? rawReadyIssues : ["invalid_payload"],
+        issues: rawReadyIssues,
         rateIssues: rawRateIssues,
-        invalidDraft: true,
+        formatIssues: exactIssues.length
+          ? exactIssues
+          : isShippingDraftFieldIssue(directIssue)
+            ? [directIssue]
+            : [{ field: "draft", reason: "missing_object" } satisfies ShippingDraftFieldIssue],
       };
     }
   }, [draft]);
-  const quoteBlockers = rateIssues.length
-    ? rateIssues.map((issue) => c.quoteIssues[issue])
-    : invalidDraft
-      ? [c.quoteInvalid]
-      : [];
+  const formatIssueMessages = formatIssues.map((issue) =>
+    shippingDraftFieldIssueMessage(issue, c)
+  );
+  const quoteBlockers = [...new Set([
+    ...rateIssues.map((issue) => c.quoteIssues[issue]),
+    ...formatIssueMessages,
+  ])];
   const submissionIssueCodes = [...new Set([...issues, ...rateIssues])];
-  const submissionIssueMessages = [
+  const submissionIssueMessages = [...new Set([
+    ...formatIssueMessages,
     ...submissionIssueCodes.map((issue) =>
       (c.submissionIssues as Record<string, string>)[issue] ??
       (c.quoteIssues as Record<string, string>)[issue] ??
       c.submissionInvalid
     ),
     ...(bootstrap && !bootstrap.sendReady ? [c.submissionConnectionNotReady] : []),
-  ];
+  ])];
   const locked = !!shipment && shipment.status !== "draft";
   const trackingUrl =
     shipment?.tracking_number && shipment.draft.carrier_code
@@ -640,10 +664,12 @@ export default function Shipping() {
     invalid_tracking: c.invalidTracking,
     popup_blocked: c.popupBlocked,
   };
-  const errorMessage = error === "provider_rejected"
-    ? providerIssueMessage || c.providerRejected
-    : knownErrorMessages[error] ??
-      (error.startsWith("invalid_") ? c.submissionInvalid : c.genericError);
+  const errorMessage = errorFieldIssue
+    ? shippingDraftFieldIssueMessage(errorFieldIssue, c)
+    : error === "provider_rejected"
+      ? providerIssueMessage || c.providerRejected
+      : knownErrorMessages[error] ??
+        (error.startsWith("invalid_") ? c.submissionInvalid : c.genericError);
   async function save() {
     const d = parseDraft(draft);
     const r = shipment

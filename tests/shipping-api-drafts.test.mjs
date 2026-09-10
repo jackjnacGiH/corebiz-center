@@ -216,6 +216,33 @@ test('forbidden users cannot list, use history or archive, and missing bearer au
   assert.equal(h.queries.length, 0);
 });
 
+test('draft endpoints return only whitelisted field metadata for exact validation feedback', async () => {
+  const h = api();
+  const malformed = domain.emptyDraft();
+  malformed.purpose = `PRIVATE-${'x'.repeat(301)}`;
+  const create = await h.call('create_draft', { id: id(50), draft: malformed });
+  assert.equal(create.status, 400);
+  assert.deepEqual(create.body, {
+    error: 'invalid_draft_field',
+    field_issue: { field: 'purpose', reason: 'text_too_long', limit: 300 },
+  });
+  assert.equal(JSON.stringify(create.body).includes('PRIVATE-'), false);
+  assert.equal(h.tables.shipments.some(row => row.id === id(50)), false);
+
+  const updated = structuredClone(h.tables.shipments[0].draft);
+  updated.products = [
+    { name: 'Good', code: 'SKU-1', qty: 1, price: '0.00', weight: 0 },
+    { name: 123, code: 'SKU-2', qty: 1, price: '0.00', weight: 0 },
+  ];
+  const save = await h.call('save_draft', { id: id(1), version: 7, draft: updated });
+  assert.equal(save.status, 400);
+  assert.deepEqual(save.body, {
+    error: 'invalid_draft_field',
+    field_issue: { field: 'products.name', reason: 'invalid_text_type', index: 1 },
+  });
+  assert.equal(h.queries.some(query => query.patch), false);
+});
+
 test('connection test is manager-only and returns no provider credential fields', async () => {
   const connectionResult = {
     environment: 'uat', checked_at: '2026-09-10T00:00:00Z',

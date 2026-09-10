@@ -6,7 +6,7 @@ import ts from 'typescript';
 import * as domain from '../supabase/functions/_shared/shipping-domain.ts';
 
 const compiled = ts.transpileModule(readFileSync(new URL('../frontend/src/pages/Shipping.tsx', import.meta.url), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 const bootstrap = () => ({ manager: true, settings: { environment: 'uat', origin: domain.emptyAddress() },
@@ -80,6 +80,9 @@ function mount(query = '') {
       if (name === 'lucide-react') return new Proxy({}, { get: (_target, key) => key });
       if (name === '@/i18n') return { useLanguage: () => ({ language: 'th', t: { shipping: shippingWords, common: words } }) };
       if (name === '@/lib/shipping-api') return { shippingApi: api };
+      if (name === '@/lib/shipping-validation') return {
+        shippingDraftFieldIssueMessage: issue => `${issue.field}:${issue.reason}`,
+      };
       if (name.endsWith('/shipping-domain')) return domain;
       if (name === '@/lib/shipping-carriers') return { shippingTrackingUrl: () => null };
       if (name === '@/lib/provider-label') return { providerLabelResource: link => ({ kind: 'external', href: link }) };
@@ -364,7 +367,7 @@ test('an oversized box shows the specific dimension blocker before quote or subm
   await settle(); h.render();
 
   const comparison = h.find(node => node.type === 'ShippingRateComparison');
-  assert.deepEqual([...comparison.props.blockers], ['box_length']);
+  assert.deepEqual([...comparison.props.blockers], ['box_length', 'box_length:number_above_max']);
   assert.equal(h.button('submit').props.disabled, true);
   assert.equal(h.requests.filter(request => request.action === 'action').length, 0);
   h.unmount();

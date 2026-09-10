@@ -14,6 +14,7 @@ import {
   providerPayload,
   moneyMinor,
   acceptStatus,
+  ShippingDraftFieldError,
   type Shipment,
   type ShippingAddress,
 } from "../_shared/shipping-domain.ts";
@@ -891,6 +892,8 @@ Deno.serve(async (req) => {
   } catch (error) {
     if (error instanceof ProviderRejectedError)
       return reply({ error: "provider_rejected", detail: error.detail }, 502);
+    if (error instanceof ShippingDraftFieldError)
+      return reply({ error: "invalid_draft_field", field_issue: error.issue }, 400);
     const message = error instanceof Error ? error.message : "";
     const safe = [
       "invalid_money",

@@ -140,3 +140,21 @@ test('Thai and English summaries explain how to correct phone and dimension bloc
   assert.doesNotMatch(shippingTranslations.th.missing, /อีเมล/);
   assert.doesNotMatch(shippingTranslations.en.missing, /email/i);
 });
+
+test('draft format messages name the exact section, product row and box number', () => {
+  const exports = {};
+  runInNewContext(compile('../frontend/src/lib/shipping-validation.ts'), {
+    exports,
+    require(name) {
+      if (name.endsWith('/shipping-domain')) return domain;
+      throw new Error(`Unexpected dependency ${name}`);
+    },
+  });
+  const format = issue => exports.shippingDraftFieldIssueMessage(issue, shippingTranslations.th);
+
+  assert.match(format({ field: 'purpose', reason: 'text_too_long', limit: 300 }), /อ้างอิง\/วัตถุประสงค์.*300/);
+  assert.match(format({ field: 'origin.address', reason: 'invalid_text_type' }), /ที่อยู่ผู้ส่ง.*ข้อความ/);
+  assert.match(format({ field: 'products.name', reason: 'invalid_text_type', index: 3 }), /ชื่อสินค้าของสินค้ารายการที่ 4/);
+  assert.match(format({ field: 'products.qty', reason: 'whole_number_required', index: 1 }), /จำนวนสินค้าของสินค้ารายการที่ 2.*จำนวนเต็ม/);
+  assert.match(format({ field: 'parcels.box_length', reason: 'number_above_max', index: 1, limit: 180 }), /ความยาวของกล่องที่ 2.*180/);
+});
