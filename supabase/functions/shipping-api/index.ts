@@ -29,6 +29,7 @@ import {
   requestProvider,
   testProviderConnection,
   type ProviderConfig,
+  type ProviderConnectionResult,
 } from "../_shared/promptspeed.ts";
 import { compareShippingRates } from "../_shared/shipping-rates.ts";
 
@@ -51,6 +52,112 @@ const record = (v: unknown): Record<string, unknown> =>
     : {};
 const small = (v: unknown, max = 100) =>
   typeof v === "string" ? v.trim().slice(0, max) : "";
+const connectionMessageCodes = new Set([
+  "signed_request_accepted",
+  "generated_locally_not_verified",
+  "signature_generation_failed",
+  "configured_not_verified",
+  "merchant_code_missing",
+  "configured_credentials_accepted",
+  "global_catalog_only",
+  "carrier_catalog_empty",
+  "synthetic_same_address_quote",
+  "rate_unavailable",
+  "provider_not_ready",
+  "provider_timeout",
+  "provider_unreachable",
+  "provider_response_invalid",
+  "provider_rejected",
+  "invalid_phone",
+  "box_dimension_exceeded",
+  "invalid_box_weight",
+  "invalid_address",
+  "invalid_postcode",
+  "wallet_insufficient",
+  "carrier_service_unavailable",
+  "provider_authentication_failed",
+  "provider_rate_limited",
+  "provider_validation_failed",
+]);
+const connectionMessage = (value: unknown): string | undefined =>
+  typeof value === "string" && connectionMessageCodes.has(value)
+    ? value
+    : undefined;
+const connectionDetails = new Set([
+  "wallet_unknown",
+  "carrier_unknown",
+  "merchant_code_not_verified",
+  "origin_incomplete",
+  "carrier_catalog_empty",
+]);
+function publicConnectionResult(value: ProviderConnectionResult): ProviderConnectionResult {
+  const source = record(value);
+  const hmac = record(source.hmac);
+  const merchant = record(source.merchant);
+  const carriers = record(source.carriers);
+  const rate = record(source.rate_test);
+  const blockers = record(source.blockers);
+  const optionalMessage = (message: unknown) => {
+    const safe = connectionMessage(message);
+    return safe ? { message: safe } : {};
+  };
+  const details = Array.isArray(blockers.details)
+    ? blockers.details.filter((detail): detail is string =>
+      typeof detail === "string" && (
+        connectionDetails.has(detail) ||
+        (
+          detail.startsWith("address_check_failed:") &&
+          connectionMessage(detail.slice("address_check_failed:".length)) !== undefined
+        )
+      )
+    )
+    : [];
+  const merchantCode = typeof merchant.code === "string" &&
+      /^[A-Za-z0-9._-]{1,100}$/.test(merchant.code)
+    ? merchant.code
+    : undefined;
+  const carrierCode = typeof rate.carrier_code === "string" &&
+      /^[A-Za-z0-9_&-]{1,80}$/.test(rate.carrier_code)
+    ? rate.carrier_code
+    : undefined;
+  const total = typeof rate.total === "string" && /^\d{1,9}(?:\.\d{1,4})?$/.test(rate.total)
+    ? rate.total
+    : undefined;
+  return {
+    environment: source.environment === "production" ? "production" : "uat",
+    checked_at: typeof source.checked_at === "string" && Number.isFinite(Date.parse(source.checked_at))
+      ? source.checked_at
+      : new Date().toISOString(),
+    hmac: { ok: hmac.ok === true, ...optionalMessage(hmac.message) },
+    merchant: {
+      ok: merchant.ok === true,
+      ...(merchantCode ? { code: merchantCode } : {}),
+      ...optionalMessage(merchant.message),
+    },
+    carriers: {
+      ok: carriers.ok === true,
+      count: Number.isInteger(carriers.count) && Number(carriers.count) >= 0 && Number(carriers.count) <= 100
+        ? Number(carriers.count)
+        : 0,
+      ...optionalMessage(carriers.message),
+    },
+    rate_test: {
+      ok: rate.ok === true,
+      ...(carrierCode ? { carrier_code: carrierCode } : {}),
+      ...(total ? { total } : {}),
+      ...(rate.currency === "THB" ? { currency: "THB" } : {}),
+      ...optionalMessage(rate.message),
+    },
+    blockers: {
+      billing: blockers.billing === true,
+      wallet: typeof blockers.wallet === "boolean" ? blockers.wallet : null,
+      carrier: typeof blockers.carrier === "boolean" ? blockers.carrier : null,
+      mutations: blockers.mutations === true,
+      ...(details.length ? { details } : {}),
+    },
+    ready: source.ready === true,
+  };
+}
 const recipientHaystack = (address: ShippingAddress) =>
   Object.values(address).join(" ").toLocaleLowerCase("th");
 
@@ -381,11 +488,12 @@ Deno.serve(async (req) => {
     ) {
       if (!manager) return fail("forbidden", 403);
       if (action === "connection_test") {
-        return reply(await testProviderConnection(config, {
+        const result = await testProviderConnection(config, {
           merchantCode: small(settings.merchant_code),
           billingMode: String(settings.billing_mode ?? "unconfirmed"),
           origin: record(settings.origin),
-        }));
+        });
+        return reply(publicConnectionResult(result));
       }
       if (action === "admin_data") {
         const page = Math.max(

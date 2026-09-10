@@ -219,17 +219,35 @@ test('forbidden users cannot list, use history or archive, and missing bearer au
 test('connection test is manager-only and returns no provider credential fields', async () => {
   const connectionResult = {
     environment: 'uat', checked_at: '2026-09-10T00:00:00Z',
-    hmac: { ok: true }, merchant: { ok: true, code: 'MC00000001' },
-    carriers: { ok: true, count: 15 },
-    rate_test: { ok: true, carrier_code: 'EMS_SPEED', total: '35.0000', currency: 'THB' },
-    blockers: { billing: true, wallet: null, carrier: null, mutations: true }, ready: false,
+    hmac: { ok: true, message: 'signed_request_accepted', raw: 'RAW-HMAC' },
+    merchant: { ok: true, code: 'MC00000001', message: 'configured_credentials_accepted', secret: 'RAW-SECRET' },
+    carriers: { ok: false, count: 15, message: 'RAW-PROVIDER-MESSAGE', code: 'RAW-PROVIDER-CODE' },
+    rate_test: { ok: false, carrier_code: 'EMS_SPEED', total: '35.0000', currency: 'THB', message: 'provider_unreachable', response: { details: 'RAW-DETAILS' } },
+    blockers: {
+      billing: true, wallet: null, carrier: null, mutations: true,
+      details: ['wallet_unknown', 'address_check_failed:provider_unreachable', 'RAW-BLOCKER-DETAIL'],
+      provider: { request_id: 'RAW-REQUEST-ID' },
+    },
+    ready: false,
+    provider_response: { body: 'RAW-BODY' },
   };
   const owner = api({ connectionResult });
   const result = await owner.call('connection_test');
   assert.equal(result.status, 200);
-  assert.deepEqual(result.body, connectionResult);
-  assert.equal('secret' in result.body, false);
-  assert.equal('appId' in result.body, false);
+  assert.deepEqual(result.body, {
+    environment: 'uat', checked_at: '2026-09-10T00:00:00Z',
+    hmac: { ok: true, message: 'signed_request_accepted' },
+    merchant: { ok: true, code: 'MC00000001', message: 'configured_credentials_accepted' },
+    carriers: { ok: false, count: 15 },
+    rate_test: { ok: false, carrier_code: 'EMS_SPEED', total: '35.0000', currency: 'THB', message: 'provider_unreachable' },
+    blockers: {
+      billing: true, wallet: null, carrier: null, mutations: true,
+      details: ['wallet_unknown', 'address_check_failed:provider_unreachable'],
+    },
+    ready: false,
+  });
+  for (const canary of ['RAW-HMAC', 'RAW-SECRET', 'RAW-PROVIDER-MESSAGE', 'RAW-PROVIDER-CODE', 'RAW-DETAILS', 'RAW-BLOCKER-DETAIL', 'RAW-REQUEST-ID', 'RAW-BODY'])
+    assert.equal(JSON.stringify(result.body).includes(canary), false);
 
   const staff = api({ role: 'staff', grant: true, connectionResult });
   const forbidden = await staff.call('connection_test');
