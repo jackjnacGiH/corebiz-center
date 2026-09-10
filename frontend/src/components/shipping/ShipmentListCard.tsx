@@ -31,6 +31,7 @@ interface ShipmentListCardProps {
   activeAction: ShipmentListAction | null;
   onOpen: () => void;
   onDelete: () => void;
+  onJnacLabel: () => void;
   onCopyTracking: (url: string) => void;
   onCarrierLabel: () => void;
   onRefreshStatus: () => void;
@@ -43,6 +44,7 @@ export default function ShipmentListCard({
   activeAction,
   onOpen,
   onDelete,
+  onJnacLabel,
   onCopyTracking,
   onCarrierLabel,
   onRefreshStatus,
@@ -101,69 +103,84 @@ export default function ShipmentListCard({
         <p>{Number(s.draft.cod_amount) > 0 ? `${c.cod}: ${Number(s.draft.cod_amount).toLocaleString()} ${c.baht}` : c.noCod}</p>
       </section>
     </div>
-    {hasTracking && <footer data-shipment-block="actions" aria-labelledby={`${idPrefix}-actions`} className="border-t border-slate-300 bg-slate-200/80 px-3 py-3 sm:px-4 sm:py-4">
+    <footer data-shipment-block="actions" aria-labelledby={`${idPrefix}-actions`} className="border-t border-slate-300 bg-slate-200/80 px-3 py-3 sm:px-4 sm:py-4">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <h3 id={`${idPrefix}-actions`} className="inline-flex self-start rounded-md bg-slate-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white shadow-sm">{c.actions}</h3>
         <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 sm:flex sm:flex-wrap sm:justify-end" aria-busy={activeAction !== null}>
-          {trackingUrl && <>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            aria-label={c.jnacPrint}
+            onClick={(event) => {
+              stopPropagation(event);
+              onJnacLabel();
+            }}
+          >
+            <Printer />{c.jnacPrint}
+          </Button>
+          {hasTracking && <>
+            {trackingUrl && <>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                aria-label={c.copyTrackingLink}
+                onClick={(event) => {
+                  stopPropagation(event);
+                  onCopyTracking(trackingUrl);
+                }}
+              >
+                {activeAction === "copy_tracking" ? <Loader2 className="animate-spin" /> : <Copy />}
+                {c.copyTrackingLink}
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <a
+                  href={trackingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={c.openTracking}
+                  onClick={stopPropagation}
+                >
+                  <ExternalLink />{c.openTracking}
+                </a>
+              </Button>
+            </>}
             <Button
               type="button"
               size="sm"
               variant="outline"
-              disabled={busy}
-              aria-label={c.copyTrackingLink}
+              disabled={busy || !providerActionsReady}
+              title={!providerActionsReady ? c.actionsRequireConnection : undefined}
+              aria-label={c.carrierPrint}
               onClick={(event) => {
                 stopPropagation(event);
-                onCopyTracking(trackingUrl);
+                onCarrierLabel();
               }}
             >
-              {activeAction === "copy_tracking" ? <Loader2 className="animate-spin" /> : <Copy />}
-              {c.copyTrackingLink}
+              {activeAction === "carrier_label" ? <Loader2 className="animate-spin" /> : <Printer />}
+              {c.carrierPrint}
             </Button>
-            <Button asChild size="sm" variant="outline">
-              <a
-                href={trackingUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={c.openTracking}
-                onClick={stopPropagation}
-              >
-                <ExternalLink />{c.openTracking}
-              </a>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy || !providerActionsReady}
+              title={!providerActionsReady ? c.actionsRequireConnection : undefined}
+              aria-label={c.poll}
+              onClick={(event) => {
+                stopPropagation(event);
+                onRefreshStatus();
+              }}
+            >
+              {activeAction === "refresh_status" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {c.poll}
             </Button>
           </>}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy || !providerActionsReady}
-            title={!providerActionsReady ? c.actionsRequireConnection : undefined}
-            aria-label={c.carrierPrint}
-            onClick={(event) => {
-              stopPropagation(event);
-              onCarrierLabel();
-            }}
-          >
-            {activeAction === "carrier_label" ? <Loader2 className="animate-spin" /> : <Printer />}
-            {c.carrierPrint}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy || !providerActionsReady}
-            title={!providerActionsReady ? c.actionsRequireConnection : undefined}
-            aria-label={c.poll}
-            onClick={(event) => {
-              stopPropagation(event);
-              onRefreshStatus();
-            }}
-          >
-            {activeAction === "refresh_status" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {c.poll}
-          </Button>
         </div>
       </div>
-    </footer>}
+    </footer>
   </article>;
 }

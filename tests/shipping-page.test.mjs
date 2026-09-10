@@ -29,7 +29,7 @@ const submittableShipment = id => {
 // JSX remains inspectable, so tests invoke the same handlers as user controls.
 // This deliberately does not simulate browser layout, printing, or network time.
 function mount(query = '') {
-  const slots = [], effects = [], requests = [], confirmations = [], clipboard = [], popups = [];
+  const slots = [], effects = [], requests = [], confirmations = [], clipboard = [], popups = [], prints = [];
   const timers = new Map();
   let cursor = 0, timerId = 0, tree, dirty = false;
   let params = new URLSearchParams(query);
@@ -86,7 +86,7 @@ function mount(query = '') {
       if (name.endsWith('/shipping-domain')) return domain;
       if (name === '@/lib/shipping-carriers') return { shippingTrackingUrl: () => null };
       if (name === '@/lib/provider-label') return { providerLabelResource: link => ({ kind: 'external', href: link }) };
-      if (name === '@/lib/print') return { printElement: () => { throw new Error('Printing is outside this test'); } };
+      if (name === '@/lib/print') return { printElement: (...args) => { prints.push(args); } };
       if (name === '@/components/ui/button') return { Button: 'Button' };
       if (name === '@/components/ui/input') return { Input: 'Input' };
       if (name === '@/components/ui/dialog') return Object.fromEntries(['Dialog', 'DialogContent', 'DialogDescription', 'DialogFooter', 'DialogHeader', 'DialogTitle'].map(name => [name, name]));
@@ -133,7 +133,7 @@ function mount(query = '') {
     (node.props.children === label || (Array.isArray(node.props.children) && node.props.children.includes(label))));
   render();
   return {
-    requests, confirmations, clipboard, popups, render, find, button,
+    requests, confirmations, clipboard, popups, prints, render, find, button,
     confirmWith(value) { confirmResult = value; },
     card: id => find(node => node.type === 'ShipmentListCard' && node.props.shipment.id === id),
     listRequests: () => requests.filter(request => request.action === 'list'),
@@ -207,6 +207,34 @@ test('list actions copy tracking, open a carrier label, and refresh a row withou
   );
   assert.equal(h.find(node => node.props.role === 'status').props.children, 'statusChecked: waiting');
   assert.equal(h.requests.filter(request => request.action === 'get').length, 0);
+  h.unmount();
+});
+
+test('a list J NAC label preview waits for its lazy module then prints without provider or shipment mutations', async () => {
+  const row = shipment('draft-label', {
+    draft: { ...domain.emptyDraft(), parcel_total: 2 },
+  });
+  const h = await readyList([row]);
+  const baselineRequests = h.requests.length;
+
+  h.card(row.id).props.onJnacLabel();
+  assert.ok(h.find(node => node.props.role === 'dialog' && node.props['aria-label'] === 'labelPreview'));
+  assert.equal(h.find(node => node.type === 'ShippingLabel'), undefined, 'The preview waits for the lazy label module');
+  assert.equal(h.button('printLabel').props.disabled, true);
+  assert.equal(h.requests.length, baselineRequests, 'Opening a J NAC label must not call a provider or shipment API');
+
+  await settle(); h.render();
+  const preview = h.find(node => node.type === 'ShippingLabel');
+  assert.equal(preview.props.shipment.id, row.id);
+  assert.equal(preview.props.companyName, 'Test company');
+  assert.equal(h.button('printLabel').props.disabled, false);
+  h.button('printLabel').props.onClick();
+  assert.equal(h.prints.length, 1);
+  assert.equal(h.prints[0][0], 'shipping-label-batch');
+  assert.equal(h.prints[0][1].title, 'labelPreview draft-label');
+  assert.equal(h.prints[0][1].pageSize, 'label-100x150');
+  assert.equal(h.requests.length, baselineRequests, 'Printing a J NAC label must not call shippingApi.print or consume carrier credit');
+  assert.equal(h.find(node => node.type === 'AddressFields'), undefined, 'The list action never opens the editor');
   h.unmount();
 });
 
@@ -423,7 +451,7 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   const buttons = value => nodes(value).filter(node => node.type === 'Button');
   const renderCard = (row, changes = {}) => exports.default({
     shipment: row, busy: false, readReady: true, activeAction: null,
-    onOpen() {}, onDelete() {}, onCopyTracking() {}, onCarrierLabel() {}, onRefreshStatus() {},
+    onOpen() {}, onDelete() {}, onJnacLabel() {}, onCopyTracking() {}, onCarrierLabel() {}, onRefreshStatus() {},
     ...changes,
   });
   for (const changes of [{}, { status: 'waiting' }, { status: 'submitting' }, { status: 'outcome_unknown' }]) {
@@ -431,7 +459,8 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
     const row = shipment('card', changes);
     const controls = buttons(renderCard(row, { onOpen: () => opened++, onDelete: () => deleted++ }));
     const editable = row.status === 'draft' && !row.tracking_number;
-    assert.equal(controls.length, editable ? 2 : 1);
+    assert.equal(controls.length, editable ? 3 : 2);
+    assert.ok(controls.find(button => button.props['aria-label'] === 'jnacPrint'), 'Every saved shipment has a J NAC label action');
     assert.equal(controls[0].props.children.at(-1), editable ? 'Edit' : 'Open');
     controls[0].props.onClick(); assert.equal(opened, 1);
     if (editable) { controls[1].props.onClick(); assert.equal(deleted, 1); }
@@ -442,8 +471,9 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
     status: 'waiting', tracking_number: 'TRACK-1',
     draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
   });
-  let copied = '', labels = 0, refreshed = 0, bubbles = 0;
+  let copied = '', jnacLabels = 0, labels = 0, refreshed = 0, bubbles = 0;
   const tree = renderCard(tracked, {
+    onJnacLabel: () => jnacLabels++,
     onCopyTracking: url => { copied = url; },
     onCarrierLabel: () => labels++, onRefreshStatus: () => refreshed++,
   });
@@ -462,20 +492,23 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
     assert.ok(nodes(blocks.get(name)).some(node => node.props?.id === labelledBy), `${name} block has a visible heading`);
   }
   const controls = buttons(tree);
-  assert.equal(controls.length, 5, 'Open plus four direct shipment actions');
+  assert.equal(controls.length, 6, 'Open plus the J NAC label and four tracked-shipment actions');
   const event = { stopPropagation: () => bubbles++ };
+  controls.find(button => button.props['aria-label'] === 'jnacPrint').props.onClick(event);
   controls.find(button => button.props['aria-label'] === 'copyTrackingLink').props.onClick(event);
   controls.find(button => button.props['aria-label'] === 'carrierPrint').props.onClick(event);
   controls.find(button => button.props['aria-label'] === 'poll').props.onClick(event);
   const trackingAnchor = nodes(tree).find(node => node.type === 'a' && node.props['aria-label'] === 'openTracking');
   trackingAnchor.props.onClick(event);
   assert.equal(copied, 'https://tracking.example.test/TRACK-1');
+  assert.equal(jnacLabels, 1);
   assert.equal(labels, 1);
   assert.equal(refreshed, 1);
-  assert.equal(bubbles, 4, 'Every list action stops the surrounding card event');
+  assert.equal(bubbles, 5, 'Every list action stops the surrounding card event');
   assert.equal(trackingAnchor.props.rel, 'noopener noreferrer');
 
   const disconnected = buttons(renderCard(tracked, { readReady: false }));
+  assert.equal(disconnected.find(button => button.props['aria-label'] === 'jnacPrint').props.disabled, false);
   assert.equal(disconnected.find(button => button.props['aria-label'] === 'carrierPrint').props.disabled, true);
   assert.equal(disconnected.find(button => button.props['aria-label'] === 'poll').props.disabled, true);
 });
