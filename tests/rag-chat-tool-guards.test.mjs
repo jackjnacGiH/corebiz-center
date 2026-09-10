@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { prioritizeProductToolCalls } from "../supabase/functions/_shared/product-selection.mjs";
+import {
+  prioritizeProductToolCalls,
+  productIdentitySearchText,
+} from "../supabase/functions/_shared/product-selection.mjs";
 import {
   mergeFacetOnlyProductQuery,
   pendingProductQuestion,
@@ -53,10 +56,9 @@ test("facet-only follow-up carries the adjacent clarified product identity", () 
     mergeFacetOnlyProductQuery("5 นิ้ว เบอร์ 120", history),
     "กระดาษทราย DEERFOS SA331 5 นิ้ว เบอร์ 120",
   );
-  assert.equal(
-    mergeFacetOnlyProductQuery("เอา 5 นิ้ว เบอร์ 120", history),
-    "กระดาษทราย DEERFOS SA331 เอา 5 นิ้ว เบอร์ 120",
-  );
+  const colloquialFollowUp = mergeFacetOnlyProductQuery("เอา 5 นิ้ว เบอร์ 120 ครับ", history);
+  assert.equal(colloquialFollowUp, "กระดาษทราย DEERFOS SA331 5 นิ้ว เบอร์ 120");
+  assert.equal(productIdentitySearchText(colloquialFollowUp), "กระดาษทราย DEERFOS SA331");
   for (const followUp of [
     "5-inch",
     "5 in.",

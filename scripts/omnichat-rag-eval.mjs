@@ -142,6 +142,14 @@ function assertFindProducts(test, toolCalls, failures) {
   }
 }
 
+function isExpectedPreflightClientError(test, status) {
+  const expectedStatus = Number(test.expect?.status);
+  return Number.isInteger(expectedStatus) &&
+    expectedStatus >= 400 &&
+    expectedStatus < 500 &&
+    status === expectedStatus;
+}
+
 function evaluateCase(test, status, body, { requireReadOnly = false } = {}) {
   const toolCalls = Array.isArray(body.tool_calls) ? body.tool_calls : [];
   const calls = toolCalls.map((call) => call?.name).filter(Boolean);
@@ -149,7 +157,9 @@ function evaluateCase(test, status, body, { requireReadOnly = false } = {}) {
   const e = test.expect ?? {};
   const failures = [];
 
-  if (requireReadOnly && body.read_only !== true) failures.push('server did not confirm read_only mode');
+  if (requireReadOnly && body.read_only !== true && !isExpectedPreflightClientError(test, status)) {
+    failures.push('server did not confirm read_only mode');
+  }
   if (e.status && status !== e.status) failures.push(`status expected ${e.status}, got ${status}`);
   if (e.blocked && body.blocked !== 'cost_query') failures.push('cost-query guard did not block the request');
   if (e.tool && !calls.includes(e.tool)) failures.push(`required tool ${e.tool} was not called`);
@@ -294,6 +304,17 @@ function runSelfTest() {
   const unconfirmedReadOnly = evaluateCase({ expect: {} }, 200, {}, { requireReadOnly: true });
   assert.equal(unconfirmedReadOnly.ok, false, 'live evaluation must fail when the server does not confirm read_only');
   assert.ok(unconfirmedReadOnly.failures.includes('server did not confirm read_only mode'));
+
+  const longInputCase = cases.find((test) => test.id === 'long-input');
+  const expectedPreflight = evaluateCase(longInputCase, 413, {
+    error: 'Message exceeds 4,000 characters',
+  }, { requireReadOnly: true });
+  assert.equal(expectedPreflight.ok, true, expectedPreflight.failures.join('; '));
+  const wrongPreflightStatus = evaluateCase(longInputCase, 400, {
+    error: 'Unexpected client error',
+  }, { requireReadOnly: true });
+  assert.equal(wrongPreflightStatus.ok, false, 'a different 4xx must not bypass read_only confirmation');
+  assert.ok(wrongPreflightStatus.failures.includes('server did not confirm read_only mode'));
   console.log('PASS omnichat RAG evaluation assertions (offline)');
 }
 
@@ -331,7 +352,7 @@ async function runLiveEvaluation(selectedCases) {
     if (!outcome.ok) failed += 1;
     console.log(`${outcome.ok ? 'PASS' : 'FAIL'} ${test.id} status=${res.status} tools=${outcome.calls.join(',') || '-'} sources=${body.sources?.length ?? 0}`);
     for (const failure of outcome.failures) console.log(`  - ${failure}`);
-    if (body.read_only !== true) {
+    if (body.read_only !== true && !isExpectedPreflightClientError(test, res.status)) {
       console.log('  - stopping: deployed rag-chat did not confirm read-only evaluation support');
       break;
     }

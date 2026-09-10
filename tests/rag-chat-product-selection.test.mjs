@@ -35,6 +35,9 @@ test("removes Thai buying intent even when it is attached to the product name", 
   assert.equal(normalizeProductSearchQuery("ขอspec SA331 หน่อยค่ะ"), "SA331");
   assert.equal(normalizeProductSearchQuery("มี SA331 ไหม"), "SA331");
   assert.equal(normalizeProductSearchQuery("มีSA331ไหมครับ"), "SA331");
+  assert.equal(normalizeProductSearchQuery("เอา 5 นิ้ว เบอร์ 120 ครับ"), "5 นิ้ว เบอร์ 120");
+  assert.equal(normalizeProductSearchQuery("เอา5 นิ้ว เบอร์120ครับ"), "5 นิ้ว เบอร์120");
+  assert.equal(normalizeProductSearchQuery("เอาท์ดอร์"), "เอาท์ดอร์");
   assert.equal(normalizeProductSearchQuery("มีดคัตเตอร์"), "มีดคัตเตอร์");
 });
 

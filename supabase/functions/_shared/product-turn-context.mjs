@@ -39,7 +39,8 @@ export function mergeFacetOnlyProductQuery(query, history) {
   const current = String(query ?? "").trim();
   if (!current || !EXPLICIT_VARIANT_RE.test(current)) return current;
 
-  const currentIdentity = productIdentitySearchText(normalizeProductSearchQuery(current));
+  const normalizedCurrent = normalizeProductSearchQuery(current);
+  const currentIdentity = productIdentitySearchText(normalizedCurrent);
   if (hasStrongProductIdentity(currentIdentity)) return current;
 
   const recent = cleanHistory(history);
@@ -58,7 +59,7 @@ export function mergeFacetOnlyProductQuery(query, history) {
   const modelCodes = extractModelCodes(priorIdentity);
   if (modelCodes.length > 1 || !hasStrongProductIdentity(priorIdentity)) return current;
 
-  return `${priorIdentity} ${current}`.replace(/\s+/g, " ").trim();
+  return `${priorIdentity} ${normalizedCurrent}`.replace(/\s+/g, " ").trim();
 }
 
 function candidateLabel(candidate, lang) {
