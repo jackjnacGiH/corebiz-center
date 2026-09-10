@@ -379,7 +379,7 @@ export function draftFormatIssues(value: unknown): ShippingDraftFieldIssue[] {
     ] as const;
     for (const [field, max] of fields)
       inspectText(
-        field === "company" ? address[field] ?? "" : address[field],
+        field === "company" || field === "email" ? address[field] ?? "" : address[field],
         `${side}.${field}`,
         max,
       );
@@ -490,7 +490,7 @@ export function addressFrom(v: unknown): ShippingAddress {
   return normalizeShippingContact(Object.fromEntries(
     Object.keys(emptyAddress()).map((k) => [
       k,
-      text(k === "company" ? a[k] ?? "" : a[k], k === "address" ? 500 : 150),
+      text(k === "company" || k === "email" ? a[k] ?? "" : a[k], k === "address" ? 500 : 150),
     ]),
   ) as unknown as ShippingAddress);
 }

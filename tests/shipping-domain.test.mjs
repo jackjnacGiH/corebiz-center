@@ -161,6 +161,15 @@ test("blank emails are optional while malformed emails still block submission", 
   d.destination.email = "not-an-email";
   assert.ok(readyIssues(parseDraft(d)).includes("destination_email"));
 });
+test("missing optional email keys are normalized to blank strings", () => {
+  const d = ready();
+  delete d.origin.email;
+  delete d.destination.email;
+  const parsed = parseDraft(d);
+  assert.equal(parsed.origin.email, "");
+  assert.equal(parsed.destination.email, "");
+  assert.deepEqual(readyIssues(parsed), []);
+});
 test("rate comparison requires delivery areas and packed parcels before selecting a carrier", () => {
   for (const side of ["origin", "destination"])
     for (const field of ["county", "city", "state", "postcode"]) {
