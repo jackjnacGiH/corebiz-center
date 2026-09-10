@@ -168,6 +168,32 @@ async function readyList(rows = [shipment('draft-1')], count = rows.length) {
   return h;
 }
 
+test('shipment list expands only one row and collapses it again', async () => {
+  const first = shipment('compact-first');
+  const second = shipment('compact-second');
+  const h = await readyList([first, second]);
+
+  assert.equal(h.card(first.id).props.expanded, false);
+  assert.equal(h.card(second.id).props.expanded, false);
+
+  h.card(first.id).props.onToggle();
+  assert.equal(h.card(first.id).props.expanded, true);
+  assert.equal(h.card(second.id).props.expanded, false);
+
+  h.card(second.id).props.onToggle();
+  assert.equal(h.card(first.id).props.expanded, false);
+  assert.equal(h.card(second.id).props.expanded, true);
+
+  h.card(second.id).props.onToggle();
+  assert.equal(h.card(first.id).props.expanded, false);
+  assert.equal(h.card(second.id).props.expanded, false);
+
+  h.card(first.id).props.onToggle();
+  h.search('another recipient');
+  assert.equal(h.card(first.id).props.expanded, false, 'Changing the search closes the open row immediately');
+  h.unmount();
+});
+
 test('list actions copy tracking, open a carrier label, and refresh a row without opening the editor', async () => {
   const row = shipment('tracked-list', {
     status: 'waiting', tracking_number: 'TRACK-1', version: 3,
@@ -437,7 +463,7 @@ test('deletion handler refuses non-drafts and any draft that already has trackin
   }
 });
 
-test('actual list card keeps draft controls and adds direct tracked-shipment actions without bubbling', () => {
+test('actual list card stays compact until expanded and preserves shipment actions', () => {
   const cardCode = ts.transpileModule(readFileSync(new URL('../frontend/src/components/shipping/ShipmentListCard.tsx', import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
@@ -461,21 +487,29 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   };
   const buttons = value => nodes(value).filter(node => node.type === 'Button');
   const renderCard = (row, changes = {}) => exports.default({
-    shipment: row, busy: false, readReady: true, activeAction: null,
-    onOpen() {}, onDelete() {}, onJnacLabel() {}, onCopyTracking() {}, onCarrierLabel() {}, onRefreshStatus() {},
+    shipment: row, expanded: false, busy: false, readReady: true, activeAction: null,
+    onToggle() {}, onOpen() {}, onDelete() {}, onJnacLabel() {}, onCopyTracking() {}, onCarrierLabel() {}, onRefreshStatus() {},
     ...changes,
   });
   for (const changes of [{}, { status: 'waiting' }, { status: 'submitting' }, { status: 'outcome_unknown' }]) {
-    let opened = 0, deleted = 0;
+    let toggled = 0, opened = 0, deleted = 0;
     const row = shipment('card', changes);
-    const controls = buttons(renderCard(row, { onOpen: () => opened++, onDelete: () => deleted++ }));
+    const collapsed = renderCard(row, { onToggle: () => toggled++ });
+    const summary = nodes(collapsed).find(node => node.type === 'button' && node.props['data-shipment-block'] === 'summary');
+    assert.ok(summary, 'Collapsed row has one full-width summary trigger');
+    assert.equal(summary.props['aria-expanded'], false);
+    assert.equal(buttons(collapsed).length, 0, 'Collapsed rows expose no command controls');
+    assert.deepEqual(nodes(collapsed).filter(node => node.props?.['data-shipment-block']).map(node => node.props['data-shipment-block']), ['summary']);
+    summary.props.onClick(); assert.equal(toggled, 1);
+
+    const controls = buttons(renderCard(row, { expanded: true, onOpen: () => opened++, onDelete: () => deleted++ }));
     const editable = row.status === 'draft' && !row.tracking_number;
     assert.equal(controls.length, editable ? 3 : 2);
     assert.ok(controls.find(button => button.props['aria-label'] === `jnacPrint ${row.reference_no}`), 'Every saved shipment has a J NAC label action');
     assert.equal(controls[0].props.children.at(-1), editable ? 'Edit' : 'Open');
     controls[0].props.onClick(); assert.equal(opened, 1);
     if (editable) { controls[1].props.onClick(); assert.equal(deleted, 1); }
-    assert.ok(buttons(renderCard(row, { busy: true })).every(button => button.props.disabled));
+    assert.ok(buttons(renderCard(row, { expanded: true, busy: true })).every(button => button.props.disabled));
   }
 
   const tracked = shipment('tracked', {
@@ -484,6 +518,7 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   });
   let copied = '', jnacLabels = 0, labels = 0, refreshed = 0, bubbles = 0;
   const tree = renderCard(tracked, {
+    expanded: true,
     onJnacLabel: () => jnacLabels++,
     onCopyTracking: url => { copied = url; },
     onCarrierLabel: () => labels++, onRefreshStatus: () => refreshed++,
@@ -491,10 +526,12 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   const blocks = new Map(nodes(tree)
     .filter(node => node.props?.['data-shipment-block'])
     .map(node => [node.props['data-shipment-block'], node]));
-  assert.deepEqual([...blocks.keys()], ['header', 'recipient', 'sender', 'parcel', 'actions']);
-  assert.match(tree.props.className, /border-t-\[var\(--brand-blue\)\]/);
-  assert.match(blocks.get('header').props.className, /bg-\[var\(--brand-navy\)\]/);
-  const cardHeadings = nodes(tree).filter(node => node.type === 'h2' || node.type === 'h3');
+  assert.deepEqual([...blocks.keys()], ['summary', 'details', 'recipient', 'sender', 'parcel', 'actions']);
+  assert.match(tree.props.className, /border-l-\[var\(--brand-blue\)\]/);
+  assert.equal(blocks.get('summary').props['aria-expanded'], true);
+  assert.equal(blocks.get('summary').props['aria-controls'], blocks.get('details').props.id);
+  assert.equal(blocks.get('details').props.role, 'region');
+  const cardHeadings = nodes(tree).filter(node => node.type === 'h3');
   assert.ok(cardHeadings.every(heading => heading.props.className.includes('shipment-list-card-heading')));
   assert.match(
     readFileSync(new URL('../frontend/src/index.css', import.meta.url), 'utf8'),
@@ -525,7 +562,12 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   assert.equal(bubbles, 5, 'Every list action stops the surrounding card event');
   assert.equal(trackingAnchor.props.rel, 'noopener noreferrer');
 
-  const disconnected = buttons(renderCard(tracked, { readReady: false }));
+  const pricedTree = renderCard({ ...tracked, order_shipping_fee: 45.5 }, { expanded: false });
+  assert.match(JSON.stringify(pricedTree), /45\.50/, 'The compact row displays the persisted order shipping fee');
+  assert.match(JSON.stringify(renderCard(tracked)), /shippingFeeUnavailable/, 'Missing shipping fees use an explicit fallback');
+  assert.match(JSON.stringify(renderCard({ ...tracked, order_shipping_fee: 0 })), /shippingFeeUnavailable/, 'An ambiguous default zero is not presented as a confirmed carrier price');
+
+  const disconnected = buttons(renderCard(tracked, { expanded: true, readReady: false }));
   assert.equal(disconnected.find(button => button.props['aria-label'] === `jnacPrint ${tracked.reference_no}`).props.disabled, false);
   assert.equal(disconnected.find(button => button.props['aria-label'] === 'carrierPrint').props.disabled, true);
   assert.equal(disconnected.find(button => button.props['aria-label'] === 'poll').props.disabled, true);

@@ -296,7 +296,7 @@ Deno.serve(async (req) => {
       );
       let query = db
         .from("shipments")
-        .select("*,orders(customers(name))", { count: "exact" })
+        .select("*,orders(shipping_fee,customers(name))", { count: "exact" })
         .neq("status", "archived")
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
@@ -306,10 +306,18 @@ Deno.serve(async (req) => {
       const { data, error, count } = await query;
       if (error) throw error;
       return reply({
-        shipments: (data ?? []).map(({ orders, ...shipment }) => ({
-          ...shipmentWithContactFields(shipment as Shipment),
-          recipient_company: small(record(record(orders).customers).name, 150),
-        })),
+        shipments: (data ?? []).map(({ orders, ...shipment }) => {
+          const order = record(orders);
+          const orderShippingFee = Number(order.shipping_fee);
+          return {
+            ...shipmentWithContactFields(shipment as Shipment),
+            recipient_company: small(record(order.customers).name, 150),
+            order_shipping_fee:
+              Number.isFinite(orderShippingFee) && orderShippingFee >= 0
+                ? orderShippingFee
+                : null,
+          };
+        }),
         count,
       });
     }
