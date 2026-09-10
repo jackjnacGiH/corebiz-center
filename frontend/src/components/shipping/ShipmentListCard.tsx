@@ -31,6 +31,7 @@ interface ShipmentListCardProps {
   activeAction: ShipmentListAction | null;
   onOpen: () => void;
   onDelete: () => void;
+  onJnacLabel: () => void;
   onCopyTracking: (url: string) => void;
   onCarrierLabel: () => void;
   onRefreshStatus: () => void;
@@ -43,6 +44,7 @@ export default function ShipmentListCard({
   activeAction,
   onOpen,
   onDelete,
+  onJnacLabel,
   onCopyTracking,
   onCarrierLabel,
   onRefreshStatus,
@@ -61,107 +63,125 @@ export default function ShipmentListCard({
     : null;
   const hasTracking = !!s.tracking_number;
   const providerActionsReady = readReady && !!s.draft.carrier_code;
+  const idPrefix = `shipment-${s.id}`;
   const stopPropagation = (event: SyntheticEvent) => event.stopPropagation();
-  return <article className="overflow-hidden rounded-xl border bg-card" aria-label={s.reference_no}>
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3">
+  return <article className="overflow-hidden rounded-xl border border-t-4 border-slate-300 border-t-[var(--brand-blue)] bg-slate-100/70 shadow-sm shadow-slate-200/70" aria-labelledby={`${idPrefix}-reference`}>
+    <header data-shipment-block="header" className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-900 bg-[var(--brand-navy)] px-4 py-3 text-white">
       <div className="min-w-0">
-        <p className="break-all text-sm font-semibold">{s.reference_no}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{s.order_code || c.manual} · {new Date(s.created_at).toLocaleString(language === "th" ? "th-TH" : "en-GB")}</p>
+        <h2 id={`${idPrefix}-reference`} className="shipment-list-card-heading break-all text-sm font-semibold">{s.reference_no}</h2>
+        <p className="mt-1 text-xs text-sky-100">{s.order_code || c.manual} · {new Date(s.created_at).toLocaleString(language === "th" ? "th-TH" : "en-GB")}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">{c.statuses[s.status]}</span>
-        <Button variant="outline" disabled={busy} onClick={onOpen}>{editableDraft && <Pencil size={15} />}{editableDraft ? t.common.edit : c.open}</Button>
-        {editableDraft && <Button variant="outline" className="text-destructive hover:text-destructive" disabled={busy} onClick={onDelete}>
+        <span className="rounded-full border border-white/30 bg-white/15 px-3 py-1 text-xs font-medium text-white">{c.statuses[s.status]}</span>
+        <Button variant="outline" className="bg-white text-slate-900 hover:bg-sky-50 hover:text-slate-950" disabled={busy} onClick={onOpen}>{editableDraft && <Pencil size={15} />}{editableDraft ? t.common.edit : c.open}</Button>
+        {editableDraft && <Button variant="outline" className="bg-white text-destructive hover:bg-red-50 hover:text-destructive" disabled={busy} onClick={onDelete}>
           <Trash2 size={15} />{c.deleteDraft}
         </Button>}
       </div>
-    </div>
-    <div className="grid gap-5 p-4 md:grid-cols-2 xl:grid-cols-[1.25fr_1fr_0.85fr]">
-      <section className="min-w-0 space-y-2">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">{c.destination}</p>
-        <h2 className="break-words font-semibold">{company || recipient.fullname || "—"}</h2>
+    </header>
+    <div className="grid gap-3 bg-slate-100/80 p-3 sm:p-4 md:grid-cols-2 xl:grid-cols-[1.25fr_1fr_0.85fr]">
+      <section data-shipment-block="recipient" aria-labelledby={`${idPrefix}-recipient`} className="min-w-0 space-y-2 rounded-lg border border-blue-200 bg-blue-50/80 p-4 shadow-sm">
+        <h3 id={`${idPrefix}-recipient`} className="shipment-list-card-heading inline-flex rounded-md bg-blue-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.destination}</h3>
+        <p className="break-words text-base font-semibold">{company || recipient.fullname || "—"}</p>
         {!!company && company !== recipient.fullname && !!recipient.fullname && <p className="text-sm">{c.fullname}: {recipient.fullname}</p>}
-        <p className="flex items-start gap-2 break-words text-sm"><MapPin size={15} className="mt-0.5 shrink-0 text-muted-foreground" /><span>{addressLine(recipient) || "—"}</span></p>
-        <p className="flex items-center gap-2 text-sm"><Phone size={15} className="shrink-0 text-muted-foreground" />{recipient.telephone1 || "—"}</p>
+        <p className="flex items-start gap-2 break-words text-sm"><MapPin size={15} className="mt-0.5 shrink-0 text-blue-700" /><span>{addressLine(recipient) || "—"}</span></p>
+        <p className="flex items-center gap-2 text-sm"><Phone size={15} className="shrink-0 text-blue-700" />{recipient.telephone1 || "—"}</p>
         {!!recipient.email && <p className="break-all text-xs text-muted-foreground">{recipient.email}</p>}
       </section>
-      <section className="min-w-0 space-y-2">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">{c.origin}</p>
+      <section data-shipment-block="sender" aria-labelledby={`${idPrefix}-sender`} className="min-w-0 space-y-2 rounded-lg border border-teal-200 bg-teal-50/80 p-4 shadow-sm">
+        <h3 id={`${idPrefix}-sender`} className="shipment-list-card-heading inline-flex rounded-md bg-teal-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.origin}</h3>
         <p className="break-words text-sm font-medium">{[...new Set([sender.company, sender.fullname].filter(Boolean))].join(" / ") || "—"}</p>
-        <p className="break-words text-sm text-muted-foreground">{addressLine(sender) || "—"}</p>
-        <p className="flex items-center gap-2 text-sm"><Phone size={15} className="shrink-0 text-muted-foreground" />{sender.telephone1 || "—"}</p>
+        <p className="break-words text-sm text-slate-600">{addressLine(sender) || "—"}</p>
+        <p className="flex items-center gap-2 text-sm"><Phone size={15} className="shrink-0 text-teal-700" />{sender.telephone1 || "—"}</p>
       </section>
-      <section className="min-w-0 space-y-2 border-t pt-3 text-sm xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
-        <p className="flex items-center gap-2 font-semibold"><Truck size={16} />{s.draft.carrier_code ? carrier : c.awaitingCarrier}</p>
-        <p className="flex items-center gap-2"><Package size={16} />{parcels.length} {c.boxUnit} · {items.totalQuantity.toLocaleString()} {c.pieceUnit} ({s.draft.products.length} {c.itemRows})</p>
+      <section data-shipment-block="parcel" aria-labelledby={`${idPrefix}-parcel`} className="min-w-0 space-y-2 rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm shadow-sm md:col-span-2 xl:col-span-1">
+        <h3 id={`${idPrefix}-parcel`} className="shipment-list-card-heading inline-flex rounded-md bg-amber-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.parcel}</h3>
+        <p className="flex items-center gap-2 font-semibold"><Truck size={16} className="shrink-0 text-amber-700" />{s.draft.carrier_code ? carrier : c.awaitingCarrier}</p>
+        <p className="flex items-center gap-2"><Package size={16} className="shrink-0 text-amber-700" />{parcels.length} {c.boxUnit} · {items.totalQuantity.toLocaleString()} {c.pieceUnit} ({s.draft.products.length} {c.itemRows})</p>
         <p>{c.packedWeight}: {parcels.reduce((sum, p) => sum + p.box_weight, 0).toLocaleString()} {c.gramUnit}</p>
         <p className="break-all">{c.tracking}: {s.tracking_number || "—"}</p>
         <p>{Number(s.draft.cod_amount) > 0 ? `${c.cod}: ${Number(s.draft.cod_amount).toLocaleString()} ${c.baht}` : c.noCod}</p>
       </section>
     </div>
-    {hasTracking && <footer className="border-t bg-muted/10 px-4 py-3">
+    <footer data-shipment-block="actions" aria-labelledby={`${idPrefix}-actions`} className="border-t border-slate-300 bg-slate-200/80 px-3 py-3 sm:px-4 sm:py-4">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">{c.actions}</p>
+        <h3 id={`${idPrefix}-actions`} className="shipment-list-card-heading inline-flex self-start rounded-md bg-slate-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.actions}</h3>
         <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 sm:flex sm:flex-wrap sm:justify-end" aria-busy={activeAction !== null}>
-          {trackingUrl && <>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="border-blue-300 bg-blue-50 text-blue-950 hover:bg-blue-100 hover:text-blue-950"
+            disabled={busy}
+            aria-label={`${c.jnacPrint} ${s.reference_no}`}
+            onClick={(event) => {
+              stopPropagation(event);
+              onJnacLabel();
+            }}
+          >
+            <Printer />{c.jnacPrint}
+          </Button>
+          {hasTracking && <>
+            {trackingUrl && <>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                aria-label={c.copyTrackingLink}
+                onClick={(event) => {
+                  stopPropagation(event);
+                  onCopyTracking(trackingUrl);
+                }}
+              >
+                {activeAction === "copy_tracking" ? <Loader2 className="animate-spin" /> : <Copy />}
+                {c.copyTrackingLink}
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <a
+                  href={trackingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={c.openTracking}
+                  onClick={stopPropagation}
+                >
+                  <ExternalLink />{c.openTracking}
+                </a>
+              </Button>
+            </>}
             <Button
               type="button"
               size="sm"
               variant="outline"
-              disabled={busy}
-              aria-label={c.copyTrackingLink}
+              disabled={busy || !providerActionsReady}
+              title={!providerActionsReady ? c.actionsRequireConnection : undefined}
+              aria-label={c.carrierPrint}
               onClick={(event) => {
                 stopPropagation(event);
-                onCopyTracking(trackingUrl);
+                onCarrierLabel();
               }}
             >
-              {activeAction === "copy_tracking" ? <Loader2 className="animate-spin" /> : <Copy />}
-              {c.copyTrackingLink}
+              {activeAction === "carrier_label" ? <Loader2 className="animate-spin" /> : <Printer />}
+              {c.carrierPrint}
             </Button>
-            <Button asChild size="sm" variant="outline">
-              <a
-                href={trackingUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={c.openTracking}
-                onClick={stopPropagation}
-              >
-                <ExternalLink />{c.openTracking}
-              </a>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy || !providerActionsReady}
+              title={!providerActionsReady ? c.actionsRequireConnection : undefined}
+              aria-label={c.poll}
+              onClick={(event) => {
+                stopPropagation(event);
+                onRefreshStatus();
+              }}
+            >
+              {activeAction === "refresh_status" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {c.poll}
             </Button>
           </>}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy || !providerActionsReady}
-            title={!providerActionsReady ? c.actionsRequireConnection : undefined}
-            aria-label={c.carrierPrint}
-            onClick={(event) => {
-              stopPropagation(event);
-              onCarrierLabel();
-            }}
-          >
-            {activeAction === "carrier_label" ? <Loader2 className="animate-spin" /> : <Printer />}
-            {c.carrierPrint}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy || !providerActionsReady}
-            title={!providerActionsReady ? c.actionsRequireConnection : undefined}
-            aria-label={c.poll}
-            onClick={(event) => {
-              stopPropagation(event);
-              onRefreshStatus();
-            }}
-          >
-            {activeAction === "refresh_status" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {c.poll}
-          </Button>
         </div>
       </div>
-    </footer>}
+    </footer>
   </article>;
 }

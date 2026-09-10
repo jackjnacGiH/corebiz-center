@@ -123,6 +123,7 @@ export default function Shipping() {
   const [labelLink, setLabelLink] = useState("");
   const [labelDownload, setLabelDownload] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
+  const [labelShipment, setLabelShipment] = useState<Shipment | null>(null);
   const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [listRevision, setListRevision] = useState(0);
@@ -137,6 +138,7 @@ export default function Shipping() {
   const productRequest = useRef(0);
   const deletingDraft = useRef(false);
   const listActionInFlight = useRef(false);
+  const labelReturnFocus = useRef<HTMLElement | null>(null);
   const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
   const revokeProviderLabel = useCallback(() => {
@@ -456,6 +458,19 @@ export default function Shipping() {
         popup.close();
         throw reason;
       }
+    });
+  }
+  function openLabelPreview(target: Shipment) {
+    if (busy) return;
+    const activeElement = document.activeElement as HTMLElement | null;
+    labelReturnFocus.current = activeElement && typeof activeElement.focus === "function"
+      ? activeElement
+      : null;
+    setLabelShipment(target);
+    setLabelOpen(true);
+    if (!labelModule) void loadShippingLabel().then(setLabelModule).catch((reason) => {
+      setLabelOpen(false);
+      reportError(reason);
     });
   }
   function deleteDraft(target: Shipment) {
@@ -832,6 +847,7 @@ export default function Shipping() {
                         })
                       }
                       onDelete={() => void deleteDraft(s)}
+                      onJnacLabel={() => openLabelPreview(s)}
                       onCopyTracking={(url) =>
                         void runListAction(s, "copy_tracking", async () => {
                           await copyText(url);
@@ -1333,13 +1349,7 @@ export default function Shipping() {
                   <Button
                     variant="outline"
                     disabled={busy || dirty}
-                    onClick={() => {
-                      setLabelOpen(true);
-                      if (!labelModule) void loadShippingLabel().then(setLabelModule).catch((reason) => {
-                        setLabelOpen(false);
-                        reportError(reason);
-                      });
-                    }}
+                    onClick={() => openLabelPreview(shipment)}
                   >
                     <Printer size={16} />
                     {c.labelPreview}
@@ -1484,17 +1494,32 @@ export default function Shipping() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {labelOpen && shipment && bootstrap && (
-        <div
-          className="fixed inset-0 z-[100] flex flex-col bg-black/70 p-2 sm:p-5"
+      <Dialog
+        open={labelOpen && !!labelShipment && !!bootstrap}
+        onOpenChange={(open) => {
+          if (!open) setLabelOpen(false);
+        }}
+      >
+        {labelShipment && bootstrap && <DialogContent
           role="dialog"
-          aria-modal="true"
           aria-label={c.labelPreview}
+          showCloseButton={false}
+          className="shipping-label-dialog"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            labelReturnFocus.current?.focus();
+            labelReturnFocus.current = null;
+            setLabelShipment(null);
+          }}
         >
-          <div className="mx-auto mb-3 flex w-full max-w-[100mm] items-center justify-between gap-2 rounded-lg bg-white p-2 shadow-lg">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{c.labelPreview}</DialogTitle>
+            <DialogDescription>100 × 150 mm</DialogDescription>
+          </DialogHeader>
+          <div className="flex w-full items-center justify-between gap-2 rounded-lg bg-white p-2 shadow-lg">
             <strong className="text-sm">
               {c.labelPreview} · 100 × 150 mm ·{" "}
-              {shipment.draft.parcel_total || 1}{" "}
+              {labelShipment.draft.parcel_total || 1}{" "}
               {language === "th" ? "ใบ" : "labels"}
             </strong>
             <div className="flex gap-2">
@@ -1503,7 +1528,7 @@ export default function Shipping() {
                 disabled={!labelModule}
                 onClick={() =>
                   labelModule && printElement(labelModule.SHIPPING_LABEL_ID, {
-                    title: `${c.labelPreview} ${shipment.tracking_number || shipment.reference_no}`,
+                    title: `${c.labelPreview} ${labelShipment.tracking_number || labelShipment.reference_no}`,
                     pageSize: "label-100x150",
                   })
                 }
@@ -1521,14 +1546,14 @@ export default function Shipping() {
               </Button>
             </div>
           </div>
-          <div className="mx-auto min-h-0 max-w-full flex-1 overflow-auto bg-neutral-200 p-1 shadow-2xl">
+          <div className="min-h-0 w-full flex-1 overflow-auto bg-neutral-200 p-1 shadow-2xl">
             {ShippingLabel ? <ShippingLabel
-              shipment={shipment}
+              shipment={labelShipment}
               companyName={bootstrap.brand.name}
             /> : <p role="status" className="p-4 text-sm">{c.loading}</p>}
           </div>
-        </div>
-      )}
+        </DialogContent>}
+      </Dialog>
     </div>
   );
 }
