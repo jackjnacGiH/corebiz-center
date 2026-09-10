@@ -447,6 +447,20 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
     onCopyTracking: url => { copied = url; },
     onCarrierLabel: () => labels++, onRefreshStatus: () => refreshed++,
   });
+  const blocks = new Map(nodes(tree)
+    .filter(node => node.props?.['data-shipment-block'])
+    .map(node => [node.props['data-shipment-block'], node]));
+  assert.deepEqual([...blocks.keys()], ['header', 'recipient', 'sender', 'parcel', 'actions']);
+  assert.match(tree.props.className, /border-t-4/);
+  assert.match(blocks.get('header').props.className, /bg-\[#0C3C63\]/);
+  assert.match(blocks.get('recipient').props.className, /border-blue-200 bg-blue-50\/80/);
+  assert.match(blocks.get('sender').props.className, /border-teal-200 bg-teal-50\/80/);
+  assert.match(blocks.get('parcel').props.className, /border-amber-200 bg-amber-50\/80/);
+  assert.match(blocks.get('actions').props.className, /border-slate-300 bg-slate-200\/80/);
+  for (const name of ['recipient', 'sender', 'parcel', 'actions']) {
+    const labelledBy = blocks.get(name).props['aria-labelledby'];
+    assert.ok(nodes(blocks.get(name)).some(node => node.props?.id === labelledBy), `${name} block has a visible heading`);
+  }
   const controls = buttons(tree);
   assert.equal(controls.length, 5, 'Open plus four direct shipment actions');
   const event = { stopPropagation: () => bubbles++ };
