@@ -19,7 +19,13 @@ import {
 } from "../_shared/shipping-domain.ts";
 import {
   assertProviderReady,
+  providerCreateResult,
+  providerDefinitiveRejection,
+  providerPrintLink,
+  providerRows,
+  reconcileCreatedShipment,
   requestProvider,
+  testProviderConnection,
   type ProviderConfig,
 } from "../_shared/promptspeed.ts";
 import { compareShippingRates } from "../_shared/shipping-rates.ts";
@@ -360,11 +366,25 @@ Deno.serve(async (req) => {
       return reply({ draft, order_code: order.code, previous });
     }
     if (
-      ["save_settings", "save_cod", "grant", "revoke", "admin_data"].includes(
+      [
+        "save_settings",
+        "save_cod",
+        "grant",
+        "revoke",
+        "admin_data",
+        "connection_test",
+      ].includes(
         action,
       )
     ) {
       if (!manager) return fail("forbidden", 403);
+      if (action === "connection_test") {
+        return reply(await testProviderConnection(config, {
+          merchantCode: small(settings.merchant_code),
+          billingMode: String(settings.billing_mode ?? "unconfirmed"),
+          origin: record(settings.origin),
+        }));
+      }
       if (action === "admin_data") {
         const page = Math.max(
           0,
@@ -629,27 +649,54 @@ Deno.serve(async (req) => {
       let outcome = "outcome_unknown",
         tracking: string | null = null,
         http: number | null = null,
-        requestId: string | null = null;
+        requestId: string | null = null,
+        definitiveRejection = false,
+        shouldReconcile = false;
       try {
         const r = await requestProvider(config, "create", payload);
         http = r.status;
-        requestId = small(r.data.request_id) || null;
-        const t = record(r.data.data).tracking_number;
-        if (
-          [200, 201].includes(r.status) &&
-          typeof t === "string" &&
-          /^[A-Za-z0-9-]{5,80}$/.test(t)
-        ) {
-          tracking = t;
+        requestId = r.requestId;
+        const created = providerCreateResult(r);
+        if (created) {
+          tracking = created.trackingNumber;
           outcome = "waiting";
-        }
+        } else if (providerDefinitiveRejection(r)) definitiveRejection = true;
+        else shouldReconcile = true;
       } catch {
         /* Any uncertain mutation outcome remains blocked from retry. */
+        shouldReconcile = true;
+      }
+      if (!tracking && shouldReconcile) {
+        try {
+          const reconciled = await reconcileCreatedShipment(config, {
+            externalId: shipment.id,
+            referenceNo: shipment.reference_no,
+            carrierCode: shipment.draft.carrier_code,
+          });
+          if (reconciled) {
+            tracking = reconciled.trackingNumber;
+            requestId ??= reconciled.requestId;
+            outcome = [
+              "waiting",
+              "on_delivery",
+              "delivered",
+              "on_return",
+              "returned",
+              "claimed",
+              "closed",
+              "canceled",
+            ].includes(reconciled.status ?? "")
+              ? reconciled.status!
+              : "waiting";
+          }
+        } catch {
+          /* A missing or ambiguous exact match stays outcome_unknown. */
+        }
       }
       const { error: finishErr } = await db
         .from("shipping_attempts")
         .update({
-          outcome: tracking ? "success" : "unknown",
+          outcome: tracking ? "success" : definitiveRejection ? "rejected" : "unknown",
           http_status: http,
           provider_request_id: requestId,
           finished_at: new Date().toISOString(),
@@ -658,7 +705,7 @@ Deno.serve(async (req) => {
       const { data, error } = await db
         .from("shipments")
         .update({
-          status: outcome,
+          status: definitiveRejection ? "draft" : outcome,
           tracking_number: tracking,
           version: shipment.version + 2,
           updated_by: userId,
@@ -670,6 +717,8 @@ Deno.serve(async (req) => {
         .select("*")
         .single();
       if (error || finishErr) throw new Error("outcome_unknown");
+      if (definitiveRejection)
+        return reply({ error: "provider_rejected", shipment: data }, 502);
       return reply({ shipment: data });
     }
     if (action === "print") {
@@ -679,18 +728,10 @@ Deno.serve(async (req) => {
         tracking_number: [shipment.tracking_number],
         show_order: 1,
       });
-      const link = record(r.data.data).link;
-      if (r.status !== 200 || typeof link !== "string")
-        return fail("provider_response_invalid", 502);
-      let url: URL;
-      try {
-        url = new URL(link);
-      } catch {
-        return fail("provider_response_invalid", 502);
-      }
-      if (url.protocol !== "https:" || url.username || url.password)
-        return fail("provider_response_invalid", 502);
-      return reply({ link: url.toString() });
+      const link = providerPrintLink(r);
+      return link
+        ? reply({ link, request_id: r.requestId })
+        : fail("provider_response_invalid", 502);
     }
     if (action === "refresh_status") {
       if (!shipment.tracking_number) return fail("tracking_required");
@@ -699,9 +740,9 @@ Deno.serve(async (req) => {
         search: shipment.tracking_number,
         limit: "25",
       });
-      if (r.status !== 200 || !Array.isArray(r.data.data))
+      if (!r.ok || !Array.isArray(r.data.data))
         return fail("provider_response_invalid", 502);
-      const found = r.data.data
+      const found = providerRows(r)
         .map(record)
         .find(
           (x) =>
@@ -746,8 +787,11 @@ Deno.serve(async (req) => {
       "carrier_required",
       "carrier_unavailable",
       "provider_rejected",
+      "provider_timeout",
+      "provider_unreachable",
       "outcome_unknown",
       "provider_response_invalid",
+      "invalid_tracking",
     ];
     return fail(
       safe.includes(message) ? message : "shipping_error",

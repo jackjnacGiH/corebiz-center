@@ -78,9 +78,18 @@ SHA-256 สำหรับตรวจว่ากำลังอ้างอิ
 
 - โมดูลฐานถูก merge และ deploy ผ่าน GitHub/Vercel; production route คือ `/center/shipping` และผู้ไม่ login ถูกส่งไปหน้า login
 - migration `20260908062224_shipping_module.sql` ถูกใช้กับ Supabase project ของ CoreBiz และ `shipping-api` ถูก deploy โดยคง JWT verification
-- การตั้งค่าปลอดภัยเริ่มที่ UAT, billing mode ยังไม่ยืนยัน, merchant ว่าง และ provider reads/mutations ปิด จึงไม่เกิดคำขอคิดค่าบริการจากการเปิดหน้า/บันทึกร่าง
+- การตั้งค่าปลอดภัยอยู่ที่ UAT ปัจจุบันผูก Merchant UAT, ตั้ง billing mode เป็น prepaid, บันทึกเบอร์/อีเมลผู้ส่งที่ API ต้องใช้ และเปิด reads เฉพาะขอบเขตที่ทดสอบ ส่วน mutations ยังปิด จึงไม่เกิดคำขอสร้างพัสดุหรือธุรกรรมจากการเปิดหน้า/บันทึกร่าง
 - ค่าใน response example ของ S1 ไม่ถือเป็น credential ของบัญชี J NAC และไม่ได้ถูกนำไปตั้งเป็น secret
+
+## S10: เอกสารออนไลน์และสถานะ UAT ล่าสุด
+
+- ตรวจ [PromptSpeed Open API](https://documenter.promptspeed.co.th/open-api/) และหน้ารายละเอียด `PUT /api/v3/pickup/{pickup_id}/cancel` วันที่ 10 กันยายน 2026; เวอร์ชันที่แสดงยังเป็น Open API V3 3.0.7
+- เอกสารออนไลน์ยังมีข้อขัดแย้งเดิมระหว่าง method ใน path กับตาราง environment สำหรับ check-price, Wallet deposit, pickup create และ pickup cancel รวมทั้ง host ของ list shipment จึงยังต้องขอ contract ที่ผู้ให้บริการยืนยัน
+- ตรวจบัญชี UAT แบบ read-only พบ Merchant เดิมผูก 11 carrier; Wallet Verified/Ready ยอด 0.00; Credit Waiting for document/Processing; COD account Active แต่ carrier mapping และ bank mapping เป็น 0
+- ผล check-price ล่าสุดจากหน้า CoreBiz สำหรับกล่อง 20 × 10 × 30 ซม. น้ำหนัก 1,200 กรัม จาก 10280 ไป 10280 ส่งผล 11 บริการกลับมา โดยไม่ได้บันทึกร่างหรือสร้างพัสดุ ผลนี้ไม่ยืนยันวงเงิน การคิดเงินจริง หรือ Production
+- Portal ยังแสดง legacy host บางส่วน ขณะที่ OpenAPI V3 และ check-price ที่ทดสอบใช้ `https://openapi-uat.promptspeed.co.th` สำเร็จ บันทึกเป็นความขัดแย้งของแหล่งข้อมูลโดยไม่เปลี่ยน endpoint อื่นตามการคาดเดา
+- ไม่คัดลอกรหัส Merchant, credential, token, รหัสผ่าน หรือเอกสารการเงินลง repository
 
 ## สิ่งที่ไม่ได้ตรวจในรอบสำรวจเอกสาร
 
-ไม่ได้อ่านค่าลับจาก `.env` ไม่ได้ตรวจบัญชีขนส่งจริง ไม่ได้เรียก endpoint ขนส่งทั้ง UAT/production ไม่ได้ตรวจ Supabase schema/RLS/functions ที่ deployed และไม่ได้รับรองสถานะใช้งานจริงของ carrier, อัตราค่าบริการ, สัญญา หรือบัญชี COD
+ข้อจำกัดเดิมของรอบสำรวจเอกสาร S1-S9 ยังคงเป็นหลักฐานตามวันที่ของแต่ละรอบ สำหรับ S10 ตรวจเฉพาะเอกสารออนไลน์และสถานะ UAT ที่ระบุ ไม่ได้สร้าง/ยกเลิกพัสดุ เรียกรถ เติมเครดิต แก้ carrier binding เปิด webhook หรือเปลี่ยนค่าระบบ และไม่ได้รับรองสถานะ Production, อัตราค่าบริการจริง, สัญญา หรือบัญชี COD

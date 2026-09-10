@@ -30,6 +30,28 @@ export interface ShippingBootstrap {
   readReady: boolean;
   sendReady: boolean;
 }
+export interface ShippingConnectionTest {
+  environment: "uat" | "production";
+  checked_at: string;
+  hmac: { ok: boolean; message?: string };
+  merchant: { ok: boolean; code?: string; message?: string };
+  carriers: { ok: boolean; count: number; message?: string };
+  rate_test: {
+    ok: boolean;
+    carrier_code?: string;
+    total?: string;
+    currency?: string;
+    message?: string;
+  };
+  blockers: {
+    billing: boolean;
+    wallet: boolean | null;
+    carrier: boolean | null;
+    mutations: boolean;
+    details?: string[];
+  };
+  ready: boolean;
+}
 export interface ShippingUser {
   id: string;
   full_name: string | null;
@@ -53,6 +75,26 @@ export interface ShippingProductOption {
   name: string;
   weight: number;
 }
+export class ShippingApiError extends Error {
+  shipment: Shipment | null;
+  constructor(code: string, shipment: Shipment | null = null) {
+    super(code);
+    this.name = "ShippingApiError";
+    this.shipment = shipment;
+  }
+}
+const shipmentFromError = (value: unknown): Shipment | null => {
+  if (!value || typeof value !== "object") return null;
+  const shipment = (value as { shipment?: unknown }).shipment;
+  if (
+    !shipment || typeof shipment !== "object" ||
+    typeof (shipment as Shipment).id !== "string" ||
+    !Number.isInteger((shipment as Shipment).version) ||
+    typeof (shipment as Shipment).status !== "string" ||
+    !(shipment as Shipment).draft || typeof (shipment as Shipment).draft !== "object"
+  ) return null;
+  return shipment as Shipment;
+};
 async function invoke<T>(
   action: string,
   payload: Record<string, unknown> = {},
@@ -62,15 +104,18 @@ async function invoke<T>(
   });
   if (error) {
     let code = "shipping_not_installed";
+    let responseBody: unknown = null;
     try {
       const body = await error.context?.json();
+      responseBody = body;
       if (typeof body?.error === "string") code = body.error;
     } catch {
       /* Generic error only. */
     }
-    throw new Error(code);
+    throw new ShippingApiError(code, shipmentFromError(responseBody));
   }
-  if (data?.error) throw new Error(String(data.error));
+  if (data?.error)
+    throw new ShippingApiError(String(data.error), shipmentFromError(data));
   return data as T;
 }
 export const shippingApi = {
@@ -120,6 +165,8 @@ export const shippingApi = {
     }>("order_draft", { order_id }),
   saveSettings: (settings: ShippingSettings) =>
     invoke("save_settings", { settings }),
+  connectionTest: () =>
+    invoke<ShippingConnectionTest>("connection_test"),
   admin: (page: number) =>
     invoke<{
       users: ShippingUser[];
