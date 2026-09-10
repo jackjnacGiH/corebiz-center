@@ -219,6 +219,7 @@ test('a list J NAC label preview waits for its lazy module then prints without p
 
   h.card(row.id).props.onJnacLabel();
   assert.ok(h.find(node => node.props.role === 'dialog' && node.props['aria-label'] === 'labelPreview'));
+  assert.equal(h.find(node => node.type === 'Dialog' && node.props.open).props.open, true, 'The shared dialog provides focus trapping and Escape handling');
   assert.equal(h.find(node => node.type === 'ShippingLabel'), undefined, 'The preview waits for the lazy label module');
   assert.equal(h.button('printLabel').props.disabled, true);
   assert.equal(h.requests.length, baselineRequests, 'Opening a J NAC label must not call a provider or shipment API');
@@ -235,6 +236,9 @@ test('a list J NAC label preview waits for its lazy module then prints without p
   assert.equal(h.prints[0][1].pageSize, 'label-100x150');
   assert.equal(h.requests.length, baselineRequests, 'Printing a J NAC label must not call shippingApi.print or consume carrier credit');
   assert.equal(h.find(node => node.type === 'AddressFields'), undefined, 'The list action never opens the editor');
+  h.find(node => node.type === 'Dialog' && node.props.open).props.onOpenChange(false);
+  h.render();
+  assert.equal(h.find(node => node.props.role === 'dialog' && node.props['aria-label'] === 'labelPreview'), undefined);
   h.unmount();
 });
 

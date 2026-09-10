@@ -1490,14 +1490,26 @@ export default function Shipping() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {labelOpen && labelShipment && bootstrap && (
-        <div
-          className="fixed inset-0 z-[100] flex flex-col bg-black/70 p-2 sm:p-5"
+      <Dialog
+        open={labelOpen && !!labelShipment && !!bootstrap}
+        onOpenChange={(open) => {
+          if (!open) {
+            setLabelOpen(false);
+            setLabelShipment(null);
+          }
+        }}
+      >
+        {labelShipment && bootstrap && <DialogContent
           role="dialog"
-          aria-modal="true"
           aria-label={c.labelPreview}
+          showCloseButton={false}
+          className="shipping-label-dialog"
         >
-          <div className="mx-auto mb-3 flex w-full max-w-[100mm] items-center justify-between gap-2 rounded-lg bg-white p-2 shadow-lg">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{c.labelPreview}</DialogTitle>
+            <DialogDescription>100 × 150 mm</DialogDescription>
+          </DialogHeader>
+          <div className="flex w-full items-center justify-between gap-2 rounded-lg bg-white p-2 shadow-lg">
             <strong className="text-sm">
               {c.labelPreview} · 100 × 150 mm ·{" "}
               {labelShipment.draft.parcel_total || 1}{" "}
@@ -1530,14 +1542,14 @@ export default function Shipping() {
               </Button>
             </div>
           </div>
-          <div className="mx-auto min-h-0 max-w-full flex-1 overflow-auto bg-neutral-200 p-1 shadow-2xl">
+          <div className="min-h-0 w-full flex-1 overflow-auto bg-neutral-200 p-1 shadow-2xl">
             {ShippingLabel ? <ShippingLabel
               shipment={labelShipment}
               companyName={bootstrap.brand.name}
             /> : <p role="status" className="p-4 text-sm">{c.loading}</p>}
           </div>
-        </div>
-      )}
+        </DialogContent>}
+      </Dialog>
     </div>
   );
 }
