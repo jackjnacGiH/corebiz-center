@@ -25,15 +25,16 @@ Boss jack อนุญาตให้พัฒนาโค้ดต่อจา�
 
 ## ยังไม่พร้อมเปิดขนส่งจริง
 
-โครงสร้างฐานข้อมูล, RLS, `shipping-api` และหน้า CoreBiz ถูกติดตั้งบน production แล้วสำหรับร่างและงานภายใน ส่วนการเรียกขนส่งจริงยังปิดแบบ fail-closed จึงยังไม่ใช่ระบบ production ครบวงจร
+โครงสร้างฐานข้อมูล, RLS, `shipping-api` และหน้า CoreBiz ถูกติดตั้งบน Production แล้วสำหรับร่างและงานภายใน UAT reads/check-price เปิดตามขอบเขตที่ทดสอบ ส่วน mutation และการรับ webhook ยังปิดแบบ fail-closed จึงยังไม่ใช่ระบบขนส่ง Production ครบวงจร
 
 | ส่วนงาน                                 | สถานะ                                                                                    |
 | --------------------------------------- | ---------------------------------------------------------------------------------------- |
 | ร่าง / สิทธิ์ / ตั้งค่าภายใน            | ติดตั้งบน CoreBiz production แล้ว; การตั้งค่าการเงินจำกัด owner/admin                    |
-| ราคา / สร้างพัสดุ / ใบปะหน้า / ดึงสถานะ | มีโค้ด แต่ต้องผ่าน UAT ด้วยสเปกที่ยืนยันก่อนเปิด flag                                    |
+| รายชื่อบริการ / ตรวจที่อยู่ / เช็กราคา   | UAT reads เปิดแล้ว; check-price จาก CoreBiz ได้ผล 11 บริการ                              |
+| สร้างพัสดุ / ใบปะหน้า / ดึงสถานะ        | มีโค้ด แต่ mutations ปิด ต้องผ่าน checklist บัญชีและทดสอบ UAT ก่อน                      |
 | webhook                                 | ตอบ 503 เสมอ ยังไม่รับหรือบันทึก payload เพราะไม่มีสัญญายืนยันผู้ส่งที่ตรวจสอบได้        |
 | ยกเลิกพัสดุ / นัดรับ / ยกเลิกนัดรับ     | ยังไม่มี workflow สำหรับผู้ใช้ ห้ามใช้การเก็บร่างเข้าคลังแทนยกเลิกพัสดุ                  |
-| เติมเครดิต / ประวัติเครดิต              | ยังไม่ทำธุรกรรม ต้องยืนยัน prepaid/postpaid และวิธีตรวจสอบยอด                            |
+| เติมเครดิต / ประวัติเครดิต              | ตั้ง UAT เป็น prepaid แล้ว แต่ Wallet ยัง 0.00; ยังไม่ทำธุรกรรมและต้องให้ Boss jack ยืนยันยอด |
 | สมัคร/เปลี่ยนบัญชี COD กับผู้ให้บริการ  | ไม่มี API ในเอกสารที่ได้รับ หน้าตั้งค่าเก็บเฉพาะรหัสที่ได้รับอนุมัติแล้ว                 |
 | รายงาน COD โอนแล้ว / กระทบยอด           | ยังไม่รองรับ รอข้อมูล settlement                                                         |
 | แก้ผลคำขอไม่ชัดเจน                      | ห้ามสร้างใหม่ ต้องตรวจรายการด้วย external_id เดิมกับผู้ให้บริการก่อนพัฒนา reconciliation |
@@ -66,12 +67,13 @@ Boss jack อนุญาตให้พัฒนาโค้ดต่อจา�
 | archive                 | ผู้ใช้ขนส่ง | id, version; เก็บร่างที่ยังไม่ส่งเท่านั้น              |
 | quote / print           | ผู้ใช้ขนส่ง | id; ต้องเปิด provider reads                            |
 | submit / refresh_status | ผู้ใช้ขนส่ง | id, version; submit ต้องเปิด mutations ด้วย            |
+| connection_test         | owner/admin | ตรวจ HMAC, carrier, ที่อยู่ และราคาทดสอบแบบ read-only  |
 | admin_data              | owner/admin | page; users/grants/accounts หน้าละ 50                  |
 | save_settings           | owner/admin | settings environment/billing_mode/merchant_code/origin |
 | save_cod                | owner/admin | account id/label/provider_account_id/active            |
 | grant / revoke          | owner/admin | user_id ของ staff                                      |
 
-ข้อมูล draft ยึด type `ShippingDraft` และ `parseDraft` เป็นสัญญา ตรวจเงินทศนิยมไม่เกินสองตำแหน่ง ไม่ปัดเงียบ ร่างยังไม่ครบเก็บได้ แต่ส่งไม่ได้ ข้อผิดพลาดส่งเป็น `{ "error": "code" }` ไม่ส่ง raw provider response หรือ credential กลับ client
+ข้อมูล draft ยึด type `ShippingDraft` และ `parseDraft` เป็นสัญญา ตรวจเงินทศนิยมไม่เกินสองตำแหน่ง ไม่ปัดเงียบ ร่างยังไม่ครบเก็บได้ แต่ส่งไม่ได้ ข้อผิดพลาดส่งเป็น `{ "error": "code" }` ไม่ส่ง raw provider response หรือ credential กลับ client หาก provider ปฏิเสธ `submit` แบบยืนยันได้ response จะมี `shipment` ร่างและ version ล่าสุดให้หน้าเว็บ sync ก่อนแสดงข้อผิดพลาด ส่วนผลที่ไม่ชัดเจนจะไม่คืนเป็นร่างให้ลองซ้ำ
 
 ฟอร์มรายการส่งอิสระแสดงรหัส ชื่อ จำนวน และน้ำหนักสินค้า โดยเพิ่มเองได้สูงสุด 5 แถว การค้นรหัสอ่านเฉพาะสินค้า `active` และเติมชื่อทันทีเมื่อรหัสตรงกัน ช่องราคาไม่แสดงใน UI; ค่า `price` ใน draft เดิมยังคงไว้เพื่อเข้ากันได้กับสัญญา provider และมีค่าเริ่มต้น `0.00` สำหรับรายการที่สร้างเอง
 
@@ -80,7 +82,7 @@ Boss jack อนุญาตให้พัฒนาโค้ดต่อจา�
 1. migration `20260908062224_shipping_module.sql` ถูกใช้กับ Supabase CoreBiz แล้ว ห้ามแก้ไฟล์ย้อนหลังหรือ drop ตารางเพื่อ rollback frontend
 2. การอัปเดต `shipping-api` ต้องคง JWT verification และตรวจ source ที่ deploy อยู่ก่อนทุกครั้ง
 3. frontend ขึ้นผ่าน GitHub/Vercel workflow เดิม และต้องตรวจ route production กับไฟล์โลโก้ทุกเจ้า ไม่ใช้ผล build แทนผล deploy
-4. คง environment=uat, billing_mode=unconfirmed, merchant ว่าง และ provider flags ปิด ระหว่างรอข้อมูลจริง
+4. คง environment=uat และ billing_mode=prepaid; Merchant UAT ผูก 11 carrier และบันทึกเบอร์/อีเมลผู้ส่งแล้ว, reads เปิดเฉพาะขอบเขตที่ทดสอบ ส่วน mutations ยังปิดระหว่างรอเติม Wallet ที่ได้รับอนุมัติ
 5. ตรวจ owner/admin, staff ก่อนและหลัง grant รวมถึงการสร้างร่างเอง/จากคำสั่งซื้อทุก release ที่แตะสิทธิ์
 
 ตัวอย่างคำสั่ง deploy function หลังตรวจเป้าหมายแล้ว:
@@ -102,7 +104,7 @@ npm.cmd run build:corebiz
 
 ก่อนตั้ง flag เป็น `true` ต้องยืนยัน HTTP methods, URL, HMAC test vector/encoding, หน่วยเงินและน้ำหนัก, รูปแบบ response และเวลา/timezone ตาม [คำถามผู้ให้บริการ](QUESTIONS.md) แล้วปรับ adapter/test ตามสัญญาที่ได้รับ การตั้ง flag ไม่ได้ทำให้ข้อขัดแย้งในสเปกหายไป
 
-เปิด reads ใน UAT ก่อน ตรวจราคาและข้อมูลด้วย fixture ที่อนุมัติ จากนั้นขอ Boss jack ยืนยันก่อนทดสอบสร้างพัสดุที่อาจมีค่าใช้จ่าย จึงเปิด mutations และตรวจไม่คิดค่าบริการซ้ำเมื่อ timeout ห้ามเปิด production เพียงเพราะ build ผ่าน
+UAT reads และ check-price ผ่านแล้วในขอบเขตที่บันทึกไว้ Merchant ผูก 11 carrier, billing mode เป็น prepaid และข้อมูลผู้ส่งที่ API ต้องใช้ถูกบันทึกแล้ว Wallet อยู่ Verified/Ready แต่ยอด 0.00 ส่วน Credit ยัง Waiting for document/Processing และ COD ยังไม่มี carrier/bank mapping ให้ทำตาม [Checklist เปิดใช้งานจริง](GO_LIVE_CHECKLIST.md) จากนั้นขอ Boss jack ยืนยันก่อนเติม Wallet หรือทดสอบสร้างพัสดุที่อาจมีค่าใช้จ่าย จึงเปิด mutations ชั่วคราวแบบจำกัดและตรวจไม่คิดค่าบริการซ้ำเมื่อ timeout ห้ามเปิด Production เพียงเพราะ build ผ่าน
 
 ร่างผูกกับ environment/merchant ณ วันที่สร้าง หากเปลี่ยนบัญชี backend จะปฏิเสธ `account_changed` ให้เก็บร่างเก่าเข้าคลังและสร้างร่างในบัญชีที่ถูกต้อง ห้ามใช้ร่างเก่าข้ามบัญชี
 
@@ -139,4 +141,4 @@ npx.cmd --yes deno check --node-modules-dir=none --no-lock supabase/functions/sh
 
 ## งานถัดไปที่ต้องทำก่อนเปิดเต็มระบบ
 
-ทีมพัฒนารับสเปกยืนยันและ credentials ผ่านช่องทางปลอดภัย จากนั้นทำ UAT ราคา/สร้าง/ใบปะหน้า/สถานะ, การกู้ผล timeout, webhook ที่ยืนยันผู้ส่งและกัน replay ได้, workflow ยกเลิกและนัดรับ, เครดิตเฉพาะผู้ดูแล และกระทบยอด COD ก่อนรับรองระบบขนส่งครบวงจร
+บัญชี UAT เลือก Wallet แบบ prepaid แล้ว ขั้นถัดไปคือให้ Boss jack ยืนยันยอดเติม หรือรอ Credit ผ่านการอนุมัติหากจะเปลี่ยนโหมดในอนาคต พร้อมให้ PromptSpeed ตอบข้อขัดแย้ง method/base URL/webhook/pickup และเปิด mapping ของ COD ก่อน ทีมพัฒนาจึงทำ UAT สร้าง/ใบปะหน้า/สถานะ, การกู้ผล timeout, webhook ที่ยืนยันผู้ส่งและกัน replay ได้, workflow ยกเลิกและนัดรับ และกระทบยอด COD ตาม [Checklist เปิดใช้งานจริง](GO_LIVE_CHECKLIST.md) ก่อนรับรองระบบขนส่งครบวงจร

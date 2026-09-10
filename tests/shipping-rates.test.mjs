@@ -5,6 +5,10 @@ import { aggregateShippingRates, compareShippingRates } from "../supabase/functi
 
 const carriers = ["A", "B", "C"].map(code => ({ code, name: code, logo: null }));
 const rate = (carrier_code, total) => ({ carrier_code, total, delivery_time: "1-3 days" });
+const response = (status, data) => ({
+  status, ok: status >= 200 && status < 300, data,
+  requestId: null, code: null, message: null,
+});
 test("rank only complete shipment prices, sum all boxes exactly, and preserve ties", () => {
   const result = aggregateShippingRates(carriers, [
     [rate("A", "1.2345"), rate("B", "0.5000"), rate("C", "0.0100")],
@@ -38,10 +42,10 @@ test("compare discovers account carriers and reuses identical-box quotes without
   const calls = [];
   const request = async (_config, operation, payload) => {
     calls.push({ operation, payload });
-    if (operation === "carriers") return { status: 200, data: { data: [{ code: "A", description: "Carrier A" }, { code: "B", description: "Carrier B", logo: "javascript:bad" }] } };
+    if (operation === "carriers") return response(200, { data: [{ code: "A", description: "Carrier A" }, { code: "B", description: "Carrier B", logo: "javascript:bad" }] });
     assert.deepEqual(payload.carriers_code, ["A", "B"]);
     assert.equal("fullname" in payload.destination, false);
-    return { status: 200, data: { data: [rate("A", payload.box_weight === 200 ? "10.0000" : "25.0000"), rate("B", "20.0000")] } };
+    return response(200, { data: [rate("A", payload.box_weight === 200 ? "10.0000" : "25.0000"), rate("B", "20.0000")] });
   };
   const result = await compareShippingRates({}, draft(), undefined, request);
   assert.equal(calls.filter(c => c.operation === "quote").length, 2);
@@ -53,16 +57,16 @@ test("compare discovers account carriers and reuses identical-box quotes without
 });
 test("failed provider requests do not return misleading partial comparisons", async () => {
   await assert.rejects(compareShippingRates({}, draft(), undefined, async (_c, operation) =>
-    operation === "carriers" ? { status: 200, data: { data: [{ code: "A" }] } } : { status: 503, data: {} }), /provider_rejected/);
+    operation === "carriers" ? response(200, { data: [{ code: "A" }] }) : response(503, {})), /provider_rejected/);
 });
 test("a dropped read connection retries once without issuing shipment mutations", async () => {
   let dropped = false;
   const operations = [];
   const result = await compareShippingRates({}, draft(), undefined, async (_c, operation) => {
     operations.push(operation);
-    if (operation === "carriers") return { status: 200, data: { data: [{ code: "A" }] } };
+    if (operation === "carriers") return response(200, { data: [{ code: "A" }] });
     if (!dropped) { dropped = true; throw new TypeError("fetch failed"); }
-    return { status: 200, data: { data: [rate("A", "10.00")] } };
+    return response(200, { data: [rate("A", "10.00")] });
   });
   assert.equal(result.rates[0].total, "30.0000");
   assert.equal(operations.filter(op => op === "quote").length, 3);

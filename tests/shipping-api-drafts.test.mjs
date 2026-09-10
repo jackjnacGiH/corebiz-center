@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as domain from '../supabase/functions/_shared/shipping-domain.ts';
+import * as promptSpeed from '../supabase/functions/_shared/promptspeed.ts';
 
 const actor = '00000000-0000-4000-8000-000000000999';
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -14,6 +15,23 @@ function shipment(n, status = 'draft', extra = {}) {
     tracking_number: null, created_at: '2026-09-01T00:00:00Z', created_by: actor,
     order_id: null, order_code: null, orders: null, ...extra };
 }
+function submittableShipment(n) {
+  const row = shipment(n);
+  const address = suffix => ({
+    ...domain.emptyAddress(), fullname: `Contact ${suffix}`, address: `Address ${suffix}`,
+    county: 'แพรกษาใหม่', city: 'เมืองสมุทรปราการ', state: 'สมุทรปราการ',
+    postcode: '10280', email: `${suffix}@example.test`, telephone1: '0800000000',
+  });
+  row.draft = {
+    ...row.draft,
+    carrier_code: 'EMS_SPEED', origin: address('origin'), destination: address('destination'),
+    box_width: 10, box_height: 10, box_length: 10, box_weight: 100,
+    products: [{ name: 'Test item', code: 'SKU-1', qty: 1, price: '0.00', weight: 100 }],
+  };
+  row.environment = 'uat';
+  row.merchant_code = 'test';
+  return row;
+}
 const compiled = ts.transpileModule(readFileSync(new URL('../supabase/functions/shipping-api/index.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -21,12 +39,12 @@ const compiled = ts.transpileModule(readFileSync(new URL('../supabase/functions/
 // Execute the real Deno handler. The fake database applies PostgREST filters,
 // ordering, exact counts and CAS updates to synthetic rows; it makes no network
 // calls and deliberately provides no delete/provider mutation implementation.
-function api({ rows = [shipment(1)], role = 'owner', active = true, grant = false, customers = [], beforeUpdate } = {}) {
+function api({ rows = [shipment(1)], role = 'owner', active = true, grant = false, customers = [], beforeUpdate, connectionResult = null, provider = null, settings = {} } = {}) {
   const tables = {
     profiles: [{ id: actor, role, is_active: active }],
     shipping_permissions: grant ? [{ user_id: actor }] : [],
-    shipping_settings: [{ id: true, environment: 'uat', merchant_code: 'test', billing_mode: 'unconfirmed' }],
-    shipments: structuredClone(rows), customers: structuredClone(customers),
+    shipping_settings: [{ id: true, environment: 'uat', merchant_code: 'test', billing_mode: 'unconfirmed', ...settings }],
+    shipments: structuredClone(rows), customers: structuredClone(customers), shipping_attempts: [],
   };
   const queries = [];
   class Query {
@@ -42,11 +60,18 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
     order(column, options = {}) { this.sorts.push([column, options.ascending !== false]); return this; }
     range(from, to) { this.bounds = [from, to]; return this; }
     limit(n) { this.bounds = [0, n - 1]; return this; }
+    insert(values) { this.insertRows = Array.isArray(values) ? values : [values]; return this; }
     update(patch) { this.patch = patch; return this; }
     single() { this.mode = 'single'; return this; }
     maybeSingle() { this.mode = 'maybe'; return this; }
     execute() {
-      if (this.patch) { beforeUpdate?.(tables.shipments); beforeUpdate = undefined; }
+      if (this.insertRows) {
+        const inserted = this.insertRows.map(row => structuredClone(row));
+        tables[this.table].push(...inserted);
+        const data = this.mode === 'many' ? inserted : inserted[0] ?? null;
+        return { data: structuredClone(data), error: null };
+      }
+      if (this.patch && this.table === 'shipments') { beforeUpdate?.(tables.shipments); beforeUpdate = undefined; }
       let data = tables[this.table].filter(row => this.filters.every(([op, key, value]) =>
         op === 'eq' ? row[key] === value : op === 'neq' ? row[key] !== value : value.includes(row[key])));
       data.sort((a, b) => {
@@ -66,6 +91,9 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
   }
   let handler;
   const noProvider = () => { throw new Error('Provider must not be called for draft list/archive'); };
+  const connectionTest = connectionResult === null ? noProvider : async () => connectionResult;
+  const providerRequest = provider?.request ?? noProvider;
+  const reconcile = provider?.reconcile ?? noProvider;
   runInNewContext(compiled, {
     exports: {}, Error, Request, Response, URL, crypto,
     Deno: { env: { get: () => '' }, serve: callback => { handler = callback; } },
@@ -75,7 +103,16 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
         from: table => new Query(table),
       }) };
       if (name.endsWith('/shipping-domain.ts')) return domain;
-      if (name.endsWith('/promptspeed.ts')) return { assertProviderReady: noProvider, requestProvider: noProvider };
+      if (name.endsWith('/promptspeed.ts')) return {
+        assertProviderReady: provider === null ? noProvider : () => {},
+        providerCreateResult: promptSpeed.providerCreateResult,
+        providerDefinitiveRejection: promptSpeed.providerDefinitiveRejection,
+        providerPrintLink: promptSpeed.providerPrintLink,
+        providerRows: promptSpeed.providerRows,
+        reconcileCreatedShipment: reconcile,
+        requestProvider: providerRequest,
+        testProviderConnection: connectionTest,
+      };
       if (name.endsWith('/shipping-rates.ts')) return { compareShippingRates: noProvider };
       throw new Error(`Unexpected import: ${name}`);
     },
@@ -175,4 +212,60 @@ test('forbidden users cannot list, use history or archive, and missing bearer au
   const h = api();
   assert.equal((await h.call('archive', { id: id(1), version: 7 }, false)).status, 401);
   assert.equal(h.queries.length, 0);
+});
+
+test('connection test is manager-only and returns no provider credential fields', async () => {
+  const connectionResult = {
+    environment: 'uat', checked_at: '2026-09-10T00:00:00Z',
+    hmac: { ok: true }, merchant: { ok: true, code: 'MC00000001' },
+    carriers: { ok: true, count: 15 },
+    rate_test: { ok: true, carrier_code: 'EMS_SPEED', total: '35.0000', currency: 'THB' },
+    blockers: { billing: true, wallet: null, carrier: null, mutations: true }, ready: false,
+  };
+  const owner = api({ connectionResult });
+  const result = await owner.call('connection_test');
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, connectionResult);
+  assert.equal('secret' in result.body, false);
+  assert.equal('appId' in result.body, false);
+
+  const staff = api({ role: 'staff', grant: true, connectionResult });
+  const forbidden = await staff.call('connection_test');
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.body.error, 'forbidden');
+});
+
+test('a definite provider 4xx records rejection and safely restores the shipment draft', async () => {
+  let reconciliations = 0;
+  const h = api({
+    rows: [submittableShipment(1)],
+    settings: { billing_mode: 'prepaid' },
+    provider: {
+      request: async (_config, operation) => {
+        assert.equal(operation, 'create');
+        return {
+          status: 400, ok: false,
+          data: { code: 'ERROR_VALIDATION', message: 'wallet balance is insufficient' },
+          requestId: 'request-wallet', code: 'ERROR_VALIDATION',
+          message: 'wallet balance is insufficient',
+        };
+      },
+      reconcile: async () => { reconciliations += 1; return null; },
+    },
+  });
+
+  const result = await h.call('submit', { id: id(1), version: 7 });
+  assert.equal(result.status, 502);
+  assert.equal(result.body.error, 'provider_rejected');
+  assert.equal(result.body.shipment.status, 'draft');
+  assert.equal(result.body.shipment.version, 9);
+  assert.equal(reconciliations, 0, 'a definite rejection must not match an older provider shipment');
+  assert.equal(h.tables.shipments[0].status, 'draft');
+  assert.equal(h.tables.shipments[0].version, 9);
+  assert.equal(h.tables.shipments[0].tracking_number, null);
+  assert.equal(h.tables.shipping_attempts.length, 1);
+  assert.equal(h.tables.shipping_attempts[0].outcome, 'rejected');
+  assert.equal(h.tables.shipping_attempts[0].http_status, 400);
+  assert.equal(h.tables.shipping_attempts[0].provider_request_id, 'request-wallet');
+  assert.ok(h.tables.shipping_attempts[0].finished_at);
 });

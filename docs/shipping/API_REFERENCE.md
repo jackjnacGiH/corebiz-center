@@ -1,6 +1,6 @@
 # คู่มือ API ขนส่ง V3 สำหรับเตรียมเชื่อม CoreBiz
 
-รายละเอียดสเปกอ้างอิง S1 ใน [SOURCES.md](SOURCES.md) ผลทดสอบกับบริการ UAT วันที่ 9 กันยายน 2026 แยกไว้ใน [UAT_CONNECTION.md](UAT_CONNECTION.md): ยืนยัน OP01, OP06, OP07 และ OP10 ตามขอบเขตที่ทดสอบ ไม่ใช่การรับรอง operations อื่นหรือ Production
+รายละเอียดสเปกอ้างอิง S1/S10 ใน [SOURCES.md](SOURCES.md) และตรวจเอกสารออนไลน์ซ้ำวันที่ 10 กันยายน 2026 ผลทดสอบ UAT แยกไว้ใน [UAT_CONNECTION.md](UAT_CONNECTION.md): ยืนยัน OP01, OP06, OP07 และ OP10 ตามขอบเขตที่ทดสอบ ไม่ใช่การรับรอง operations อื่นหรือ Production
 
 ## API ภายใน CoreBiz ที่พัฒนาแล้ว
 
@@ -16,7 +16,10 @@
 | `product_options` | สินค้า active จากคลัง CoreBiz | ค้นด้วยรหัสสินค้าอย่างน้อย 2 ตัวอักษร คืนสูงสุด 20 รายการเฉพาะ `id`, `code`, `name`, `weight`; ไม่คืนราคาและต้นทุน |
 | `create_draft` / `save_draft` / `archive` | จัดการร่างภายใน | ใช้ version กันเขียนทับ และ UUID เดิมเมื่อ retry การสร้างร่าง |
 | `quote` / `submit` / `print` / `refresh_status` | เรียก provider ผ่าน adapter | ปิดอัตโนมัติเมื่อ credential/spec/flag/บัญชียังไม่พร้อม |
+| `connection_test` | ทดสอบ HMAC, รายชื่อบริการ, ที่อยู่ และราคาแบบ read-only | เฉพาะ owner/admin; ไม่คืน credential หรือ raw provider response |
 | `admin_data`, `save_settings`, `save_cod`, `grant`, `revoke` | ตั้งค่าเฉพาะ owner/admin | staff เปลี่ยนบัญชี COD หรือสิทธิ์ตัวเองไม่ได้ |
+
+เมื่อ `submit` ถูก PromptSpeed ปฏิเสธด้วย 4xx ที่ยืนยันได้ Backend จะบันทึก attempt เป็น `rejected` และคืนรายการเป็น `draft` พร้อม version ล่าสุดให้หน้าเว็บ เพื่อให้แก้หรือลบต่อได้ทันที ส่วน timeout, 5xx, response ที่ผิดรูปแบบ หรือผลที่ไม่ชัดเจนจะคงเป็น `outcome_unknown` และห้ามส่งซ้ำอัตโนมัติ
 
 รหัสไปรษณีย์ไทยใช้ข้อมูลชุดเดียวกับหน้าลูกค้าใน frontend จึงไม่เรียก OP07 ระหว่างกรอกฟอร์ม หากรหัสเดียวมีหลายตำบล ระบบเติมจังหวัด/อำเภอแล้วให้ผู้ใช้เลือกตำบลเพื่อไม่เดาค่าผิด ส่วน OP07 เก็บไว้สำหรับตรวจ coverage/รูปแบบที่อยู่กับ provider หลังยืนยันสัญญา API
 
@@ -268,7 +271,7 @@ Fields: attachment=<APPROVED_SLIP_FILE>, amount=<AMOUNT>, payment_code=BANK_TRAN
 
 **ผิดพลาด:** 400 `ERROR_VALIDATION`; example ระบุ `should approve wallet before add deposit.` จึงต้องถาม approval flow และเงื่อนไขรายการค้างก่อนส่งซ้ำ
 
-**ข้อจำกัด:** จำกัด owner/admin ตาม Brief ไม่มีการเติมเงินจริงในงานเอกสารนี้ และยังไม่ยืนยันว่าบัญชี J NAC ใช้ wallet prepaid หรือ invoice/postpaid; ไม่มี approve/status endpoint ของ deposit ในชุดนี้
+**ข้อจำกัด:** จำกัด owner/admin ตาม Brief บัญชี CoreBiz UAT ตั้งเป็น `prepaid` แล้ว แต่ยังไม่มีการเติมเงินจริงและ Wallet ยัง 0.00; ไม่มี approve/status endpoint ของ deposit ในชุดนี้
 
 ## OP09: ประวัติเงินเข้าออก
 
@@ -289,6 +292,8 @@ Fields: attachment=<APPROVED_SLIP_FILE>, amount=<AMOUNT>, payment_code=BANK_TRAN
 **ผิดพลาด:** description ระบุ 400 `ERROR_VALIDATION` แต่ response map มีเพียง 200
 
 **ข้อจำกัด:** ไม่มี capability matrix เรื่อง COD, pickup, max weight, เขตบริการ หรือระยะเวลาตัดรอบใน schema ใช้ API เป็นแหล่ง code แล้วตรวจสิทธิ์ merchant แยก อย่า hardcode รายชื่อ/ราคาจาก PDF
+
+**ผลตรวจบัญชี 10 กันยายน 2026:** Merchant UAT ผูกไว้ 11 บริการ, carrier list ส่งกลับ 11 บริการ และ check-price ล่าสุดได้ผลครบ 11 บริการ การผูกใน UAT ยังไม่ใช่หลักฐานว่าทุกบริการเปิดใช้ใน Production หรือรองรับ COD/pickup ให้ตรวจ capability ก่อนเปิด OP02
 
 ## OP11: เรียกรถเข้ารับ
 

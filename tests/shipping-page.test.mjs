@@ -12,6 +12,18 @@ const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve()
 const bootstrap = () => ({ manager: true, settings: { environment: 'uat', origin: domain.emptyAddress() },
   brand: { name: 'Test company' }, accounts: [], readReady: true, sendReady: false });
 const shipment = (id, changes = {}) => ({ id, reference_no: id, draft: domain.emptyDraft(), status: 'draft', tracking_number: null, version: 3, created_at: '2026-09-09T00:00:00Z', ...changes });
+const submittableShipment = id => {
+  const address = suffix => ({
+    ...domain.emptyAddress(), fullname: `Contact ${suffix}`, address: `Address ${suffix}`,
+    county: 'แพรกษาใหม่', city: 'เมืองสมุทรปราการ', state: 'สมุทรปราการ',
+    postcode: '10280', email: `${suffix}@example.test`, telephone1: '0800000000',
+  });
+  return shipment(id, { draft: {
+    ...domain.emptyDraft(), carrier_code: 'EMS_SPEED', origin: address('origin'), destination: address('destination'),
+    box_width: 10, box_height: 10, box_length: 10, box_weight: 100,
+    products: [{ name: 'Test item', code: 'SKU-1', qty: 1, price: '0.00', weight: 100 }],
+  } });
+};
 
 // Execute the actual component with deterministic hooks and deferred requests.
 // JSX remains inspectable, so tests invoke the same handlers as user controls.
@@ -225,6 +237,33 @@ test('failed deletion and version conflict keep dirty editor input and do not re
     assert.equal(h.find(node => node.props.role === 'alert').props.children, reason === 'conflict' ? 'conflict' : 'providerRejected');
     h.unmount();
   }
+});
+
+test('definite submit rejection syncs the restored draft version before another edit action', async () => {
+  const row = submittableShipment('rejected-submit');
+  const h = mount(); h.runTimers();
+  h.requests[0].resolve({ ...bootstrap(), sendReady: true });
+  h.listRequests()[0].resolve({ shipments: [row], count: 1 });
+  await settle(); h.render();
+  h.card(row.id).props.onOpen();
+  h.requests.at(-1).resolve({ shipment: row, events: [] });
+  await settle(); h.render();
+
+  h.button('submit').props.onClick();
+  const submit = h.requests.at(-1);
+  assert.equal(submit.action, 'action');
+  assert.equal(submit.args[0], 'submit');
+  const restored = { ...row, status: 'draft', version: 5 };
+  submit.reject(Object.assign(new Error('provider_rejected'), { shipment: restored }));
+  await settle(); h.render();
+
+  assert.equal(h.find(node => node.props.role === 'alert').props.children, 'providerRejected');
+  h.button('deleteDraft').props.onClick();
+  h.button('confirmDeleteAction').props.onClick();
+  const nextAction = h.requests.at(-1);
+  assert.equal(nextAction.args[0], 'archive');
+  assert.equal(nextAction.args[1].version, 5, 'the page must use the restored server version');
+  h.unmount();
 });
 
 test('deletion handler refuses non-drafts and any draft that already has tracking', async () => {

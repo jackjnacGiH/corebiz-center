@@ -353,6 +353,16 @@ export default function Shipping() {
     try {
       await task();
     } catch (e) {
+      const restored = e && typeof e === "object"
+        ? (e as { shipment?: unknown }).shipment
+        : null;
+      if (
+        e instanceof Error && e.message === "provider_rejected" &&
+        restored && typeof restored === "object" &&
+        typeof (restored as Shipment).id === "string" &&
+        (restored as Shipment).status === "draft" &&
+        Number.isInteger((restored as Shipment).version)
+      ) editResult(restored as Shipment);
       reportError(e);
     } finally {
       setBusy(false);

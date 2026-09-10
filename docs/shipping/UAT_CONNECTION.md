@@ -1,6 +1,6 @@
 # การเชื่อมต่อ PromptSpeed UAT
 
-วันที่ตรวจ: 9 กันยายน 2026
+วันที่ตรวจล่าสุด: 10 กันยายน 2026
 
 ## สถานะที่ยืนยันแล้ว
 
@@ -9,6 +9,9 @@
 - Partner token ใช้เป็น Bearer สำหรับสร้าง Merchant ส่วน `api_key` และ `api_secret` ที่ได้รับจาก Merchant ใช้กับการลงลายเซ็น HMAC โดยนำ `api_key` ไปใช้เป็น `app_id`
 - ติดตั้งเฉพาะกุญแจ UAT ใน Supabase Secrets และบันทึกรหัส Merchant ในหน้าตั้งค่าขนส่งของ CoreBiz มีผู้ใช้ที่บันทึกการเปลี่ยนแปลงกำกับ
 - รหัสผ่าน, Partner token, App ID และ Secret ไม่อยู่ใน Git หรือเอกสารนี้
+- วันที่ 10 กันยายน 2026 ตรวจพบ Merchant UAT เดิมอยู่แล้ว จึงไม่สร้าง Merchant เพิ่มและไม่บันทึกรหัส Merchant ลงเอกสาร
+- Merchant UAT ถูกผูกไว้ 11 บริการ; Wallet อยู่ Verified/Ready แต่ยอด 0.00; Credit ยัง Waiting for document/Processing; บัญชี COD แสดง Active แต่ carrier mapping และ bank mapping เป็น 0
+- CoreBiz ตั้ง billing mode ของบัญชี UAT เป็น `prepaid` และบันทึกเบอร์โทรกับอีเมลผู้ส่งที่ OP02 ต้องใช้แล้ว ค่าจริงเก็บในระบบและไม่คัดลอกลงเอกสาร
 
 ## ผลทดสอบ
 
@@ -20,17 +23,22 @@
 | `POST /api/v3/shipment/check-price` ด้วย HMAC | HTTP 200 ได้ราคา Flash และ Best ในคำขอเดียว | สมุทรปราการ 10280 ไปกรุงเทพมหานคร 10330; กว้าง 20 สูง 10 ยาว 30 ซม.; น้ำหนัก 1,200 กรัม |
 | `check-price` โดยส่งเฉพาะพื้นที่และกล่อง | HTTP 200 ได้ราคา EMS ใน UAT | 10280 ไป 10330; กว้าง 10 สูง 10 ยาว 15 ซม.; น้ำหนัก 200 กรัม; ไม่ส่งข้อมูลผู้ติดต่อ สินค้า หรือ COD |
 | เช็กราคาจากหน้า CoreBiz ผ่าน `shipping-api` | ได้ชื่อบริการ ยอดประเมิน และระยะเวลา | ร่างทดสอบใหม่ที่ผูก Merchant UAT; Flash; ยังเป็นสถานะร่าง |
+| เช็กราคาล่าสุดจากหน้า CoreBiz | ได้ราคา 11 บริการ โดยไม่บันทึกร่าง | กล่อง 20 × 10 × 30 ซม.; 1,200 กรัม; 10280 ไป 10280 |
+| ตรวจสถานะ Wallet/Credit | Wallet Verified/Ready ยอด 0.00; Credit Waiting for document/Processing | ยังไม่มีเงิน/วงเงินที่พิสูจน์ว่าสร้างพัสดุได้ |
+| ตรวจบริการที่ผูกกับ Merchant | ผูกไว้ 11 บริการ | เป็น UAT และยังต้องยืนยัน capability/เงื่อนไข Production |
+| ตรวจบัญชี COD | Active แต่ carrier mapping และ bank mapping เป็น 0 | ยังส่ง COD หรือรับรอง settlement ไม่ได้ |
 | ปุ่มสร้างพัสดุ | ปิดใช้งาน | ไม่มีเลข Tracking และยังไม่ได้ส่งคำสั่งสร้างพัสดุ |
 
-ผลข้างต้นยืนยันการใช้ `api_key` เป็น App ID, timestamp หน่วย milliseconds, HMAC-SHA256 แบบ hex และ POST JSON ของ check-price สำหรับคำขอที่ทดสอบ ไม่ได้ยืนยันอายุลายเซ็น, clock skew, การ sign multipart หรือ operations อื่นทั้งหมด
+ผลข้างต้นยืนยันการใช้ `api_key` เป็น App ID, timestamp หน่วย milliseconds, HMAC-SHA256 แบบ hex และ POST JSON ของ check-price สำหรับคำขอที่ทดสอบ ไม่ได้ยืนยันอายุลายเซ็น, clock skew, การ sign multipart หรือ operations อื่นทั้งหมด เอกสารออนไลน์ที่ตรวจวันที่ 10 กันยายนยังไม่แก้ข้อขัดแย้งเรื่อง method ของ check-price, Wallet, pickup และ pickup cancel
 
 ## ค่าที่ตั้งบนเซิร์ฟเวอร์
 
 | ค่า | สถานะ |
 | --- | --- |
 | `shipping_settings.environment` | `uat` |
-| `shipping_settings.merchant_code` | ผูก Merchant ทดสอบแล้ว ดูรหัสในหน้าตั้งค่าขนส่ง |
-| `shipping_settings.billing_mode` | `unconfirmed` |
+| `shipping_settings.merchant_code` | ผูก Merchant ทดสอบแล้ว ดูรหัสในหน้าตั้งค่าขนส่ง ไม่เผยแพร่ในเอกสาร |
+| `shipping_settings.billing_mode` | `prepaid` |
+| ข้อมูลผู้ส่งสำหรับ API | บันทึกเบอร์โทรและอีเมลแล้ว ค่าจริงดูได้เฉพาะผู้มีสิทธิ์ในระบบ |
 | `PROMPTSPEED_UAT_APP_ID` / `PROMPTSPEED_UAT_SECRET` | ติดตั้งแล้ว เก็บเฉพาะฝั่งเซิร์ฟเวอร์ |
 | `PROMPTSPEED_SPEC_CONFIRMED` | `true` สำหรับขอบเขต UAT ที่ทดสอบด้านบน ไม่ใช่การรับรองสเปกทั้งชุด |
 | `PROMPTSPEED_READS_ENABLED` | `true` |
@@ -38,6 +46,16 @@
 | กุญแจ Production | ไม่ได้ติดตั้งในรอบนี้ |
 
 Base URL ที่ทดสอบ: `https://openapi-uat.promptspeed.co.th` โค้ด provider เดิมผ่านการทดสอบได้โดยไม่ต้องเปลี่ยน Edge Function `shipping-api` รุ่น 3
+
+## ขอบเขตที่ยังขวางการสร้างพัสดุ
+
+1. Merchant UAT ผูกไว้ 11 บริการแล้ว แต่ยังต้องยืนยัน capability, ค่าใช้จ่าย และสิทธิ์ Production ของแต่ละบริการ
+2. ใช้โหมด `prepaid` และข้อมูลผู้ส่งสำหรับ API ครบแล้ว แต่ Wallet ยังมียอด 0.00 จึงยังไม่มีเงินสำหรับพิสูจน์ mutation
+3. COD แม้แสดง Active แต่ carrier mapping และ bank mapping เป็น 0 จึงยังไม่พร้อมใช้งาน
+4. OpenAPI ระบุ method ขัดกัน 4 จุด และ Portal ยังอ้าง legacy host บางส่วน ขณะที่ OpenAPI V3 กับ check-price ล่าสุดใช้ `https://openapi-uat.promptspeed.co.th` สำเร็จ
+5. Webhook ไม่มี signature/header/replay contract จึงยังเปิดรับ event จริงไม่ได้
+6. Pickup ยังขาด `warehouse_no`, response ID, ID mapping กับ callback และ method ที่ยืนยัน
+7. CoreBiz คง `PROMPTSPEED_MUTATIONS_ENABLED=false` จนกว่าจะผ่าน [Checklist เปิดใช้งานจริง](GO_LIVE_CHECKLIST.md)
 
 ## ผลตรวจหน้าจัดการพื้นที่บริการ
 
@@ -74,3 +92,4 @@ Base URL ที่ทดสอบ: `https://openapi-uat.promptspeed.co.th` โ�
 - การพิมพ์ใบปะหน้าจากผู้ให้บริการ การดึงสถานะพัสดุจริง และ webhook ยังต้องทดสอบแยกต่างหาก
 - หน้าเปรียบเทียบใช้รายชื่อจาก API บัญชีปัจจุบัน; โลโก้/ชื่อแสดงผลบางส่วนใช้ asset ที่เตรียมไว้ การให้ราคา UAT ไม่ใช่การยืนยันบริการ Production
 - ห้ามนำสถานะ `SPEC_CONFIRMED` ของรอบนี้ไปตีความว่า production, COD, webhook, retry หรือ operations ที่ไม่ได้ทดสอบพร้อมใช้งานแล้ว ดู [QUESTIONS.md](QUESTIONS.md) สำหรับประเด็นคงค้าง
+- การเติมเครดิตเป็นธุรกรรมการเงิน แม้ Wallet อยู่ Verified/Ready ต้องให้ Boss jack ยืนยัน environment กับจำนวนเงินจริงเป็นครั้งสุดท้ายก่อนส่งคำขอ
