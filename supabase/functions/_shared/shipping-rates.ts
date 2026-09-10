@@ -1,6 +1,6 @@
 import { quoteIssues, quotePayload, shippingParcels, type ShippingDraft, type ShippingParcel } from "./shipping-domain.ts";
 import {
-  ProviderRejectedError,
+  providerReadError,
   providerRows,
   requestProvider,
   type ProviderConfig,
@@ -96,7 +96,7 @@ export async function compareShippingRates(
   };
   const carrierResponse = await read("carriers", undefined, { limit: "100" });
   if (!carrierResponse.ok || !Array.isArray(carrierResponse.data.data))
-    throw new ProviderRejectedError(carrierResponse);
+    throw providerReadError(carrierResponse);
   const carrierRows = providerRows(carrierResponse);
   const carriers = carrierRows.map(record).map((row) => ({
     code: text(row.code), name: text(row.description) || text(row.name) || text(row.code),
@@ -125,7 +125,7 @@ export async function compareShippingRates(
       const group = queue[next++];
       const response = await read("quote", quotePayload(draft, codes, group.parcel));
       if (!response.ok || !Array.isArray(response.data.data))
-        throw new ProviderRejectedError(response);
+        throw providerReadError(response);
       const rows = providerRows(response);
       for (const index of group.indexes) responses[index] = rows;
     }

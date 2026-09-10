@@ -176,6 +176,15 @@ test("company is optional on older drafts and is carried into provider recipient
   assert.equal(payload.destination.fullname, "Customer Company / Test contact");
   assert.equal("company" in payload.destination, false);
 });
+test("an organization can submit without an unknown contact person", () => {
+  const d = ready();
+  d.destination.company = "บริษัท ลูกค้า จำกัด";
+  d.destination.fullname = "";
+  const parsed = parseDraft(d);
+  assert.deepEqual(readyIssues(parsed), []);
+  const payload = providerPayload({ draft: parsed, id: "test", reference_no: "test" }, null);
+  assert.equal(payload.destination.fullname, "บริษัท ลูกค้า จำกัด");
+});
 test("formatted phone numbers are preserved in drafts but block provider submission", () => {
   const d = ready();
   d.origin.telephone1 = "02-183 8489";
@@ -242,8 +251,8 @@ test("draft read correction leaves storage objects and submitted snapshots untou
   assert.equal(shipmentWithContactFields({ ...s, status: "waiting" }).draft, s.draft);
   assert.equal(parseDraft(s.draft).origin.company, s.draft.origin.fullname);
   assert.deepEqual(quoteIssues(corrected.draft), []);
-  assert.ok(readyIssues(s.draft).includes("origin_incomplete"));
-  assert.throws(() => providerPayload(s, null), /shipment_incomplete/);
+  assert.equal(readyIssues(s.draft).includes("origin_incomplete"), false);
+  assert.equal(providerPayload(s, null).origin.fullname, "บริษัท เจ แนค (ประเทศไทย) จำกัด");
 });
 test("parcel sizes are validated separately and unknown legacy boxes are not silently cloned", () => {
   const d = ready();

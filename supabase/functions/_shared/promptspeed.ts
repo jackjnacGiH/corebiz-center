@@ -23,6 +23,10 @@ export interface ProviderResponse {
 // must remain inside the Edge Function.
 export function providerRejectionIssue(response: ProviderResponse): ShippingProviderIssue {
   const value = `${response.code ?? ""} ${response.message ?? ""}`.toLowerCase();
+  // Transport/auth status is more reliable than provider wording. For example,
+  // an authentication response may mention a wallet or carrier in its text.
+  if ([401, 403].includes(response.status)) return "provider_authentication_failed";
+  if (response.status === 429) return "provider_rate_limited";
   if (/telephone|phone|mobile|เบอร์/.test(value)) return "invalid_phone";
   if (/box.{0,30}(?:length|width|height)|(?:length|width|height).{0,30}(?:box|cm)|dimension/.test(value))
     return "box_dimension_exceeded";
@@ -32,10 +36,35 @@ export function providerRejectionIssue(response: ProviderResponse): ShippingProv
   if (/wallet|balance|credit|insufficient fund/.test(value)) return "wallet_insufficient";
   if (/\bauth\b|error_auth|unauthori[sz]ed|authentication|credential|signature|forbidden|api.?key/.test(value))
     return "provider_authentication_failed";
-  if (response.status === 429 || /rate.?limit|too many requests/.test(value)) return "provider_rate_limited";
+  if (/rate.?limit|too many requests/.test(value)) return "provider_rate_limited";
   if (/carrier|service|route|rate version|not support|unavailable/.test(value))
     return "carrier_service_unavailable";
   return "provider_validation_failed";
+}
+
+export type ProviderReadFailure =
+  | ShippingProviderIssue
+  | "provider_unreachable"
+  | "provider_response_invalid";
+
+// Read requests are safe to retry, but their final failure still needs to
+// distinguish provider validation from authentication, throttling and outage.
+// Only this bounded enum may cross the Edge Function boundary.
+export function providerReadFailure(response: ProviderResponse): ProviderReadFailure {
+  if ([401, 403].includes(response.status)) return "provider_authentication_failed";
+  if (response.status === 429) return "provider_rate_limited";
+  if (response.status >= 500 || [408, 425].includes(response.status))
+    return "provider_unreachable";
+  if (response.ok || !Object.keys(response.data).length)
+    return "provider_response_invalid";
+  return providerRejectionIssue(response);
+}
+
+export function providerReadError(response: ProviderResponse): Error {
+  const failure = providerReadFailure(response);
+  return failure === "provider_unreachable" || failure === "provider_response_invalid"
+    ? new Error(failure)
+    : new ProviderRejectedError(response);
 }
 
 export class ProviderRejectedError extends Error {
@@ -417,6 +446,7 @@ const providerArea = (value: Partial<ProviderArea>): ProviderArea => ({
 const completeArea = (value: ProviderArea) =>
   !!value.county && !!value.city && !!value.state && /^\d{5}$/.test(value.postcode);
 const safeFailure = (error: unknown) => {
+  if (error instanceof ProviderRejectedError) return error.detail;
   const code = error instanceof Error ? error.message : "provider_rejected";
   return [
     "provider_not_ready",
@@ -436,9 +466,9 @@ export async function testProviderConnection(
   request: typeof requestProvider = requestProvider,
 ): Promise<ProviderConnectionResult> {
   const details = [
-    "wallet_unknown: Open API V3 has no balance/readiness endpoint",
-    "carrier_unknown: carrier/list is a global catalogue, not merchant mapping proof",
-    "merchant_code_not_verified: read endpoints authenticate credentials but do not accept merchant_code",
+    "wallet_unknown",
+    "carrier_unknown",
+    "merchant_code_not_verified",
   ];
   let hmac: ProviderConnectionResult["hmac"] = { ok: false };
   const merchantCode = text(input.merchantCode, 100);
@@ -480,8 +510,11 @@ export async function testProviderConnection(
       : {
         ok: false,
         count: 0,
-        message: carrierResponse.code ?? carrierResponse.message ??
-          `HTTP_${carrierResponse.status}`,
+        message: carrierResponse.ok
+          ? Array.isArray(carrierResponse.data.data)
+            ? "carrier_catalog_empty"
+            : "provider_response_invalid"
+          : providerReadFailure(carrierResponse),
       };
     const selected = text(
       carrierCodes.find((code) => code === "EMS_SPEED") ?? carrierCodes[0],
@@ -499,7 +532,7 @@ export async function testProviderConnection(
       addressOk = addressResponse.ok;
       if (!addressOk)
         details.push(
-          `address_check_failed:${addressResponse.code ?? `HTTP_${addressResponse.status}`}`,
+          `address_check_failed:${providerReadFailure(addressResponse)}`,
         );
       const quoteResponse = await request(config, "quote", {
         box_width: 10,
@@ -525,8 +558,11 @@ export async function testProviderConnection(
         : {
           ok: false,
           carrier_code: selected,
-          message: quoteResponse.code ?? quoteResponse.message ??
-            `HTTP_${quoteResponse.status}`,
+          message: quoteResponse.ok
+            ? Array.isArray(quoteResponse.data.data)
+              ? "rate_unavailable"
+              : "provider_response_invalid"
+            : providerReadFailure(quoteResponse),
         };
     } else {
       details.push(selected ? "origin_incomplete" : "carrier_catalog_empty");

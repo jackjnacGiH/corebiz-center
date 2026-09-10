@@ -7,6 +7,7 @@ import {
   providerCreateResult,
   providerDefinitiveRejection,
   providerPrintLink,
+  providerReadFailure,
   providerRejectionIssue,
   providerRows,
   reconcileCreatedShipment,
@@ -151,6 +152,22 @@ test("provider rejection details are reduced to safe user-facing issue codes", (
   assert.ok(!JSON.stringify(providerRejectionIssue(response)).includes(secret));
 });
 
+test("provider read failures prioritize HTTP authentication, throttling and service status", () => {
+  const response = (status, message) => ({
+    status,
+    ok: false,
+    data: { code: "ERROR_VALIDATION", message },
+    requestId: "provider-request-id",
+    code: "ERROR_VALIDATION",
+    message,
+  });
+  assert.equal(providerReadFailure(response(401, "wallet balance is insufficient")), "provider_authentication_failed");
+  assert.equal(providerReadFailure(response(403, "invalid telephone")), "provider_authentication_failed");
+  assert.equal(providerReadFailure(response(429, "invalid telephone")), "provider_rate_limited");
+  assert.equal(providerReadFailure(response(503, "invalid telephone")), "provider_unreachable");
+  assert.equal(providerReadFailure({ ...response(200, "success"), ok: true }), "provider_response_invalid");
+});
+
 test("only a definite non-transient 4xx provider envelope is safe to retry", () => {
   const validation = parseProviderResponse(400,
     '{"code":"ERROR_VALIDATION","message":"wallet balance is insufficient","request_id":"request-wallet"}');
@@ -290,6 +307,51 @@ test("connection test does not claim HMAC or merchant verification after provide
   assert.equal(result.carriers.ok, false);
   assert.equal(result.ready, false);
   assert.ok(!JSON.stringify(result).includes(config.secret));
+});
+
+test("connection test returns only safe failure enums, never raw provider diagnostics", async () => {
+  const rawCarrier = "RAW carrier failure for customer 0814420000";
+  const rejected = await testProviderConnection({ ...config, mutationsEnabled: false }, {
+    merchantCode: "MC00000001",
+    billingMode: "confirmed",
+    origin: { county: "แพรกษาใหม่", city: "เมืองสมุทรปราการ", state: "สมุทรปราการ", postcode: "10280" },
+  }, async () => ({
+    status: 403,
+    ok: false,
+    data: { code: "PRIVATE_AUTH_CODE", message: rawCarrier },
+    requestId: "private-request-id",
+    code: "PRIVATE_AUTH_CODE",
+    message: rawCarrier,
+  }));
+  assert.equal(rejected.carriers.message, "provider_authentication_failed");
+  assert.equal(rejected.rate_test.message, undefined);
+  assert.ok(rejected.blockers.details.every((detail) => /^[a-z_]+(?::[a-z_]+)?$/.test(detail)));
+  for (const raw of [rawCarrier, "PRIVATE_AUTH_CODE", "private-request-id"])
+    assert.equal(JSON.stringify(rejected).includes(raw), false);
+
+  const rawAddress = "RAW address gateway detail: secret tenant path";
+  const rawQuote = "RAW quote validation for telephone 0814420000";
+  const checked = await testProviderConnection({ ...config, mutationsEnabled: false }, {
+    merchantCode: "MC00000001",
+    billingMode: "confirmed",
+    origin: { county: "แพรกษาใหม่", city: "เมืองสมุทรปราการ", state: "สมุทรปราการ", postcode: "10280" },
+  }, async (_config, operation) => {
+    if (operation === "carriers") return envelope(200, { data: [{ code: "EMS_SPEED" }] });
+    if (operation === "address") return {
+      status: 503, ok: false, data: { code: "PRIVATE_ADDRESS_CODE", message: rawAddress },
+      requestId: "private-address-id", code: "PRIVATE_ADDRESS_CODE", message: rawAddress,
+    };
+    if (operation === "quote") return {
+      status: 400, ok: false, data: { code: "PRIVATE_QUOTE_CODE", message: rawQuote },
+      requestId: "private-quote-id", code: "PRIVATE_QUOTE_CODE", message: rawQuote,
+    };
+    throw new Error(`unexpected operation ${operation}`);
+  });
+  assert.ok(checked.blockers.details.includes("address_check_failed:provider_unreachable"));
+  assert.equal(checked.rate_test.message, "invalid_phone");
+  assert.ok(checked.blockers.details.every((detail) => /^[a-z_]+(?::[a-z_]+)?$/.test(detail)));
+  for (const raw of [rawAddress, rawQuote, "PRIVATE_ADDRESS_CODE", "PRIVATE_QUOTE_CODE", "private-address-id", "private-quote-id"])
+    assert.equal(JSON.stringify(checked).includes(raw), false);
 });
 
 test("successful read checks do not claim production readiness while wallet and carrier binding are unknown", async () => {

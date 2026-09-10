@@ -350,7 +350,9 @@ export function readyIssues(d: ShippingDraft): string[] {
   if (d.parcel_total > 1) issues.push("multi_parcel_submission_unavailable");
   for (const side of ["origin", "destination"] as const) {
     const a = normalizeShippingContact(d[side]);
-    if (organizationName(a.fullname) || [a.fullname, a.address, a.county, a.city, a.state, a.postcode, a.email, a.telephone1].some((v) => !v))
+    const hasRecipientName = !!a.fullname || !!a.company;
+    const hasRealContactName = !a.fullname || !organizationName(a.fullname);
+    if (!hasRecipientName || !hasRealContactName || [a.address, a.county, a.city, a.state, a.postcode, a.email, a.telephone1].some((v) => !v))
       issues.push(`${side}_incomplete`);
     if (!/^\d{5}$/.test(a.postcode)) issues.push(`${side}_postcode`);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email))
@@ -409,12 +411,14 @@ export function providerPayload(
 function providerAddress(
   { company, telephone1, ...a }: ShippingAddress,
 ): ShippingAddress {
+  const fullname = [company, a.fullname]
+    .filter((part, index, parts) => !!part && parts.indexOf(part) === index)
+    .join(" / ")
+    .slice(0, 150);
   return {
     ...a,
     telephone1: normalizeProviderPhone(telephone1),
-    fullname: company && company !== a.fullname
-      ? `${company} / ${a.fullname}`.slice(0, 150)
-      : a.fullname,
+    fullname,
   };
 }
 

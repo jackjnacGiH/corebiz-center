@@ -57,7 +57,61 @@ test("compare discovers account carriers and reuses identical-box quotes without
 });
 test("failed provider requests do not return misleading partial comparisons", async () => {
   await assert.rejects(compareShippingRates({}, draft(), undefined, async (_c, operation) =>
-    operation === "carriers" ? response(200, { data: [{ code: "A" }] }) : response(503, {})), /provider_rejected/);
+    operation === "carriers" ? response(200, { data: [{ code: "A" }] }) : response(503, {})), /provider_unreachable/);
+});
+
+test("catalogue and quote failures preserve safe auth, rate-limit and service causes", async () => {
+  const oneBoxDraft = () => {
+    const value = draft();
+    value.parcel_total = 1;
+    value.parcels = [value.parcels[0]];
+    return value;
+  };
+  const failed = (status, message) => ({
+    status,
+    ok: false,
+    data: { code: "ERROR_VALIDATION", message },
+    requestId: "private-request-id",
+    code: "ERROR_VALIDATION",
+    message,
+  });
+  for (const phase of ["carriers", "quote"])
+    for (const [status, message, code, detail] of [
+      [401, "wallet balance is insufficient", "provider_rejected", "provider_authentication_failed"],
+      [403, "invalid telephone", "provider_rejected", "provider_authentication_failed"],
+      [429, "invalid telephone", "provider_rejected", "provider_rate_limited"],
+      [503, "invalid telephone", "provider_unreachable", undefined],
+    ]) {
+      await assert.rejects(
+        compareShippingRates({}, oneBoxDraft(), undefined, async (_config, operation) => {
+          if (operation === "carriers" && phase === "quote")
+            return response(200, { data: [{ code: "A" }] });
+          return failed(status, message);
+        }),
+        error => {
+          assert.equal(error.message, code, `${phase} HTTP ${status}`);
+          assert.equal(error.detail, detail, `${phase} HTTP ${status}`);
+          assert.equal(JSON.stringify(error).includes(message), false);
+          return true;
+        },
+      );
+    }
+});
+
+test("catalogue and quote keep timeout and unreachable transport errors actionable", async () => {
+  const oneBox = draft();
+  oneBox.parcel_total = 1;
+  oneBox.parcels = [oneBox.parcels[0]];
+  for (const phase of ["carriers", "quote"])
+    for (const code of ["provider_timeout", "provider_unreachable"])
+      await assert.rejects(
+        compareShippingRates({}, oneBox, undefined, async (_config, operation) => {
+          if (operation === "carriers" && phase === "quote")
+            return response(200, { data: [{ code: "A" }] });
+          throw new Error(code);
+        }),
+        new RegExp(code),
+      );
 });
 test("a dropped read connection retries once without issuing shipment mutations", async () => {
   let dropped = false;

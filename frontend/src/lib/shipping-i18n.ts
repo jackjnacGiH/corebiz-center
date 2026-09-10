@@ -77,8 +77,8 @@ export const shippingTranslations = {
     submissionBlocked: "ยังสร้างพัสดุไม่ได้ กรุณาแก้ไขรายการต่อไปนี้:",
     submissionConnectionNotReady: "ระบบยังไม่พร้อมสร้างพัสดุ กรุณาให้เจ้าของหรือผู้ดูแลตรวจการเชื่อมต่อและรูปแบบชำระค่าขนส่ง",
     submissionIssues: {
-      origin_incomplete: "กรอกข้อมูลผู้ส่งให้ครบ: ชื่อผู้ติดต่อ ที่อยู่ ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ อีเมล และเบอร์โทร",
-      destination_incomplete: "กรอกข้อมูลผู้รับให้ครบ: ชื่อผู้ติดต่อ ที่อยู่ ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ อีเมล และเบอร์โทร",
+      origin_incomplete: "กรอกชื่อผู้ติดต่อหรือชื่อหน่วยงานของผู้ส่ง พร้อมที่อยู่ ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ อีเมล และเบอร์โทรให้ครบ",
+      destination_incomplete: "กรอกชื่อผู้ติดต่อหรือชื่อหน่วยงานของผู้รับ พร้อมที่อยู่ ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ อีเมล และเบอร์โทรให้ครบ",
       origin_postcode: "รหัสไปรษณีย์ผู้ส่งต้องเป็นตัวเลข 5 หลัก",
       destination_postcode: "รหัสไปรษณีย์ผู้รับต้องเป็นตัวเลข 5 หลัก",
       origin_email: "อีเมลผู้ส่งไม่ถูกต้อง กรุณาใส่รูปแบบ เช่น name@example.com",
@@ -365,8 +365,8 @@ export const shippingTranslations = {
     submissionBlocked: "This shipment cannot be created yet. Correct the following:",
     submissionConnectionNotReady: "Shipment creation is not ready. Ask an owner or administrator to check the connection and billing mode.",
     submissionIssues: {
-      origin_incomplete: "Complete the sender contact, address, area, postal code, email and phone.",
-      destination_incomplete: "Complete the recipient contact, address, area, postal code, email and phone.",
+      origin_incomplete: "Enter a sender contact or organization name, then complete the address, area, postal code, email and phone.",
+      destination_incomplete: "Enter a recipient contact or organization name, then complete the address, area, postal code, email and phone.",
       origin_postcode: "Sender postal code must contain exactly 5 digits.",
       destination_postcode: "Recipient postal code must contain exactly 5 digits.",
       origin_email: "Sender email is invalid. Use a format such as name@example.com.",
