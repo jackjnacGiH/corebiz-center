@@ -21,7 +21,7 @@ const submittableShipment = id => {
   return shipment(id, { draft: {
     ...domain.emptyDraft(), carrier_code: 'EMS_SPEED', origin: address('origin'), destination: address('destination'),
     box_width: 10, box_height: 10, box_length: 10, box_weight: 100,
-    products: [{ name: 'Test item', code: 'SKU-1', qty: 1, price: '0.00', weight: 100 }],
+    products: [{ name: 'Test item', code: 'SKU-1', qty: 1, price: '0.00', weight: 0 }],
   } });
 };
 
@@ -250,7 +250,9 @@ test('definite submit rejection syncs the restored draft version before another 
   h.requests.at(-1).resolve({ shipment: row, events: [] });
   await settle(); h.render();
 
+  assert.equal(h.find(node => node.type === 'Input' && node.props['aria-label'] === 'weight 1'), undefined);
   h.button('submit').props.onClick();
+  assert.equal(h.confirmations.length, 0, 'Submit starts directly without a browser confirmation');
   const submit = h.requests.at(-1);
   assert.equal(submit.action, 'action');
   assert.equal(submit.args[0], 'submit');

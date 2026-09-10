@@ -76,7 +76,7 @@ test("draft can be incomplete but cannot submit", () => {
   assert.ok(readyIssues(parseDraft(emptyDraft())).length);
   assert.deepEqual(readyIssues(parseDraft(ready())), []);
 });
-test("rates work with packed weight before item weights, contacts or COD account are ready", () => {
+test("packed weight is authoritative and item weight is optional for shipment readiness", () => {
   const d = ready();
   d.products[0].weight = 0;
   d.cod_amount = "350.00";
@@ -85,11 +85,24 @@ test("rates work with packed weight before item weights, contacts or COD account
       d[side][field] = "";
   const parsed = parseDraft(d);
   assert.deepEqual(quoteIssues(parsed), []);
-  assert.ok(readyIssues(parsed).includes("items_incomplete"));
+  assert.equal(readyIssues(parsed).includes("items_incomplete"), false);
   assert.ok(readyIssues(parsed).includes("cod_account_required"));
   assert.ok(readyIssues(parsed).includes("destination_email"));
   assert.throws(() => providerPayload({ draft: parsed }, null), /shipment_incomplete/);
   assert.equal(quotePayload(parsed).box_weight, 1200);
+});
+
+test("provider payload keeps an optional zero item weight for API compatibility", () => {
+  const d = ready();
+  d.products[0].weight = 0;
+  const parsed = parseDraft(d);
+  assert.deepEqual(readyIssues(parsed), []);
+  const payload = providerPayload(
+    { draft: parsed, id: "test", reference_no: "SHP-TEST" },
+    null,
+  );
+  assert.equal(payload.box_weight, 1200);
+  assert.equal(payload.products[0].weight, 0);
 });
 test("rate comparison requires delivery areas and packed parcels before selecting a carrier", () => {
   for (const side of ["origin", "destination"])

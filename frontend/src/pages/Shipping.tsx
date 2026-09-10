@@ -979,7 +979,7 @@ export default function Shipping() {
                     {draft.products.map((item, index) => (
                       <div
                         key={index}
-                        className="grid grid-cols-2 items-end gap-2 border-b pb-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)_100px_150px_auto]"
+                        className="grid grid-cols-2 items-end gap-2 border-b pb-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)_100px_auto]"
                       >
                         <label
                           data-shipping-product={index}
@@ -1067,31 +1067,26 @@ export default function Shipping() {
                             }
                           />
                         </label>
-                        {(["qty", "weight"] as const).map((key) => (
-                          <label key={key} className="space-y-1 text-sm">
-                            <span>{c[key]}</span>
-                            <Input
-                              aria-label={`${c[key]} ${index + 1}`}
-                              value={item[key]}
-                              type="number"
-                              min="0"
-                              step="1"
-                              onChange={(event) =>
-                                change(
-                                  "products",
-                                  draft.products.map((value, itemIndex) =>
-                                    itemIndex === index
-                                      ? {
-                                          ...value,
-                                          [key]: Number(event.target.value),
-                                        }
-                                      : value,
-                                  ),
-                                )
-                              }
-                            />
-                          </label>
-                        ))}
+                        <label className="space-y-1 text-sm">
+                          <span>{c.qty}</span>
+                          <Input
+                            aria-label={`${c.qty} ${index + 1}`}
+                            value={item.qty}
+                            type="number"
+                            min="0"
+                            step="1"
+                            onChange={(event) =>
+                              change(
+                                "products",
+                                draft.products.map((value, itemIndex) =>
+                                  itemIndex === index
+                                    ? { ...value, qty: Number(event.target.value) }
+                                    : value,
+                                ),
+                              )
+                            }
+                          />
+                        </label>
                         <Button
                           type="button"
                           variant="outline"
@@ -1197,15 +1192,11 @@ export default function Shipping() {
                           issues.length > 0 ||
                           !bootstrap.sendReady
                         }
-                        onClick={() => {
-                          if (window.confirm(c.confirmSubmit))
-                            void run(async () =>
-                              editResult(
-                                (await shippingApi.action("submit", shipment))
-                                  .shipment,
-                              ),
-                            );
-                        }}
+                        onClick={() => void run(async () =>
+                          editResult(
+                            (await shippingApi.action("submit", shipment)).shipment,
+                          ),
+                        )}
                       >
                         {c.submit}
                       </Button>

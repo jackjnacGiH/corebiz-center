@@ -366,7 +366,10 @@ export function readyIssues(d: ShippingDraft): string[] {
     ))
   )
     issues.push("parcel_required");
-  if (d.products.some((i) => !i.name || i.qty < 1 || i.weight <= 0))
+  // PromptSpeed rates and shipment readiness use the packed parcel weight.
+  // Keep each product's weight in the draft/provider payload for backwards
+  // compatibility, but do not require staff to enter it separately.
+  if (d.products.some((i) => !i.name || i.qty < 1))
     issues.push("items_incomplete");
   if (moneyMinor(d.cod_amount) > 0 && !d.cod_account_id)
     issues.push("cod_account_required");
