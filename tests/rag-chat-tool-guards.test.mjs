@@ -81,10 +81,14 @@ test("facet-only follow-up carries the adjacent clarified product identity", () 
 });
 
 test("facet-only product follow-up bypasses unrelated knowledge retrieval", () => {
+  const skipStart = source.indexOf("function shouldSkipRAG");
+  const skipEnd = source.indexOf("const TOOL_DEFINITIONS", skipStart);
+  const skipRag = source.slice(skipStart, skipEnd);
   const routingStart = source.indexOf("const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history)");
   const routingEnd = source.indexOf("const systemPrompt", routingStart);
   const routing = source.slice(routingStart, routingEnd);
 
+  assert.match(skipRag, /extractModelCodes\(query\)\.length > 0/);
   assert.ok(routingStart >= 0);
   assert.match(routing, /!shouldSkipRAG\(ragRoutingQuery\)/);
   assert.match(source, /const contextualProductQuery = ragRoutingQuery/);

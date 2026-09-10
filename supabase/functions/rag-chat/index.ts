@@ -247,7 +247,10 @@ const FAQ_HINT_RE = [
 function shouldSkipRAG(query: string): boolean {
   const hasFaq = FAQ_HINT_RE.some((p) => p.test(query));
   if (hasFaq) return false;
-  const hasProduct = PRODUCT_HINT_RE.some((p) => p.test(query));
+  // Catalog model codes are broader than the older CS/XA shortcuts. Treat
+  // any model recognised by the product parser (for example SA331 or FA 331)
+  // as a product query so a generic FAQ match cannot replace product search.
+  const hasProduct = extractModelCodes(query).length > 0 || PRODUCT_HINT_RE.some((p) => p.test(query));
   return hasProduct;
 }
 
