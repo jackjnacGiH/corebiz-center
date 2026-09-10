@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import {
   emptyDraft,
+  SHIPPING_BOX_DIMENSION_MAX_CM,
   parseDraft,
   parseDraftUpdate,
   normalizeShippingContact,
@@ -113,6 +114,35 @@ test("rate comparison requires delivery areas and packed parcels before selectin
   assert.throws(() => quotePayload(d), /carrier_required/);
   assert.deepEqual(quotePayload(d, ["EMS_SPEED", "FLASH_EXPRESS_SPEED"]).carriers_code, ["EMS_SPEED", "FLASH_EXPRESS_SPEED"]);
 });
+test("PromptSpeed box dimensions stop at 180 cm in legacy and per-parcel drafts", () => {
+  const boundary = ready();
+  for (const field of ["box_width", "box_height", "box_length"])
+    boundary[field] = SHIPPING_BOX_DIMENSION_MAX_CM;
+  assert.doesNotThrow(() => parseDraft(boundary));
+  assert.deepEqual(quoteIssues(boundary), []);
+  assert.deepEqual(readyIssues(boundary), []);
+  assert.equal(boundary.box_weight, 1200, "weight is measured in grams and does not use the cm limit");
+
+  for (const field of ["box_width", "box_height", "box_length"]) {
+    const legacy = ready();
+    legacy[field] = SHIPPING_BOX_DIMENSION_MAX_CM + 0.01;
+    assert.deepEqual(quoteIssues(legacy), [field]);
+    assert.ok(readyIssues(legacy).includes("parcel_required"));
+    assert.throws(() => parseDraft(legacy), /invalid_quantity/);
+
+    const perParcel = ready();
+    perParcel.parcels = [{
+      box_width: perParcel.box_width,
+      box_height: perParcel.box_height,
+      box_length: perParcel.box_length,
+      box_weight: perParcel.box_weight,
+      [field]: SHIPPING_BOX_DIMENSION_MAX_CM + 0.01,
+    }];
+    assert.deepEqual(quoteIssues(perParcel), [field]);
+    assert.ok(readyIssues(perParcel).includes("parcel_required"));
+    assert.throws(() => parseDraft(perParcel), /invalid_quantity/);
+  }
+});
 test("all imported items contribute to label totals and the overflow row", () => {
   const d = ready();
   d.products = [1, 2, 3, 4, 5, 2, 3, 5].map((qty, i) => ({ ...d.products[0], code: `SKU${i}`, qty }));
@@ -132,6 +162,31 @@ test("company is optional on older drafts and is carried into provider recipient
   const payload = providerPayload({ draft: parseDraft(d), id: "test", reference_no: "test" }, null);
   assert.equal(payload.destination.fullname, "Customer Company / Test contact");
   assert.equal("company" in payload.destination, false);
+});
+test("formatted phone numbers stay in drafts and are normalized only for PromptSpeed", () => {
+  const d = ready();
+  d.origin.telephone1 = "02-183 8489";
+  d.destination.telephone1 = "+66 81-442-0000";
+  const parsed = parseDraft(d);
+  assert.deepEqual(readyIssues(parsed), []);
+  assert.equal(parsed.origin.telephone1, "02-183 8489");
+  assert.equal(parsed.destination.telephone1, "+66 81-442-0000");
+
+  const payload = providerPayload(
+    { draft: parsed, id: "test", reference_no: "SHP-TEST" },
+    null,
+  );
+  assert.equal(payload.origin.telephone1, "021838489");
+  assert.equal(payload.destination.telephone1, "66814420000");
+  assert.equal(parsed.origin.telephone1, "02-183 8489");
+  assert.equal(parsed.destination.telephone1, "+66 81-442-0000");
+});
+test("phone validation counts normalized digits and rejects unsupported characters", () => {
+  for (const phone of ["02-18 34", "02-183-ABCD", "08(1442)0000", "66+814420000"]) {
+    const d = ready();
+    d.origin.telephone1 = phone;
+    assert.ok(readyIssues(parseDraft(d)).includes("origin_phone"), phone);
+  }
 });
 test("legacy company names move to company while unknown contacts stay blank", () => {
   for (const company of ["บริษัท เจ แนค (ประเทศไทย) จำกัด", "หจก. ทดสอบ", "ACME Co., Ltd."]) {

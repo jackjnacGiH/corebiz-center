@@ -269,3 +269,61 @@ test('a definite provider 4xx records rejection and safely restores the shipment
   assert.equal(h.tables.shipping_attempts[0].provider_request_id, 'request-wallet');
   assert.ok(h.tables.shipping_attempts[0].finished_at);
 });
+
+test('submit sends normalized phone digits without rewriting the saved draft', async () => {
+  const row = submittableShipment(1);
+  row.draft.origin.telephone1 = '02-183 8489';
+  row.draft.destination.telephone1 = '+66 81-442-0000';
+  let providerBody;
+  const h = api({
+    rows: [row],
+    settings: { billing_mode: 'prepaid' },
+    provider: {
+      request: async (_config, operation, body) => {
+        assert.equal(operation, 'create');
+        providerBody = structuredClone(body);
+        return {
+          status: 200, ok: true,
+          data: { data: { tracking_number: 'TH1234567890', charge: '28.0000', wallet_balance: '100.0000' } },
+          requestId: 'request-created', code: '200', message: 'success',
+        };
+      },
+    },
+  });
+
+  const result = await h.call('submit', { id: id(1), version: 7 });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.shipment.tracking_number, 'TH1234567890');
+  assert.equal(providerBody.origin.telephone1, '021838489');
+  assert.equal(providerBody.destination.telephone1, '66814420000');
+  assert.equal(result.body.shipment.draft.origin.telephone1, '02-183 8489');
+  assert.equal(result.body.shipment.draft.destination.telephone1, '+66 81-442-0000');
+  assert.equal(h.tables.shipping_attempts[0].outcome, 'success');
+});
+
+test('print accepts the provider array PDF for the requested tracking number', async () => {
+  const row = submittableShipment(1);
+  row.status = 'waiting';
+  row.tracking_number = 'TH1234567890';
+  const pdf = Buffer.from('%PDF-1.4\n%%EOF').toString('base64');
+  const link = `data:application/pdf;base64,${pdf}`;
+  const h = api({
+    rows: [row],
+    provider: {
+      request: async (_config, operation, body) => {
+        assert.equal(operation, 'print');
+        assert.equal(JSON.stringify(body.tracking_number), '["TH1234567890"]');
+        return {
+          status: 200, ok: true,
+          data: { data: [{ tracking_number: 'TH1234567890', parcel_id: 'parcel-1', link }] },
+          requestId: 'request-print', code: '200', message: 'success',
+        };
+      },
+    },
+  });
+
+  const result = await h.call('print', { id: id(1) });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.link, link);
+  assert.equal(result.body.request_id, 'request-print');
+});

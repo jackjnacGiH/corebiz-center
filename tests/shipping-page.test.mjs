@@ -77,6 +77,7 @@ function mount(query = '') {
       if (name === '@/lib/shipping-api') return { shippingApi: api };
       if (name.endsWith('/shipping-domain')) return domain;
       if (name === '@/lib/shipping-carriers') return { shippingTrackingUrl: () => null };
+      if (name === '@/lib/provider-label') return { providerLabelResource: () => { throw new Error('Provider labels are outside this test'); } };
       if (name === '@/lib/print') return { printElement: () => { throw new Error('Printing is outside this test'); } };
       if (name === '@/components/ui/button') return { Button: 'Button' };
       if (name === '@/components/ui/input') return { Input: 'Input' };
@@ -263,6 +264,24 @@ test('definite submit rejection syncs the restored draft version before another 
   const nextAction = h.requests.at(-1);
   assert.equal(nextAction.args[0], 'archive');
   assert.equal(nextAction.args[1].version, 5, 'the page must use the restored server version');
+  h.unmount();
+});
+
+test('an oversized box shows the specific dimension blocker before quote or submit', async () => {
+  const row = submittableShipment('oversized-box');
+  row.draft.box_length = domain.SHIPPING_BOX_DIMENSION_MAX_CM + 1;
+  const h = mount(); h.runTimers();
+  h.requests[0].resolve({ ...bootstrap(), sendReady: true });
+  h.listRequests()[0].resolve({ shipments: [row], count: 1 });
+  await settle(); h.render();
+  h.card(row.id).props.onOpen();
+  h.requests.at(-1).resolve({ shipment: row, events: [] });
+  await settle(); h.render();
+
+  const comparison = h.find(node => node.type === 'ShippingRateComparison');
+  assert.deepEqual([...comparison.props.blockers], ['box_length']);
+  assert.equal(h.button('submit').props.disabled, true);
+  assert.equal(h.requests.filter(request => request.action === 'action').length, 0);
   h.unmount();
 });
 

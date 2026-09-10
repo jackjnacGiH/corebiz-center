@@ -28,7 +28,6 @@ import {
   parseDraft,
   readyIssues,
   quoteIssues,
-  type QuoteIssue,
   type ShippingParcel,
   summarizeShippingItems,
   shippingQuoteKey,
@@ -47,6 +46,7 @@ import {
   shippingTrackingUrl,
 } from "@/lib/shipping-carriers";
 import { printElement } from "@/lib/print";
+import { providerLabelResource } from "@/lib/provider-label";
 
 type ShippingLabelModule = typeof import("@/components/shipping/ShippingLabel");
 let labelModulePromise: Promise<ShippingLabelModule> | undefined;
@@ -113,6 +113,7 @@ export default function Shipping() {
   const [events, setEvents] = useState<ShippingEvent[]>([]),
     [rates, setRates] = useState<ShippingRate[]>([]);
   const [labelLink, setLabelLink] = useState("");
+  const [labelDownload, setLabelDownload] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
   const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
@@ -123,6 +124,18 @@ export default function Shipping() {
   const recipientRequest = useRef(0);
   const productRequest = useRef(0);
   const deletingDraft = useRef(false);
+  const providerLabelObjectUrl = useRef("");
+  const revokeProviderLabel = useCallback(() => {
+    if (providerLabelObjectUrl.current) {
+      URL.revokeObjectURL(providerLabelObjectUrl.current);
+      providerLabelObjectUrl.current = "";
+    }
+  }, []);
+  const clearProviderLabel = useCallback(() => {
+    revokeProviderLabel();
+    setLabelLink("");
+    setLabelDownload(false);
+  }, [revokeProviderLabel]);
   const serializedDraft = useMemo(() => JSON.stringify(draft), [draft]);
   const dirty = view === "editor" && serializedDraft !== baseline;
   const reportError = useCallback((e: unknown) => {
@@ -189,6 +202,7 @@ export default function Shipping() {
     }).catch(() => { /* Preview can retry an interrupted background download. */ });
     return () => { active = false; };
   }, [view, labelModule]);
+  useEffect(() => () => revokeProviderLabel(), [revokeProviderLabel]);
   useEffect(() => {
     const query = recipientSearch.trim();
     if (view !== "editor" || query.length < 3) {
@@ -310,7 +324,7 @@ export default function Shipping() {
     setOrderId(s.order_id);
     setOrderCode(s.order_code ?? "");
     setRates([]);
-    setLabelLink("");
+    clearProviderLabel();
     resetRecipientLookup();
     resetProductLookup();
   };
@@ -484,16 +498,29 @@ export default function Shipping() {
     resetProductLookup();
   };
   const { issues, rateIssues, invalidDraft } = useMemo(() => {
+    const rawRateIssues = (() => {
+      try {
+        return quoteIssues(draft);
+      } catch {
+        return [];
+      }
+    })();
     try {
       const parsed = parseDraft(draft);
       return { issues: readyIssues(parsed), rateIssues: quoteIssues(parsed), invalidDraft: false };
     } catch {
-      return { issues: ["invalid_payload"], rateIssues: [] as QuoteIssue[], invalidDraft: true };
+      return {
+        issues: ["invalid_payload"],
+        rateIssues: rawRateIssues,
+        invalidDraft: true,
+      };
     }
   }, [draft]);
-  const quoteBlockers = invalidDraft
-    ? [c.quoteInvalid]
-    : rateIssues.map((issue) => c.quoteIssues[issue]);
+  const quoteBlockers = rateIssues.length
+    ? rateIssues.map((issue) => c.quoteIssues[issue])
+    : invalidDraft
+      ? [c.quoteInvalid]
+      : [];
   const locked = !!shipment && shipment.status !== "draft";
   const trackingUrl =
     shipment?.tracking_number && shipment.draft.carrier_code
@@ -550,6 +577,18 @@ export default function Shipping() {
     if (r.previous.length) setNotice(c.duplicateOrder);
   }
   const status = (s: Shipment) => c.statuses[s.status];
+  const showProviderLabel = (link: string) => {
+    clearProviderLabel();
+    const resource = providerLabelResource(link);
+    if (resource.kind === "pdf") {
+      providerLabelObjectUrl.current = URL.createObjectURL(resource.blob);
+      setLabelLink(providerLabelObjectUrl.current);
+      setLabelDownload(true);
+    } else {
+      setLabelLink(resource.href);
+      setLabelDownload(false);
+    }
+  };
   const selectClass =
     "h-10 w-full border border-input rounded-md bg-background px-3";
   const ShippingLabel = labelModule?.default;
@@ -1215,7 +1254,7 @@ export default function Shipping() {
                         onClick={() =>
                           void run(async () => {
                             const r = await shippingApi.print(shipment);
-                            setLabelLink(r.link);
+                            showProviderLabel(r.link);
                           })
                         }
                       >
@@ -1251,6 +1290,15 @@ export default function Shipping() {
                   rel="noopener noreferrer"
                 >
                   {c.carrierPrint} ↗
+                </a>
+              )}
+              {labelLink && labelDownload && shipment?.tracking_number && (
+                <a
+                  className="ml-3 inline-block underline text-primary"
+                  href={labelLink}
+                  download={`shipping-label-${shipment.tracking_number}.pdf`}
+                >
+                  {c.downloadCarrierLabel}
                 </a>
               )}
               {!!events.length && (

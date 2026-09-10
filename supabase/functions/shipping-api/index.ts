@@ -728,7 +728,7 @@ Deno.serve(async (req) => {
         tracking_number: [shipment.tracking_number],
         show_order: 1,
       });
-      const link = providerPrintLink(r);
+      const link = providerPrintLink(r, shipment.tracking_number);
       return link
         ? reply({ link, request_id: r.requestId })
         : fail("provider_response_invalid", 502);
