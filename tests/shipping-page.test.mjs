@@ -483,6 +483,13 @@ test('actual list card keeps draft controls and adds direct tracked-shipment act
   assert.deepEqual([...blocks.keys()], ['header', 'recipient', 'sender', 'parcel', 'actions']);
   assert.match(tree.props.className, /border-t-\[var\(--brand-blue\)\]/);
   assert.match(blocks.get('header').props.className, /bg-\[var\(--brand-navy\)\]/);
+  const cardHeadings = nodes(tree).filter(node => node.type === 'h2' || node.type === 'h3');
+  assert.ok(cardHeadings.every(heading => heading.props.className.includes('shipment-list-card-heading')));
+  assert.match(
+    readFileSync(new URL('../frontend/src/index.css', import.meta.url), 'utf8'),
+    /\.shipment-list-card-heading\s*\{\s*color:\s*#FFFFFF;\s*\}/,
+    'The unlayered heading color must override the legacy global heading rule',
+  );
   const sectionBackgrounds = ['recipient', 'sender', 'parcel', 'actions'].map(name =>
     blocks.get(name).props.className.split(' ').find(className => className.startsWith('bg-')),
   );

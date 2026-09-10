@@ -218,6 +218,7 @@ button, input, select, textarea {
     background: rgb(255 255 255 / 12%);
     color: #FFFFFF;
 }
+.shipment-list-card-heading { color: #FFFFFF; }
 .page-header-actions {
     padding: 0.5rem;
     border-radius: var(--radius);

@@ -68,7 +68,7 @@ export default function ShipmentListCard({
   return <article className="overflow-hidden rounded-xl border border-t-4 border-slate-300 border-t-[var(--brand-blue)] bg-slate-100/70 shadow-sm shadow-slate-200/70" aria-labelledby={`${idPrefix}-reference`}>
     <header data-shipment-block="header" className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-900 bg-[var(--brand-navy)] px-4 py-3 text-white">
       <div className="min-w-0">
-        <h2 id={`${idPrefix}-reference`} className="break-all text-sm font-semibold">{s.reference_no}</h2>
+        <h2 id={`${idPrefix}-reference`} className="shipment-list-card-heading break-all text-sm font-semibold">{s.reference_no}</h2>
         <p className="mt-1 text-xs text-sky-100">{s.order_code || c.manual} · {new Date(s.created_at).toLocaleString(language === "th" ? "th-TH" : "en-GB")}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -81,7 +81,7 @@ export default function ShipmentListCard({
     </header>
     <div className="grid gap-3 bg-slate-100/80 p-3 sm:p-4 md:grid-cols-2 xl:grid-cols-[1.25fr_1fr_0.85fr]">
       <section data-shipment-block="recipient" aria-labelledby={`${idPrefix}-recipient`} className="min-w-0 space-y-2 rounded-lg border border-blue-200 bg-blue-50/80 p-4 shadow-sm">
-        <h3 id={`${idPrefix}-recipient`} className="inline-flex rounded-md bg-blue-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white shadow-sm">{c.destination}</h3>
+        <h3 id={`${idPrefix}-recipient`} className="shipment-list-card-heading inline-flex rounded-md bg-blue-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.destination}</h3>
         <p className="break-words text-base font-semibold">{company || recipient.fullname || "—"}</p>
         {!!company && company !== recipient.fullname && !!recipient.fullname && <p className="text-sm">{c.fullname}: {recipient.fullname}</p>}
         <p className="flex items-start gap-2 break-words text-sm"><MapPin size={15} className="mt-0.5 shrink-0 text-blue-700" /><span>{addressLine(recipient) || "—"}</span></p>
@@ -89,13 +89,13 @@ export default function ShipmentListCard({
         {!!recipient.email && <p className="break-all text-xs text-muted-foreground">{recipient.email}</p>}
       </section>
       <section data-shipment-block="sender" aria-labelledby={`${idPrefix}-sender`} className="min-w-0 space-y-2 rounded-lg border border-teal-200 bg-teal-50/80 p-4 shadow-sm">
-        <h3 id={`${idPrefix}-sender`} className="inline-flex rounded-md bg-teal-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white shadow-sm">{c.origin}</h3>
+        <h3 id={`${idPrefix}-sender`} className="shipment-list-card-heading inline-flex rounded-md bg-teal-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.origin}</h3>
         <p className="break-words text-sm font-medium">{[...new Set([sender.company, sender.fullname].filter(Boolean))].join(" / ") || "—"}</p>
         <p className="break-words text-sm text-slate-600">{addressLine(sender) || "—"}</p>
         <p className="flex items-center gap-2 text-sm"><Phone size={15} className="shrink-0 text-teal-700" />{sender.telephone1 || "—"}</p>
       </section>
       <section data-shipment-block="parcel" aria-labelledby={`${idPrefix}-parcel`} className="min-w-0 space-y-2 rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm shadow-sm md:col-span-2 xl:col-span-1">
-        <h3 id={`${idPrefix}-parcel`} className="inline-flex rounded-md bg-amber-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white shadow-sm">{c.parcel}</h3>
+        <h3 id={`${idPrefix}-parcel`} className="shipment-list-card-heading inline-flex rounded-md bg-amber-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.parcel}</h3>
         <p className="flex items-center gap-2 font-semibold"><Truck size={16} className="shrink-0 text-amber-700" />{s.draft.carrier_code ? carrier : c.awaitingCarrier}</p>
         <p className="flex items-center gap-2"><Package size={16} className="shrink-0 text-amber-700" />{parcels.length} {c.boxUnit} · {items.totalQuantity.toLocaleString()} {c.pieceUnit} ({s.draft.products.length} {c.itemRows})</p>
         <p>{c.packedWeight}: {parcels.reduce((sum, p) => sum + p.box_weight, 0).toLocaleString()} {c.gramUnit}</p>
@@ -105,7 +105,7 @@ export default function ShipmentListCard({
     </div>
     <footer data-shipment-block="actions" aria-labelledby={`${idPrefix}-actions`} className="border-t border-slate-300 bg-slate-200/80 px-3 py-3 sm:px-4 sm:py-4">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <h3 id={`${idPrefix}-actions`} className="inline-flex self-start rounded-md bg-slate-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white shadow-sm">{c.actions}</h3>
+        <h3 id={`${idPrefix}-actions`} className="shipment-list-card-heading inline-flex self-start rounded-md bg-slate-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide shadow-sm">{c.actions}</h3>
         <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 sm:flex sm:flex-wrap sm:justify-end" aria-busy={activeAction !== null}>
           <Button
             type="button"
