@@ -91,6 +91,7 @@ test('Thai and English summaries explain how to correct phone and dimension bloc
   for (const language of ['th', 'en']) {
     const words = shippingTranslations[language];
     assert.ok(words.submissionBlocked);
+    assert.ok(words.submissionConnectionNotReady);
     assert.ok(words.submissionIssues.destination_phone);
     assert.ok(words.quoteIssues.box_length.includes('180'));
     assert.ok(words.providerIssues.invalid_phone);

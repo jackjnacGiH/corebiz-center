@@ -101,9 +101,8 @@ export function normalizeShippingContact(address: ShippingAddress): ShippingAddr
   return { ...address, company, fullname };
 }
 
-// PromptSpeed accepts phone numbers as digits. Keep the staff-entered format in
-// the draft, then remove the optional international prefix marker, spaces and
-// hyphens only when building the provider request.
+// PromptSpeed accepts phone numbers as digits. Readiness requires that exact
+// format; normalization remains as a final safeguard for older saved drafts.
 export function normalizeProviderPhone(value: string): string {
   return value.replace(/[\s-]/gu, "").replace(/^\+/, "");
 }

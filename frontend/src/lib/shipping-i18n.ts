@@ -33,9 +33,9 @@ export const shippingTranslations = {
     pieceUnit: "ชิ้น",
     gramUnit: "กรัม",
     packedWeight: "น้ำหนักรวมทั้งชุด",
-    carrierUnavailable: "บัญชีขนส่งยังไม่มีบริการที่ใช้เปรียบเทียบได้",
+    carrierUnavailable: "ไม่พบบริการขนส่งในแค็ตตาล็อก Open API กรุณาทดสอบการเชื่อมต่อหรือติดต่อผู้ดูแล",
     providerRejected: "ขนส่งไม่รับข้อมูลรายการนี้ กรุณาตรวจรายละเอียดที่แจ้งแล้วแก้ไขก่อนลองอีกครั้ง",
-    providerTimeout: "ขนส่งตอบกลับช้าเกินกำหนด กรุณารอสักครู่แล้วตรวจสถานะรายการก่อนลองใหม่ เพื่อป้องกันการสร้างพัสดุซ้ำ",
+    providerTimeout: "ขนส่งตอบกลับช้าเกินกำหนด กรุณารอสักครู่แล้วลองใหม่ หากเพิ่งกดสร้างพัสดุให้ตรวจสถานะรายการก่อนเพื่อป้องกันเลข Tracking ซ้ำ",
     providerUnreachable: "ติดต่อระบบขนส่งไม่ได้ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่ หากเป็นการสร้างพัสดุให้ตรวจสถานะรายการก่อนเพื่อป้องกันเลข Tracking ซ้ำ",
     providerResponseInvalid: "ขนส่งส่งข้อมูลตอบกลับในรูปแบบที่ระบบอ่านไม่ได้ กรุณาติดต่อผู้ดูแลพร้อมเลขรายการนี้",
     providerIssues: {
@@ -75,6 +75,7 @@ export const shippingTranslations = {
       parcels_incomplete: "ขนาดและน้ำหนักของกล่องที่เหลือให้ครบทุกกล่อง",
     },
     submissionBlocked: "ยังสร้างพัสดุไม่ได้ กรุณาแก้ไขรายการต่อไปนี้:",
+    submissionConnectionNotReady: "ระบบยังไม่พร้อมสร้างพัสดุ กรุณาให้เจ้าของหรือผู้ดูแลตรวจการเชื่อมต่อและรูปแบบชำระค่าขนส่ง",
     submissionIssues: {
       origin_incomplete: "กรอกข้อมูลผู้ส่งให้ครบ: ชื่อผู้ติดต่อ ที่อยู่ ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ อีเมล และเบอร์โทร",
       destination_incomplete: "กรอกข้อมูลผู้รับให้ครบ: ชื่อผู้ติดต่อ ที่อยู่ ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ อีเมล และเบอร์โทร",
@@ -320,9 +321,9 @@ export const shippingTranslations = {
     pieceUnit: "pieces",
     gramUnit: "grams",
     packedWeight: "Total packed weight",
-    carrierUnavailable: "No carrier services available to compare for this account.",
+    carrierUnavailable: "No carrier services were found in the Open API catalogue. Test the connection or contact an administrator.",
     providerRejected: "The carrier rejected this shipment. Review the listed corrections before trying again.",
-    providerTimeout: "The carrier timed out. Wait briefly and check this shipment's status before retrying to avoid creating a duplicate.",
+    providerTimeout: "The carrier timed out. Wait briefly and retry. If you just created a shipment, check its status first to avoid a duplicate tracking number.",
     providerUnreachable: "The carrier could not be reached. Check the connection and verify this shipment's status before retrying.",
     providerResponseInvalid: "The carrier returned an unreadable response. Contact an administrator with this shipment reference.",
     providerIssues: {
@@ -362,6 +363,7 @@ export const shippingTranslations = {
       parcels_incomplete: "Dimensions and weight for every remaining box",
     },
     submissionBlocked: "This shipment cannot be created yet. Correct the following:",
+    submissionConnectionNotReady: "Shipment creation is not ready. Ask an owner or administrator to check the connection and billing mode.",
     submissionIssues: {
       origin_incomplete: "Complete the sender contact, address, area, postal code, email and phone.",
       destination_incomplete: "Complete the recipient contact, address, area, postal code, email and phone.",

@@ -49,7 +49,8 @@ export default function ShippingParcels({ draft, onChange }: {
                 const errorId = `shipping-box-${index}-${key}-error`;
                 return <label key={key} className="space-y-1 text-sm">
                   {c[key]}
-                  <Input aria-label={`${c[key]} ${c.box} ${index + 1}`} type="number" min="0"
+                  <Input aria-label={`${c[key]} ${c.box} ${index + 1}`} type="number"
+                    min={key === "box_weight" ? "1" : "0.01"}
                     max={key === "box_weight" ? 1000000 : SHIPPING_BOX_DIMENSION_MAX_CM}
                     step={key === "box_weight" ? 1 : "any"} value={parcel[key]}
                     aria-invalid={invalid || undefined}

@@ -538,11 +538,14 @@ export default function Shipping() {
       ? [c.quoteInvalid]
       : [];
   const submissionIssueCodes = [...new Set([...issues, ...rateIssues])];
-  const submissionIssueMessages = submissionIssueCodes.map((issue) =>
-    (c.submissionIssues as Record<string, string>)[issue] ??
-    (c.quoteIssues as Record<string, string>)[issue] ??
-    c.submissionInvalid
-  );
+  const submissionIssueMessages = [
+    ...submissionIssueCodes.map((issue) =>
+      (c.submissionIssues as Record<string, string>)[issue] ??
+      (c.quoteIssues as Record<string, string>)[issue] ??
+      c.submissionInvalid
+    ),
+    ...(bootstrap && !bootstrap.sendReady ? [c.submissionConnectionNotReady] : []),
+  ];
   const locked = !!shipment && shipment.status !== "draft";
   const trackingUrl =
     shipment?.tracking_number && shipment.draft.carrier_code
