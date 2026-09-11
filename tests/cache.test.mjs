@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { swrList, prefetchList, invalidateList, clearListCache, hasCache } from '../frontend/src/lib/cache.ts';
+import { swrList, prefetchList, invalidateList, invalidateListPrefix, clearListCache, hasCache } from '../frontend/src/lib/cache.ts';
 
 function deferred() {
   let resolve, reject;
@@ -131,6 +131,17 @@ test('invalidated background and prefetch work cannot refill the cache or notify
   assert.equal(notified, false);
 });
 
+test('prefix invalidation clears cached and pending identity-scoped variants', async () => {
+  const pendingResponse = deferred();
+  await swrList('shipping:initial:user-a:owner', async () => ['A']);
+  const pendingRead = swrList('shipping:initial:user-b:staff', () => pendingResponse.promise);
+  invalidateListPrefix('shipping:initial');
+  assert.equal(hasCache('shipping:initial:user-a:owner'), false);
+  pendingResponse.resolve(['B']);
+  await pendingRead;
+  assert.equal(hasCache('shipping:initial:user-b:staff'), false);
+});
+
 test('cold failures reach every caller and retries are not stuck behind failed work', async () => {
   const response = deferred();
   const first = swrList('cold-failure', () => response.promise);
@@ -160,6 +171,23 @@ test('background and prefetch failures remain best-effort; forced errors preserv
   assert.equal(hasCache('prefetch-failure'), false);
   await assert.rejects(swrList(key, async () => { throw new Error('offline'); }, { force: true }), /offline/);
   assert.deepEqual(await swrList(key, async () => []), ['cached']);
+});
+
+test('background errors notify subscribers only for the newest request generation', async () => {
+  const key = 'background-errors';
+  await swrList(key, async () => ['cached']);
+  const oldResponse = deferred(), currentResponse = deferred(), errors = [];
+  assert.deepEqual(await swrList(key, () => oldResponse.promise, {
+    staleMs: -1,
+    onBackgroundError: error => errors.push(error.message),
+  }), ['cached']);
+  const forced = swrList(key, () => currentResponse.promise, { force: true });
+  oldResponse.reject(new Error('superseded'));
+  await settled();
+  assert.deepEqual(errors, []);
+  currentResponse.reject(new Error('current'));
+  await assert.rejects(forced, /current/);
+  assert.deepEqual(errors, ['current']);
 });
 
 test('identity cache reset isolates new cold requests from late reads and subscribers of the previous account', async () => {

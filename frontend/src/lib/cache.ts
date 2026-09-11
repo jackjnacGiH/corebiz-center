@@ -11,7 +11,11 @@
  */
 
 type Entry<T = unknown> = { data: T; at: number };
-type Pending = { promise: Promise<unknown>; listeners: Set<(data: unknown) => void> };
+type Pending = {
+  promise: Promise<unknown>;
+  listeners: Set<(data: unknown) => void>;
+  errorListeners: Set<(error: unknown) => void>;
+};
 
 const store = new Map<string, Entry>();
 const pending = new Map<string, Pending>();
@@ -20,11 +24,19 @@ const DEFAULT_STALE_MS = 30_000;
 
 /** Share reads already in progress, but explicit reloads always start a new
  * generation: a request started before a write must not satisfy its reload. */
-function fetchList<T>(key: string, fetcher: () => Promise<T>, force = false, onFresh?: (d: T) => void): Promise<T> {
+function fetchList<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  force = false,
+  onFresh?: (d: T) => void,
+  onBackgroundError?: (error: unknown) => void,
+): Promise<T> {
   const active = pending.get(key);
   const listener = onFresh as ((data: unknown) => void) | undefined;
+  const errorListener = onBackgroundError;
   if (active && !force) {
     if (listener) active.listeners.add(listener);
+    if (errorListener) active.errorListeners.add(errorListener);
     return active.promise as Promise<T>;
   }
 
@@ -33,8 +45,10 @@ function fetchList<T>(key: string, fetcher: () => Promise<T>, force = false, onF
     // A forced refresh supersedes the earlier generation; its subscribers
     // should receive the newer result as well.
     listeners: new Set(active?.listeners),
+    errorListeners: new Set(active?.errorListeners),
   };
   if (listener) request.listeners.add(listener);
+  if (errorListener) request.errorListeners.add(errorListener);
   pending.set(key, request);
   request.promise = Promise.resolve().then(fetcher)
     .then((data) => {
@@ -46,6 +60,16 @@ function fetchList<T>(key: string, fetcher: () => Promise<T>, force = false, onF
         }
       }
       return data;
+    })
+    .catch((error) => {
+      // Only the newest generation may report a background failure. A forced
+      // reload can supersede an older revalidation while it is still running.
+      if (pending.get(key) === request) {
+        for (const notify of request.errorListeners) {
+          try { notify(error); } catch { /* one view must not block the others */ }
+        }
+      }
+      throw error;
     })
     .finally(() => {
       if (pending.get(key) === request) pending.delete(key);
@@ -61,13 +85,18 @@ function fetchList<T>(key: string, fetcher: () => Promise<T>, force = false, onF
 export async function swrList<T>(
   key: string,
   fetcher: () => Promise<T>,
-  opts: { onFresh?: (d: T) => void; force?: boolean; staleMs?: number } = {},
+  opts: {
+    onFresh?: (d: T) => void;
+    onBackgroundError?: (error: unknown) => void;
+    force?: boolean;
+    staleMs?: number;
+  } = {},
 ): Promise<T> {
   const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
   const hit = store.get(key) as Entry<T> | undefined;
   if (!opts.force && hit) {
     if (Date.now() - hit.at > staleMs) {
-      void fetchList(key, fetcher, false, opts.onFresh)
+      void fetchList(key, fetcher, false, opts.onFresh, opts.onBackgroundError)
         .catch(() => { /* keep the stale copy on failure */ });
     }
     return hit.data;
@@ -91,6 +120,17 @@ export function invalidateList(...keys: string[]): void {
   }
 }
 
+/** Drop every scoped variant of one cache family. */
+export function invalidateListPrefix(prefix: string): void {
+  const matches = (key: string) => key === prefix || key.startsWith(`${prefix}:`);
+  for (const key of new Set([...store.keys(), ...pending.keys()])) {
+    if (matches(key)) {
+      store.delete(key);
+      pending.delete(key);
+    }
+  }
+}
+
 /** Detach cached and pending reads before the authenticated identity changes.
  * A late response from the previous account cannot refill the new cache. */
 export function clearListCache(): void {
@@ -109,4 +149,5 @@ export const CK = {
   customers: 'customers',
   categories: 'categories',
   warehouses: 'warehouses',
+  shippingInitial: 'shipping:initial',
 } as const;
