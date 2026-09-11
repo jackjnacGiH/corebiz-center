@@ -12,6 +12,9 @@ const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve()
 const bootstrap = () => ({ manager: true, settings: { environment: 'uat', origin: domain.emptyAddress() },
   brand: { name: 'Test company' }, accounts: [], readReady: true, sendReady: false });
 const shipment = (id, changes = {}) => ({ id, reference_no: id, draft: domain.emptyDraft(), status: 'draft', tracking_number: null, version: 3, created_at: '2026-09-09T00:00:00Z', ...changes });
+const initial = (rows = [], initialBootstrap = bootstrap()) => ({
+  bootstrap: initialBootstrap, shipments: rows, count: rows.length,
+});
 const submittableShipment = id => {
   const address = suffix => ({
     ...domain.emptyAddress(), fullname: `Contact ${suffix}`, address: `Address ${suffix}`,
@@ -146,24 +149,20 @@ function mount(query = '') {
   };
 }
 
-test('initial bootstrap and list run concurrently, but list data stays hidden until authorization succeeds', async () => {
+test('initial shipping load authorizes and returns the first list in one request', async () => {
   const h = mount();
   h.runTimers();
-  assert.deepEqual(h.requests.map(request => request.action), ['bootstrap', 'list']);
-  h.listRequests()[0].resolve({ shipments: [shipment('first')], count: 1 });
-  await settle();
-  assert.deepEqual(h.rows(), [], 'Bootstrap is still unresolved');
-  h.requests[0].resolve(bootstrap());
+  assert.deepEqual(h.requests.map(request => request.action), ['initial']);
+  h.requests[0].resolve(initial([shipment('first')]));
   await settle(); h.runTimers();
   assert.deepEqual(h.rows(), ['first']);
-  assert.equal(h.listRequests().length, 1, 'Bootstrap completion must not issue a duplicate list');
+  assert.equal(h.listRequests().length, 0, 'Initial completion must not issue a duplicate list');
   h.unmount();
 });
 
 async function readyList(rows = [shipment('draft-1')], count = rows.length) {
   const h = mount(); h.runTimers();
-  h.requests[0].resolve(bootstrap());
-  h.listRequests()[0].resolve({ shipments: rows, count });
+  h.requests[0].resolve({ ...initial(rows), count });
   await settle(); h.render();
   return h;
 }
@@ -318,7 +317,7 @@ test('canceling deletion retains the draft and does not send a mutation', async 
 test('successful deletion waits for versioned archive acceptance then refreshes the first page once', async () => {
   const h = await readyList([shipment('page-0')], 26);
   h.button('next').props.onClick(); h.runTimers();
-  h.listRequests()[1].resolve({ shipments: [shipment('page-1')], count: 26 });
+  h.listRequests()[0].resolve({ shipments: [shipment('page-1')], count: 26 });
   await settle();
   h.card('page-1').props.onDelete();
   const remove = h.button('confirmDeleteAction').props.onClick;
@@ -331,9 +330,9 @@ test('successful deletion waits for versioned archive acceptance then refreshes 
   assert.deepEqual(h.rows(), ['page-1'], 'Do not optimistically remove before acceptance');
   actions[0].resolve({ shipment: shipment('page-1', { status: 'archived', version: 4 }) });
   await settle(); h.runTimers();
-  assert.equal(h.listRequests().length, 3);
-  assert.equal(h.listRequests()[2].args[0], 0);
-  h.listRequests()[2].resolve({ shipments: [shipment('remaining')], count: 25 });
+  assert.equal(h.listRequests().length, 2);
+  assert.equal(h.listRequests()[1].args[0], 0);
+  h.listRequests()[1].resolve({ shipments: [shipment('remaining')], count: 25 });
   await settle();
   assert.deepEqual(h.rows(), ['remaining']);
   assert.equal(h.find(node => node.props.role === 'status').props.children, 'draftDeleted');
@@ -371,7 +370,7 @@ test('failed deletion and version conflict keep dirty editor input and do not re
     h.requests.at(-1).reject(new Error(reason));
     await settle(); h.runTimers();
     assert.equal(h.find(node => node.type === 'AddressFields' && node.props.prefix === 'sender').props.value.fullname, 'Unsaved contact');
-    assert.equal(h.listRequests().length, 1);
+    assert.equal(h.listRequests().length, 0);
     assert.equal(h.button('deleteDraft').props.disabled, false);
     assert.equal(h.find(node => node.props.role === 'alert').props.children, reason === 'conflict' ? 'conflict' : 'providerRejected');
     h.unmount();
@@ -381,8 +380,7 @@ test('failed deletion and version conflict keep dirty editor input and do not re
 test('definite submit rejection syncs the restored draft version before another edit action', async () => {
   const row = submittableShipment('rejected-submit');
   const h = mount(); h.runTimers();
-  h.requests[0].resolve({ ...bootstrap(), sendReady: true });
-  h.listRequests()[0].resolve({ shipments: [row], count: 1 });
+  h.requests[0].resolve(initial([row], { ...bootstrap(), sendReady: true }));
   await settle(); h.render();
   h.card(row.id).props.onOpen();
   h.requests.at(-1).resolve({ shipment: row, events: [] });
@@ -410,8 +408,7 @@ test('definite submit rejection syncs the restored draft version before another 
 test('a safe provider rejection detail replaces the generic error with an actionable reason', async () => {
   const row = submittableShipment('phone-rejected');
   const h = mount(); h.runTimers();
-  h.requests[0].resolve({ ...bootstrap(), sendReady: true });
-  h.listRequests()[0].resolve({ shipments: [row], count: 1 });
+  h.requests[0].resolve(initial([row], { ...bootstrap(), sendReady: true }));
   await settle(); h.render();
   h.card(row.id).props.onOpen();
   h.requests.at(-1).resolve({ shipment: row, events: [] });
@@ -431,8 +428,7 @@ test('an oversized box shows the specific dimension blocker before quote or subm
   const row = submittableShipment('oversized-box');
   row.draft.box_length = domain.SHIPPING_BOX_DIMENSION_MAX_CM + 1;
   const h = mount(); h.runTimers();
-  h.requests[0].resolve({ ...bootstrap(), sendReady: true });
-  h.listRequests()[0].resolve({ shipments: [row], count: 1 });
+  h.requests[0].resolve(initial([row], { ...bootstrap(), sendReady: true }));
   await settle(); h.render();
   h.card(row.id).props.onOpen();
   h.requests.at(-1).resolve({ shipment: row, events: [] });
@@ -573,9 +569,8 @@ test('actual list card stays compact until expanded and preserves shipment actio
   assert.equal(disconnected.find(button => button.props['aria-label'] === 'poll').props.disabled, true);
 });
 
-test('a rejected bootstrap never reveals a completed list', async () => {
+test('a rejected initial request never reveals list data', async () => {
   const h = mount(); h.runTimers();
-  h.listRequests()[0].resolve({ shipments: [shipment('hidden')], count: 1 });
   h.requests[0].reject(new Error('forbidden'));
   await settle();
   assert.deepEqual(h.rows(), []);
@@ -583,48 +578,43 @@ test('a rejected bootstrap never reveals a completed list', async () => {
   h.unmount();
 });
 
-test('explicit reload refreshes bootstrap followed by exactly one new list request', async () => {
+test('explicit list reload refreshes bootstrap and rows in one request', async () => {
   const h = mount(); h.runTimers();
-  h.requests[0].resolve(bootstrap());
-  h.listRequests()[0].resolve({ shipments: [shipment('old')], count: 1 });
+  h.requests[0].resolve(initial([shipment('old')]));
   await settle(); h.render();
   h.button('refresh').props.onClick();
-  assert.equal(h.requests.at(-1).action, 'bootstrap');
-  h.runTimers();
-  assert.equal(h.listRequests().length, 1, 'Reload waits for successful settings refresh');
-  h.requests.at(-1).resolve(bootstrap());
-  await settle(); h.runTimers();
-  assert.equal(h.listRequests().length, 2);
-  h.listRequests()[1].resolve({ shipments: [shipment('new')], count: 1 });
+  assert.equal(h.requests.at(-1).action, 'initial');
+  assert.equal(h.listRequests().length, 0);
+  h.requests.at(-1).resolve(initial([shipment('new')]));
   await settle(); h.runTimers();
   assert.deepEqual(h.rows(), ['new']);
-  assert.equal(h.listRequests().length, 2);
+  assert.equal(h.requests.filter(request => request.action === 'initial').length, 2);
+  assert.equal(h.listRequests().length, 0);
   h.unmount();
 });
 
 test('debounced search discards queued queries and superseded request results without clearing current loading', async () => {
   const h = mount(); h.runTimers();
-  h.requests[0].resolve(bootstrap());
-  h.listRequests()[0].resolve({ shipments: [shipment('initial')], count: 1 });
+  h.requests[0].resolve(initial([shipment('initial')]));
   await settle();
   h.search('old query'); h.runTimers();
   h.search('not sent');
   h.search('latest query'); h.runTimers();
-  assert.deepEqual(h.listRequests().map(request => request.args[1]), ['', 'old query', 'latest query']);
-  h.listRequests()[1].resolve({ shipments: [shipment('obsolete')], count: 1 });
+  assert.deepEqual(h.listRequests().map(request => request.args[1]), ['old query', 'latest query']);
+  h.listRequests()[0].resolve({ shipments: [shipment('obsolete')], count: 1 });
   await settle();
   assert.deepEqual(h.rows(), ['initial']);
   assert.equal(h.find(node => node.type === 'section' && 'aria-busy' in node.props).props['aria-busy'], true);
-  h.listRequests()[2].resolve({ shipments: [shipment('latest')], count: 1 });
+  h.listRequests()[1].resolve({ shipments: [shipment('latest')], count: 1 });
   await settle();
   assert.deepEqual(h.rows(), ['latest']);
   assert.equal(h.find(node => node.type === 'section' && 'aria-busy' in node.props).props['aria-busy'], false);
   h.search('delayed query'); h.runTimers();
   h.search('final query'); h.runTimers();
-  h.listRequests()[4].resolve({ shipments: [shipment('final')], count: 1 });
+  h.listRequests()[3].resolve({ shipments: [shipment('final')], count: 1 });
   await settle();
   assert.deepEqual(h.rows(), ['final']);
-  h.listRequests()[3].resolve({ shipments: [shipment('late-obsolete')], count: 1 });
+  h.listRequests()[2].resolve({ shipments: [shipment('late-obsolete')], count: 1 });
   await settle();
   assert.deepEqual(h.rows(), ['final'], 'Older response cannot replace an already completed newer search');
   h.unmount();
@@ -639,15 +629,13 @@ test('order entry cancels list ownership and does not fetch a list while the edi
   order.resolve({ draft: domain.emptyDraft(), order_code: 'SO-1', previous: [] });
   await settle(); h.render(); await settle(); h.runTimers();
   assert.ok(h.find(node => node.type === 'AddressFields'), 'Order is shown in the editor');
-  h.listRequests()[0].resolve({ shipments: [shipment('late-list')], count: 1 });
-  await settle();
   assert.deepEqual(h.rows(), []);
   h.button('refresh').props.onClick();
   h.requests.at(-1).resolve(bootstrap());
   await settle(); h.runTimers();
-  assert.equal(h.listRequests().length, 1, 'Editor reload must not start a list request');
+  assert.equal(h.listRequests().length, 0, 'Order entry and editor reload must not start a list request');
   h.button('back').props.onClick(); h.runTimers();
-  assert.equal(h.listRequests().length, 2, 'Returning to list refreshes it');
-  assert.deepEqual(h.rows(), [], 'Late response from the previous view was not stored');
+  assert.equal(h.listRequests().length, 1, 'Returning to list fetches it once');
+  assert.deepEqual(h.rows(), []);
   h.unmount();
 });

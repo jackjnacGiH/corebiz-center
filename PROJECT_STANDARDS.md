@@ -19,6 +19,7 @@ These encode real incidents. Violating them has caused outages or data issues be
 6. **LINE limits:** the OA **cannot push file/document messages** (text/image/sticker/flex/template only). The **push** API has a monthly quota (free plan = 300/mo); the **reply** API (responding to an inbound message) is **free**. Prefer reply over push; deliver documents as **links**, not files. (See §6.)
 7. **Never expose cost/margin/buying price** to customers or the bot, and **never echo channel secrets/tokens**. Entering credentials (LINE console, Supabase dashboard) is the operator's job, not the assistant's.
 8. **Confirm before destructive/irreversible actions** (deleting data, mass operations). Use safe, explicit filters.
+9. **Performance is part of release acceptance.** After a change that can affect `/center`, build and smoke-test `/center/shipping` as a critical route, including initial SPA navigation and a full reload. Do not start full product/customer prefetches while Shipping is loading. Report any performance blocker before release; ask the owner before a paid infrastructure change or a major architecture change.
 
 ---
 
