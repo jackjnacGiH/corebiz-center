@@ -67,8 +67,7 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
     .maybeSingle();
 
   if (error) {
-    console.error('[supabase] fetchProfile error', error);
-    return null;
+    throw error;
   }
   if (!data) return null;
   // Merge defaults so any missing keys (older rows) read as enabled
