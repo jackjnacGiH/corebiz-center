@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { CK, invalidateList, invalidateListPrefix, swrList } from "./cache";
 import type { ShippingRate } from "../../../supabase/functions/_shared/shipping-rates";
 import {
   isShippingProviderIssue,
@@ -40,6 +41,12 @@ export interface ShippingInitial {
   bootstrap: ShippingBootstrap;
   shipments: Shipment[];
   count: number;
+}
+interface ShippingInitialOptions {
+  cacheScope?: string;
+  force?: boolean;
+  onFresh?: (result: ShippingInitial) => void;
+  onBackgroundError?: (error: unknown) => void;
 }
 export interface ShippingConnectionTest {
   environment: "uat" | "production";
@@ -164,9 +171,48 @@ async function invoke<T>(
     );
   return data as T;
 }
+const isDefaultInitialRequest = (page: number, search: string) =>
+  page === 0 && !search.trim();
+const loadInitial = (
+  page: number,
+  search: string,
+  options: ShippingInitialOptions = {},
+) => {
+  const fetcher = () => invoke<ShippingInitial>("initial", { page, search });
+  if (!isDefaultInitialRequest(page, search) || !options.cacheScope) return fetcher();
+  const cacheKey = `${CK.shippingInitial}:${options.cacheScope}`;
+  return swrList(cacheKey, fetcher, {
+    force: options.force,
+    // Revisit instantly from the session cache. A short freshness window avoids
+    // duplicate Edge calls while moving between menus; older data revalidates
+    // in the background without blocking the list.
+    staleMs: 10_000,
+    onFresh: options.onFresh,
+    onBackgroundError: (error) => {
+      // A revoked permission or failed live authorization must not leave an
+      // operational Shipping list cached indefinitely.
+      invalidateList(cacheKey);
+      options.onBackgroundError?.(error);
+    },
+  }).catch((error) => {
+    // Cold/forced reads reject to their caller instead of using the background
+    // callback. They must still discard any previously cached shipment data.
+    invalidateList(cacheKey);
+    throw error;
+  });
+};
+async function mutate<T>(task: () => Promise<T>): Promise<T> {
+  // Detach any read that started before this write. Invalidate again after the
+  // attempt because provider errors can still carry a newer persisted version.
+  invalidateListPrefix(CK.shippingInitial);
+  try {
+    return await task();
+  } finally {
+    invalidateListPrefix(CK.shippingInitial);
+  }
+}
 export const shippingApi = {
-  initial: (page: number, search: string) =>
-    invoke<ShippingInitial>("initial", { page, search }),
+  initial: loadInitial,
   bootstrap: () => invoke<ShippingBootstrap>("bootstrap"),
   compare: (draft: ShippingDraft) => invoke<{ rates: ShippingRate[]; parcel_count: number; quoted_at: string }>("compare_rates", { draft }),
   list: (page: number, search: string) =>
@@ -174,15 +220,15 @@ export const shippingApi = {
   get: (id: string) =>
     invoke<{ shipment: Shipment; events: ShippingEvent[] }>("get", { id }),
   create: (id: string, draft: ShippingDraft, order_id: string | null) =>
-    invoke<{ shipment: Shipment }>("create_draft", { id, draft, order_id }),
+    mutate(() => invoke<{ shipment: Shipment }>("create_draft", { id, draft, order_id })),
   save: (s: Shipment, draft: ShippingDraft) =>
-    invoke<{ shipment: Shipment }>("save_draft", {
+    mutate(() => invoke<{ shipment: Shipment }>("save_draft", {
       id: s.id,
       version: s.version,
       draft,
-    }),
+    })),
   action: (action: "archive" | "submit" | "refresh_status", s: Shipment) =>
-    invoke<{ shipment: Shipment }>(action, { id: s.id, version: s.version }),
+    mutate(() => invoke<{ shipment: Shipment }>(action, { id: s.id, version: s.version })),
   print: (s: Shipment) => invoke<{ link: string }>("print", { id: s.id }),
   quote: (s: Shipment) =>
     invoke<{
@@ -212,7 +258,7 @@ export const shippingApi = {
       previous: { reference_no: string; status: string }[];
     }>("order_draft", { order_id }),
   saveSettings: (settings: ShippingSettings) =>
-    invoke("save_settings", { settings }),
+    mutate(() => invoke("save_settings", { settings })),
   connectionTest: () =>
     invoke<ShippingConnectionTest>("connection_test"),
   admin: (page: number) =>
@@ -222,6 +268,6 @@ export const shippingApi = {
       accounts: CodAccount[];
     }>("admin_data", { page }),
   permission: (user_id: string, enabled: boolean) =>
-    invoke(enabled ? "grant" : "revoke", { user_id }),
-  saveCod: (account: CodAccount) => invoke("save_cod", { account }),
+    mutate(() => invoke(enabled ? "grant" : "revoke", { user_id })),
+  saveCod: (account: CodAccount) => mutate(() => invoke("save_cod", { account })),
 };

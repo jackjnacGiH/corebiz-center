@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useLanguage } from "@/i18n";
+import { useAuth } from "@/lib/AuthProvider";
 import {
   shippingApi,
   type Shipment,
@@ -80,10 +81,14 @@ async function copyText(value: string) {
   textarea.remove();
   if (!copied) throw new Error("clipboard_unavailable");
 }
+const isShippingAccessError = (reason: unknown) =>
+  reason instanceof Error && ["forbidden", "unauthorized"].includes(reason.message);
 
 export default function Shipping() {
   const { t, language } = useLanguage(),
     c = t.shipping;
+  const { session, profile } = useAuth();
+  const cacheScope = session && profile ? `${session.user.id}:${profile.role}` : undefined;
   const [params, setParams] = useSearchParams();
   const [bootstrap, setBootstrap] = useState<ShippingBootstrap | null>(null),
     [error, setError] = useState(""),
@@ -141,10 +146,19 @@ export default function Shipping() {
   const deletingDraft = useRef(false);
   const listActionInFlight = useRef(false);
   const initialLoaded = useRef(false);
+  const listRequest = useRef<symbol | null>(null);
+  const mounted = useRef(true);
   const labelReturnFocus = useRef<HTMLElement | null>(null);
   const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      listRequest.current = null;
+    };
+  }, []);
   useEffect(() => {
     if (
       expandedShipmentId &&
@@ -180,22 +194,46 @@ export default function Shipping() {
     setErrorFieldIssue(isShippingDraftFieldIssue(fieldIssue) ? fieldIssue : null);
     setNotice("");
   }, []);
+  const handleListError = useCallback((reason: unknown, current: boolean) => {
+    if (!mounted.current || !current) return;
+    if (isShippingAccessError(reason)) {
+      // The newest authorization result owns the whole Shipping capability.
+      // Older errors cannot erase a later successful search or token refresh.
+      initialLoaded.current = false;
+      listRequest.current = null;
+      setBootstrap(null);
+      setRows([]);
+      setCount(0);
+    }
+    reportError(reason);
+  }, [reportError]);
   const reload = useCallback(async () => {
+    const request = Symbol();
+    listRequest.current = request;
+    const isCurrent = () => listRequest.current === request;
     if (view === "list") {
       setListLoading(true);
       try {
-        const result = await shippingApi.initial(page, search);
+        const result = await shippingApi.initial(page, search, { cacheScope, force: true });
+        if (!isCurrent()) return;
         initialLoaded.current = true;
         setBootstrap(result.bootstrap);
         setRows(result.shipments);
         setCount(result.count);
+      } catch (reason) {
+        handleListError(reason, isCurrent());
       } finally {
-        setListLoading(false);
+        if (isCurrent()) setListLoading(false);
       }
       return;
     }
-    setBootstrap(await shippingApi.bootstrap());
-  }, [page, search, view]);
+    try {
+      const result = await shippingApi.bootstrap();
+      if (isCurrent()) setBootstrap(result);
+    } catch (reason) {
+      handleListError(reason, isCurrent());
+    }
+  }, [cacheScope, handleListError, page, search, view]);
   const resetRecipientLookup = useCallback(() => {
     recipientRequest.current += 1;
     setRecipientSearch("");
@@ -212,49 +250,66 @@ export default function Shipping() {
   }, []);
   useEffect(() => {
     let active = true;
+    const version = Symbol();
+    listRequest.current = version;
+    const isCurrent = () => active && listRequest.current === version;
+    const applyInitial = (result: {
+      bootstrap: ShippingBootstrap;
+      shipments: Shipment[];
+      count: number;
+    }) => {
+      if (!isCurrent()) return;
+      initialLoaded.current = true;
+      setBootstrap(result.bootstrap);
+      setRows(result.shipments);
+      setCount(result.count);
+    };
     setListLoading(true);
     const request = initialOrderId
       ? shippingApi.bootstrap().then((initialBootstrap) => ({
           bootstrap: initialBootstrap,
-          shipments: [] as Shipment[],
-          count: 0,
-        }))
-      : shippingApi.initial(0, "");
+           shipments: [] as Shipment[],
+           count: 0,
+         }))
+      : shippingApi.initial(0, "", {
+          cacheScope,
+          onFresh: applyInitial,
+          onBackgroundError: (reason) => handleListError(reason, isCurrent()),
+        });
     request
-      .then((result) => {
-        if (!active) return;
-        initialLoaded.current = true;
-        setBootstrap(result.bootstrap);
-        setRows(result.shipments);
-        setCount(result.count);
-      })
+      .then(applyInitial)
       .catch((e) => {
-        if (active) reportError(e);
+        handleListError(e, isCurrent());
       })
       .finally(() => {
-        if (active) setListLoading(false);
+        if (isCurrent()) setListLoading(false);
       });
     return () => {
       active = false;
+      if (listRequest.current === version) listRequest.current = null;
     };
-  }, [initialOrderId, reportError]);
+  }, [cacheScope, handleListError, initialOrderId]);
   useEffect(() => {
-    if (!initialLoaded.current || view !== "list") return;
+    if (!initialLoaded.current) return;
+    const version = Symbol();
+    listRequest.current = version;
+    if (view !== "list") return;
     let active = true;
+    const isCurrent = () => active && listRequest.current === version;
     const timer = window.setTimeout(() => {
       setListLoading(true);
       shippingApi.list(page, search)
         .then((r) => {
-          if (active) {
+          if (isCurrent()) {
             setRows(r.shipments);
             setCount(r.count);
           }
         })
-        .catch((e) => { if (active) reportError(e); })
-        .finally(() => { if (active) setListLoading(false); });
+        .catch((e) => handleListError(e, isCurrent()))
+        .finally(() => { if (isCurrent()) setListLoading(false); });
     }, search.trim() ? 250 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [listRevision, page, search, view, reportError]);
+  }, [handleListError, listRevision, page, search, view]);
   useEffect(() => {
     if (view !== "editor" || labelModule) return;
     let active = true;
@@ -426,6 +481,7 @@ export default function Shipping() {
     resetProductLookup,
   ]);
   async function run(task: () => Promise<void>) {
+    if (!mounted.current) return;
     setBusy(true);
     setError("");
     setErrorDetail("");
@@ -434,6 +490,7 @@ export default function Shipping() {
     try {
       await task();
     } catch (e) {
+      if (!mounted.current) return;
       const restored = e && typeof e === "object"
         ? (e as { shipment?: unknown }).shipment
         : null;
@@ -446,7 +503,7 @@ export default function Shipping() {
       ) editResult(restored as Shipment);
       reportError(e);
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
   async function runListAction(
@@ -692,6 +749,7 @@ export default function Shipping() {
   const knownErrorMessages: Record<string, string> = {
     carrier_unavailable: c.carrierUnavailable,
     forbidden: c.noPermission,
+    unauthorized: c.noPermission,
     shipping_not_installed: c.notInstalled,
     conflict: c.conflict,
     client_outdated: c.conflict,

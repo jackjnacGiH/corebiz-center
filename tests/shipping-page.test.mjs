@@ -34,7 +34,7 @@ const submittableShipment = id => {
 function mount(query = '') {
   const slots = [], effects = [], requests = [], confirmations = [], clipboard = [], popups = [], prints = [];
   const timers = new Map();
-  let cursor = 0, timerId = 0, tree, dirty = false;
+  let cursor = 0, timerId = 0, tree, dirty = false, unmounted = false, writesAfterUnmount = 0;
   let focusRestores = 0;
   let params = new URLSearchParams(query);
   let confirmResult = true;
@@ -49,6 +49,7 @@ function mount(query = '') {
       const index = cursor++;
       if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
       return [slots[index], value => {
+        if (unmounted) writesAfterUnmount += 1;
         const next = typeof value === 'function' ? value(slots[index]) : value;
         if (!Object.is(next, slots[index])) { slots[index] = next; dirty = true; }
       }];
@@ -83,6 +84,9 @@ function mount(query = '') {
       if (name === 'react-router-dom') return { useSearchParams: () => [params, next => { params = new URLSearchParams(next); dirty = true; }] };
       if (name === 'lucide-react') return new Proxy({}, { get: (_target, key) => key });
       if (name === '@/i18n') return { useLanguage: () => ({ language: 'th', t: { shipping: shippingWords, common: words } }) };
+      if (name === '@/lib/AuthProvider') return { useAuth: () => ({
+        session: { user: { id: 'user-1' } }, profile: { role: 'owner' },
+      }) };
       if (name === '@/lib/shipping-api') return { shippingApi: api };
       if (name === '@/lib/shipping-validation') return {
         shippingDraftFieldIssueMessage: issue => `${issue.field}:${issue.reason}`,
@@ -139,13 +143,14 @@ function mount(query = '') {
   return {
     requests, confirmations, clipboard, popups, prints, render, find, button,
     focusRestores: () => focusRestores,
+    writesAfterUnmount: () => writesAfterUnmount,
     confirmWith(value) { confirmResult = value; },
     card: id => find(node => node.type === 'ShipmentListCard' && node.props.shipment.id === id),
     listRequests: () => requests.filter(request => request.action === 'list'),
     rows: () => { render(); return nodes(tree).filter(node => node.type === 'ShipmentListCard').map(node => node.props.shipment.id); },
     runTimers() { render(); for (const [id, callback] of [...timers]) { timers.delete(id); callback(); } render(); },
     search(value) { find(node => node.type === 'Input' && node.props['aria-label'] === 'search').props.onChange({ target: { value } }); render(); },
-    unmount() { for (const slot of slots) slot?.cleanup?.(); },
+    unmount() { unmounted = true; for (const slot of slots) slot?.cleanup?.(); },
   };
 }
 
@@ -584,6 +589,8 @@ test('explicit list reload refreshes bootstrap and rows in one request', async (
   await settle(); h.render();
   h.button('refresh').props.onClick();
   assert.equal(h.requests.at(-1).action, 'initial');
+  assert.equal(h.requests.at(-1).args[2].cacheScope, 'user-1:owner');
+  assert.equal(h.requests.at(-1).args[2].force, true);
   assert.equal(h.listRequests().length, 0);
   h.requests.at(-1).resolve(initial([shipment('new')]));
   await settle(); h.runTimers();
@@ -591,6 +598,58 @@ test('explicit list reload refreshes bootstrap and rows in one request', async (
   assert.equal(h.requests.filter(request => request.action === 'initial').length, 2);
   assert.equal(h.listRequests().length, 0);
   h.unmount();
+});
+
+test('cached initial data and obsolete failures cannot overwrite a newer successful search', async () => {
+  const h = mount(); h.runTimers();
+  const initialRequest = h.requests[0];
+  initialRequest.resolve(initial([shipment('cached')]));
+  await settle(); h.render();
+  h.search('new recipient'); h.runTimers();
+  initialRequest.args[2].onFresh(initial([shipment('obsolete-default')]));
+  await settle();
+  assert.deepEqual(h.rows(), ['cached'], 'default background data cannot replace an active search');
+  const searchRequest = h.listRequests().at(-1);
+  searchRequest.resolve({ shipments: [shipment('search-result')], count: 1 });
+  await settle();
+  assert.deepEqual(h.rows(), ['search-result']);
+  initialRequest.args[2].onBackgroundError(new Error('provider_unreachable'));
+  await settle();
+  assert.deepEqual(h.rows(), ['search-result'], 'a superseded transient failure cannot clear newer results');
+  initialRequest.args[2].onBackgroundError(new Error('forbidden'));
+  await settle();
+  assert.deepEqual(h.rows(), ['search-result'], 'an obsolete authorization error cannot erase newer authorized data');
+  assert.equal(h.find(node => node.props.role === 'alert'), undefined);
+  h.unmount();
+});
+
+test('a current list authorization failure clears Shipping data and access state', async () => {
+  const h = await readyList([shipment('private-row')]);
+  h.search('revoked user'); h.runTimers();
+  h.listRequests().at(-1).reject(new Error('forbidden'));
+  await settle();
+  assert.deepEqual(h.rows(), []);
+  assert.equal(h.find(node => node.props.role === 'alert').props.children, 'noPermission');
+  h.unmount();
+});
+
+test('an unmounted or superseded reload cannot write state or report an obsolete transient error', async () => {
+  const h = await readyList([shipment('old')]);
+  h.button('refresh').props.onClick();
+  const reload = h.requests.at(-1);
+  h.search('new query'); h.runTimers();
+  reload.reject(new Error('provider_unreachable'));
+  await settle();
+  assert.equal(h.find(node => node.props.role === 'alert'), undefined);
+  h.listRequests().at(-1).resolve({ shipments: [shipment('new')], count: 1 });
+  await settle();
+  assert.deepEqual(h.rows(), ['new']);
+  h.button('refresh').props.onClick();
+  const unmountedReload = h.requests.at(-1);
+  h.unmount();
+  unmountedReload.resolve(initial([shipment('late')]));
+  await settle();
+  assert.equal(h.writesAfterUnmount(), 0);
 });
 
 test('debounced search discards queued queries and superseded request results without clearing current loading', async () => {
