@@ -11,11 +11,13 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const session = (id, token = 'first') => ({ user: { id }, access_token: token });
 const profile = (id, changes = {}) => ({ id, role: 'staff', is_active: true, ...changes });
-const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
+const settle = async () => {
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+};
 
 // Run the actual provider with deterministic hooks, auth notifications and a
 // manual timer queue. This covers races without a DOM or a real signed-in user.
-function mount(initialSession) {
+function mount(initialSession, options = {}) {
   const slots = [];
   const effects = [];
   const timers = new Map();
@@ -78,13 +80,16 @@ function mount(initialSession) {
         supabase: { auth: {
           getSession: async () => {
             ++sessionReads;
+            if (options.hangSessionRead) return new Promise(() => {});
             return { data: { session: initialSession } };
           },
           onAuthStateChange: callback => {
             listener = callback;
-            queueMicrotask(() => {
-              if (listener === callback) emit('INITIAL_SESSION', initialSession);
-            });
+            if (options.emitInitial !== false) {
+              queueMicrotask(() => {
+                if (listener === callback) emit('INITIAL_SESSION', initialSession);
+              });
+            }
             return { data: { subscription: { unsubscribe: () => { listener = undefined; } } } };
           },
         } },
@@ -96,7 +101,7 @@ function mount(initialSession) {
     },
     console: { error: message => diagnostics.push(message) },
     window: {
-      setTimeout: callback => { timers.set(++nextTimer, callback); return nextTimer; },
+      setTimeout: (callback, delay = 0) => { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
       clearTimeout: id => timers.delete(id),
     },
   });
@@ -114,10 +119,14 @@ function mount(initialSession) {
     get cacheClears() { return cacheClears; },
     get stateWrites() { return stateWrites; },
     get pendingTimers() { return timers.size; },
-    runTimers() {
-      for (const [id, callback] of [...timers]) {
+    get pendingImmediateTimers() {
+      return [...timers.values()].filter(({ delay }) => delay === 0).length;
+    },
+    runTimers(maxDelay = 0) {
+      for (const [id, timer] of [...timers]) {
+        if (timer.delay > maxDelay) continue;
         timers.delete(id);
-        callback();
+        timer.callback();
       }
     },
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
@@ -131,11 +140,11 @@ function mount(initialSession) {
   };
 }
 
-test('bootstrap uses one deferred profile query from INITIAL_SESSION, not a parallel session read', async () => {
+test('bootstrap races INITIAL_SESSION with one session read without duplicating the profile query', async () => {
   const h = mount(session('a'));
   assert.equal(h.value.loading, true);
   await settle();
-  assert.equal(h.sessionReads, 0);
+  assert.equal(h.sessionReads, 1);
   assert.equal(h.requests.length, 0);
   h.runTimers();
   assert.equal(h.requests.length, 1);
@@ -143,6 +152,48 @@ test('bootstrap uses one deferred profile query from INITIAL_SESSION, not a para
   await settle();
   assert.equal(h.value.profile.id, 'a');
   assert.equal(h.value.loading, false);
+  h.unmount();
+});
+
+test('stored-session fallback exits loading when INITIAL_SESSION is not emitted', async () => {
+  const h = mount(session('fallback'), { emitInitial: false });
+  await settle();
+  assert.equal(h.sessionReads, 1);
+  h.runTimers();
+  assert.equal(h.requests.length, 1);
+  h.requests[0].resolve(profile('fallback'));
+  await settle();
+  assert.equal(h.value.session.user.id, 'fallback');
+  assert.equal(h.value.profile.id, 'fallback');
+  assert.equal(h.value.loading, false);
+  h.unmount();
+});
+
+test('hard timeout releases loading when auth initialization never returns', async () => {
+  const h = mount(null, { emitInitial: false, hangSessionRead: true });
+  await settle();
+  assert.equal(h.value.loading, true);
+  h.runTimers(8_000);
+  h.runTimers();
+  await settle();
+  assert.equal(h.value.session, null);
+  assert.equal(h.value.profile, null);
+  assert.equal(h.value.loading, false);
+  assert.equal(h.diagnostics.includes('[auth] Session initialization timed out'), true);
+  h.unmount();
+});
+
+test('profile timeout releases loading and fails closed', async () => {
+  const h = mount(session('slow-profile'));
+  await settle();
+  h.runTimers();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.value.loading, true);
+  h.runTimers(10_000);
+  await settle();
+  assert.equal(h.value.profile, null);
+  assert.equal(h.value.loading, false);
+  assert.equal(h.diagnostics.includes('[auth] Unable to load profile'), true);
   h.unmount();
 });
 
@@ -204,7 +255,7 @@ test('signout cannot be reversed by a late profile response or obsolete queued a
   h.runTimers();
   h.emit('SIGNED_IN', session('b'));
   h.emit('SIGNED_OUT', null);
-  assert.equal(h.pendingTimers, 1);
+  assert.equal(h.pendingImmediateTimers, 1);
   h.requests[0].resolve(profile('a'));
   await settle();
   h.runTimers();
