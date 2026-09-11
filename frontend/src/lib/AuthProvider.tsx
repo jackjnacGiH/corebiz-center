@@ -5,6 +5,7 @@ import { clearListCache } from './cache';
 interface AuthContextValue {
   session: Session | null;
   profile: Profile | null;
+  profileIssue: 'missing' | 'unavailable' | null;
   loading: boolean;
   refresh: () => Promise<void>;
 }
@@ -30,6 +31,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileIssue, setProfileIssue] = useState<'missing' | 'unavailable' | null>(null);
   const [loading, setLoading] = useState(true);
   const profileLoadVersion = useRef(0);
   const activeSession = useRef<Session | null | undefined>(undefined);
@@ -42,25 +44,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!s) {
       if (version === profileLoadVersion.current) {
         setProfile(null);
+        setProfileIssue(null);
         setLoading(false);
       }
       return;
     }
 
     let p: Profile | null = null;
+    let issue: 'missing' | 'unavailable' | null = null;
     try {
       p = await withTimeout(
         fetchProfile(s.user.id),
         PROFILE_LOAD_TIMEOUT_MS,
         'Profile request timed out'
       );
-    } catch {
+      issue = p ? null : 'missing';
+    } catch (error) {
       // Failed or stalled revalidation must release the spinner without
-      // retaining access. ProtectedRoute will fail closed to the login page.
-      console.error('[auth] Unable to load profile');
+      // retaining access. Keep the session so the user can retry without
+      // signing in again, while ProtectedRoute continues to fail closed.
+      issue = 'unavailable';
+      console.error('[auth] Unable to load profile', error);
     }
     if (version === profileLoadVersion.current) {
       setProfile(p);
+      setProfileIssue(issue);
       setLoading(false);
     }
   }, []);
@@ -82,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       activeSession.current = s;
       setSession(s);
       setProfile(null);
+      setProfileIssue(null);
       // Keep protected routes in their loading state until the matching profile
       // is ready. Supabase calls made directly inside this callback can deadlock,
       // so defer the profile query until after the auth callback returns.
@@ -138,10 +147,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       session,
       profile,
+      profileIssue,
       loading,
       refresh: () => loadProfile(activeSession.current ?? null),
     }),
-    [session, profile, loading, loadProfile]
+    [session, profile, profileIssue, loading, loadProfile]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

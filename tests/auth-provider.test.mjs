@@ -151,6 +151,7 @@ test('bootstrap races INITIAL_SESSION with one session read without duplicating 
   h.requests[0].resolve(profile('a'));
   await settle();
   assert.equal(h.value.profile.id, 'a');
+  assert.equal(h.value.profileIssue, null);
   assert.equal(h.value.loading, false);
   h.unmount();
 });
@@ -183,7 +184,7 @@ test('hard timeout releases loading when auth initialization never returns', asy
   h.unmount();
 });
 
-test('profile timeout releases loading and fails closed', async () => {
+test('profile timeout releases loading as unavailable while preserving the session', async () => {
   const h = mount(session('slow-profile'));
   await settle();
   h.runTimers();
@@ -192,6 +193,8 @@ test('profile timeout releases loading and fails closed', async () => {
   h.runTimers(10_000);
   await settle();
   assert.equal(h.value.profile, null);
+  assert.equal(h.value.profileIssue, 'unavailable');
+  assert.equal(h.value.session.user.id, 'slow-profile');
   assert.equal(h.value.loading, false);
   assert.equal(h.diagnostics.includes('[auth] Unable to load profile'), true);
   h.unmount();
@@ -289,7 +292,7 @@ test('explicit refresh always requests fresh data and uses the current account, 
   h.unmount();
 });
 
-test('null or rejected profile reads release loading and fail closed without stale access', async () => {
+test('missing and rejected profile reads remain distinct and fail closed without stale access', async () => {
   const h = mount(session('a'));
   await settle();
   h.runTimers();
@@ -297,13 +300,35 @@ test('null or rejected profile reads release loading and fail closed without sta
   await settle();
   assert.equal(h.value.loading, false);
   assert.equal(h.value.profile, null);
+  assert.equal(h.value.profileIssue, 'missing');
   h.emit('SIGNED_IN', session('a'));
   h.runTimers();
   h.requests[1].reject(new Error('test network failure'));
   await settle();
   assert.equal(h.value.loading, false);
   assert.equal(h.value.profile, null);
+  assert.equal(h.value.profileIssue, 'unavailable');
   assert.equal(h.diagnostics.length, 1);
+  h.unmount();
+});
+
+test('retry after a transient profile failure restores access without a new sign-in', async () => {
+  const h = mount(session('a'));
+  await settle();
+  h.runTimers();
+  h.requests[0].reject(new Error('temporary provider failure'));
+  await settle();
+  assert.equal(h.value.profileIssue, 'unavailable');
+  assert.equal(h.value.session.user.id, 'a');
+
+  const retry = h.value.refresh();
+  assert.equal(h.value.loading, true);
+  assert.equal(h.requests.length, 2);
+  h.requests[1].resolve(profile('a', { role: 'owner' }));
+  await retry;
+  assert.equal(h.value.profile.role, 'owner');
+  assert.equal(h.value.profileIssue, null);
+  assert.equal(h.value.session.user.id, 'a');
   h.unmount();
 });
 

@@ -69,6 +69,11 @@ export const translations = {
       orContinueWith: 'or continue with',
       adminOnly: 'Authorized users only. Contact admin for access.',
       inactiveAccount: 'Your account is inactive. Contact admin.',
+      profileUnavailableTitle: 'Unable to verify your account',
+      profileUnavailable: 'The connection to the account service was interrupted. Your account has not been suspended. Please try again.',
+      profileMissingTitle: 'CoreBiz access not found',
+      profileMissing: 'This sign-in account does not have a CoreBiz user profile. Please contact an administrator or try again.',
+      tryAgain: 'Try again',
       forgotPassword: 'Forgot password?',
     },
     dashboard: {
@@ -403,6 +408,11 @@ export const translations = {
       orContinueWith: 'หรือเข้าสู่ระบบด้วย',
       adminOnly: 'สำหรับผู้ใช้ที่ได้รับอนุญาตเท่านั้น ติดต่อแอดมินหากต้องการเข้าใช้งาน',
       inactiveAccount: 'บัญชีของคุณถูกระงับ ติดต่อแอดมิน',
+      profileUnavailableTitle: 'ยังตรวจสอบบัญชีไม่ได้',
+      profileUnavailable: 'การเชื่อมต่อระบบบัญชีขัดข้องชั่วคราว บัญชีของคุณไม่ได้ถูกระงับ กรุณาลองเชื่อมต่ออีกครั้ง',
+      profileMissingTitle: 'ไม่พบสิทธิ์เข้าใช้ CoreBiz',
+      profileMissing: 'บัญชีที่เข้าสู่ระบบยังไม่มีข้อมูลผู้ใช้ CoreBiz กรุณาติดต่อผู้ดูแลระบบหรือลองใหม่อีกครั้ง',
+      tryAgain: 'ลองใหม่',
       forgotPassword: 'ลืมรหัสผ่าน?',
     },
     dashboard: {
