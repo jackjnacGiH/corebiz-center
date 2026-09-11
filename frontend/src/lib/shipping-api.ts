@@ -36,6 +36,11 @@ export interface ShippingBootstrap {
   readReady: boolean;
   sendReady: boolean;
 }
+export interface ShippingInitial {
+  bootstrap: ShippingBootstrap;
+  shipments: Shipment[];
+  count: number;
+}
 export interface ShippingConnectionTest {
   environment: "uat" | "production";
   checked_at: string;
@@ -160,6 +165,8 @@ async function invoke<T>(
   return data as T;
 }
 export const shippingApi = {
+  initial: (page: number, search: string) =>
+    invoke<ShippingInitial>("initial", { page, search }),
   bootstrap: () => invoke<ShippingBootstrap>("bootstrap"),
   compare: (draft: ShippingDraft) => invoke<{ rates: ShippingRate[]; parcel_count: number; quoted_at: string }>("compare_rates", { draft }),
   list: (page: number, search: string) =>

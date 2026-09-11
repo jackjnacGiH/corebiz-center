@@ -44,6 +44,8 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
     profiles: [{ id: actor, role, is_active: active }],
     shipping_permissions: grant ? [{ user_id: actor }] : [],
     shipping_settings: [{ id: true, environment: 'uat', merchant_code: 'test', billing_mode: 'unconfirmed', ...settings }],
+    shipping_cod_accounts: [],
+    org_settings: [{ id: true, business_name: 'Test company', logo_url: null }],
     shipments: structuredClone(rows), customers: structuredClone(customers), shipping_attempts: [],
   };
   const queries = [];
@@ -143,6 +145,21 @@ test('active shipment list filters archived rows before exact count and paginati
   const expected = rows.filter(row => row.status !== 'archived').map(row => row.id).sort().reverse();
   assert.deepEqual(all.map(row => row.id), expected);
   assert.equal(h.queries.some(query => query.patch), false);
+});
+
+test('initial load returns authorization settings and the first shipment page in one call', async () => {
+  const visible = shipment(1, 'waiting');
+  const h = api({ rows: [visible, shipment(2, 'archived')] });
+  const result = await h.call('initial', { page: 0, search: '' });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.bootstrap.manager, true);
+  assert.equal(result.body.bootstrap.brand.name, 'Test company');
+  assert.deepEqual(result.body.shipments.map(row => row.id), [visible.id]);
+  assert.equal(result.body.count, 1);
+  for (const table of ['profiles', 'shipping_permissions', 'shipping_settings']) {
+    assert.equal(h.queries.filter(query => query.table === table).length, 1, `${table} is read once`);
+  }
 });
 
 test('shipment list exposes the billed order shipping fee without inventing a provider charge', async () => {

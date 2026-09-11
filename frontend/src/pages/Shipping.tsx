@@ -133,12 +133,14 @@ export default function Shipping() {
     action: ShipmentListAction;
   } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ shipment: Shipment; unsaved: boolean } | null>(null);
+  const [initialOrderId] = useState(() => params.get("order"));
   const draftId = useRef(crypto.randomUUID());
   const handledOrder = useRef("");
   const recipientRequest = useRef(0);
   const productRequest = useRef(0);
   const deletingDraft = useRef(false);
   const listActionInFlight = useRef(false);
+  const initialLoaded = useRef(false);
   const labelReturnFocus = useRef<HTMLElement | null>(null);
   const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
@@ -179,10 +181,21 @@ export default function Shipping() {
     setNotice("");
   }, []);
   const reload = useCallback(async () => {
-    const b = await shippingApi.bootstrap();
-    setBootstrap(b);
-    setListRevision((revision) => revision + 1);
-  }, []);
+    if (view === "list") {
+      setListLoading(true);
+      try {
+        const result = await shippingApi.initial(page, search);
+        initialLoaded.current = true;
+        setBootstrap(result.bootstrap);
+        setRows(result.shipments);
+        setCount(result.count);
+      } finally {
+        setListLoading(false);
+      }
+      return;
+    }
+    setBootstrap(await shippingApi.bootstrap());
+  }, [page, search, view]);
   const resetRecipientLookup = useCallback(() => {
     recipientRequest.current += 1;
     setRecipientSearch("");
@@ -199,22 +212,34 @@ export default function Shipping() {
   }, []);
   useEffect(() => {
     let active = true;
-    shippingApi
-      .bootstrap()
-      .then((b) => {
-        if (active) setBootstrap(b);
+    setListLoading(true);
+    const request = initialOrderId
+      ? shippingApi.bootstrap().then((initialBootstrap) => ({
+          bootstrap: initialBootstrap,
+          shipments: [] as Shipment[],
+          count: 0,
+        }))
+      : shippingApi.initial(0, "");
+    request
+      .then((result) => {
+        if (!active) return;
+        initialLoaded.current = true;
+        setBootstrap(result.bootstrap);
+        setRows(result.shipments);
+        setCount(result.count);
       })
       .catch((e) => {
         if (active) reportError(e);
+      })
+      .finally(() => {
+        if (active) setListLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [reportError]);
+  }, [initialOrderId, reportError]);
   useEffect(() => {
-    // Both endpoints authorize independently; keep display gated by bootstrap,
-    // but let list data arrive in parallel instead of waiting for another trip.
-    if (view !== "list") return;
+    if (!initialLoaded.current || view !== "list") return;
     let active = true;
     const timer = window.setTimeout(() => {
       setListLoading(true);

@@ -179,6 +179,7 @@ Deno.serve(async (req) => {
     const [
       { data: profile, error: profileErr },
       { data: grant, error: grantErr },
+      { data: settings, error: settingsErr },
     ] = await Promise.all([
       db
         .from("profiles")
@@ -190,8 +191,14 @@ Deno.serve(async (req) => {
         .select("user_id")
         .eq("user_id", userId)
         .maybeSingle(),
+      db
+        .from("shipping_settings")
+        .select("*")
+        .eq("id", true)
+        .single(),
     ]);
-    if (profileErr || grantErr) return fail("shipping_not_installed", 503);
+    if (profileErr || grantErr || settingsErr)
+      return fail("shipping_not_installed", 503);
     if (!canUseShipping(profile, !!grant)) return fail("forbidden", 403);
     const manager = ["owner", "admin"].includes(profile!.role);
     const raw = await req.text();
@@ -203,12 +210,6 @@ Deno.serve(async (req) => {
       return fail("invalid_payload");
     }
     const action = small(b.action);
-    const { data: settings, error: settingsErr } = await db
-      .from("shipping_settings")
-      .select("*")
-      .eq("id", true)
-      .single();
-    if (settingsErr) return fail("shipping_not_installed", 503);
     const config: ProviderConfig = {
       environment: settings.environment,
       appId:
@@ -224,7 +225,7 @@ Deno.serve(async (req) => {
       mutationsEnabled:
         Deno.env.get("PROMPTSPEED_MUTATIONS_ENABLED") === "true",
     };
-    if (action === "bootstrap") {
+    const loadBootstrap = async () => {
       const [accountResult, orgResult] = await Promise.all([
         db
           .from("shipping_cod_accounts")
@@ -266,7 +267,7 @@ Deno.serve(async (req) => {
       } catch {
         /* Default off. */
       }
-      return reply({
+      return {
         manager,
         brand: {
           name:
@@ -283,16 +284,12 @@ Deno.serve(async (req) => {
         accounts: accountResult.data,
         readReady,
         sendReady,
-      });
-    }
-    if (action === "compare_rates") {
-      assertProviderReady(config, false);
-      return reply(await compareShippingRates(config, parseDraft(b.draft)));
-    }
-    if (action === "list") {
+      };
+    };
+    const loadList = async (pageValue: unknown, searchValue: unknown) => {
       const page = Math.max(
         0,
-        Math.min(10000, Number.isInteger(b.page) ? Number(b.page) : 0),
+        Math.min(10000, Number.isInteger(pageValue) ? Number(pageValue) : 0),
       );
       let query = db
         .from("shipments")
@@ -301,11 +298,11 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(page * 25, page * 25 + 24);
-      const searchFilter = shipmentSearchFilter(small(b.search, 80));
+      const searchFilter = shipmentSearchFilter(small(searchValue, 80));
       if (searchFilter) query = query.or(searchFilter);
       const { data, error, count } = await query;
       if (error) throw error;
-      return reply({
+      return {
         shipments: (data ?? []).map(({ orders, ...shipment }) => {
           const order = record(orders);
           const orderShippingFee = Number(order.shipping_fee);
@@ -319,8 +316,21 @@ Deno.serve(async (req) => {
           };
         }),
         count,
-      });
+      };
+    };
+    if (action === "initial") {
+      const [bootstrap, list] = await Promise.all([
+        loadBootstrap(),
+        loadList(b.page, b.search),
+      ]);
+      return reply({ bootstrap, ...list });
     }
+    if (action === "bootstrap") return reply(await loadBootstrap());
+    if (action === "compare_rates") {
+      assertProviderReady(config, false);
+      return reply(await compareShippingRates(config, parseDraft(b.draft)));
+    }
+    if (action === "list") return reply(await loadList(b.page, b.search));
     if (action === "order_options") {
       const search = small(b.search, 60).replace(/[%_\\]/g, "");
       const { data, error } = await db
