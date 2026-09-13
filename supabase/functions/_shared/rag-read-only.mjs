@@ -1,6 +1,7 @@
 const READ_ONLY_SAFE_TOOL_NAMES = new Set([
   "find_products",
   "get_product_detail",
+  "get_exact_price",
   "list_product_groups",
   "get_group_members",
   "list_categories",

@@ -168,13 +168,14 @@ test("product lookups run before mutations regardless of model call order", () =
   const calls = [
     { name: "capture_lead", args: {} },
     { name: "request_quote", args: {} },
+    { name: "get_exact_price", args: { sku: "2020000979", qty: 10 } },
     { name: "find_products", args: { query: "SA331" } },
     { name: "get_product_detail", args: { sku: "2020000979" } },
   ];
 
   assert.deepEqual(
     prioritizeProductToolCalls(calls).map(({ call }) => call.name),
-    ["find_products", "get_product_detail", "capture_lead", "request_quote"],
+    ["find_products", "get_product_detail", "capture_lead", "request_quote", "get_exact_price"],
   );
 });
 
