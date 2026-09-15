@@ -126,6 +126,7 @@ function statusLabel(
 const ACTIVE_STATUSES: ChatStatus[] = ['open', 'assigned', 'resolved'];
 const CHAT_FAST_LOAD_ENABLED = import.meta.env.VITE_CHAT_FAST_LOAD_ENABLED !== 'false';
 const CHAT_PERSISTENT_CACHE_ENABLED = import.meta.env.VITE_CHAT_PERSISTENT_CACHE_ENABLED !== 'false';
+const CHAT_REALTIME_DELTA_ENABLED = import.meta.env.VITE_CHAT_REALTIME_DELTA_ENABLED !== 'false';
 const MESSAGE_PAGE_SIZE = CHAT_FAST_LOAD_ENABLED ? 50 : 100;
 const CONVERSATION_REFRESH_DELAY_MS = 200;
 const MESSAGE_LOAD_TIMEOUT_MS = 10_000;
@@ -231,6 +232,12 @@ async function writePersistentChatCache<T>(
 
 function conversationCacheId(filters: { channel: ChatChannel | null; status: ChatStatus | null; search: string }): string {
     return `${filters.channel ?? 'all'}|${filters.status ?? 'all'}|${filters.search.trim().toLowerCase()}`;
+}
+
+function compareConversations(a: ChatConversation, b: ChatConversation): number {
+    const aTime = Date.parse(a.last_message_at ?? a.created_at);
+    const bTime = Date.parse(b.last_message_at ?? b.created_at);
+    return bTime - aTime;
 }
 
 function readMessageCache(conversationId: string): ChatMessagePage | null {
@@ -435,6 +442,7 @@ export default function Chat() {
 
     // Data
     const [conversations, setConversations] = useState<ChatConversation[]>([]);
+    const conversationsRef = useRef<ChatConversation[]>([]);
     const [loadingList, setLoadingList] = useState(true);
     const [listErr, setListErr] = useState<string | null>(null);
     const conversationFiltersRef = useRef({ channel, status, search: debouncedSearch });
@@ -446,6 +454,9 @@ export default function Chat() {
     useEffect(() => {
         conversationFiltersRef.current = { channel, status, search: debouncedSearch };
     }, [channel, status, debouncedSearch]);
+    useEffect(() => {
+        conversationsRef.current = conversations;
+    }, [conversations]);
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
@@ -703,8 +714,8 @@ export default function Chat() {
         }
     }, []);
 
-    // Realtime: external changes refresh the list. A local mark-read already
-    // updates React state, so suppress that echo instead of reloading 100 rows.
+    // Realtime updates existing rows in place. A full refresh is reserved for
+    // inserts, filtered searches, or rows not present in the current page.
     useEffect(() => {
         const ch = supabase
             .channel('chat:conversations')
@@ -713,6 +724,7 @@ export default function Chat() {
                 { event: '*', schema: 'public', table: 'chat_conversations' },
                 (payload) => {
                     const row = payload.new as Partial<ChatConversation>;
+                    const oldRow = payload.old as Partial<ChatConversation>;
                     const suppressUntil = row.id
                         ? localReadMutationUntilRef.current.get(row.id)
                         : undefined;
@@ -724,6 +736,31 @@ export default function Chat() {
                         && suppressUntil > Date.now()
                     ) {
                         localReadMutationUntilRef.current.delete(row.id);
+                        return;
+                    }
+                    if (CHAT_REALTIME_DELTA_ENABLED && payload.eventType === 'DELETE' && oldRow.id) {
+                        setConversations((current) => current.filter((conversation) => conversation.id !== oldRow.id));
+                        return;
+                    }
+                    if (CHAT_REALTIME_DELTA_ENABLED && payload.eventType === 'UPDATE' && row.id) {
+                        const existing = conversationsRef.current.find((conversation) => conversation.id === row.id);
+                        if (!existing) {
+                            scheduleConversationRefresh();
+                            return;
+                        }
+                        const filters = conversationFiltersRef.current;
+                        const merged = { ...existing, ...row } as ChatConversation;
+                        if (
+                            (filters.channel && merged.channel !== filters.channel)
+                            || (filters.status && merged.status !== filters.status)
+                        ) {
+                            setConversations((current) => current.filter((conversation) => conversation.id !== row.id));
+                            return;
+                        }
+                        setConversations((current) => current
+                            .map((conversation) => conversation.id === row.id ? merged : conversation)
+                            .sort(compareConversations));
+                        if (filters.search) scheduleConversationRefresh();
                         return;
                     }
                     scheduleConversationRefresh();

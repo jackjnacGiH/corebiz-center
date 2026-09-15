@@ -87,6 +87,7 @@ const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const OPENAI_EMBED_MODEL = "text-embedding-3-small";
 const TOKEN_OPTIMIZATION_ENABLED = Deno.env.get("CHAT_TOKEN_OPTIMIZATION_ENABLED") !== "false";
+const PARALLEL_RETRIEVAL_ENABLED = Deno.env.get("CHAT_PARALLEL_RETRIEVAL_ENABLED") !== "false";
 const MAX_TOOL_ITERATIONS = TOKEN_OPTIMIZATION_ENABLED ? 3 : 5;
 const RETRY_PER_MODEL = 5;
 const DEFAULT_MATCH_COUNT = TOKEN_OPTIMIZATION_ENABLED ? 3 : 5;
@@ -2069,28 +2070,58 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
 
   const setupStartedAt = Date.now();
   const learningSettings = await getLearningSettings(admin);
-  const [geminiKey, openaiKey, persona, conversationMemory, approvedGuidance, trustedCustomerContext] = await Promise.all([
+  // Decide retrieval before loading the rest of the prompt context so the
+  // embedding request can overlap independent database reads.
+  const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history);
+  const requestToolDefinitions = selectToolDefinitions(ragRoutingQuery, history, images.length > 0);
+  const requestToolCount = requestToolDefinitions.length > 0
+    ? ((requestToolDefinitions[0] as { functionDeclarations?: unknown[] }).functionDeclarations?.length ?? 0)
+    : 0;
+  const skipKnowledgeByRoute = TOKEN_OPTIMIZATION_ENABLED && (
+    SIMPLE_ACK_RE.test(query.trim())
+    || isCallbackRequest(query)
+    || PRODUCT_TOOL_RE.test(ragRoutingQuery)
+  );
+  const shouldRetrieveKnowledge = Boolean(
+    query
+    && images.length === 0
+    && !shouldSkipRAG(ragRoutingQuery)
+    && !skipKnowledgeByRoute
+  );
+  const openaiKeyPromise = getOpenAIKey(admin);
+  const prefetchedEmbeddingPromise: Promise<{ embedding: number[]; elapsedMs: number } | null> =
+    PARALLEL_RETRIEVAL_ENABLED && shouldRetrieveKnowledge
+      ? openaiKeyPromise.then(async (apiKey) => {
+        if (!apiKey) return null;
+        const startedAt = Date.now();
+        return {
+          embedding: await embedQueryOpenAI(apiKey, query),
+          elapsedMs: Date.now() - startedAt,
+        };
+      })
+      : Promise.resolve(null);
+  const [
+    geminiKey,
+    openaiKey,
+    persona,
+    conversationMemory,
+    approvedGuidance,
+    trustedCustomerContext,
+    prefetchedEmbedding,
+  ] = await Promise.all([
     getGeminiKey(admin),
-    getOpenAIKey(admin),
+    openaiKeyPromise,
     getPersonaPrompt(admin, channel),
     loadConversationMemory(admin, conversationId, learningSettings),
     loadApprovedLearningGuidance(admin, query, learningSettings),
     loadTrustedCustomerContext(admin, trustedConversationId, learningSettings),
+    prefetchedEmbeddingPromise,
   ]);
   const setupMs = Date.now() - setupStartedAt;
   if (!geminiKey) throw new Error(MSG[lang].geminiKeyMissing);
   if (!openaiKey) throw new Error(MSG[lang].openaiKeyMissing);
 
   send({ type: "status", message: "thinking", channel });
-  // A short variant reply such as "5 นิ้ว เบอร์ 120" is still a product
-  // query when it immediately follows our size/grit clarification. Route the
-  // combined identity through the same product-only path as the original
-  // question so unrelated knowledge-base matches cannot distract the model.
-  const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history);
-  const requestToolDefinitions = selectToolDefinitions(ragRoutingQuery, history, images.length > 0);
-  const requestToolCount = requestToolDefinitions.length > 0
-    ? ((requestToolDefinitions[0] as { functionDeclarations?: unknown[] }).functionDeclarations?.length ?? 0)
-    : 0;
   let embed_ms = 0;
   let search_ms = 0;
   let matchedRows: Array<{ id: string; content: string; metadata: unknown; similarity: number; source_path: string; tags: string[]; title: string | null }> = [];
@@ -2098,15 +2129,16 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   let forcedRows: Array<{ source_path: string; chunk_index: number; title: string | null; content: string }> = [];
   let contextText: string | null = null;
 
-  const skipKnowledgeByRoute = TOKEN_OPTIMIZATION_ENABLED && (
-    SIMPLE_ACK_RE.test(query.trim())
-    || isCallbackRequest(query)
-    || PRODUCT_TOOL_RE.test(ragRoutingQuery)
-  );
-  if (query && images.length === 0 && !shouldSkipRAG(ragRoutingQuery) && !skipKnowledgeByRoute) {
-    const t0 = Date.now();
-    const queryEmbedding = await embedQueryOpenAI(openaiKey, query);
-    embed_ms = Date.now() - t0;
+  if (shouldRetrieveKnowledge) {
+    let queryEmbedding: number[];
+    if (prefetchedEmbedding) {
+      queryEmbedding = prefetchedEmbedding.embedding;
+      embed_ms = prefetchedEmbedding.elapsedMs;
+    } else {
+      const t0 = Date.now();
+      queryEmbedding = await embedQueryOpenAI(openaiKey, query);
+      embed_ms = Date.now() - t0;
+    }
     const t1 = Date.now();
     const { data: matches, error: matchErr } = await admin.rpc("match_knowledge", {
       query_embedding: JSON.stringify(queryEmbedding), match_threshold: matchThreshold, match_count, filter_language: lang, filter_visibility: "public",
