@@ -29,10 +29,16 @@ const IDS = {
   pendingConversation: "00000000-0000-4000-8000-000000000303",
 };
 
-const MIGRATION_URL = new URL(
-  "../supabase/migrations/20260913102145_customer_memory_flowaccount_sync.sql",
-  import.meta.url,
-);
+const MIGRATION_URLS = [
+  new URL(
+    "../supabase/migrations/20260913102145_customer_memory_flowaccount_sync.sql",
+    import.meta.url,
+  ),
+  new URL(
+    "../supabase/migrations/20260915024000_flowaccount_active_customer_cap.sql",
+    import.meta.url,
+  ),
+];
 
 function json(value) {
   return typeof value === "string" ? JSON.parse(value) : value;
@@ -325,9 +331,11 @@ async function bootstrap() {
     );
   `);
 
-  const migration = await readFile(MIGRATION_URL, "utf8");
-  await db.exec(migration);
-  return { db, migration };
+  const migrations = await Promise.all(
+    MIGRATION_URLS.map((migrationUrl) => readFile(migrationUrl, "utf8")),
+  );
+  for (const migration of migrations) await db.exec(migration);
+  return { db, migration: migrations.join("\n") };
 }
 
 async function asRole(db, role, subject, callback) {
@@ -1039,16 +1047,18 @@ test("FlowAccount targets include only verified LINE customers who asked within 
         channel,external_id,customer_id,display_name,metadata,
         last_message_at,last_customer_message_at
       )
-      select 'line','U-101',id,'Customer 101','{}'::jsonb,now(),now()
+      select 'line','U-101',id,'Customer 101','{}'::jsonb,
+             now()+interval '1 minute',now()+interval '1 minute'
       from customer_row;
     `);
-    await assert.rejects(
-      () => serviceQuery(
-        db,
-        "select public.get_flowaccount_active_customer_targets(180,100)",
-      ),
-      /flowaccount_active_customer_limit_exceeded/,
+    result = await serviceQuery(
+      db,
+      "select public.get_flowaccount_active_customer_targets(180,100) as targets",
     );
+    payload = json(result.rows[0].targets);
+    assert.equal(payload.target_count, 100);
+    assert.equal(payload.targets.length, 100);
+    assert.ok(payload.targets.some((target) => target.tax_id === "0500000000001"));
     await assert.rejects(
       () => authQuery(
         db,
