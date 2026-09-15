@@ -575,7 +575,7 @@ export default function Manual() {
       </div>
 
       <div className="text-center text-[11px] text-neutral-400 mt-6">
-        CoreBiz Center · คู่มือนี้อัปเดตตามฟังก์ชันล่าสุดของระบบ — อัปเดตล่าสุด 15 มิ.ย. 2569
+        CoreBiz Center · คู่มือนี้อัปเดตตามฟังก์ชันล่าสุดของระบบ — อัปเดตล่าสุด 15 ก.ย. 2569
       </div>
     </div>
   );
