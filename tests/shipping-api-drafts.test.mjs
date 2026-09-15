@@ -7,6 +7,11 @@ import * as domain from '../supabase/functions/_shared/shipping-domain.ts';
 import * as promptSpeed from '../supabase/functions/_shared/promptspeed.ts';
 
 const actor = '00000000-0000-4000-8000-000000000999';
+const gatewayToken = `e30.${Buffer.from(JSON.stringify({
+  sub: actor,
+  role: 'authenticated',
+  exp: 4102444800,
+})).toString('base64url')}.signature`;
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 function shipment(n, status = 'draft', extra = {}) {
   const draft = domain.emptyDraft();
@@ -91,17 +96,17 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
     }
     then(resolve, reject) { return Promise.resolve().then(() => this.execute()).then(resolve, reject); }
   }
-  let handler;
+  let handler, authCalls = 0;
   const noProvider = () => { throw new Error('Provider must not be called for draft list/archive'); };
   const connectionTest = connectionResult === null ? noProvider : async () => connectionResult;
   const providerRequest = provider?.request ?? noProvider;
   const reconcile = provider?.reconcile ?? noProvider;
   runInNewContext(compiled, {
-    exports: {}, Error, Request, Response, URL, crypto,
+    exports: {}, Error, Request, Response, URL, crypto, atob,
     Deno: { env: { get: () => '' }, serve: callback => { handler = callback; } },
     require: name => {
       if (name.startsWith('npm:@supabase/')) return { createClient: () => ({
-        auth: { getUser: async () => ({ data: { user: { id: actor } }, error: null }) },
+        auth: { getUser: async () => { authCalls += 1; return { data: { user: { id: actor } }, error: null }; } },
         from: table => new Query(table),
       }) };
       if (name.endsWith('/shipping-domain.ts')) return domain;
@@ -121,9 +126,9 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
       throw new Error(`Unexpected import: ${name}`);
     },
   });
-  return { tables, queries, async call(action, payload = {}, authenticated = true) {
+  return { tables, queries, authCalls: () => authCalls, async call(action, payload = {}, authenticated = true) {
     const response = await handler(new Request('https://test.invalid/shipping-api', {
-      method: 'POST', headers: authenticated ? { Authorization: 'Bearer synthetic-test-token' } : {},
+      method: 'POST', headers: authenticated ? { Authorization: `Bearer ${gatewayToken}` } : {},
       body: JSON.stringify({ action, ...payload }),
     }));
     return { status: response.status, body: await response.json() };
@@ -157,6 +162,7 @@ test('initial load returns authorization settings and the first shipment page in
   assert.equal(result.body.bootstrap.brand.name, 'Test company');
   assert.deepEqual(result.body.shipments.map(row => row.id), [visible.id]);
   assert.equal(result.body.count, 1);
+  assert.equal(h.authCalls(), 0, 'the verified gateway subject avoids a second Auth network request');
   for (const table of ['profiles', 'shipping_permissions', 'shipping_settings']) {
     assert.equal(h.queries.filter(query => query.table === table).length, 1, `${table} is read once`);
   }

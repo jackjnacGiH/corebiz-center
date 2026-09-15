@@ -53,6 +53,32 @@ const record = (v: unknown): Record<string, unknown> =>
     : {};
 const small = (v: unknown, max = 100) =>
   typeof v === "string" ? v.trim().slice(0, max) : "";
+/**
+ * Supabase's Edge gateway verifies the bearer JWT before this function runs
+ * (`verify_jwt = true`). Reading the already-verified subject locally avoids a
+ * second Auth HTTP round-trip on every Shipping read, which otherwise dominates
+ * the page load from Thailand to the Sydney project region.
+ */
+function verifiedGatewayUserId(token: string): string | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3 || !parts[1]) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const claims = record(JSON.parse(atob(padded)));
+    const subject = small(claims.sub, 80);
+    const expiresAt = Number(claims.exp);
+    if (
+      !isUuid(subject) ||
+      claims.role !== "authenticated" ||
+      !Number.isFinite(expiresAt) ||
+      expiresAt <= Math.floor(Date.now() / 1000)
+    ) return null;
+    return subject;
+  } catch {
+    return null;
+  }
+}
 const connectionMessageCodes = new Set([
   "signed_request_accepted",
   "generated_locally_not_verified",
@@ -173,9 +199,8 @@ Deno.serve(async (req) => {
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
   try {
-    const { data: auth, error: authErr } = await db.auth.getUser(token);
-    if (authErr || !auth.user) return fail("unauthorized", 401);
-    const userId = auth.user.id;
+    const userId = verifiedGatewayUserId(token);
+    if (!userId) return fail("unauthorized", 401);
     const [
       { data: profile, error: profileErr },
       { data: grant, error: grantErr },

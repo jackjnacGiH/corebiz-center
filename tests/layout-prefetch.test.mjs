@@ -32,6 +32,12 @@ function prefetchesAt(pathname) {
         collapsed: false, mobileOpen: false, isMobile: false,
         toggleCollapsed() {}, openMobile() {}, closeMobile() {}, setMobileOpen() {},
       }) };
+      if (name === '../../lib/AuthProvider') return { useAuth: () => ({
+        session: { user: { id: 'user-1' } }, profile: { role: 'owner' },
+      }) };
+      if (name === '../../lib/shipping-api') return {
+        shippingApi: { initial: () => { warmed.push('shipping:initial'); return Promise.resolve(); } },
+      };
       if (name === './Sidebar' || name === './TopBar' || name === '../BackToTop') return { default: name };
       if (name === '@/lib/utils') return { cn: (...values) => values.filter(Boolean).join(' ') };
       if (name === '../../lib/cache') return {
@@ -57,5 +63,7 @@ test('Shipping does not start full-list background prefetches', () => {
 });
 
 test('other routes keep the existing background cache warm-up', () => {
-  assert.deepEqual(prefetchesAt('/inventory'), ['products', 'categories', 'warehouses', 'customers']);
+  assert.deepEqual(prefetchesAt('/inventory'), [
+    'shipping:initial', 'products', 'categories', 'warehouses', 'customers',
+  ]);
 });
