@@ -27,7 +27,7 @@ independent rollout flags.
 - An older or slower turn cannot overwrite a newer turn; a staff-locked memory cannot be overwritten by the bot.
 - A price is never stated unless the exact SKU and quantity resolve through the authoritative pricing RPC.
 - FlowAccount import must complete as one immutable generation; a partial/failed run cannot affect pricing.
-- The active FlowAccount cohort is selected from actual inbound LINE messages, capped at 100 exact verified customers. Empty cohorts skip provider reads and a cohort over the cap fails closed.
+- The active FlowAccount cohort is selected from actual inbound LINE messages and contains the 100 most recently active exact verified customers at most. Empty cohorts skip provider reads; older eligible customers enter a later cohort when they message again.
 - Baseline for the seven days before rollout: 304 successful Gemini runs, total response time p50 6.465 s and p95 14.084 s; end-to-end p50 11.146 s and p95 22.483 s.
 - The rollout must not materially regress the baseline or the Shipping initial/full-reload path. Any regression, error-rate increase, identity ambiguity or stale cache disables the new flag and returns traffic to the current path.
 
