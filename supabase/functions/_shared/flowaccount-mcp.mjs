@@ -775,8 +775,10 @@ export function assertExpectedCompany(currentCompany, expected = {}) {
   if (!expectedId && !expectedName) {
     throw new FlowAccountSafeError("oauth_configuration_invalid", 500);
   }
-  if ((expectedId && currentCompany?.providerCompanyId !== expectedId) ||
-      (expectedName && currentCompany?.providerCompanyName !== expectedName)) {
+  const matchesExpectedTenant = expectedId
+    ? currentCompany?.providerCompanyId === expectedId
+    : currentCompany?.providerCompanyName === expectedName;
+  if (!matchesExpectedTenant) {
     throw new FlowAccountSafeError("flowaccount_company_mismatch", 409);
   }
   return currentCompany;

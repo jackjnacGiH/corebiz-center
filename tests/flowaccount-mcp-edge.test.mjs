@@ -619,11 +619,19 @@ test("current FlowAccount company is discovered read-only and must be exactly on
     }),
     /flowaccount_company_mismatch/,
   );
-  assert.throws(
-    () => assertExpectedCompany(current, {
+  assert.deepEqual(
+    assertExpectedCompany(current, {
       id: "JNAC01",
-      name: "Wrong Company",
+      name: "ชื่อที่แสดงผลต่างรูปแบบ",
     }),
+    current,
+  );
+  assert.deepEqual(
+    assertExpectedCompany(current, { name: "J NAC (THAILAND) CO.,LTD." }),
+    current,
+  );
+  assert.throws(
+    () => assertExpectedCompany(current, { name: "Wrong Company" }),
     /flowaccount_company_mismatch/,
   );
   assert.throws(() => assertExpectedCompany(current, {}), /oauth_configuration_invalid/);
