@@ -9,6 +9,8 @@
  *
  * v33 — lower-latency LINE processing and privacy-safe timing telemetry
  *
+ * v38 — compact recent history for lower Gemini prompt cost
+ *
  * Reuses briefly cached channel/bot flags, fetches a LINE profile only when a
  * conversation is first created, lets the incoming-message unique index handle
  * cheap event retries, and measures the LINE-to-RAG/reply path without storing
@@ -81,6 +83,10 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const TOKEN_OPTIMIZATION_ENABLED = Deno.env.get("CHAT_TOKEN_OPTIMIZATION_ENABLED") !== "false";
+const CHAT_HISTORY_FETCH_LIMIT = TOKEN_OPTIMIZATION_ENABLED ? 12 : 20;
+const CHAT_HISTORY_ITEM_LIMIT = TOKEN_OPTIMIZATION_ENABLED ? 8 : 20;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -714,7 +720,7 @@ function composeQuoteReply(answer: string, quoteLink: string | null): string {
 async function loadHistory(admin: SupabaseClient, conversationId: string): Promise<Array<{ role: string; content: string }>> {
   const { data } = await admin.from("chat_messages")
     .select("sender_type, content, metadata").eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false }).limit(20);
+    .order("created_at", { ascending: false }).limit(CHAT_HISTORY_FETCH_LIMIT);
   const rows = (data ?? []) as Array<{ sender_type: string; content: string; metadata: Record<string, unknown> | null }>;
   return rows.reverse()
     .filter((r) => !(r.metadata && r.metadata.quote_link))   // drop dedicated quote-link messages
@@ -722,7 +728,8 @@ async function loadHistory(admin: SupabaseClient, conversationId: string): Promi
       role: r.sender_type === "customer" ? "user" : "assistant",
       content: stripQuoteLink(r.content),                     // strip any echoed link from other messages
     }))
-    .filter((m) => m.content.length > 0);
+    .filter((m) => m.content.length > 0)
+    .slice(-CHAT_HISTORY_ITEM_LIMIT);
 }
 
 // LINE can send an image and a short text such as "ขอราคาหน่อย" as separate
