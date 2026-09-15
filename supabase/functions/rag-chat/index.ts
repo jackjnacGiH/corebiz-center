@@ -86,14 +86,17 @@ import {
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const OPENAI_EMBED_MODEL = "text-embedding-3-small";
-const MAX_TOOL_ITERATIONS = 5;
+const TOKEN_OPTIMIZATION_ENABLED = Deno.env.get("CHAT_TOKEN_OPTIMIZATION_ENABLED") !== "false";
+const MAX_TOOL_ITERATIONS = TOKEN_OPTIMIZATION_ENABLED ? 3 : 5;
 const RETRY_PER_MODEL = 5;
-const DEFAULT_MATCH_COUNT = 5;
+const DEFAULT_MATCH_COUNT = TOKEN_OPTIMIZATION_ENABLED ? 3 : 5;
 const DEFAULT_MATCH_THRESHOLD = 0.3;
-const MAX_CONTEXT_CHUNKS = 30;
+const MAX_CONTEXT_CHUNKS = TOKEN_OPTIMIZATION_ENABLED ? 5 : 30;
+const MAX_KNOWLEDGE_CONTEXT_CHARS = 6_000;
 const MAX_QUERY_CHARS = 4_000;
-const MAX_HISTORY_ITEMS = 20;
-const MAX_HISTORY_CHARS = 4_000;
+const MAX_HISTORY_ITEMS = TOKEN_OPTIMIZATION_ENABLED ? 8 : 20;
+const MAX_HISTORY_ITEM_CHARS = TOKEN_OPTIMIZATION_ENABLED ? 1_200 : 4_000;
+const MAX_HISTORY_TOTAL_CHARS = TOKEN_OPTIMIZATION_ENABLED ? 8_000 : 80_000;
 const MAX_IMAGE_BASE64_CHARS = 8_000_000;
 const PERSONA_CACHE_TTL_MS = 60_000;
 const KEYWORD_CACHE_TTL_MS = 60_000;
@@ -336,11 +339,60 @@ const TOOL_DEFINITIONS = [
   },
 ];
 
+const QUOTE_TOOL_RE = /ใบเสนอราคา|เสนอราคา|quotation|\bquote\b/i;
+const PRICE_TOOL_RE = /ราคา|เท่าไหร่|เท่าไร|ส่วนลด|\bprice\b|\bdiscount\b/i;
+const PRODUCT_TOOL_RE = /สินค้า|รหัสสินค้า|รุ่น|ขนาด|เบอร์|กริต|กระดาษทราย|จานทราย|ล้อทราย|แผ่นขัด|สายพาน|ใบขัด|ใบตัด|ใบเจียร|เครื่องมือ|อุปกรณ์|สต็อก|\bsku\b|\bgrit\b|\bproduct\b|\bstock\b|\babrasive\b|\bpneumatic\b/i;
+const GROUP_TOOL_RE = /กลุ่มสินค้า|หมวดสินค้า|ประเภทสินค้า|\bcategory\b|\bproduct\s*group\b/i;
+const SIMPLE_ACK_RE = /^(?:(?:สวัสดี|หวัดดี|ขอบคุณ|ขอบใจ|โอเค|รับทราบ|ได้)(?:มาก)?(?:ครับ|ค่ะ|คะ|จ้า)?|ครับ|ค่ะ|hello|hi|thanks?|thank\s+you|ok|okay)[\s!🙏😊🙂.]*$/iu;
+
+function selectToolDefinitions(
+  query: string,
+  history: Array<{ role: string; content: string }>,
+  hasImages: boolean,
+): unknown[] {
+  if (!TOKEN_OPTIMIZATION_ENABLED) return TOOL_DEFINITIONS;
+  if (hasImages) return TOOL_DEFINITIONS;
+  const recentContext = [...history.slice(-4).map((item) => item.content), query].join("\n");
+  const recentActionContext = history.slice(-2).some((item) => (
+    QUOTE_TOOL_RE.test(item.content)
+    || PRICE_TOOL_RE.test(item.content)
+    || PRODUCT_TOOL_RE.test(item.content)
+  ));
+  if (SIMPLE_ACK_RE.test(query.trim()) && !recentActionContext) return [];
+
+  const names = new Set<string>();
+  if (isCallbackRequest(query)) names.add("capture_lead");
+  const quoteIntent = QUOTE_TOOL_RE.test(recentContext);
+  const productIntent = quoteIntent
+    || PRICE_TOOL_RE.test(recentContext)
+    || PRODUCT_TOOL_RE.test(recentContext)
+    || shouldSkipRAG(query);
+  if (productIntent) {
+    names.add("find_products");
+    names.add("get_product_detail");
+    names.add("get_exact_price");
+    names.add("capture_lead");
+  }
+  if (GROUP_TOOL_RE.test(recentContext)) {
+    names.add("list_product_groups");
+    names.add("get_group_members");
+    names.add("list_categories");
+  }
+  if (quoteIntent) {
+    names.add("link_quote_customer");
+    names.add("request_quote");
+  }
+  if (names.size === 0) names.add("capture_lead");
+
+  const declarations = TOOL_DEFINITIONS[0].functionDeclarations.filter((tool) => names.has(tool.name));
+  return declarations.length > 0 ? [{ functionDeclarations: declarations }] : [];
+}
+
 const PRODUCT_COLUMNS_CUSTOMER = "sku, name_th, name_en, brand, unit, status, weight_kg, feature_tags, tags, barcode, images, min_order_qty";
 const PRODUCT_MATCH_COLUMNS = "sku, name_th, name_en, brand, status, feature_tags, tags, barcode, group:product_groups(name)";
 const MAX_PRODUCT_MATCH_SCAN = 1_000;
-const MAX_PRODUCTS_IN_TOOL_RESULT = 25;
-const MAX_PRODUCTS_DURING_SELECTION = 12;
+const MAX_PRODUCTS_IN_TOOL_RESULT = TOKEN_OPTIMIZATION_ENABLED ? 8 : 25;
+const MAX_PRODUCTS_DURING_SELECTION = TOKEN_OPTIMIZATION_ENABLED ? 8 : 12;
 
 function escapeLike(s: string): string { return s.replace(/[%_]/g, (m) => "\\" + m); }
 function escapeRegex(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -840,6 +892,20 @@ async function dispatchTool(
       default: return toolResponse({ error: `Unknown tool: ${name}` });
     }
   } catch (e) { return toolResponse({ error: (e as Error).message ?? String(e) }); }
+}
+
+function compactToolResultForModel(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return value.slice(0, 1_200);
+  if (!value || typeof value !== "object") return value;
+  if (depth >= 4) return "[truncated]";
+  if (Array.isArray(value)) {
+    return value.slice(0, 8).map((item) => compactToolResultForModel(item, depth + 1));
+  }
+  const compact: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 30)) {
+    compact[key] = compactToolResultForModel(item, depth + 1);
+  }
+  return compact;
 }
 
 const cleanStr = (v: unknown) => { const t = (v == null ? "" : String(v)).trim(); return t || null; };
@@ -1481,9 +1547,14 @@ function buildSystemPrompt(
   guidance: LearningGuidance[],
   customerContext: TrustedCustomerContext | null,
   structuredMemoryEnabled: boolean,
+  compactTooling: boolean,
 ): string {
   const safety  = lang === "th" ? SAFETY_RULES_TH  : SAFETY_RULES_EN;
-  const tooling = lang === "th" ? TOOLING_GUIDE_TH : TOOLING_GUIDE_EN;
+  const tooling = compactTooling
+    ? (lang === "th"
+      ? "ตอบสั้น เป็นธรรมชาติ และใช้เฉพาะข้อมูลที่ตรวจสอบได้จากบริบทหรือความจำที่ให้มา หากไม่มีคำตอบที่ยืนยันได้ ให้เรียก capture_lead เมื่อมีเครื่องมือนี้ ห้ามเดาข้อมูล"
+      : "Reply briefly and naturally using only verified context or memory. If the answer cannot be verified, call capture_lead when available. Never invent facts.")
+    : (lang === "th" ? TOOLING_GUIDE_TH : TOOLING_GUIDE_EN);
   const ctx = contextText ? `\n\n[knowledge base context]\n${contextText}` : "";
   const learning = learningPromptContext(memory, guidance, customerContext, structuredMemoryEnabled);
   const learningCtx = learning ? `\n\n[guarded learning context]\n${learning}` : "";
@@ -1492,12 +1563,13 @@ function buildSystemPrompt(
 
 interface GeminiStreamResult { fullText: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }>; allParts: unknown[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; model: string; }
 
-async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: string, contents: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
+async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
+  const toolConfig = tools.length > 0 ? { tools } : {};
   const res = await fetch(`${GEMINI_BASE}/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] }, contents, tools: TOOL_DEFINITIONS,
-      generationConfig: { temperature: 0, maxOutputTokens: 1024, topP: 0.95 },
+      systemInstruction: { parts: [{ text: systemPrompt }] }, contents, ...toolConfig,
+      generationConfig: { temperature: 0, maxOutputTokens: TOKEN_OPTIMIZATION_ENABLED ? 512 : 1024, topP: 0.95 },
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -1549,11 +1621,11 @@ async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: str
   return { fullText, toolCalls, allParts, usage, model };
 }
 
-async function streamGeminiWithFallback(apiKey: string, systemPrompt: string, contents: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
+async function streamGeminiWithFallback(apiKey: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
   let lastErr: Error | null = null;
   for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt < RETRY_PER_MODEL; attempt++) {
-      try { return await streamGeminiOnce(apiKey, model, systemPrompt, contents, onText); }
+      try { return await streamGeminiOnce(apiKey, model, systemPrompt, contents, tools, onText); }
       catch (e) {
         lastErr = e as Error;
         const msg = (e as Error).message ?? "";
@@ -1772,15 +1844,18 @@ Deno.serve(async (req: Request) => {
   }
   const query = rawQuery;
   const images = normalizeImages(body.images);
-  const history = (Array.isArray(body.history) ? body.history : [])
-    .slice(-MAX_HISTORY_ITEMS)
-    .map((item: unknown) => {
-      const row = (item ?? {}) as Record<string, unknown>;
-      return {
-        role: row.role === "assistant" ? "assistant" : "user",
-        content: String(row.content ?? "").slice(0, MAX_HISTORY_CHARS),
-      };
-    });
+  const rawHistory = Array.isArray(body.history) ? body.history : [];
+  const history: Array<{ role: string; content: string }> = [];
+  let historyChars = 0;
+  for (const item of rawHistory.slice(-MAX_HISTORY_ITEMS).reverse()) {
+    const row = (item ?? {}) as Record<string, unknown>;
+    const remaining = MAX_HISTORY_TOTAL_CHARS - historyChars;
+    if (remaining <= 0) break;
+    const content = String(row.content ?? "").trim().slice(0, Math.min(MAX_HISTORY_ITEM_CHARS, remaining));
+    if (!content) continue;
+    history.unshift({ role: row.role === "assistant" ? "assistant" : "user", content });
+    historyChars += content.length;
+  }
   const match_count = Math.max(1, Math.min(MAX_CONTEXT_CHUNKS, Number(body.match_count ?? DEFAULT_MATCH_COUNT) || DEFAULT_MATCH_COUNT));
   const matchThreshold = Math.max(0, Math.min(1, Number(body.match_threshold ?? DEFAULT_MATCH_THRESHOLD) || DEFAULT_MATCH_THRESHOLD));
   const wantStream = body.stream !== false;
@@ -2012,6 +2087,10 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   // combined identity through the same product-only path as the original
   // question so unrelated knowledge-base matches cannot distract the model.
   const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history);
+  const requestToolDefinitions = selectToolDefinitions(ragRoutingQuery, history, images.length > 0);
+  const requestToolCount = requestToolDefinitions.length > 0
+    ? ((requestToolDefinitions[0] as { functionDeclarations?: unknown[] }).functionDeclarations?.length ?? 0)
+    : 0;
   let embed_ms = 0;
   let search_ms = 0;
   let matchedRows: Array<{ id: string; content: string; metadata: unknown; similarity: number; source_path: string; tags: string[]; title: string | null }> = [];
@@ -2019,7 +2098,12 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   let forcedRows: Array<{ source_path: string; chunk_index: number; title: string | null; content: string }> = [];
   let contextText: string | null = null;
 
-  if (query && images.length === 0 && !shouldSkipRAG(ragRoutingQuery)) {
+  const skipKnowledgeByRoute = TOKEN_OPTIMIZATION_ENABLED && (
+    SIMPLE_ACK_RE.test(query.trim())
+    || isCallbackRequest(query)
+    || PRODUCT_TOOL_RE.test(ragRoutingQuery)
+  );
+  if (query && images.length === 0 && !shouldSkipRAG(ragRoutingQuery) && !skipKnowledgeByRoute) {
     const t0 = Date.now();
     const queryEmbedding = await embedQueryOpenAI(openaiKey, query);
     embed_ms = Date.now() - t0;
@@ -2030,7 +2114,16 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     if (matchErr) throw matchErr;
     matchedRows = (matches ?? []) as typeof matchedRows;
     const sourcePaths = [...new Set(matchedRows.map((m) => m.source_path))];
-    if (sourcePaths.length > 0) {
+    if (TOKEN_OPTIMIZATION_ENABLED) {
+      // Vector search already returns the most relevant chunks. Sending every
+      // chunk from every matched document caused the largest prompt spikes.
+      expandedRows = matchedRows.slice(0, MAX_CONTEXT_CHUNKS).map((row, index) => ({
+        source_path: row.source_path,
+        chunk_index: index,
+        title: row.title,
+        content: row.content,
+      }));
+    } else if (sourcePaths.length > 0) {
       const { data: all, error: allErr } = await admin
         .from("knowledge_chunks").select("source_path, chunk_index, title, content")
         .in("source_path", sourcePaths).eq("visibility", "public")
@@ -2054,7 +2147,8 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
           .select("source_path, chunk_index, title, content")
           .ilike("source_path", "%บัญชี%")
           .eq("visibility", "public")
-          .order("chunk_index", { ascending: true });
+          .order("chunk_index", { ascending: true })
+          .limit(MAX_CONTEXT_CHUNKS);
         if (paymentDocs && paymentDocs.length > 0) {
           expandedRows = [...paymentDocs, ...expandedRows].slice(0, MAX_CONTEXT_CHUNKS);
         }
@@ -2077,7 +2171,8 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
           .or("source_path.ilike.%location%,source_path.ilike.%แผนที่%")
           .eq("visibility", "public")
           .order("source_path", { ascending: true })
-          .order("chunk_index", { ascending: true });
+          .order("chunk_index", { ascending: true })
+          .limit(MAX_CONTEXT_CHUNKS);
         if (locationErr) throw locationErr;
         if (locationDocs && locationDocs.length > 0) {
           forcedRows = locationDocs;
@@ -2088,6 +2183,15 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     // ── End forced location retrieval ─────────────────────────────────────
 
     if (expandedRows.length > 0) {
+      if (TOKEN_OPTIMIZATION_ENABLED) {
+        const seen = new Set<string>();
+        expandedRows = expandedRows.filter((row) => {
+          const key = `${row.source_path}\u0000${row.content}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, MAX_CONTEXT_CHUNKS);
+      }
       const bySource = new Map<string, typeof expandedRows>();
       for (const r of expandedRows) {
         const arr = bySource.get(r.source_path) ?? [];
@@ -2097,8 +2201,15 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       let i = 1;
       for (const [sp, rows] of bySource) {
         const title = rows[0]?.title ? " — " + rows[0].title : "";
-        const bodyTxt = rows.map((r) => r.content).join("\n\n");
-        blocks.push(`[ที่มา ${i}: ${sp}${title}]\n${bodyTxt}`); i++;
+        const prefix = `[ที่มา ${i}: ${sp}${title}]\n`;
+        const usedChars = blocks.join("\n\n---\n\n").length;
+        const separatorChars = blocks.length > 0 ? "\n\n---\n\n".length : 0;
+        const remaining = TOKEN_OPTIMIZATION_ENABLED
+          ? MAX_KNOWLEDGE_CONTEXT_CHARS - usedChars - separatorChars - prefix.length
+          : Number.POSITIVE_INFINITY;
+        if (remaining <= 0) break;
+        const bodyTxt = rows.map((r) => r.content).join("\n\n").slice(0, remaining);
+        blocks.push(`${prefix}${bodyTxt}`); i++;
       }
       contextText = blocks.join("\n\n---\n\n");
     }
@@ -2114,6 +2225,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     approvedGuidance,
     trustedCustomerContext,
     learningSettings.structured_memory_enabled,
+    TOKEN_OPTIMIZATION_ENABLED && requestToolCount <= 1,
   );
   const generationStartedAt = Date.now();
   const defaultImgPrompt = lang === "en"
@@ -2162,6 +2274,13 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   };
   const contextualProductQuery = ragRoutingQuery;
   const hasContextualProductQuery = contextualProductQuery !== query;
+  console.info("chat token budget", {
+    optimization_enabled: TOKEN_OPTIMIZATION_ENABLED,
+    history_items: history.length,
+    history_chars: history.reduce((total, item) => total + item.content.length, 0),
+    context_chars: contextText?.length ?? 0,
+    tool_count: requestToolCount,
+  });
   let productSelectionPending = false;
   // Raw-request lower bound, captured before tools run. This prevents one
   // successful lookup from authorizing a partial answer to a multi-item ask.
@@ -2174,7 +2293,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let iterText = "";
     const llmStartedAt = Date.now();
-    const r = await streamGeminiWithFallback(geminiKey, systemPrompt, contents, (chunk) => {
+    const r = await streamGeminiWithFallback(geminiKey, systemPrompt, contents, requestToolDefinitions, (chunk) => {
       if (chunk && firstTokenMs === null) firstTokenMs = Date.now() - telemetry.startedAt;
       // Always hold the first model turn until its function calls are known.
       // This prevents eager prose from reaching the customer before product
@@ -2253,7 +2372,10 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         }
         executed = true;
       }
-      responseParts[index] = { functionResponse: { name: call.name, response: result } };
+      const modelResult = TOKEN_OPTIMIZATION_ENABLED
+        ? compactToolResultForModel(result)
+        : result;
+      responseParts[index] = { functionResponse: { name: call.name, response: modelResult } };
 
       let resultMeta: ToolResultMeta | undefined = dispatchResultMeta;
       if (call.name === "find_products" || call.name === "get_product_detail") {
