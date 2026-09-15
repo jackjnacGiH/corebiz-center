@@ -55,6 +55,8 @@ import ChatAvatar from './ChatAvatar';
 interface Props {
   conversation: ChatConversation;
   onConversationChanged?: () => void;
+  customerSnapshot?: CustomerSnapshot | null;
+  onCustomerSnapshotChanged?: (customer: CustomerSnapshot | null) => void;
 }
 
 const MEMORY_LABELS: Record<string, string> = {
@@ -98,10 +100,15 @@ function memoryFactLabel(value: string): string {
   return match ? `${memoryLabel(match[1])} ${memoryLabel(match[2])}` : memoryLabel(value);
 }
 
-export default function ContactPanel({ conversation, onConversationChanged }: Props) {
+export default function ContactPanel({
+  conversation,
+  onConversationChanged,
+  customerSnapshot = null,
+  onCustomerSnapshotChanged,
+}: Props) {
   const [aliasEditing, setAliasEditing] = useState(false);
   const [aliasDraft, setAliasDraft] = useState(conversation.alias_name ?? '');
-  const [customer, setCustomer] = useState<CustomerSnapshot | null>(null);
+  const [customer, setCustomer] = useState<CustomerSnapshot | null>(customerSnapshot);
   const [packers, setPackers] = useState<StaffProfile[]>([]);
   const [notes, setNotes] = useState<ChatContactNote[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
@@ -146,8 +153,10 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
       if (id) {
         const snap = await chatProfileApi.getCustomerSnapshot(id).catch(() => null);
         setCustomer(snap);
+        onCustomerSnapshotChanged?.(snap);
       } else {
         setCustomer(null);
+        onCustomerSnapshotChanged?.(null);
       }
       setLinking(false); setCustQuery(''); setCustResults([]);
       onConversationChanged?.();
@@ -218,21 +227,11 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
     }
   }
 
-  // Load customer snapshot (only when conversation has a linked customer)
+  // Chat owns the customer snapshot so the quote preview and this panel share
+  // one request instead of loading the same customer twice on every room.
   useEffect(() => {
-    if (!conversation.customer_id) {
-      setCustomer(null);
-      return;
-    }
-    let cancelled = false;
-    chatProfileApi
-      .getCustomerSnapshot(conversation.customer_id)
-      .then((c) => !cancelled && setCustomer(c))
-      .catch(() => !cancelled && setCustomer(null));
-    return () => {
-      cancelled = true;
-    };
-  }, [conversation.customer_id]);
+    setCustomer(customerSnapshot);
+  }, [customerSnapshot]);
 
   // Load packer staff list (once)
   useEffect(() => {

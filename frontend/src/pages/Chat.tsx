@@ -58,6 +58,7 @@ import {
     type ChatChannel,
     type ChatConversation,
     type ChatMessage,
+    type ChatMessagePage,
     type ChatStatus,
     type CustomerSnapshot,
 } from '../lib/api';
@@ -123,8 +124,55 @@ function statusLabel(
 // Status flow shown in the UI. `archived` is kept in the DB enum for
 // historical rows but no longer exposed — collapses into 'เสร็จสิ้น'.
 const ACTIVE_STATUSES: ChatStatus[] = ['open', 'assigned', 'resolved'];
-const MESSAGE_PAGE_SIZE = 100;
+const CHAT_FAST_LOAD_ENABLED = import.meta.env.VITE_CHAT_FAST_LOAD_ENABLED !== 'false';
+const MESSAGE_PAGE_SIZE = CHAT_FAST_LOAD_ENABLED ? 50 : 100;
 const CONVERSATION_REFRESH_DELAY_MS = 200;
+const MESSAGE_LOAD_TIMEOUT_MS = 10_000;
+const MESSAGE_CACHE_TTL_MS = 2 * 60_000;
+const MAX_CACHED_CONVERSATIONS = 20;
+
+interface CachedMessagePage extends ChatMessagePage {
+    cachedAt: number;
+}
+
+const messagePageCache = new Map<string, CachedMessagePage>();
+
+function readMessageCache(conversationId: string): ChatMessagePage | null {
+    const cached = messagePageCache.get(conversationId);
+    if (!cached || Date.now() - cached.cachedAt > MESSAGE_CACHE_TTL_MS) {
+        messagePageCache.delete(conversationId);
+        return null;
+    }
+    messagePageCache.delete(conversationId);
+    messagePageCache.set(conversationId, cached);
+    return { messages: cached.messages, hasMore: cached.hasMore };
+}
+
+function writeMessageCache(conversationId: string, page: ChatMessagePage) {
+    messagePageCache.delete(conversationId);
+    messagePageCache.set(conversationId, {
+        messages: [...page.messages],
+        hasMore: page.hasMore,
+        cachedAt: Date.now(),
+    });
+    while (messagePageCache.size > MAX_CACHED_CONVERSATIONS) {
+        const oldest = messagePageCache.keys().next().value as string | undefined;
+        if (!oldest) break;
+        messagePageCache.delete(oldest);
+    }
+}
+
+function updateCachedMessageRows(
+    conversationId: string,
+    updater: (messages: ChatMessage[]) => ChatMessage[],
+) {
+    const cached = messagePageCache.get(conversationId);
+    if (!cached) return;
+    writeMessageCache(conversationId, {
+        messages: updater(cached.messages),
+        hasMore: cached.hasMore,
+    });
+}
 
 // Force-download an image. Storage URLs are cross-origin, so the <a download>
 // attribute is ignored by browsers — fetch the bytes as a blob and save that.
@@ -293,6 +341,7 @@ export default function Chat() {
     const conversationFiltersRef = useRef({ channel, status, search: debouncedSearch });
     const conversationRefreshRef = useRef({ inFlight: false, queued: false, version: 0 });
     const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const localReadMutationUntilRef = useRef(new Map<string, number>());
     useEffect(() => {
         conversationFiltersRef.current = { channel, status, search: debouncedSearch };
     }, [channel, status, debouncedSearch]);
@@ -358,6 +407,7 @@ export default function Chat() {
             setQuoteCustomerPreview(null);
             return;
         }
+        setQuoteCustomerPreview(null);
         let cancelled = false;
         void chatProfileApi.getCustomerSnapshot(selectedConversation.customer_id)
             .then((customer) => { if (!cancelled) setQuoteCustomerPreview(customer); })
@@ -368,6 +418,7 @@ export default function Chat() {
     const [loadingOlderMsgs, setLoadingOlderMsgs] = useState(false);
     const [hasOlderMessages, setHasOlderMessages] = useState(false);
     const [msgErr, setMsgErr] = useState<string | null>(null);
+    const [messageReloadKey, setMessageReloadKey] = useState(0);
     const selectedIdRef = useRef(selectedId);
     const selectedConversationRef = useRef(selectedConversation);
     useEffect(() => {
@@ -517,14 +568,31 @@ export default function Chat() {
         }
     }, []);
 
-    // Realtime: any change to chat_conversations triggers a list refresh
+    // Realtime: external changes refresh the list. A local mark-read already
+    // updates React state, so suppress that echo instead of reloading 100 rows.
     useEffect(() => {
         const ch = supabase
             .channel('chat:conversations')
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'chat_conversations' },
-                scheduleConversationRefresh,
+                (payload) => {
+                    const row = payload.new as Partial<ChatConversation>;
+                    const suppressUntil = row.id
+                        ? localReadMutationUntilRef.current.get(row.id)
+                        : undefined;
+                    if (
+                        CHAT_FAST_LOAD_ENABLED
+                        && row.id
+                        && row.unread_count === 0
+                        && suppressUntil
+                        && suppressUntil > Date.now()
+                    ) {
+                        localReadMutationUntilRef.current.delete(row.id);
+                        return;
+                    }
+                    scheduleConversationRefresh();
+                },
             )
             .subscribe();
         return () => { void supabase.removeChannel(ch); };
@@ -533,8 +601,34 @@ export default function Chat() {
     const markConversationRead = useCallback(async (
         conversationId: string,
         lastSeenCustomerAt: string | null,
+        currentStatus?: ChatStatus,
     ) => {
-        const marked = await chatInboxApi.markRead(conversationId, lastSeenCustomerAt);
+        const current = selectedConversationRef.current?.id === conversationId
+            ? selectedConversationRef.current
+            : null;
+        if (
+            CHAT_FAST_LOAD_ENABLED
+            && current
+            && currentStatus !== 'open'
+            && current.status !== 'open'
+            && current.unread_count <= 0
+        ) return true;
+
+        if (CHAT_FAST_LOAD_ENABLED) {
+            const now = Date.now();
+            for (const [id, expiresAt] of localReadMutationUntilRef.current) {
+                if (expiresAt <= now) localReadMutationUntilRef.current.delete(id);
+            }
+            localReadMutationUntilRef.current.set(conversationId, Date.now() + 5_000);
+        }
+        const startedAt = performance.now();
+        const marked = await chatInboxApi.markRead(conversationId, lastSeenCustomerAt, currentStatus);
+        console.info('[chat-performance]', {
+            phase: 'mark_read',
+            duration_ms: Math.round(performance.now() - startedAt),
+            updated: marked,
+        });
+        if (!marked) localReadMutationUntilRef.current.delete(conversationId);
         if (!marked) return false;
         const asRead = (conversation: ChatConversation): ChatConversation => ({
             ...conversation,
@@ -563,47 +657,79 @@ export default function Chat() {
             return;
         }
         let cancelled = false;
-        setLoadingMsgs(true);
+        const controller = new AbortController();
+        const cached = CHAT_FAST_LOAD_ENABLED ? readMessageCache(selectedId) : null;
+        setLoadingMsgs(!cached);
         setLoadingOlderMsgs(false);
-        setHasOlderMessages(false);
-        setMessages([]);
+        setHasOlderMessages(cached?.hasMore ?? false);
+        setMessages(cached?.messages ?? []);
         setMsgErr(null);
         void (async () => {
+            const startedAt = performance.now();
+            const timeout = window.setTimeout(() => controller.abort(), MESSAGE_LOAD_TIMEOUT_MS);
             try {
-                let page = await chatInboxApi.listMessages(selectedId, { limit: MESSAGE_PAGE_SIZE });
+                let page = await chatInboxApi.listMessages(selectedId, {
+                    limit: MESSAGE_PAGE_SIZE,
+                    signal: controller.signal,
+                });
+                window.clearTimeout(timeout);
                 if (cancelled) return;
                 let rows = page.messages;
                 setMessages(rows);
                 setHasOlderMessages(page.hasMore);
+                writeMessageCache(selectedId, page);
+                setLoadingMsgs(false);
+                console.info('[chat-performance]', {
+                    phase: 'messages',
+                    duration_ms: Math.round(performance.now() - startedAt),
+                    count: rows.length,
+                    cache_hit: Boolean(cached),
+                });
 
                 // Clear the badge and move an open conversation out of the
-                // "ยังไม่อ่าน" list as soon as the admin opens it.
+                // "ยังไม่อ่าน" list without blocking message rendering.
                 let readThrough = newestCustomerMessageAt(rows)
                     ?? selectedConversationRef.current?.last_customer_message_at
                     ?? null;
-                let marked = await markConversationRead(selectedId, readThrough);
-                if (!marked && !cancelled) {
-                    // A customer message landed between the first snapshot and
-                    // the conditional update. Re-sync once so that message is
-                    // visible before advancing the read-through watermark.
-                    page = await chatInboxApi.listMessages(selectedId, { limit: MESSAGE_PAGE_SIZE });
-                    if (cancelled) return;
-                    rows = page.messages;
-                    setMessages(rows);
-                    setHasOlderMessages(page.hasMore);
-                    readThrough = newestCustomerMessageAt(rows)
-                        ?? selectedConversationRef.current?.last_customer_message_at
-                        ?? null;
-                    marked = await markConversationRead(selectedId, readThrough);
-                }
+                const statusSnapshot = selectedConversationRef.current?.status;
+                void (async () => {
+                    const marked = await markConversationRead(selectedId, readThrough, statusSnapshot);
+                    if (!marked && !cancelled) {
+                        // A customer message landed between snapshots. Re-sync
+                        // once in the background so its unread state is safe.
+                        page = await chatInboxApi.listMessages(selectedId, {
+                            limit: MESSAGE_PAGE_SIZE,
+                            signal: AbortSignal.timeout(MESSAGE_LOAD_TIMEOUT_MS),
+                        });
+                        if (cancelled) return;
+                        rows = page.messages;
+                        setMessages(rows);
+                        setHasOlderMessages(page.hasMore);
+                        writeMessageCache(selectedId, page);
+                        readThrough = newestCustomerMessageAt(rows)
+                            ?? selectedConversationRef.current?.last_customer_message_at
+                            ?? null;
+                        await markConversationRead(selectedId, readThrough, selectedConversationRef.current?.status);
+                    }
+                })().catch((error) => {
+                    console.warn('[chat-performance] background mark-read failed', error);
+                });
             } catch (e) {
-                if (!cancelled) setMsgErr((e as Error).message);
+                window.clearTimeout(timeout);
+                if (!cancelled) {
+                    setMsgErr(controller.signal.aborted
+                        ? 'โหลดข้อความใช้เวลานานเกิน 10 วินาที กรุณาลองใหม่'
+                        : `โหลดข้อความไม่สำเร็จ: ${(e as Error).message}`);
+                }
             } finally {
                 if (!cancelled) setLoadingMsgs(false);
             }
         })();
-        return () => { cancelled = true; };
-    }, [selectedId, markConversationRead]);
+        return () => {
+            cancelled = true;
+            controller.abort();
+        };
+    }, [selectedId, messageReloadKey, markConversationRead]);
 
     async function loadOlderMessages() {
         if (!selectedId || loadingOlderMsgs || !hasOlderMessages || messages.length === 0) return;
@@ -622,7 +748,11 @@ export default function Chat() {
             });
             if (selectedIdRef.current !== conversationId) return;
             preserveThreadScrollRef.current = scrollSnapshot;
-            setMessages((current) => mergeMessages(current, page.messages));
+            setMessages((current) => {
+                const next = mergeMessages(current, page.messages);
+                writeMessageCache(conversationId, { messages: next, hasMore: page.hasMore });
+                return next;
+            });
             setHasOlderMessages(page.hasMore);
         } catch (e) {
             if (selectedIdRef.current === conversationId) {
@@ -650,12 +780,16 @@ export default function Chat() {
                 },
                 (payload) => {
                     const row = payload.new as ChatMessage;
-                    setMessages((prev) => mergeMessages(prev, [row]));
+                    setMessages((prev) => {
+                        const next = mergeMessages(prev, [row]);
+                        updateCachedMessageRows(selectedId, () => next);
+                        return next;
+                    });
                     // The DB trigger re-opens the conversation as "ยังไม่อ่าน"
                     // on any customer message. But the admin is looking at THIS
                     // thread right now, so clear its unread badge immediately.
                     if (row.sender_type === 'customer') {
-                        void markConversationRead(selectedId, row.created_at).catch((e) => {
+                        void markConversationRead(selectedId, row.created_at, 'open').catch((e) => {
                             setMsgErr((e as Error).message);
                         });
                     }
@@ -672,7 +806,11 @@ export default function Chat() {
                 (payload) => {
                     // e.g. a background LINE push flagged the message as undelivered
                     const row = payload.new as ChatMessage;
-                    setMessages((prev) => prev.map((m) => (m.id === row.id ? { ...m, ...row } : m)));
+                    setMessages((prev) => {
+                        const next = prev.map((m) => (m.id === row.id ? { ...m, ...row } : m));
+                        updateCachedMessageRows(selectedId, () => next);
+                        return next;
+                    });
                 },
             )
             .subscribe();
@@ -1258,9 +1396,17 @@ export default function Chat() {
                                     </div>
                                 )}
                                 {msgErr && (
-                                    <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
-                                        <AlertCircle size={12} className="inline mr-1" />
-                                        {msgErr}
+                                    <div className="flex items-center justify-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                                        <span><AlertCircle size={12} className="inline mr-1" />{msgErr}</span>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 bg-white px-2 text-xs"
+                                            onClick={() => setMessageReloadKey((value) => value + 1)}
+                                        >
+                                            ลองใหม่
+                                        </Button>
                                     </div>
                                 )}
                                 {messages.map((m) => (
@@ -1415,6 +1561,8 @@ export default function Chat() {
                     <div className="hidden lg:flex flex-shrink-0">
                         <ContactPanel
                             conversation={selectedConv}
+                            customerSnapshot={quoteCustomerPreview}
+                            onCustomerSnapshotChanged={setQuoteCustomerPreview}
                             onConversationChanged={() => void loadConvs()}
                         />
                     </div>

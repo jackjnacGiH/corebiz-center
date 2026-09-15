@@ -2923,7 +2923,7 @@ export const chatInboxApi = {
    *  backwards without a growing offset being shifted by Realtime inserts. */
   async listMessages(
     conversationId: string,
-    opts: { limit?: number; before?: ChatMessageCursor } = {},
+    opts: { limit?: number; before?: ChatMessageCursor; signal?: AbortSignal } = {},
   ): Promise<ChatMessagePage> {
     const limit = Math.max(1, Math.min(opts.limit ?? 100, 200));
     let query = supabase
@@ -2938,6 +2938,7 @@ export const chatInboxApi = {
         `created_at.lt.${opts.before.createdAt},and(created_at.eq.${opts.before.createdAt},id.lt.${opts.before.id})`,
       );
     }
+    if (opts.signal) query = query.abortSignal(opts.signal);
     const { data, error } = await query;
     if (error) throw error;
     const rows = (data ?? []) as ChatMessage[];
@@ -3132,15 +3133,34 @@ export const chatInboxApi = {
     if (error) throw error;
   },
 
-  async markRead(conversationId: string, lastSeenCustomerAt: string | null): Promise<boolean> {
+  async markRead(
+    conversationId: string,
+    lastSeenCustomerAt: string | null,
+    currentStatus?: ChatStatus,
+  ): Promise<boolean> {
     // `last_customer_message_at` predates the current generated DB types.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any;
-    // `open` is the backing status for the "ยังไม่อ่าน" tab. Reading an open
-    // conversation must therefore clear the badge AND move it to `assigned`.
-    // The customer-message timestamp is a read-through watermark: if a newer
-    // message lands concurrently, neither update matches and its unread state
-    // is preserved.
+    // The caller normally knows the current status, so use one guarded update
+    // instead of trying `open` and then `assigned/resolved` sequentially.
+    // Unknown status keeps the compatibility fallback below.
+    if (currentStatus) {
+      let query = db
+        .from('chat_conversations')
+        .update(currentStatus === 'open'
+          ? { unread_count: 0, status: 'assigned' }
+          : { unread_count: 0 })
+        .eq('id', conversationId)
+        .eq('status', currentStatus);
+      query = lastSeenCustomerAt
+        ? query.eq('last_customer_message_at', lastSeenCustomerAt)
+        : query.is('last_customer_message_at', null);
+      const { data, error } = await query.select('id').maybeSingle();
+      if (error) throw error;
+      return Boolean(data);
+    }
+
+    // Compatibility fallback for callers without a status snapshot.
     let transitionQuery = db
       .from('chat_conversations')
       .update({ unread_count: 0, status: 'assigned' })
