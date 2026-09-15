@@ -8,6 +8,8 @@ import BackToTop from '../BackToTop';
 import { cn } from '@/lib/utils';
 import { prefetchList, CK } from '../../lib/cache';
 import { productsApi, customersApi, categoriesApi, warehousesApi } from '../../lib/api';
+import { shippingApi } from '../../lib/shipping-api';
+import { useAuth } from '../../lib/AuthProvider';
 import type { TopBarPageContent } from './TopBar';
 
 export interface LayoutOutletContext {
@@ -18,9 +20,14 @@ const Layout: React.FC = () => {
     const { collapsed, mobileOpen, isMobile, toggleCollapsed, openMobile, closeMobile, setMobileOpen } =
         useSidebar();
     const location = useLocation();
+    const { session, profile } = useAuth();
     const [topBarContent, setTopBarContent] = React.useState<TopBarPageContent | null>(null);
     const outletContext = React.useMemo<LayoutOutletContext>(() => ({ setTopBarContent }), []);
     const heavyPrefetchStarted = React.useRef(false);
+    const shippingPrefetchScope = React.useRef('');
+    const shippingCacheScope = session && profile && ['owner', 'admin', 'staff'].includes(profile.role)
+        ? `${session.user.id}:${profile.role}`
+        : '';
 
     // Auto-close mobile drawer when route changes
     React.useEffect(() => {
@@ -28,10 +35,28 @@ const Layout: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location.pathname]);
 
-    // Warm the heavy lists shortly after login so the first visit to
-    // E-Commerce / Inventory / CRM feels instant (background, best-effort).
-    // Shipping has its own targeted search endpoints. Do not make it compete
-    // with full product/customer prefetches while its critical data is loading.
+    // Shipping is an operational priority. Warm its bounded first page before
+    // the much larger catalogue/CRM lists so the first menu click can share the
+    // in-flight request or render the session cache immediately.
+    React.useEffect(() => {
+        if (
+            !shippingCacheScope ||
+            shippingPrefetchScope.current === shippingCacheScope ||
+            location.pathname.startsWith('/shipping')
+        ) return;
+        const t = setTimeout(() => {
+            shippingPrefetchScope.current = shippingCacheScope;
+            void shippingApi.initial(0, '', { cacheScope: shippingCacheScope }).catch(() => {
+                if (shippingPrefetchScope.current === shippingCacheScope) {
+                    shippingPrefetchScope.current = '';
+                }
+            });
+        }, 150);
+        return () => clearTimeout(t);
+    }, [location.pathname, shippingCacheScope]);
+
+    // Warm the heavy lists after the Shipping request has had a head start.
+    // These remain background-only and never block route rendering.
     React.useEffect(() => {
         if (heavyPrefetchStarted.current || location.pathname.startsWith('/shipping')) return;
         const t = setTimeout(() => {
@@ -40,7 +65,7 @@ const Layout: React.FC = () => {
             prefetchList(CK.categories, () => categoriesApi.list());
             prefetchList(CK.warehouses, () => warehousesApi.list());
             prefetchList(CK.customers, () => customersApi.list());
-        }, 1200);
+        }, 2500);
         return () => clearTimeout(t);
     }, [location.pathname]);
 
