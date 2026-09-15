@@ -38,6 +38,10 @@ const MIGRATION_URLS = [
     "../supabase/migrations/20260915024000_flowaccount_active_customer_cap.sql",
     import.meta.url,
   ),
+  new URL(
+    "../supabase/migrations/20260915030500_fix_flowaccount_vault_write.sql",
+    import.meta.url,
+  ),
 ];
 
 function json(value) {
