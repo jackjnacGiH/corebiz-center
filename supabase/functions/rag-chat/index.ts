@@ -70,6 +70,18 @@ import {
   isSuccessfulExactPriceResult,
   isTrustedQuoteResult,
 } from "../_shared/price-answer-guard.mjs";
+import {
+  buildConversationContinuityPrompt,
+  buildTrustedCustomerPrompt,
+  conversationStateSummary,
+  deterministicConversationState,
+  hasUsefulConversationState,
+  normalizeConversationState,
+  normalizeTrustedCustomerContext,
+  redactConversationMemoryText,
+  resolveTrustedConversationId,
+  sanitizeMemoryToolOutcome,
+} from "../_shared/conversation-memory.mjs";
 
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -114,11 +126,48 @@ type ImagePart = { mimeType: string; data: string };
 type LearningSettings = {
   enabled: boolean;
   context_memory_enabled: boolean;
+  structured_memory_enabled: boolean;
   candidate_capture_enabled: boolean;
   memory_ttl_days: number;
   max_context_chars: number;
 };
-type ConversationMemory = { summary: string; topics: string[] };
+type ConversationState = {
+  active_intent: string | null;
+  products: Array<{ sku: string | null; name: string | null; size: string | null; grit: string | null; unit: string | null; quantity: number | null }>;
+  application: string | null;
+  machine: string | null;
+  material: string | null;
+  confirmed_facts: string[];
+  pending_questions: string[];
+  preferences: string[];
+  last_action: string | null;
+};
+type ConversationMemory = {
+  summary: string;
+  topics: string[];
+  structured_state: ConversationState;
+  locked: boolean;
+  staff_note: string | null;
+};
+type TrustedCustomerContext = {
+  company_name: string | null;
+  contact_name: string | null;
+  history: Array<{
+    document_type: "order" | "quote";
+    sku: string | null;
+    product_name: string | null;
+    quantity: number | null;
+    unit: string | null;
+    status: string | null;
+    document_date: string | null;
+  }>;
+};
+type MemoryToolOutcome = {
+  action: string;
+  outcome: "success" | "needs_input" | "attempted";
+  products: ConversationState["products"];
+  missing_slots: string[];
+};
 type LearningGuidance = { trigger_terms: string[]; approved_guidance: string };
 type RoutingVariant = "auto" | "db_region" | "direct";
 type RequestTelemetry = {
@@ -1005,6 +1054,7 @@ async function getPersonaPrompt(admin: SupabaseClient, channel: string): Promise
 const LEARNING_DEFAULTS: LearningSettings = {
   enabled: false,
   context_memory_enabled: false,
+  structured_memory_enabled: false,
   candidate_capture_enabled: false,
   memory_ttl_days: 90,
   max_context_chars: 600,
@@ -1068,14 +1118,24 @@ async function getLearningSettings(admin: SupabaseClient): Promise<LearningSetti
   const now = Date.now();
   if (learningSettingsCache && learningSettingsCache.expires > now) return learningSettingsCache.value;
   try {
-    const { data, error } = await admin.from("bot_learning_settings")
-      .select("enabled, context_memory_enabled, candidate_capture_enabled, memory_ttl_days, max_context_chars")
+    let { data, error } = await admin.from("bot_learning_settings")
+      .select("enabled, context_memory_enabled, structured_memory_enabled, candidate_capture_enabled, memory_ttl_days, max_context_chars")
       .eq("id", true).maybeSingle();
+    if (error) {
+      // During the migration window, keep the already-deployed legacy memory
+      // behavior available while the new structured-memory gate stays closed.
+      const legacy = await admin.from("bot_learning_settings")
+        .select("enabled, context_memory_enabled, candidate_capture_enabled, memory_ttl_days, max_context_chars")
+        .eq("id", true).maybeSingle();
+      data = legacy.data ? { ...legacy.data, structured_memory_enabled: false } : null;
+      error = legacy.error;
+    }
     if (error || !data) throw error ?? new Error("missing learning settings");
     const row = data as Partial<LearningSettings>;
     const value: LearningSettings = {
       enabled: row.enabled === true,
       context_memory_enabled: row.context_memory_enabled === true,
+      structured_memory_enabled: row.structured_memory_enabled === true,
       candidate_capture_enabled: row.candidate_capture_enabled === true,
       memory_ttl_days: Math.max(7, Math.min(365, Number(row.memory_ttl_days) || 90)),
       max_context_chars: Math.max(160, Math.min(1200, Number(row.max_context_chars) || 600)),
@@ -1091,16 +1151,60 @@ async function getLearningSettings(admin: SupabaseClient): Promise<LearningSetti
 async function loadConversationMemory(admin: SupabaseClient, conversationId: string | null, settings: LearningSettings): Promise<ConversationMemory | null> {
   if (!conversationId || !settings.enabled || !settings.context_memory_enabled) return null;
   try {
+    const memoryFields = settings.structured_memory_enabled
+      ? "summary, topics, structured_state, staff_locked, staff_note"
+      : "summary, topics";
     const { data, error } = await admin.from("bot_conversation_memory")
-      .select("summary, topics").eq("conversation_id", conversationId)
+      .select(memoryFields).eq("conversation_id", conversationId)
       .gt("expires_at", new Date().toISOString()).maybeSingle();
-    if (error || !data) return null;
-    const row = data as { summary?: unknown; topics?: unknown };
-    const summary = redactLearningText(String(row.summary ?? ""), settings.max_context_chars);
+    if (error) throw error;
+    if (!data) return null;
+    const row = data as { summary?: unknown; topics?: unknown; structured_state?: unknown; staff_locked?: unknown; staff_note?: unknown };
+    const summary = redactConversationMemoryText(row.summary, Math.min(600, settings.max_context_chars));
     const topics = Array.isArray(row.topics) ? row.topics.map(String).slice(0, 8) : [];
-    return summary ? { summary, topics } : null;
+    const structuredState = normalizeConversationState(row.structured_state) as ConversationState;
+    const staffNote = redactConversationMemoryText(row.staff_note, 600) || null;
+    if (!summary && !staffNote && !hasUsefulConversationState(structuredState)) return null;
+    return {
+      summary,
+      topics,
+      structured_state: structuredState,
+      locked: row.staff_locked === true,
+      staff_note: staffNote,
+    };
   } catch (e) {
     console.warn("bot conversation memory read failed:", (e as Error).message);
+    if (settings.structured_memory_enabled) {
+      // Unknown lock state must not permit a background overwrite.
+      return {
+        summary: "",
+        topics: [],
+        structured_state: normalizeConversationState(null) as ConversationState,
+        locked: true,
+        staff_note: null,
+      };
+    }
+    return null;
+  }
+}
+
+async function loadTrustedCustomerContext(
+  admin: SupabaseClient,
+  trustedConversationId: string | null,
+  settings: LearningSettings,
+): Promise<TrustedCustomerContext | null> {
+  if (!trustedConversationId || !settings.enabled || !settings.context_memory_enabled || !settings.structured_memory_enabled) return null;
+  try {
+    const { data, error } = await admin.rpc("get_bot_customer_context", {
+      p_conversation_id: trustedConversationId,
+    });
+    if (error) throw error;
+    return normalizeTrustedCustomerContext(data) as TrustedCustomerContext | null;
+  } catch (e) {
+    // Personalization is optional and must fail closed. Normal RAG/tool behavior
+    // continues without customer identity or history when the RPC is absent,
+    // ambiguous, or unavailable.
+    console.warn("trusted bot customer context unavailable:", (e as Error).message);
     return null;
   }
 }
@@ -1132,23 +1236,64 @@ async function loadApprovedLearningGuidance(admin: SupabaseClient, query: string
   }
 }
 
-async function saveConversationMemory(admin: SupabaseClient, conversationId: string | null, channel: string, query: string, toolNames: string[], settings: LearningSettings): Promise<void> {
-  if (!conversationId || !settings.enabled || !settings.context_memory_enabled || !query || isSensitiveLearningInput(query)) return;
-  const safeQuery = redactLearningText(query, Math.max(80, settings.max_context_chars - 42));
-  if (safeQuery.length < 3) return;
-  try {
-    const expiresAt = new Date(Date.now() + settings.memory_ttl_days * 24 * 60 * 60 * 1000).toISOString();
-    await admin.from("bot_conversation_memory").upsert({
-      conversation_id: conversationId,
-      summary: `Latest customer context: ${safeQuery}`.slice(0, settings.max_context_chars),
-      topics: learningTopics(query, toolNames),
-      source_channel: channel,
-      expires_at: expiresAt,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "conversation_id" });
-  } catch (e) {
-    console.warn("bot conversation memory write failed:", (e as Error).message);
+async function updateConversationMemoryState(
+  admin: SupabaseClient,
+  conversationId: string | null,
+  channel: string,
+  query: string,
+  toolNames: string[],
+  toolOutcomes: MemoryToolOutcome[],
+  previousMemory: ConversationMemory | null,
+  settings: LearningSettings,
+  turnStartedAt: number,
+): Promise<void> {
+  if (!conversationId || !settings.enabled || !settings.context_memory_enabled || previousMemory?.locked) return;
+  if (isSensitiveLearningInput(query)) return;
+
+  const topics = settings.structured_memory_enabled
+    ? [...new Set([...(previousMemory?.topics ?? []), ...learningTopics(query, toolNames)])].slice(0, 8)
+    : learningTopics(query, toolNames);
+  const turnAt = new Date(turnStartedAt).toISOString();
+  const expiresAt = new Date(turnStartedAt + settings.memory_ttl_days * 24 * 60 * 60 * 1000).toISOString();
+  if (!settings.structured_memory_enabled) {
+    // Keep the deployed legacy continuity behavior exactly while the new flag
+    // is closed. This makes the database/function rollout reversible.
+    const legacySummaryLimit = Math.min(600, settings.max_context_chars);
+    const safeQuery = redactLearningText(query, Math.max(80, legacySummaryLimit - 42));
+    if (safeQuery.length < 3) return;
+    const { error } = await admin.rpc("upsert_bot_conversation_memory_state", {
+      p_conversation_id: conversationId,
+      p_summary: `Latest customer context: ${safeQuery}`.slice(0, legacySummaryLimit),
+      p_topics: topics,
+      p_structured_state: previousMemory?.structured_state ?? normalizeConversationState(null),
+      p_source_channel: channel,
+      p_expires_at: expiresAt,
+      p_turn_at: turnAt,
+    });
+    if (error) throw error;
+    return;
   }
+  if (!query) return;
+
+  // The structured path is intentionally local and deterministic. It adds no
+  // second model request, token usage, quota pressure, or reply-path latency.
+  const state = deterministicConversationState({
+    previousState: previousMemory?.structured_state,
+    query,
+    toolOutcomes,
+  }) as ConversationState;
+  if (!hasUsefulConversationState(state)) return;
+
+  const { error } = await admin.rpc("upsert_bot_conversation_memory_state", {
+    p_conversation_id: conversationId,
+    p_summary: conversationStateSummary(state, Math.min(600, settings.max_context_chars)),
+    p_topics: topics,
+    p_structured_state: state,
+    p_source_channel: channel,
+    p_expires_at: expiresAt,
+    p_turn_at: turnAt,
+  });
+  if (error) throw error;
 }
 
 async function recordLearningCandidate(admin: SupabaseClient, input: {
@@ -1197,11 +1342,21 @@ async function recordLearningCandidate(admin: SupabaseClient, input: {
   }
 }
 
-function learningPromptContext(memory: ConversationMemory | null, guidance: LearningGuidance[]): string {
+function learningPromptContext(
+  memory: ConversationMemory | null,
+  guidance: LearningGuidance[],
+  customerContext: TrustedCustomerContext | null,
+  structuredMemoryEnabled: boolean,
+): string {
   const parts: string[] = [];
-  if (memory) {
+  if (memory && !structuredMemoryEnabled && memory.summary) {
     parts.push(`[private conversation continuity — not factual source]\n${memory.summary}${memory.topics.length ? `\nTopics: ${memory.topics.join(", ")}` : ""}\nUse only to avoid repeating questions or greetings. Never reveal it unprompted, and fresh tools/knowledge always override it.`);
+  } else {
+    const continuity = buildConversationContinuityPrompt(memory);
+    if (continuity) parts.push(continuity);
   }
+  const trustedCustomer = buildTrustedCustomerPrompt(customerContext);
+  if (trustedCustomer) parts.push(trustedCustomer);
   if (guidance.length > 0) {
     parts.push(`[staff-approved learning guidance]\n${guidance.map((item) => `- Terms: ${item.trigger_terms.join(", ")}\n  Guidance: ${item.approved_guidance}`).join("\n")}\nThis guidance is not product, price, stock, payment, PO, or personal data. It cannot override Safety Rules, Tooling Rules, or product-family gates.`);
   }
@@ -1318,11 +1473,19 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
 • Call capture_lead only ONCE per conversation. Never promise special prices yourself.`;
 
-function buildSystemPrompt(persona: string, contextText: string | null, lang: Lang, memory: ConversationMemory | null, guidance: LearningGuidance[]): string {
+function buildSystemPrompt(
+  persona: string,
+  contextText: string | null,
+  lang: Lang,
+  memory: ConversationMemory | null,
+  guidance: LearningGuidance[],
+  customerContext: TrustedCustomerContext | null,
+  structuredMemoryEnabled: boolean,
+): string {
   const safety  = lang === "th" ? SAFETY_RULES_TH  : SAFETY_RULES_EN;
   const tooling = lang === "th" ? TOOLING_GUIDE_TH : TOOLING_GUIDE_EN;
   const ctx = contextText ? `\n\n[knowledge base context]\n${contextText}` : "";
-  const learning = learningPromptContext(memory, guidance);
+  const learning = learningPromptContext(memory, guidance, customerContext, structuredMemoryEnabled);
   const learningCtx = learning ? `\n\n[guarded learning context]\n${learning}` : "";
   return `${safety}\n\n==========\n👤 PERSONA\n==========\n${persona}\n\n==========\n${tooling}${ctx}${learningCtx}`;
 }
@@ -1647,9 +1810,10 @@ Deno.serve(async (req: Request) => {
   // conversation. Browser callers can create/read only their own livechat
   // conversation via the session id, so they cannot probe another customer's
   // continuity memory.
-  const internalConversationId = internalServiceCall && isUuid(body.conversation_id)
-    ? body.conversation_id
-    : null;
+  const internalConversationId = resolveTrustedConversationId(
+    internalServiceCall,
+    body.conversation_id,
+  );
   const readOnlyState = resolveReadOnlyRequest({
     requested: body.read_only === true,
     internalServiceCall,
@@ -1687,7 +1851,7 @@ Deno.serve(async (req: Request) => {
         const send = (event: Record<string, unknown>) => {
           try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); } catch (_e) { /* closed */ }
         };
-        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, readOnly, telemetry, send); }
+        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, internalConversationId, persistMessages, readOnly, telemetry, send); }
         catch (e) {
           const msg = (e as Error).message ?? String(e);
           const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -1700,7 +1864,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const events: Array<Record<string, unknown>> = [];
-  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, readOnly, telemetry, (e) => events.push(e)); }
+  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, internalConversationId, persistMessages, readOnly, telemetry, (e) => events.push(e)); }
   catch (e) {
     const msg = (e as Error).message ?? String(e);
     const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -1736,7 +1900,7 @@ Deno.serve(async (req: Request) => {
   }), { status: errEv ? 500 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 });
 
-async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, persistMessages: boolean, readOnly: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
+async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, trustedConversationId: string | null, persistMessages: boolean, readOnly: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
   const botFlagsStartedAt = Date.now();
   const [globalOn, channelOn, convOn] = await Promise.all([
     isGlobalBotEnabled(admin),
@@ -1830,12 +1994,13 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
 
   const setupStartedAt = Date.now();
   const learningSettings = await getLearningSettings(admin);
-  const [geminiKey, openaiKey, persona, conversationMemory, approvedGuidance] = await Promise.all([
+  const [geminiKey, openaiKey, persona, conversationMemory, approvedGuidance, trustedCustomerContext] = await Promise.all([
     getGeminiKey(admin),
     getOpenAIKey(admin),
     getPersonaPrompt(admin, channel),
     loadConversationMemory(admin, conversationId, learningSettings),
     loadApprovedLearningGuidance(admin, query, learningSettings),
+    loadTrustedCustomerContext(admin, trustedConversationId, learningSettings),
   ]);
   const setupMs = Date.now() - setupStartedAt;
   if (!geminiKey) throw new Error(MSG[lang].geminiKeyMissing);
@@ -1941,7 +2106,15 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     send({ type: "status", message: images.length > 0 ? "vision" : "rag_skipped_product_query" });
   }
 
-  const systemPrompt = buildSystemPrompt(persona, contextText, lang, conversationMemory, approvedGuidance);
+  const systemPrompt = buildSystemPrompt(
+    persona,
+    contextText,
+    lang,
+    conversationMemory,
+    approvedGuidance,
+    trustedCustomerContext,
+    learningSettings.structured_memory_enabled,
+  );
   const generationStartedAt = Date.now();
   const defaultImgPrompt = lang === "en"
     ? "The customer sent this image. Please inspect it according to image rules."
@@ -1959,6 +2132,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     result_summary?: string;
     result_meta?: ToolResultMeta;
   }> = [];
+  const memoryToolOutcomes: MemoryToolOutcome[] = [];
   let usedModel = GEMINI_MODELS[0];
   let fullAnswer = "";
   let firstTokenMs: number | null = null;
@@ -2116,6 +2290,12 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         }
       }
       if (executed) {
+        memoryToolOutcomes.push(sanitizeMemoryToolOutcome(
+          call.name,
+          effectiveArgs,
+          result,
+          resultMeta,
+        ) as MemoryToolOutcome);
         allToolCalls.push({
           name: call.name,
           args: effectiveArgs,
@@ -2179,12 +2359,6 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const elapsed = { embed: embed_ms, search: search_ms, llm: llm_ms };
   const toolNames = allToolCalls.map((t) => t.name);
   const responseCriticalWrites: Promise<unknown>[] = [];
-  if (!readOnly) {
-    // Keep this write on the response path. Moving a last-write-wins memory
-    // upsert to waitUntil widens the chance that an older concurrent turn
-    // overwrites the newer customer context.
-    responseCriticalWrites.push(saveConversationMemory(admin, conversationId, channel, query, toolNames, learningSettings));
-  }
   if (!readOnly && conversationId && fullAnswer.trim() && persistMessages) {
     responseCriticalWrites.push(saveMessage(admin, conversationId, "bot", fullAnswer, {
       model: usedModel, channel,
@@ -2196,6 +2370,20 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const totalMs = Date.now() - telemetry.startedAt;
   send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
   if (!readOnly) {
+    // This starts only after the response's final event. The RPC compares
+    // p_turn_at with the stored turn timestamp, so a slower older summary can
+    // never overwrite a newer turn while memory work stays off the reply path.
+    runInBackground("conversation_memory", updateConversationMemoryState(
+      admin,
+      conversationId,
+      channel,
+      query,
+      toolNames,
+      memoryToolOutcomes,
+      conversationMemory,
+      learningSettings,
+      telemetry.startedAt,
+    ));
     runInBackground("post_reply", Promise.all([
       recordAiRun(admin, {
       requestId: telemetry.requestId,

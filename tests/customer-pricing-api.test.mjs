@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const api = readFileSync(new URL('../frontend/src/lib/api.ts', import.meta.url), 'utf8');
+const api = readFileSync(new URL('../frontend/src/lib/customer-pricing-api.ts', import.meta.url), 'utf8');
 const cache = readFileSync(new URL('../frontend/src/lib/cache.ts', import.meta.url), 'utf8');
 
 function between(source, startMarker, endMarker) {
@@ -24,7 +24,7 @@ test('customer net-price rule contracts contain no quantity field', () => {
 });
 
 test('staff listing uses only the sanitised customer-scoped RPC', () => {
-  const list = between(api, 'async listRules(customerId: string)', '/** Lightweight, server-side product search');
+  const list = between(api, 'async listRules(customerId: string)', 'async searchProducts(');
 
   assert.match(list, /list_customer_product_net_prices/);
   assert.match(list, /p_customer_id:\s*customerId/);
@@ -34,7 +34,7 @@ test('staff listing uses only the sanitised customer-scoped RPC', () => {
 });
 
 test('product lookup stays server-side, bounded, and avoids inventory or cost data', () => {
-  const search = between(api, 'async searchProducts(term: string, limit = 20)', '/** Set-based preview');
+  const search = between(api, 'async searchProducts(term: string, limit = 20)', 'async resolvePrices(');
   const selected = search.match(/\.select\('([^']+)'\)/)?.[1] ?? '';
 
   assert.equal(
@@ -58,7 +58,7 @@ test('price preview calls the authoritative set-based resolver', () => {
 });
 
 test('owner/admin writes are scoped and expiry is an auditable soft disable', () => {
-  const writes = between(api, 'async createRule(', '// =========================================================================\n// CRM dashboard');
+  const writes = api.slice(api.indexOf('async createRule('));
   const expire = between(writes, 'async expireRule(', '\n  },\n};');
 
   assert.match(writes, /\.from\(['"]customer_product_net_prices['"]\)/);

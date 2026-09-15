@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 const profile = readFileSync(new URL('../frontend/src/components/CustomerProfile.tsx', import.meta.url), 'utf8');
 const pricing = readFileSync(new URL('../frontend/src/components/customer-pricing/CustomerPricingSection.tsx', import.meta.url), 'utf8');
 const api = readFileSync(new URL('../frontend/src/lib/api.ts', import.meta.url), 'utf8');
-const i18n = readFileSync(new URL('../frontend/src/i18n.ts', import.meta.url), 'utf8');
+const i18n = readFileSync(new URL('../frontend/src/lib/customer-pricing-copy.ts', import.meta.url), 'utf8');
 
 function between(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);

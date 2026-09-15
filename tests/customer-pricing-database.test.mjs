@@ -363,6 +363,57 @@ test("customer pricing migration resolves precedence, privacy, provenance and bo
       { final_price: "82.00", price_source: "flowaccount_quote" },
       "a newer/lower cache row with a mismatched source SKU must be ignored",
     );
+
+    // Provider document IDs are not a proven chronology across document kinds.
+    // Conflicting prices on the newest date must fail closed; identical prices
+    // may safely use any deterministic representative row.
+    await db.exec(`
+      insert into pricing_private.flowaccount_quote_price_cache(
+        company_key,sync_run_id,document_record_id,line_key,document_serial,document_status,
+        published_on,source_updated_at,source_contact_id,customer_id,product_id,
+        source_sku,source_unit,source_quantity,net_unit_price,currency,eligible,
+        source_hash
+      ) values (
+        'jnac','30000000-0000-4000-8000-000000000001',7,'tax_invoice:1','INV-SAME-DAY',5,
+        current_date,clock_timestamp(),501,'${IDS.vip}','${IDS.product}',
+        'SKU-PRICE','pcs',1,81,'THB',true,'hash-same-day-conflict'
+      )
+    `);
+    price = one(await asJwt(
+      db,
+      "authenticated",
+      IDS.staff,
+      `select final_price::text,price_source
+       from public.resolve_customer_quote_prices('${IDS.vip}',${vipInput})`,
+    ));
+    assert.deepEqual(
+      price,
+      { final_price: "85.50", price_source: "tier" },
+      "different prices across document kinds on the latest date must fail closed",
+    );
+    await db.exec(`
+      update pricing_private.flowaccount_quote_price_cache
+      set net_unit_price=82,source_hash='hash-same-day-equal'
+      where sync_run_id='30000000-0000-4000-8000-000000000001'
+        and document_record_id=7 and line_key='tax_invoice:1'
+    `);
+    price = one(await asJwt(
+      db,
+      "authenticated",
+      IDS.staff,
+      `select final_price::text,price_source
+       from public.resolve_customer_quote_prices('${IDS.vip}',${vipInput})`,
+    ));
+    assert.deepEqual(
+      price,
+      { final_price: "82.00", price_source: "flowaccount_quote" },
+      "matching prices across document kinds on the latest date remain usable",
+    );
+    await db.exec(`
+      delete from pricing_private.flowaccount_quote_price_cache
+      where sync_run_id='30000000-0000-4000-8000-000000000001'
+        and document_record_id=7 and line_key='tax_invoice:1'
+    `);
     const flowRunOneQuote = one(await asJwt(
       db,
       "service_role",
@@ -1087,6 +1138,111 @@ test("customer pricing migration resolves precedence, privacy, provenance and bo
     assert.equal(
       audit.rows.find((row) => row.action === "quote.pricing_resolved")?.n,
       3,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("bot quote reuse is limited to an exact short-lived request", async () => {
+  const db = new PGlite();
+  try {
+    await bootstrap(db);
+
+    const callQuote = async ({
+      qty,
+      channel = "line",
+      name = "คุณสมชาย",
+      phone = "0812345678",
+      note = "ส่งที่โรงงาน",
+    }) => one(await asJwt(
+      db,
+      "service_role",
+      null,
+      `select * from public.create_or_reuse_bot_quote(
+        '${IDS.manualConversation}',
+        '${channel.replaceAll("'", "''")}',
+        '[{"sku":"SKU-PRICE","qty":${qty}}]'::jsonb,
+        '${name.replaceAll("'", "''")}',
+        '${phone.replaceAll("'", "''")}',
+        '${note.replaceAll("'", "''")}'
+      )`,
+    ));
+
+    const first = await callQuote({ qty: 2 });
+    const immediateRetry = await callQuote({
+      qty: 2,
+      channel: " line ",
+      name: " คุณสมชาย ",
+      phone: " 0812345678 ",
+      note: " ส่งที่โรงงาน ",
+    });
+    assert.equal(first.quote_created, true);
+    assert.equal(immediateRetry.quote_reused, true);
+    assert.equal(immediateRetry.quote_id, first.quote_id);
+
+    for (const changedRequest of [
+      { qty: 2, name: "คุณสมหญิง" },
+      { qty: 2, phone: "0899999999" },
+      { qty: 2, note: "รับหน้าร้าน" },
+      { qty: 2, channel: "web" },
+    ]) {
+      const changed = await callQuote(changedRequest);
+      assert.equal(changed.quote_created, true, JSON.stringify(changedRequest));
+      assert.notEqual(changed.quote_id, first.quote_id, JSON.stringify(changedRequest));
+    }
+
+    const expiring = await callQuote({ qty: 3 });
+    await db.query(
+      "update public.quotes set valid_until=current_date-1 where id=$1",
+      [expiring.quote_id],
+    );
+    const afterExpiry = await callQuote({ qty: 3 });
+    assert.equal(afterExpiry.quote_created, true);
+    assert.notEqual(afterExpiry.quote_id, expiring.quote_id);
+
+    const oldRequest = await callQuote({ qty: 4 });
+    await db.query(
+      "update public.quotes set created_at=now()-interval '11 minutes' where id=$1",
+      [oldRequest.quote_id],
+    );
+    await db.query(
+      `update public.agent_tasks
+       set created_at=now()-interval '11 minutes'
+       where payload->>'quote_id'=$1`,
+      [oldRequest.quote_id],
+    );
+    const afterRetryWindow = await callQuote({ qty: 4 });
+    assert.equal(afterRetryWindow.quote_created, true);
+    assert.notEqual(afterRetryWindow.quote_id, oldRequest.quote_id);
+
+    await db.exec(`reset role;
+      select set_config('request.jwt.claim.sub','',false);
+      select set_config('request.jwt.claim.role','service_role',false);
+      set role service_role;`);
+    const concurrentSql = `select * from public.create_or_reuse_bot_quote(
+      '${IDS.manualConversation}','line',
+      '[{"sku":"SKU-PRICE","qty":5}]'::jsonb,
+      'คุณสมชาย','0812345678','ส่งที่โรงงาน'
+    )`;
+    let concurrentResults;
+    try {
+      concurrentResults = await Promise.all([
+        db.query(concurrentSql),
+        db.query(concurrentSql),
+      ]);
+    } finally {
+      await db.exec("reset role");
+    }
+    const concurrent = concurrentResults.map(one);
+    assert.equal(new Set(concurrent.map((row) => row.quote_id)).size, 1);
+    assert.deepEqual(
+      concurrent.map((row) => row.quote_created).sort(),
+      [false, true],
+    );
+    assert.deepEqual(
+      concurrent.map((row) => row.quote_reused).sort(),
+      [false, true],
     );
   } finally {
     await db.close();

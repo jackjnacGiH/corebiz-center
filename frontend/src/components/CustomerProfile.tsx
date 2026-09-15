@@ -7,6 +7,7 @@ import {
 import { cn } from '@/lib/utils';
 import { supabase } from '../lib/supabase';
 import { useLanguage } from '../i18n';
+import { customerPricingCopy } from '../lib/customer-pricing-copy';
 import {
     customerProfileApi,
     type CustomerProfileBundle,
@@ -112,7 +113,8 @@ interface PortalContact {
 }
 
 export default function CustomerProfile({ customerId, onClose }: { customerId: string; onClose: () => void }) {
-    const { t } = useLanguage();
+    const { language } = useLanguage();
+    const pricingWords = customerPricingCopy[language];
     const [data, setData] = useState<CustomerProfileBundle | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -173,14 +175,14 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                                 type="button"
                                 onClick={() => setPricingOpen(false)}
                                 className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-md border border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
-                                title={t.crm.pricing.back}
-                                aria-label={t.crm.pricing.back}
+                                title={pricingWords.back}
+                                aria-label={pricingWords.back}
                             >
                                 <ArrowLeft size={16} />
                             </button>
                         )}
                         <div className="min-w-0">
-                        <div className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wider">{pricingOpen ? t.crm.pricing.title : 'โปรไฟล์ลูกค้า 360°'}</div>
+                        <div className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wider">{pricingOpen ? pricingWords.title : 'โปรไฟล์ลูกค้า 360°'}</div>
                         <h2 className="text-base font-bold text-neutral-900 truncate">{c?.name ?? 'กำลังโหลด...'}</h2>
                         {c && (
                             <div className="flex flex-wrap items-center gap-1.5 mt-1">
@@ -240,14 +242,14 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
 
                         <Section
                             icon={<Percent size={13} className="text-sky-600" />}
-                            title={t.crm.pricing.title}
+                            title={pricingWords.title}
                             action={(
                                 <button
                                     type="button"
                                     onClick={() => setPricingOpen(true)}
                                     className="inline-flex h-7 items-center gap-1 rounded-md bg-sky-700 px-2.5 text-[11px] font-bold text-white hover:bg-sky-800"
                                 >
-                                    {t.crm.pricing.open}
+                                    {pricingWords.open}
                                 </button>
                             )}
                         >
@@ -256,7 +258,7 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                                 onClick={() => setPricingOpen(true)}
                                 className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-sky-50/60"
                             >
-                                <span className="text-xs text-neutral-600">{t.crm.pricing.summary}</span>
+                                <span className="text-xs text-neutral-600">{pricingWords.summary}</span>
                                 <ArrowLeft size={14} className="shrink-0 rotate-180 text-sky-600" />
                             </button>
                         </Section>

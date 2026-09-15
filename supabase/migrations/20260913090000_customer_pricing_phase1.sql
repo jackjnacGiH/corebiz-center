@@ -489,26 +489,42 @@ as $$
       limit 1
     ) net on true
     left join lateral (
-      select f.id, f.net_unit_price, f.published_on
-      from pricing_private.flowaccount_quote_price_cache f
-      join pricing_private.flowaccount_price_sync_state s
-        on s.company_key = f.company_key
-       and s.last_success_run_id = f.sync_run_id
-       and s.enabled
-       and s.last_success_at >= statement_timestamp()
-          - make_interval(mins => s.stale_after_minutes)
-      where f.customer_id = p_customer_id
-        and f.product_id = m.product_id
-        and upper(btrim(f.source_sku)) = upper(btrim(m.sku))
-        and f.unit_key = m.unit_key
-        and f.source_quantity = m.quantity
-        and f.currency = 'THB'
-        and f.eligible
-        and p_allow_personalized
-        and f.published_on >= current_date - s.max_document_age_days
-        and f.published_on >= m.price_updated_at::date
-        and f.source_updated_at >= m.price_updated_at
-      order by f.published_on desc, f.document_record_id desc, f.line_key desc
+      with eligible_history as (
+        select f.id, f.net_unit_price, f.published_on,
+               f.document_record_id, f.line_key
+        from pricing_private.flowaccount_quote_price_cache f
+        join pricing_private.flowaccount_price_sync_state s
+          on s.company_key = f.company_key
+         and s.last_success_run_id = f.sync_run_id
+         and s.enabled
+         and s.last_success_at >= statement_timestamp()
+            - make_interval(mins => s.stale_after_minutes)
+        where f.customer_id = p_customer_id
+          and f.product_id = m.product_id
+          and upper(btrim(f.source_sku)) = upper(btrim(m.sku))
+          and f.unit_key = m.unit_key
+          and f.source_quantity = m.quantity
+          and f.currency = 'THB'
+          and f.eligible
+          and p_allow_personalized
+          and f.published_on >= current_date - s.max_document_age_days
+          and f.published_on >= m.price_updated_at::date
+          and f.source_updated_at >= m.price_updated_at
+      ), latest_history as (
+        select history.*
+        from eligible_history as history
+        where history.published_on = (
+          select max(candidate.published_on) from eligible_history as candidate
+        )
+      )
+      select history.id, history.net_unit_price, history.published_on
+      from latest_history as history
+      where not exists (
+        select 1
+        from latest_history as conflict
+        where conflict.net_unit_price is distinct from history.net_unit_price
+      )
+      order by history.document_record_id desc, history.line_key desc
       limit 1
     ) flow on true
   ), priced as (
@@ -941,6 +957,19 @@ begin
     and q.pricing_fingerprint = v_pricing_fingerprint
     and q.status = 'draft'
     and q.converted_to_order_id is null
+    and (q.valid_until is null or q.valid_until >= current_date)
+    -- Idempotency protects duplicate delivery/retry of one request. It must
+    -- not turn every future request at the same price into the same quote.
+    and q.created_at >= statement_timestamp() - interval '10 minutes'
+    and task.created_at >= statement_timestamp() - interval '10 minutes'
+    and coalesce(btrim(task.payload->>'name'), '')
+      = coalesce(btrim(p_name), '')
+    and coalesce(btrim(task.payload->>'phone'), '')
+      = coalesce(btrim(p_phone), '')
+    and coalesce(btrim(task.payload->>'note'), '')
+      = coalesce(btrim(p_note), '')
+    and lower(coalesce(nullif(btrim(task.payload->>'channel'), ''), 'unknown'))
+      = lower(coalesce(nullif(btrim(p_channel), ''), 'unknown'))
     and not exists (
       select 1
       from jsonb_array_elements(v_resolved) expected

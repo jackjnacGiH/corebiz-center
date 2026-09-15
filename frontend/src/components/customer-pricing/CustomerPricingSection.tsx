@@ -21,15 +21,18 @@ import { CK, hasCache, invalidateList, swrList } from '@/lib/cache';
 import { isAdminOrOwner } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/i18n';
+import { customerPricingCopy } from '@/lib/customer-pricing-copy';
 import {
-  customerPricingApi,
   getEffectivePrice,
   tierApi,
   type CustomerBenefit,
+} from '@/lib/api';
+import {
+  customerPricingApi,
   type CustomerNetPriceRule,
   type CustomerPricingProduct,
   type ResolvedCustomerPrice,
-} from '@/lib/api';
+} from '@/lib/customer-pricing-api';
 import type { Customer } from '@/lib/database.types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -173,8 +176,8 @@ export default function CustomerPricingSection({
   customer: Pick<Customer, 'id' | 'name' | 'code' | 'tier'>;
 }) {
   const { profile } = useAuth();
-  const { language, t } = useLanguage();
-  const words = t.crm.pricing;
+  const { language } = useLanguage();
+  const words = customerPricingCopy[language];
   const canManage = isAdminOrOwner(profile?.role);
   const cacheKey = CK.customerPricing(customer.id);
   const requestVersion = useRef(0);

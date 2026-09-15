@@ -6,7 +6,7 @@
 
 เอกสารนี้เป็นแผนพัฒนา ยังไม่เปลี่ยนราคาสินค้า ใบเสนอราคา หรือคำตอบของ AI ในระบบจริง
 
-สถานะ branch วันที่ 13 กันยายน 2026: ทำ Phase 1 แล้วเฉพาะฐานข้อมูลกลาง, ราคาเน็ตใน Customer Profile, การตรวจราคาจาก Chatbot และใบเสนอราคาที่ Chatbot สร้าง พร้อม tests แต่ยังไม่ deploy หรือ apply migration ใน production ส่วนการ sync ประวัติจาก FlowAccount ยังปิดไว้จนกว่าจะยืนยันสิทธิ์และ contract ของ connector เป็นลายลักษณ์อักษร หน้าออกใบเสนอราคา Backoffice และ Storefront ยังใช้ logic เดิมและต้องย้ายมาใช้ resolver กลางใน phase ถัดไปก่อนประกาศว่าใช้ราคาเดียวกันครบทุกช่องทาง
+สถานะ branch วันที่ 14 กันยายน 2026: ทำฐานข้อมูลกลาง, ราคาเน็ตใน Customer Profile, การตรวจราคาจาก Chatbot, ใบเสนอราคาที่ Chatbot สร้าง, ความจำแยกห้อง และตัวเชื่อม FlowAccount MCP แบบอ่านอย่างเดียวพร้อม tests แล้ว แต่ยังไม่ deploy หรือ apply migration ใน production การ sync จำกัดประวัติ 180 วันเฉพาะลูกค้า LINE ที่ยืนยันตัวตนและส่งข้อความเข้ามาจริงภายใน 180 วัน สูงสุด 100 ราย และยังปิดไว้จนกว่าจะผ่าน Preview/Production acceptance gates หน้าออกใบเสนอราคา Backoffice และ Storefront ยังใช้ logic เดิมและต้องย้ายมาใช้ resolver กลางใน phase ถัดไปก่อนประกาศว่าใช้ราคาเดียวกันครบทุกช่องทาง
 
 ## 1. กติกาที่ใช้เป็นแหล่งเดียว
 
@@ -112,7 +112,7 @@ RPC สร้างใบเสนอราคาจาก bot ต้องผ�
 1. ทำ migration ชดเชย schema เดิม แล้วสำรองและตรวจยอดข้อมูลส่วนลดสินค้า
 2. เพิ่มตารางราคาเน็ต, private FlowAccount cache ที่ยัง disabled, RLS, audit และ resolver พร้อม unit/integration tests
 3. เชื่อม bot quotation กับ resolver และ snapshot โดยไม่เปลี่ยน contract เดิม
-4. ยืนยัน field contract/OAuth/quota ของ FlowAccount แล้วทำ sync แบบ idempotent; เอกสารที่ตีความราคา/ส่วนลด/VAT ไม่ชัดต้อง ineligible
+4. เชื่อม FlowAccount MCP แบบ OAuth read-only แล้วทำ sync แบบ idempotent เฉพาะ active LINE cohort ย้อนหลัง 180 วัน; เอกสารที่ตีความราคา/ส่วนลด/VAT ไม่ชัดต้อง ineligible
 5. เชื่อม Backoffice quotation และ snapshot ต่อบรรทัด
 6. เชื่อม Storefront quote แล้วเทียบผลกับ Backoffice
 7. เชื่อม AI price lookup กับ resolver โดยไม่ส่ง provenance ภายในให้ model/customer
