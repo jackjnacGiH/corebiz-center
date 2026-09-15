@@ -38,6 +38,10 @@ import {
     type AiPersona,
     type PersonaChannel,
 } from '../lib/api';
+import {
+    flowAccountMcpApi,
+    type FlowAccountMcpStatus,
+} from '../lib/flowaccount-api';
 import type { BotLearningCandidate, BotLearningSettings, OrgSettings } from '../lib/database.types';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
@@ -890,6 +894,8 @@ const SECRETS: SecretSpec[] = [
 function IntegrationsTab() {
     return (
         <div className="space-y-4">
+            <FlowAccountMcpCard />
+
             <Card className="gap-5 py-6">
                 <CardHeader className="px-6">
                     <CardTitle className="text-base font-semibold text-neutral-900">
@@ -913,6 +919,192 @@ function IntegrationsTab() {
             <BotLearningCard />
             <LineChannelsCard />
         </div>
+    );
+}
+
+// ─── FlowAccount MCP connection ──────────────────────────────────────────────
+// OAuth and history sync run entirely in Supabase Edge Functions. The browser
+// receives status and row counts only; credentials remain in Supabase Vault.
+
+function flowAccountErrorMessage(error: unknown): string {
+    const code = error instanceof Error ? error.message : String(error ?? '');
+    const messages: Record<string, string> = {
+        forbidden: 'บัญชีนี้ไม่มีสิทธิ์จัดการการเชื่อมต่อ FlowAccount',
+        connection_required: 'ยังไม่ได้เชื่อม FlowAccount กรุณากดเชื่อมต่อก่อน',
+        oauth_state_invalid: 'การยืนยันหมดอายุ กรุณาเริ่มเชื่อมต่อใหม่',
+        provider_rate_limited: 'FlowAccount จำกัดการเรียกชั่วคราว กรุณารอสักครู่แล้วลองใหม่',
+        provider_unavailable: 'FlowAccount ยังไม่พร้อมตอบ กรุณาลองใหม่อีกครั้ง',
+        sync_in_progress: 'มีการ Sync อยู่แล้ว กรุณารอให้รายการเดิมเสร็จก่อน',
+        no_eligible_rows: 'ไม่พบประวัติราคาที่เข้าเงื่อนไขในช่วง 6 เดือน',
+        flowaccount_disconnect_failed: 'ยกเลิกการเชื่อมต่อไม่สำเร็จ',
+    };
+    return messages[code] ?? 'เชื่อมต่อ FlowAccount ไม่สำเร็จ กรุณาลองใหม่หรือตรวจสถานะระบบ';
+}
+
+function FlowAccountMcpCard() {
+    const [status, setStatus] = useState<FlowAccountMcpStatus | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [action, setAction] = useState<'connect' | 'sync' | 'disconnect' | null>(null);
+    const [err, setErr] = useState<string | null>(null);
+    const [notice, setNotice] = useState<string | null>(null);
+
+    async function load() {
+        setLoading(true);
+        setErr(null);
+        try {
+            setStatus(await flowAccountMcpApi.getStatus());
+        } catch (e) {
+            setErr(flowAccountErrorMessage(e));
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        const result = new URLSearchParams(window.location.search).get('flowaccount');
+        void load().finally(() => {
+            if (result === 'connected') setNotice('เชื่อมต่อ FlowAccount สำเร็จแล้ว');
+            if (result === 'error') setErr('FlowAccount ไม่อนุญาตการเชื่อมต่อ กรุณาลองใหม่');
+        });
+    }, []);
+
+    async function connect() {
+        setAction('connect');
+        setErr(null);
+        setNotice(null);
+        try {
+            const url = await flowAccountMcpApi.startConnection(
+                `${window.location.origin}/center/settings?flowaccount=connected`,
+            );
+            window.location.assign(url);
+        } catch (e) {
+            setErr(flowAccountErrorMessage(e));
+            setAction(null);
+        }
+    }
+
+    async function sync() {
+        setAction('sync');
+        setErr(null);
+        setNotice(null);
+        try {
+            const result = await flowAccountMcpApi.syncNow();
+            setNotice(
+                `Sync สำเร็จ ${result.imported_rows.toLocaleString()} รายการ · ใช้ได้ ${result.eligible_rows.toLocaleString()} รายการ`,
+            );
+            await load();
+        } catch (e) {
+            setErr(flowAccountErrorMessage(e));
+        } finally {
+            setAction(null);
+        }
+    }
+
+    async function disconnect() {
+        if (!confirm('ยืนยันยกเลิกการเชื่อมต่อ FlowAccount? ประวัติราคาที่เคย Sync จะหยุดใช้ทันที')) return;
+        setAction('disconnect');
+        setErr(null);
+        setNotice(null);
+        try {
+            await flowAccountMcpApi.disconnect();
+            setNotice('ยกเลิกการเชื่อมต่อ FlowAccount แล้ว');
+            await load();
+        } catch (e) {
+            setErr(flowAccountErrorMessage(e));
+        } finally {
+            setAction(null);
+        }
+    }
+
+    const connected = status?.connected === true;
+    const lastSync = status?.last_success_at
+        ? new Date(status.last_success_at).toLocaleString('th-TH')
+        : 'ยังไม่เคย Sync';
+
+    return (
+        <Card className={cn('border-2', connected ? 'border-emerald-200' : 'border-sky-200')}>
+            <CardHeader className="px-6">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                    <Building2 size={19} className="text-sky-700" />
+                    FlowAccount — ประวัติราคาลูกค้า 6 เดือน
+                </CardTitle>
+                <p className="text-xs text-neutral-600 mt-1 leading-relaxed">
+                    อ่านเฉพาะประวัติราคาที่ตรงกับลูกค้า รหัสสินค้า หน่วย และจำนวน แล้วเก็บเป็น cache สำหรับตอบแชท
+                    ระบบนี้ไม่สร้าง แก้ไข หรือลบเอกสารใน FlowAccount
+                </p>
+            </CardHeader>
+            <CardContent className="px-6 space-y-4">
+                {loading ? (
+                    <div className="flex items-center gap-2 py-3 text-sm text-neutral-500">
+                        <Loader2 size={16} className="animate-spin" /> กำลังตรวจสถานะ...
+                    </div>
+                ) : (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+                            <div className="text-[11px] text-neutral-500">สถานะ</div>
+                            <div className={cn('mt-1 text-sm font-semibold', connected ? 'text-emerald-700' : 'text-neutral-700')}>
+                                {connected ? 'เชื่อมต่อแล้ว' : 'ยังไม่ได้เชื่อมต่อ'}
+                            </div>
+                        </div>
+                        <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 sm:col-span-2">
+                            <div className="text-[11px] text-neutral-500">บริษัท / Sync ล่าสุด</div>
+                            <div className="mt-1 text-sm font-medium text-neutral-900">
+                                {status?.provider_company_name ?? '—'}
+                            </div>
+                            <div className="mt-0.5 text-xs text-neutral-500">{lastSync}</div>
+                        </div>
+                    </div>
+                )}
+
+                {status?.last_success_at && (
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="rounded-md bg-sky-50 px-2 py-2">
+                            <div className="text-lg font-bold tabular-nums text-sky-800">{status.last_sync_imported_rows.toLocaleString()}</div>
+                            <div className="text-[10px] text-sky-700">อ่านทั้งหมด</div>
+                        </div>
+                        <div className="rounded-md bg-emerald-50 px-2 py-2">
+                            <div className="text-lg font-bold tabular-nums text-emerald-800">{status.last_sync_eligible_rows.toLocaleString()}</div>
+                            <div className="text-[10px] text-emerald-700">ใช้คำนวณได้</div>
+                        </div>
+                        <div className="rounded-md bg-neutral-100 px-2 py-2">
+                            <div className="text-lg font-bold tabular-nums text-neutral-800">{status.last_sync_excluded_rows.toLocaleString()}</div>
+                            <div className="text-[10px] text-neutral-600">ตัดออก</div>
+                        </div>
+                    </div>
+                )}
+
+                {notice && (
+                    <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                        <CheckCircle size={14} className="mt-0.5 flex-shrink-0" /> <span>{notice}</span>
+                    </div>
+                )}
+                {err && (
+                    <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> <span>{err}</span>
+                    </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-end gap-2 border-t border-neutral-200 pt-4">
+                    {connected && (
+                        <Button type="button" variant="outline" onClick={() => void disconnect()} disabled={action !== null}>
+                            {action === 'disconnect' ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}
+                            ยกเลิกการเชื่อมต่อ
+                        </Button>
+                    )}
+                    {connected ? (
+                        <Button type="button" onClick={() => void sync()} disabled={action !== null} className="bg-sky-700 hover:bg-sky-800">
+                            {action === 'sync' ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <RotateCcw size={14} className="mr-1.5" />}
+                            Sync ตอนนี้
+                        </Button>
+                    ) : (
+                        <Button type="button" onClick={() => void connect()} disabled={action !== null || loading} className="bg-sky-700 hover:bg-sky-800">
+                            {action === 'connect' ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <ExternalLink size={14} className="mr-1.5" />}
+                            เชื่อมต่อ FlowAccount
+                        </Button>
+                    )}
+                </div>
+            </CardContent>
+        </Card>
     );
 }
 
@@ -1352,6 +1544,7 @@ function BotLearningCard() {
             const saved = await botLearningApi.updateSettings({
                 enabled: settings.enabled,
                 context_memory_enabled: settings.context_memory_enabled,
+                structured_memory_enabled: settings.structured_memory_enabled,
                 candidate_capture_enabled: settings.candidate_capture_enabled,
                 memory_ttl_days: Math.min(365, Math.max(7, settings.memory_ttl_days)),
                 max_context_chars: Math.min(1200, Math.max(160, settings.max_context_chars)),
@@ -1418,7 +1611,7 @@ function BotLearningCard() {
                     </div>
                 ) : (
                     <>
-                        <div className="grid gap-3 md:grid-cols-3">
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                             <label className="rounded-md border border-neutral-200 p-3 cursor-pointer">
                                 <div className="flex items-start gap-2">
                                     <input
@@ -1430,6 +1623,21 @@ function BotLearningCard() {
                                     <span>
                                         <span className="block text-sm font-medium">เปิด Safe Learning</span>
                                         <span className="block text-xs text-neutral-500 mt-1">ปิดแล้วจะไม่เขียนความจำและไม่เก็บข้อเสนอใหม่</span>
+                                    </span>
+                                </div>
+                            </label>
+                            <label className="rounded-md border border-neutral-200 p-3 cursor-pointer">
+                                <div className="flex items-start gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.structured_memory_enabled}
+                                        disabled={!settings.enabled || !settings.context_memory_enabled}
+                                        onChange={(e) => changeSetting('structured_memory_enabled', e.target.checked)}
+                                        className="mt-0.5"
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-medium">จำความต้องการแบบมีโครงสร้าง</span>
+                                        <span className="block text-xs text-neutral-500 mt-1">จำสินค้า ขนาด เบอร์ และงานที่ใช้ แยกแต่ละห้อง</span>
                                     </span>
                                 </div>
                             </label>

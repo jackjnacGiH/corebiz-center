@@ -533,11 +533,13 @@ export type Database = {
       bot_learning_settings: {
         Row: {
           id: boolean; enabled: boolean; context_memory_enabled: boolean;
+          structured_memory_enabled: boolean;
           candidate_capture_enabled: boolean; memory_ttl_days: number;
           max_context_chars: number; updated_at: string; updated_by: string | null;
         }
         Insert: {
           id?: boolean; enabled?: boolean; context_memory_enabled?: boolean;
+          structured_memory_enabled?: boolean;
           candidate_capture_enabled?: boolean; memory_ttl_days?: number;
           max_context_chars?: number; updated_at?: string; updated_by?: string | null;
         }

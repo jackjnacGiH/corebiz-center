@@ -53,6 +53,7 @@ test("read-only mode executes catalog reads and records suppressed mutations", (
   for (const name of [
     "find_products",
     "get_product_detail",
+    "get_exact_price",
     "list_product_groups",
     "get_group_members",
     "list_categories",

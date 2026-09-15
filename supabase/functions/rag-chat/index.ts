@@ -1,5 +1,11 @@
 /**
- * rag-chat v53 — read-only production evaluation without operational writes
+ * rag-chat v54 — authoritative customer-aware price lookup
+ *
+ * Selling prices now come only from the centralized quote-price resolver.
+ * Product search still resolves the exact SKU and missing variant facets, but
+ * it no longer exposes a catalogue number that could bypass customer/Tier
+ * pricing. get_exact_price requires an exact SKU and quantity and keeps price
+ * provenance private from the customer-facing model response.
  *
  * v50: product suggestions are filtered before reaching the LLM. A recognised
  * product family must match exactly; unknown families need a normalized-name
@@ -53,6 +59,29 @@ import {
   readOnlyToolDecision,
   resolveReadOnlyRequest,
 } from "../_shared/rag-read-only.mjs";
+import {
+  customerSafePriceResult,
+  normalizeExactPriceRequest,
+  normalizeQuoteItems,
+} from "../_shared/customer-pricing.mjs";
+import {
+  guardNumericSellingPriceAnswer,
+  inferRequestedProductItemCount,
+  isSuccessfulExactPriceResult,
+  isTrustedQuoteResult,
+} from "../_shared/price-answer-guard.mjs";
+import {
+  buildConversationContinuityPrompt,
+  buildTrustedCustomerPrompt,
+  conversationStateSummary,
+  deterministicConversationState,
+  hasUsefulConversationState,
+  normalizeConversationState,
+  normalizeTrustedCustomerContext,
+  redactConversationMemoryText,
+  resolveTrustedConversationId,
+  sanitizeMemoryToolOutcome,
+} from "../_shared/conversation-memory.mjs";
 
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -97,11 +126,48 @@ type ImagePart = { mimeType: string; data: string };
 type LearningSettings = {
   enabled: boolean;
   context_memory_enabled: boolean;
+  structured_memory_enabled: boolean;
   candidate_capture_enabled: boolean;
   memory_ttl_days: number;
   max_context_chars: number;
 };
-type ConversationMemory = { summary: string; topics: string[] };
+type ConversationState = {
+  active_intent: string | null;
+  products: Array<{ sku: string | null; name: string | null; size: string | null; grit: string | null; unit: string | null; quantity: number | null }>;
+  application: string | null;
+  machine: string | null;
+  material: string | null;
+  confirmed_facts: string[];
+  pending_questions: string[];
+  preferences: string[];
+  last_action: string | null;
+};
+type ConversationMemory = {
+  summary: string;
+  topics: string[];
+  structured_state: ConversationState;
+  locked: boolean;
+  staff_note: string | null;
+};
+type TrustedCustomerContext = {
+  company_name: string | null;
+  contact_name: string | null;
+  history: Array<{
+    document_type: "order" | "quote";
+    sku: string | null;
+    product_name: string | null;
+    quantity: number | null;
+    unit: string | null;
+    status: string | null;
+    document_date: string | null;
+  }>;
+};
+type MemoryToolOutcome = {
+  action: string;
+  outcome: "success" | "needs_input" | "attempted";
+  products: ConversationState["products"];
+  missing_slots: string[];
+};
 type LearningGuidance = { trigger_terms: string[]; approved_guidance: string };
 type RoutingVariant = "auto" | "db_region" | "direct";
 type RequestTelemetry = {
@@ -259,29 +325,23 @@ const TOOL_DEFINITIONS = [
     functionDeclarations: [
       { name: "find_products", description: "Search products. Multi-word AND on (sku, name_th, name_en, brand). Stop-words are stripped server-side. Each result includes min_order_qty. Query is auto-rewritten using keyword_synonyms before search (alias to canonical). If selection_required=true, ask clarification_question_th/en and wait for the missing variant details; do not call capture_lead. If result contains clarification_candidates the customer used an unrecognised name — ask which product they mean.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
       { name: "get_product_detail", description: "Full product detail by SKU, including min_order_qty.", parameters: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"] } },
+      { name: "get_exact_price", description: "Return the CURRENT authoritative selling price for one exact SKU and exact quantity. For every numeric selling-price answer, first resolve the exact product with find_products/get_product_detail, obtain the customer's quantity, then call this tool. Never infer a quantity, use a price from product search, or reveal internal price source/customer verification details. If product selection is still pending, ask the missing size/grit/hole/backing first.", parameters: { type: "object", properties: { sku: { type: "string", description: "exact product SKU returned by product search" }, qty: { type: "integer", description: "exact positive whole-number quantity requested by the customer", minimum: 1, maximum: 1000000 } }, required: ["sku", "qty"] } },
       { name: "list_product_groups", description: "All product groups.", parameters: { type: "object", properties: {} } },
       { name: "get_group_members", description: "SKUs in a product group.", parameters: { type: "object", properties: { group_name: { type: "string" } }, required: ["group_name"] } },
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
       { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer asks to be contacted, OR asks anything the bot cannot answer/verify itself after using the relevant tools (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. Do NOT call while find_products reports selection_required; ask the customer for those missing variant details first. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
       { name: "link_quote_customer", description: "Link the current chat to CRM before creating a quotation. Call only when a quotation is pending and the customer supplies billing details in text or a clearly readable company document/image. Extract exactly what is visible; NEVER guess. Tax ID must contain exactly 13 digits and is the ONLY customer matching key. Require company_name and billing_address too. If any required field is missing or unclear, ask the customer instead of calling.", parameters: { type: "object", properties: { tax_id: { type: "string", description: "exact 13-digit Thai tax ID" }, company_name: { type: "string", description: "legal customer/company name" }, billing_address: { type: "string", description: "complete billing address as one string" }, branch: { type: "string", description: "head office or branch label/code if visible" }, phone: { type: "string", description: "phone if supplied" } }, required: ["tax_id", "company_name", "billing_address"] } },
-      { name: "request_quote", description: "Create one REAL draft quotation for a DIRECT customer request with exact items and quantities. The chat MUST already be linked to a CRM customer with a valid 13-digit tax ID; otherwise the tool asks for company name, billing address, tax ID and branch. Pass EXACT SKUs from find_products/get_product_detail results. NEVER call for a thank-you or question about how to order. An image may lead to a quote only when it is the requested billing document and link_quote_customer succeeded in the same flow. The system reuses an existing draft with identical items in the same chat; only tell the customer a quote_code when quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "number", description: "quantity" } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
+      { name: "request_quote", description: "Create one REAL draft quotation for a DIRECT customer request with exact items and quantities. The chat MUST already be linked to a CRM customer with a valid 13-digit tax ID; otherwise the tool asks for company name, billing address, tax ID and branch. Pass EXACT SKUs from find_products/get_product_detail results. NEVER call for a thank-you or question about how to order. An image may lead to a quote only when it is the requested billing document and link_quote_customer succeeded in the same flow. The system reuses an existing draft with identical items in the same chat; only tell the customer a quote_code when quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", maxItems: "100", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "integer", description: "quantity", minimum: 1, maximum: 1000000 } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
     ],
   },
 ];
 
-const PRODUCT_COLUMNS_CUSTOMER = "sku, name_th, name_en, brand, price, discount_value, discount_type, unit, status, weight_kg, feature_tags, tags, barcode, images, min_order_qty";
+const PRODUCT_COLUMNS_CUSTOMER = "sku, name_th, name_en, brand, unit, status, weight_kg, feature_tags, tags, barcode, images, min_order_qty";
 const PRODUCT_MATCH_COLUMNS = "sku, name_th, name_en, brand, status, feature_tags, tags, barcode, group:product_groups(name)";
 const MAX_PRODUCT_MATCH_SCAN = 1_000;
 const MAX_PRODUCTS_IN_TOOL_RESULT = 25;
 const MAX_PRODUCTS_DURING_SELECTION = 12;
 
-function computeEffectivePrice(p: { price: unknown; discount_value: unknown; discount_type: unknown }) {
-  const base = Number(p.price ?? 0);
-  const val = Number(p.discount_value ?? 0);
-  if (!val) return { effective: base, discounted: false };
-  const off = p.discount_type === "percent" ? (base * val) / 100 : val;
-  return { effective: Math.max(0, base - off), discounted: true };
-}
 function escapeLike(s: string): string { return s.replace(/[%_]/g, (m) => "\\" + m); }
 function escapeRegex(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
@@ -657,6 +717,52 @@ async function getProductDetail(admin: SupabaseClient, sku: string) {
   return formatProductForLLM(data as Record<string, unknown>, true);
 }
 
+type ToolResultMeta = {
+  disposition?: string;
+  selection_required?: boolean;
+  missing_fields?: string[];
+  selected_skus?: string[];
+  read_only_suppressed?: boolean;
+  price_source?: string;
+  personalized_allowed?: boolean;
+  reason?: string;
+};
+
+type DispatchedToolResult = {
+  response: unknown;
+  resultMeta?: ToolResultMeta;
+};
+
+const toolResponse = (response: unknown, resultMeta?: ToolResultMeta): DispatchedToolResult => ({
+  response,
+  ...(resultMeta ? { resultMeta } : {}),
+});
+
+async function getExactPrice(
+  admin: SupabaseClient,
+  args: Record<string, unknown>,
+  conversationId: string | null,
+): Promise<DispatchedToolResult> {
+  const request = normalizeExactPriceRequest(args.sku, args.qty);
+  if (!request.ok) {
+    return toolResponse({
+      ok: false,
+      exact_match: false,
+      reason: request.reason,
+      message: "ต้องระบุ SKU ที่ค้นพบแล้วและจำนวนเต็มที่มากกว่า 0 ก่อนตรวจราคา",
+    }, { reason: request.reason });
+  }
+
+  const { data, error } = await admin.rpc("resolve_bot_quote_prices", {
+    p_conversation_id: conversationId,
+    p_items: [{ sku: request.sku, qty: request.quantity }],
+  });
+  if (error) throw error;
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  const safe = customerSafePriceResult(row, request.sku, request.quantity);
+  return toolResponse(safe.response, safe.meta);
+}
+
 async function listProductGroups(admin: SupabaseClient) {
   const { data, error } = await admin.from("product_groups").select(`name, description, products(sku)`).order("name", { ascending: true });
   if (error) return { error: error.message };
@@ -687,17 +793,14 @@ async function listCategories(admin: SupabaseClient) {
 function formatProductForLLM(p: Record<string, unknown>, detail = false) {
   const inv = (p.inventory as Array<{ quantity: number }> | null) ?? [];
   const stock = inv.reduce((acc, i) => acc + Number(i.quantity ?? 0), 0);
-  const { effective, discounted } = computeEffectivePrice(p as { price: unknown; discount_value: unknown; discount_type: unknown });
   const imgs = Array.isArray(p.images) ? (p.images as string[]) : [];
   const base = {
     sku: p.sku, name_th: p.name_th, name_en: p.name_en, brand: p.brand,
     category: (p.category as { name_th?: string } | null)?.name_th ?? null,
     group: (p.group as { name?: string } | null)?.name ?? null,
-    price: effective, // Actual selling price after discount
-    original_price: discounted ? Number(p.price ?? 0) : null, // Original list price before discount
-    discount_value: Number(p.discount_value ?? 0), discount_type: p.discount_type ?? null,
-    effective_price: effective, discounted, unit: p.unit, stock, in_stock: stock > 0, status: p.status,
+    unit: p.unit, stock, in_stock: stock > 0, status: p.status,
     min_order_qty: Math.max(1, Number(p.min_order_qty ?? 1)),
+    price_lookup_required: true,
     image_thumb: imgs.length > 0 ? imgs[0] : null,
   };
   if (!detail) return base;
@@ -713,7 +816,7 @@ async function dispatchTool(
   conversationId: string | null,
   userQuery: string,
   hasImages: boolean,
-): Promise<unknown> {
+): Promise<DispatchedToolResult> {
   try {
     switch (name) {
       case "find_products": {
@@ -724,18 +827,19 @@ async function dispatchTool(
             send({ type: "clarification", candidates });
           }
         }
-        return result;
+        return toolResponse(result);
       }
-      case "get_product_detail":  return await getProductDetail(admin, String(args.sku ?? ""));
-      case "list_product_groups": return await listProductGroups(admin);
-      case "get_group_members":   return await getGroupMembers(admin, String(args.group_name ?? ""));
-      case "list_categories":     return await listCategories(admin);
-      case "capture_lead":        return await captureLead(admin, args, channel, conversationId);
-      case "link_quote_customer": return await linkQuoteCustomer(admin, args, conversationId);
-      case "request_quote":       return await requestQuote(admin, args, channel, conversationId, userQuery, hasImages);
-      default: return { error: `Unknown tool: ${name}` };
+      case "get_product_detail":  return toolResponse(await getProductDetail(admin, String(args.sku ?? "")));
+      case "get_exact_price":     return await getExactPrice(admin, args, conversationId);
+      case "list_product_groups": return toolResponse(await listProductGroups(admin));
+      case "get_group_members":   return toolResponse(await getGroupMembers(admin, String(args.group_name ?? "")));
+      case "list_categories":     return toolResponse(await listCategories(admin));
+      case "capture_lead":        return toolResponse(await captureLead(admin, args, channel, conversationId));
+      case "link_quote_customer": return toolResponse(await linkQuoteCustomer(admin, args, conversationId));
+      case "request_quote":       return toolResponse(await requestQuote(admin, args, channel, conversationId, userQuery, hasImages));
+      default: return toolResponse({ error: `Unknown tool: ${name}` });
     }
-  } catch (e) { return { error: (e as Error).message ?? String(e) }; }
+  } catch (e) { return toolResponse({ error: (e as Error).message ?? String(e) }); }
 }
 
 const cleanStr = (v: unknown) => { const t = (v == null ? "" : String(v)).trim(); return t || null; };
@@ -852,15 +956,32 @@ async function requestQuote(
     };
   }
 
-  const name = cleanStr(args.name), phone = cleanStr(args.phone), note = cleanStr(args.note);
-  const reqItems: Array<{ sku: string; qty: number }> = [];
-  if (Array.isArray(args.items)) {
-    for (const it of args.items as Array<Record<string, unknown>>) {
-      const sku = String(it?.sku ?? "").trim().toUpperCase();
-      const qty = Math.max(1, Math.floor(Number(it?.qty) || 1));
-      if (sku) reqItems.push({ sku, qty });
-    }
+  const normalizedItems = normalizeQuoteItems(args.items);
+  if (!normalizedItems.ok) {
+    const itemNumber = typeof normalizedItems.item_index === "number"
+      ? normalizedItems.item_index + 1
+      : null;
+    const message = normalizedItems.reason === "too_many_items"
+      ? "ไม่สามารถสร้างใบเสนอราคาได้: หนึ่งคำขอมีสินค้าได้ไม่เกิน 100 รายการ"
+      : normalizedItems.item_reason === "sku_required"
+      ? `ไม่สามารถสร้างใบเสนอราคาได้: สินค้ารายการที่ ${itemNumber} ต้องระบุ SKU ที่ค้นพบแล้ว`
+      : normalizedItems.item_reason === "positive_integer_quantity_required"
+      ? `ไม่สามารถสร้างใบเสนอราคาได้: จำนวนของสินค้ารายการที่ ${itemNumber} ต้องเป็นจำนวนเต็มที่มากกว่า 0`
+      : "ไม่สามารถสร้างใบเสนอราคาได้: ต้องมีสินค้าอย่างน้อย 1 รายการพร้อม SKU และจำนวนเต็มที่มากกว่า 0";
+    return {
+      ok: false,
+      saved: false,
+      skipped: true,
+      quote_created: false,
+      quote_reused: false,
+      reason: "invalid_quote_items",
+      validation_reason: normalizedItems.item_reason ?? normalizedItems.reason,
+      invalid_item_index: itemNumber,
+      message,
+    };
   }
+  const name = cleanStr(args.name), phone = cleanStr(args.phone), note = cleanStr(args.note);
+  const reqItems = normalizedItems.items as Array<{ sku: string; qty: number }>;
   const itemsText = reqItems.length > 0
     ? reqItems.map((i) => `${i.sku} x${i.qty}`).join(", ")
     : cleanStr(args.items);
@@ -880,7 +1001,7 @@ async function requestQuote(
       return {
         ok: true, saved: true, quote_created: true, quote_reused: false,
         quote_code: quote.quote_code, estimated_total_incl_vat: Number(quote.quote_total ?? 0),
-        message: `สร้างใบเสนอราคาฉบับร่างเลขที่ ${quote.quote_code} แล้ว — แจ้งเลขที่นี้กับลูกค้า และบอกว่าทีมงานจะตรวจสอบ/ยืนยันราคาสุทธิแล้วติดต่อกลับโดยเร็ว`,
+        message: `สร้างใบเสนอราคาฉบับร่างเลขที่ ${quote.quote_code} ด้วยราคาที่ระบบคำนวณแล้ว — แจ้งเลขที่นี้กับลูกค้าได้ทันที ห้ามบอกว่าต้องรอ Owner หรือทีมงานยืนยันราคา`,
       };
     }
     if (quote?.items_resolved === true && quote.quote_reused === true && typeof quote.quote_code === "string") {
@@ -933,6 +1054,7 @@ async function getPersonaPrompt(admin: SupabaseClient, channel: string): Promise
 const LEARNING_DEFAULTS: LearningSettings = {
   enabled: false,
   context_memory_enabled: false,
+  structured_memory_enabled: false,
   candidate_capture_enabled: false,
   memory_ttl_days: 90,
   max_context_chars: 600,
@@ -996,14 +1118,24 @@ async function getLearningSettings(admin: SupabaseClient): Promise<LearningSetti
   const now = Date.now();
   if (learningSettingsCache && learningSettingsCache.expires > now) return learningSettingsCache.value;
   try {
-    const { data, error } = await admin.from("bot_learning_settings")
-      .select("enabled, context_memory_enabled, candidate_capture_enabled, memory_ttl_days, max_context_chars")
+    let { data, error } = await admin.from("bot_learning_settings")
+      .select("enabled, context_memory_enabled, structured_memory_enabled, candidate_capture_enabled, memory_ttl_days, max_context_chars")
       .eq("id", true).maybeSingle();
+    if (error) {
+      // During the migration window, keep the already-deployed legacy memory
+      // behavior available while the new structured-memory gate stays closed.
+      const legacy = await admin.from("bot_learning_settings")
+        .select("enabled, context_memory_enabled, candidate_capture_enabled, memory_ttl_days, max_context_chars")
+        .eq("id", true).maybeSingle();
+      data = legacy.data ? { ...legacy.data, structured_memory_enabled: false } : null;
+      error = legacy.error;
+    }
     if (error || !data) throw error ?? new Error("missing learning settings");
     const row = data as Partial<LearningSettings>;
     const value: LearningSettings = {
       enabled: row.enabled === true,
       context_memory_enabled: row.context_memory_enabled === true,
+      structured_memory_enabled: row.structured_memory_enabled === true,
       candidate_capture_enabled: row.candidate_capture_enabled === true,
       memory_ttl_days: Math.max(7, Math.min(365, Number(row.memory_ttl_days) || 90)),
       max_context_chars: Math.max(160, Math.min(1200, Number(row.max_context_chars) || 600)),
@@ -1019,16 +1151,60 @@ async function getLearningSettings(admin: SupabaseClient): Promise<LearningSetti
 async function loadConversationMemory(admin: SupabaseClient, conversationId: string | null, settings: LearningSettings): Promise<ConversationMemory | null> {
   if (!conversationId || !settings.enabled || !settings.context_memory_enabled) return null;
   try {
+    const memoryFields = settings.structured_memory_enabled
+      ? "summary, topics, structured_state, staff_locked, staff_note"
+      : "summary, topics";
     const { data, error } = await admin.from("bot_conversation_memory")
-      .select("summary, topics").eq("conversation_id", conversationId)
+      .select(memoryFields).eq("conversation_id", conversationId)
       .gt("expires_at", new Date().toISOString()).maybeSingle();
-    if (error || !data) return null;
-    const row = data as { summary?: unknown; topics?: unknown };
-    const summary = redactLearningText(String(row.summary ?? ""), settings.max_context_chars);
+    if (error) throw error;
+    if (!data) return null;
+    const row = data as { summary?: unknown; topics?: unknown; structured_state?: unknown; staff_locked?: unknown; staff_note?: unknown };
+    const summary = redactConversationMemoryText(row.summary, Math.min(600, settings.max_context_chars));
     const topics = Array.isArray(row.topics) ? row.topics.map(String).slice(0, 8) : [];
-    return summary ? { summary, topics } : null;
+    const structuredState = normalizeConversationState(row.structured_state) as ConversationState;
+    const staffNote = redactConversationMemoryText(row.staff_note, 600) || null;
+    if (!summary && !staffNote && !hasUsefulConversationState(structuredState)) return null;
+    return {
+      summary,
+      topics,
+      structured_state: structuredState,
+      locked: row.staff_locked === true,
+      staff_note: staffNote,
+    };
   } catch (e) {
     console.warn("bot conversation memory read failed:", (e as Error).message);
+    if (settings.structured_memory_enabled) {
+      // Unknown lock state must not permit a background overwrite.
+      return {
+        summary: "",
+        topics: [],
+        structured_state: normalizeConversationState(null) as ConversationState,
+        locked: true,
+        staff_note: null,
+      };
+    }
+    return null;
+  }
+}
+
+async function loadTrustedCustomerContext(
+  admin: SupabaseClient,
+  trustedConversationId: string | null,
+  settings: LearningSettings,
+): Promise<TrustedCustomerContext | null> {
+  if (!trustedConversationId || !settings.enabled || !settings.context_memory_enabled || !settings.structured_memory_enabled) return null;
+  try {
+    const { data, error } = await admin.rpc("get_bot_customer_context", {
+      p_conversation_id: trustedConversationId,
+    });
+    if (error) throw error;
+    return normalizeTrustedCustomerContext(data) as TrustedCustomerContext | null;
+  } catch (e) {
+    // Personalization is optional and must fail closed. Normal RAG/tool behavior
+    // continues without customer identity or history when the RPC is absent,
+    // ambiguous, or unavailable.
+    console.warn("trusted bot customer context unavailable:", (e as Error).message);
     return null;
   }
 }
@@ -1060,23 +1236,64 @@ async function loadApprovedLearningGuidance(admin: SupabaseClient, query: string
   }
 }
 
-async function saveConversationMemory(admin: SupabaseClient, conversationId: string | null, channel: string, query: string, toolNames: string[], settings: LearningSettings): Promise<void> {
-  if (!conversationId || !settings.enabled || !settings.context_memory_enabled || !query || isSensitiveLearningInput(query)) return;
-  const safeQuery = redactLearningText(query, Math.max(80, settings.max_context_chars - 42));
-  if (safeQuery.length < 3) return;
-  try {
-    const expiresAt = new Date(Date.now() + settings.memory_ttl_days * 24 * 60 * 60 * 1000).toISOString();
-    await admin.from("bot_conversation_memory").upsert({
-      conversation_id: conversationId,
-      summary: `Latest customer context: ${safeQuery}`.slice(0, settings.max_context_chars),
-      topics: learningTopics(query, toolNames),
-      source_channel: channel,
-      expires_at: expiresAt,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "conversation_id" });
-  } catch (e) {
-    console.warn("bot conversation memory write failed:", (e as Error).message);
+async function updateConversationMemoryState(
+  admin: SupabaseClient,
+  conversationId: string | null,
+  channel: string,
+  query: string,
+  toolNames: string[],
+  toolOutcomes: MemoryToolOutcome[],
+  previousMemory: ConversationMemory | null,
+  settings: LearningSettings,
+  turnStartedAt: number,
+): Promise<void> {
+  if (!conversationId || !settings.enabled || !settings.context_memory_enabled || previousMemory?.locked) return;
+  if (isSensitiveLearningInput(query)) return;
+
+  const topics = settings.structured_memory_enabled
+    ? [...new Set([...(previousMemory?.topics ?? []), ...learningTopics(query, toolNames)])].slice(0, 8)
+    : learningTopics(query, toolNames);
+  const turnAt = new Date(turnStartedAt).toISOString();
+  const expiresAt = new Date(turnStartedAt + settings.memory_ttl_days * 24 * 60 * 60 * 1000).toISOString();
+  if (!settings.structured_memory_enabled) {
+    // Keep the deployed legacy continuity behavior exactly while the new flag
+    // is closed. This makes the database/function rollout reversible.
+    const legacySummaryLimit = Math.min(600, settings.max_context_chars);
+    const safeQuery = redactLearningText(query, Math.max(80, legacySummaryLimit - 42));
+    if (safeQuery.length < 3) return;
+    const { error } = await admin.rpc("upsert_bot_conversation_memory_state", {
+      p_conversation_id: conversationId,
+      p_summary: `Latest customer context: ${safeQuery}`.slice(0, legacySummaryLimit),
+      p_topics: topics,
+      p_structured_state: previousMemory?.structured_state ?? normalizeConversationState(null),
+      p_source_channel: channel,
+      p_expires_at: expiresAt,
+      p_turn_at: turnAt,
+    });
+    if (error) throw error;
+    return;
   }
+  if (!query) return;
+
+  // The structured path is intentionally local and deterministic. It adds no
+  // second model request, token usage, quota pressure, or reply-path latency.
+  const state = deterministicConversationState({
+    previousState: previousMemory?.structured_state,
+    query,
+    toolOutcomes,
+  }) as ConversationState;
+  if (!hasUsefulConversationState(state)) return;
+
+  const { error } = await admin.rpc("upsert_bot_conversation_memory_state", {
+    p_conversation_id: conversationId,
+    p_summary: conversationStateSummary(state, Math.min(600, settings.max_context_chars)),
+    p_topics: topics,
+    p_structured_state: state,
+    p_source_channel: channel,
+    p_expires_at: expiresAt,
+    p_turn_at: turnAt,
+  });
+  if (error) throw error;
 }
 
 async function recordLearningCandidate(admin: SupabaseClient, input: {
@@ -1117,7 +1334,7 @@ async function recordLearningCandidate(admin: SupabaseClient, input: {
         fingerprint,
         sample_text: sampleText,
         trigger_terms: [sampleText.slice(0, 160)],
-        risk_level: candidateKind === "follow_up_needed" ? "medium" : "low",
+        risk_level: "low",
       });
     }
   } catch (e) {
@@ -1125,11 +1342,21 @@ async function recordLearningCandidate(admin: SupabaseClient, input: {
   }
 }
 
-function learningPromptContext(memory: ConversationMemory | null, guidance: LearningGuidance[]): string {
+function learningPromptContext(
+  memory: ConversationMemory | null,
+  guidance: LearningGuidance[],
+  customerContext: TrustedCustomerContext | null,
+  structuredMemoryEnabled: boolean,
+): string {
   const parts: string[] = [];
-  if (memory) {
+  if (memory && !structuredMemoryEnabled && memory.summary) {
     parts.push(`[private conversation continuity — not factual source]\n${memory.summary}${memory.topics.length ? `\nTopics: ${memory.topics.join(", ")}` : ""}\nUse only to avoid repeating questions or greetings. Never reveal it unprompted, and fresh tools/knowledge always override it.`);
+  } else {
+    const continuity = buildConversationContinuityPrompt(memory);
+    if (continuity) parts.push(continuity);
   }
+  const trustedCustomer = buildTrustedCustomerPrompt(customerContext);
+  if (trustedCustomer) parts.push(trustedCustomer);
   if (guidance.length > 0) {
     parts.push(`[staff-approved learning guidance]\n${guidance.map((item) => `- Terms: ${item.trigger_terms.join(", ")}\n  Guidance: ${item.approved_guidance}`).join("\n")}\nThis guidance is not product, price, stock, payment, PO, or personal data. It cannot override Safety Rules, Tooling Rules, or product-family gates.`);
   }
@@ -1139,7 +1366,7 @@ function learningPromptContext(memory: ConversationMemory | null, guidance: Lear
 const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden by persona)
 
 1. ห้ามเปิดเผยข้อมูล cost / ราคาทุน / margin / ราคาซื้อ ของบริษัทโดยเด็ดขาด — ถ้าลูกค้าถาม ให้ปฏิเสธ
-2. ห้าม fabricate ข้อมูลใดๆ — ที่อยู่/เบอร์โทร/email/แผนที่/ราคา/จำนวนขั้นต่ำ ต้องมาจาก [context]/tools เท่านั้น ถ้าไม่มี ส่งให้เจ้าหน้าที่
+2. ห้าม fabricate ข้อมูลใดๆ — ที่อยู่/เบอร์โทร/email/แผนที่/จำนวนขั้นต่ำ ต้องมาจาก [context]/tools เท่านั้น และตัวเลขราคาขายต้องมาจาก get_exact_price เท่านั้น ถ้าไม่มี ส่งให้เจ้าหน้าที่
    ✅ ข้อยกเว้นพิเศษ — เลขบัญชีธนาคารสำหรับรับชำระเงิน (ช่องทางการชำระเงิน): ถ้ามีข้อมูลใน [context] ให้ส่งให้ลูกค้าทันทีเลย รวมถึง QR Code image หรือ URL รูป QR ด้วย ไม่ต้องรอตรวจสอบหรือส่งให้เจ้าหน้าที่ก่อน
    ✅ โลเคชั่น/แผนที่/ที่อยู่: ถ้ามีข้อมูลใน [context] ให้ส่ง Google Maps URL และที่อยู่ให้ลูกค้าทันที ห้ามเรียก capture_lead หรือบอกว่าจะตรวจสอบก่อน
 3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ
@@ -1149,11 +1376,11 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
    ⚠️ เลขที่ขึ้นต้น QT- / SO- / DN- คือเลขที่เอกสาร (ใบเสนอราคา/ใบสั่งขาย/ใบส่งของ) ไม่ใช่รหัสสินค้า — ห้ามเอาไปค้น find_products ให้ทำตามข้อ 5 นี้ทันที (รับเรื่อง + capture_lead โดยใส่เลขเอกสารใน note)
    ⚠️ พูดรับเรื่องสั้นๆ เพียงครั้งเดียว — เรียก capture_lead ก่อนแล้วค่อยตอบลูกค้าหลังได้ผล tool ห้ามพูดประโยคเดิม/ความหมายเดิมซ้ำสองรอบในคำตอบเดียว
    💡 ถ้าเป็นเรื่องสถานะใบเสนอราคา/คำสั่งซื้อ ให้แนะนำเพิ่มท้ายคำตอบว่า ลูกค้าดูสถานะเองได้ตลอดเวลาที่หน้า "บัญชีของฉัน" https://www.jnac.online/account (เข้าสู่ระบบด้วยอีเมลที่ใช้ติดต่อ)
-6. ข้อมูลสินค้า (เช่น ราคา สต็อก รูปภาพ) สามารถเปลี่ยนแปลงหรือได้รับการอัปเดตแก้ไขให้ถูกต้องในคลังสินค้า/ฐานข้อมูลได้ตลอดเวลา ดังนั้น แม้ว่าในบทสนทนาก่อนหน้าหรือในประวัติการคุยจะแสดงข้อมูลสินค้าที่ผิด หรือผู้ใช้จะเคยท้วงติงว่ารูปภาพ/ราคาไม่ถูกต้องก็ตาม เมื่อลูกค้าถามถึงสินค้าตัวนั้นหรือรูปภาพอีกครั้ง ห้ามทวน/ห้ามใช้ข้อมูล/ห้ามใช้รูปภาพเดิมจากประวัติบทสนทนาเด็ดขาด และห้ามคิดเอาเองว่าข้อมูลหรือรูปภาพยังคงผิดพลาดอยู่ คุณต้องเรียกใช้ tool (find_products หรือ get_product_detail) ใหม่ทุกครั้งเพื่อดึงข้อมูลล่าสุดจากฐานข้อมูลมาตอบ หากฐานข้อมูลอัปเดตเป็นรูปใหม่แล้ว ให้ส่งรูปภาพใหม่จาก tool ให้ลูกค้าทันที`;
+6. ข้อมูลสินค้า (เช่น ราคา สต็อก รูปภาพ) สามารถเปลี่ยนแปลงหรือได้รับการอัปเดตแก้ไขให้ถูกต้องในคลังสินค้า/ฐานข้อมูลได้ตลอดเวลา ดังนั้น แม้ว่าในบทสนทนาก่อนหน้าหรือในประวัติการคุยจะแสดงข้อมูลสินค้าที่ผิด หรือผู้ใช้จะเคยท้วงติงว่ารูปภาพ/ราคาไม่ถูกต้องก็ตาม เมื่อลูกค้าถามถึงสินค้าตัวนั้นหรือรูปภาพอีกครั้ง ห้ามทวน/ห้ามใช้ข้อมูล/ห้ามใช้รูปภาพเดิมจากประวัติบทสนทนาเด็ดขาด และห้ามคิดเอาเองว่าข้อมูลหรือรูปภาพยังคงผิดพลาดอยู่ คุณต้องเรียก find_products หรือ get_product_detail ใหม่เพื่อดึงข้อมูลสินค้าล่าสุด และเมื่อจะตอบตัวเลขราคาต้องเรียก get_exact_price ใหม่ทุกครั้ง หากฐานข้อมูลอัปเดตเป็นรูปใหม่แล้ว ให้ส่งรูปภาพใหม่จาก tool ให้ลูกค้าทันที`;
 
 const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 1. NEVER reveal cost/margin/buying-price. Refuse politely.
-2. NEVER fabricate factual data (address/phone/email/map/price/MOQ). If missing, escalate to staff.
+2. NEVER fabricate factual data (address/phone/email/map/MOQ). A numeric selling price must come from get_exact_price only. If missing, escalate to staff.
    ✅ Special exception — bank account number for receiving payment (payment channels): if the info is in [context], send it to the customer IMMEDIATELY including QR Code image/URL. No need to verify or escalate first.
    ✅ Location/map/address: when present in [context], send the Google Maps URL and address IMMEDIATELY. Do not call capture_lead or say it needs checking.
 3. Language: reply in same language as customer (Thai-Thai, English-English).
@@ -1163,7 +1390,7 @@ const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
    ⚠️ Numbers starting QT- / SO- / DN- are DOCUMENT numbers (quote / sales order / delivery note), NOT product SKUs — never search find_products for them; apply this rule immediately (own it + capture_lead with the doc number in the note).
    ⚠️ Acknowledge ONCE only — call capture_lead first, then reply after the tool result; never repeat the same sentence/meaning twice in one answer.
    💡 For quote/order status questions, also mention the customer can self-check anytime at "บัญชีของฉัน" https://www.jnac.online/account (log in with the e-mail they use with us).
-6. Product details (price, stock, images) can be updated or corrected in the database at any time. Even if the conversation history shows that the customer complained about an incorrect image/price, or that a previous answer contained incorrect details, you MUST NOT assume the data remains incorrect, and you MUST NEVER reuse the stale details or image URLs from the history. You MUST always invoke the tool (find_products or get_product_detail) to query the latest database values and output the updated image URL/price from the tool response immediately.`;
+6. Product details (price, stock, images) can be updated or corrected in the database at any time. Even if the conversation history shows that the customer complained about an incorrect image/price, or that a previous answer contained incorrect details, you MUST NOT assume the data remains incorrect, and you MUST NEVER reuse stale details or image URLs. Use find_products or get_product_detail for current product facts, and call get_exact_price again every time before stating any numeric selling price.`;
 
 const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคัญมาก — ต้องทำตาม)
 
@@ -1172,6 +1399,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 3. ถ้าพูดว่า เดี๋ยวเช็คให้ → ต้อง CALL TOOL จริงใน reply เดียวกัน
 
 ⚠️ ถ้า find_products ส่ง selection_required=true: ให้ถาม clarification_question_th เพียงคำถามเดียว รอคำตอบ แล้วค้นใหม่โดยรวมชื่อ/รุ่นเดิมกับข้อมูลที่ลูกค้าเพิ่งตอบ ห้ามเสนอราคา ห้ามเดา SKU และห้ามเรียก capture_lead จนกว่าจะถามข้อมูลที่ขาดและค้นซ้ำแล้วไม่พบสินค้าจริง
+💰 เมื่อลูกค้าถามราคา: ต้องค้นจนได้ SKU ที่ตรงเพียงรายการเดียวและทราบจำนวนที่ลูกค้าต้องการก่อน แล้วเรียก get_exact_price ทุกครั้ง ถ้ายังไม่ทราบจำนวนให้ถามจำนวนก่อน ห้ามใช้ตัวเลขราคาจากผลค้นสินค้า ประวัติแชต หรือคำนวณส่วนลดเอง และห้ามบอกลูกค้าว่าราคามาจาก Tier ราคาเฉพาะลูกค้า ประวัติ FlowAccount หรือสถานะการยืนยันตัวตน
 
 🚫 ห้ามเสนอสินค้าเพียงเพราะขนาด เบอร์ หรือการใช้งานใกล้เคียงกัน หากเป็นคนละชนิดสินค้า. เมื่อไม่มีตัวเลือกที่ผ่านเงื่อนไข ให้บอกว่าจะตรวจสอบจัดหา/สั่งผลิตกับคุณเชอร์รี่ แทนการเดาสินค้าทดแทน
 
@@ -1203,6 +1431,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 • เมื่อลูกค้าส่งข้อมูลออกบิลเป็นข้อความหรือรูปเอกสารที่อ่านชัด ให้เรียก link_quote_customer โดยคัดลอกข้อมูลตามจริง ห้ามเดาหรือเติมข้อมูลเอง เลขผู้เสียภาษีเป็นกุญแจเดียวที่ใช้ผูกลูกค้า
 • ถ้ารูปเป็นหนังสือรับรอง/ภ.พ.20/นามบัตรที่ส่งมาเพื่อตอบคำถามข้อมูลออกบิล ไม่ถือเป็น PO และสามารถเรียก link_quote_customer ได้ เมื่อข้อมูลบังคับครบและอ่านชัด
 • เรียก request_quote ได้เฉพาะเมื่อลูกค้าขอ "ออกใบเสนอราคา" โดยตรง และยืนยันสินค้า+จำนวนชัดเจนเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)\n• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน\n• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
+• เมื่อ request_quote คืน quote_created=true ราคาถูกคำนวณจาก resolver แล้ว ให้แจ้งเลข quote_code ได้ทันทีโดยไม่บอกว่าต้องรอ Owner หรือทีมงานยืนยันราคา
 • ถ้าลูกค้ายังไม่ระบุขนาด/เบอร์/รุ่นย่อย → ถามข้อมูลที่ขาดและค้นซ้ำก่อน; ใช้ capture_lead เฉพาะเมื่อค้นซ้ำแล้วยังหา SKU ที่ตรงไม่ได้ อย่าเดา SKU
 • tool เหล่านี้ ไม่ได้ ส่งข้อความหาลูกค้า แค่บันทึกในระบบ+แจ้งทีมขาย JNAC ภายใน
 • เรียก capture_lead แค่ครั้งเดียวต่อบทสนทนา
@@ -1213,6 +1442,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 2. Broad question → call list_product_groups / list_categories first.
 3. If you say let me check → you MUST call a tool in the SAME reply.
 ⚠️ When find_products returns selection_required=true: ask clarification_question_en only, wait for the answer, then search again using the original product/model plus the new details. Do not quote a price, guess a SKU, or call capture_lead until the missing details have been asked and the refined search truly has no match.
+💰 When the customer asks for a price: first resolve exactly one SKU and obtain the customer's exact quantity, then call get_exact_price every time. Ask for quantity when it is missing. Never use a number from product search/chat history or calculate a discount yourself. Never reveal whether the price came from Tier, a customer rule, FlowAccount history, or identity-verification state.
 🚫 NEVER offer a product merely because its size, grit, or use is similar when it is a different product type. If no safe option exists, escalate for sourcing/made-to-order instead of guessing a substitute.
 4. 0 results + no candidates and no selection_required after clarification → offer made-to-order via Khun Cherry.
 5. ⚠️ Whenever offering product options, alternatives, similar items, or lists of sizes/grits/specs for the customer to choose from (including made-to-order variant choices): You MUST present them as a numbered list starting with "1.", "2.", "3." (do NOT use emojis like ✨ or bullet points like • for these lists under any circumstances) so that the numbers align exactly with the Quick Reply buttons.
@@ -1238,15 +1468,24 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 • When the customer supplies readable billing details in text or a document image, call link_quote_customer with exact visible values. Never infer missing data. Tax ID is the only matching key.
 • A certificate/VAT registration/business card sent specifically to answer the billing-data request is not a PO and may be processed with link_quote_customer when all required fields are legible.
 • Call request_quote only for a DIRECT request to issue a quote with confirmed specific items+quantities. Never call it for a thank-you, an ordering-process question, or an image/document alone.\n• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
+• When request_quote returns quote_created=true, its prices have already been resolved. Share the quote_code immediately without saying that an Owner or staff member must confirm the price.
 • If a size/grit/variant is still unclear, ask for it and search again first. Use capture_lead only after the refined search still cannot resolve a SKU; never guess SKUs.
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
 • Call capture_lead only ONCE per conversation. Never promise special prices yourself.`;
 
-function buildSystemPrompt(persona: string, contextText: string | null, lang: Lang, memory: ConversationMemory | null, guidance: LearningGuidance[]): string {
+function buildSystemPrompt(
+  persona: string,
+  contextText: string | null,
+  lang: Lang,
+  memory: ConversationMemory | null,
+  guidance: LearningGuidance[],
+  customerContext: TrustedCustomerContext | null,
+  structuredMemoryEnabled: boolean,
+): string {
   const safety  = lang === "th" ? SAFETY_RULES_TH  : SAFETY_RULES_EN;
   const tooling = lang === "th" ? TOOLING_GUIDE_TH : TOOLING_GUIDE_EN;
   const ctx = contextText ? `\n\n[knowledge base context]\n${contextText}` : "";
-  const learning = learningPromptContext(memory, guidance);
+  const learning = learningPromptContext(memory, guidance, customerContext, structuredMemoryEnabled);
   const learningCtx = learning ? `\n\n[guarded learning context]\n${learning}` : "";
   return `${safety}\n\n==========\n👤 PERSONA\n==========\n${persona}\n\n==========\n${tooling}${ctx}${learningCtx}`;
 }
@@ -1571,9 +1810,10 @@ Deno.serve(async (req: Request) => {
   // conversation. Browser callers can create/read only their own livechat
   // conversation via the session id, so they cannot probe another customer's
   // continuity memory.
-  const internalConversationId = internalServiceCall && isUuid(body.conversation_id)
-    ? body.conversation_id
-    : null;
+  const internalConversationId = resolveTrustedConversationId(
+    internalServiceCall,
+    body.conversation_id,
+  );
   const readOnlyState = resolveReadOnlyRequest({
     requested: body.read_only === true,
     internalServiceCall,
@@ -1611,7 +1851,7 @@ Deno.serve(async (req: Request) => {
         const send = (event: Record<string, unknown>) => {
           try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); } catch (_e) { /* closed */ }
         };
-        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, readOnly, telemetry, send); }
+        try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, internalConversationId, persistMessages, readOnly, telemetry, send); }
         catch (e) {
           const msg = (e as Error).message ?? String(e);
           const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -1624,7 +1864,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const events: Array<Record<string, unknown>> = [];
-  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, persistMessages, readOnly, telemetry, (e) => events.push(e)); }
+  try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, internalConversationId, persistMessages, readOnly, telemetry, (e) => events.push(e)); }
   catch (e) {
     const msg = (e as Error).message ?? String(e);
     const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
@@ -1660,7 +1900,7 @@ Deno.serve(async (req: Request) => {
   }), { status: errEv ? 500 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 });
 
-async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, persistMessages: boolean, readOnly: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
+async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, trustedConversationId: string | null, persistMessages: boolean, readOnly: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
   const botFlagsStartedAt = Date.now();
   const [globalOn, channelOn, convOn] = await Promise.all([
     isGlobalBotEnabled(admin),
@@ -1754,12 +1994,13 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
 
   const setupStartedAt = Date.now();
   const learningSettings = await getLearningSettings(admin);
-  const [geminiKey, openaiKey, persona, conversationMemory, approvedGuidance] = await Promise.all([
+  const [geminiKey, openaiKey, persona, conversationMemory, approvedGuidance, trustedCustomerContext] = await Promise.all([
     getGeminiKey(admin),
     getOpenAIKey(admin),
     getPersonaPrompt(admin, channel),
     loadConversationMemory(admin, conversationId, learningSettings),
     loadApprovedLearningGuidance(admin, query, learningSettings),
+    loadTrustedCustomerContext(admin, trustedConversationId, learningSettings),
   ]);
   const setupMs = Date.now() - setupStartedAt;
   if (!geminiKey) throw new Error(MSG[lang].geminiKeyMissing);
@@ -1865,7 +2106,15 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     send({ type: "status", message: images.length > 0 ? "vision" : "rag_skipped_product_query" });
   }
 
-  const systemPrompt = buildSystemPrompt(persona, contextText, lang, conversationMemory, approvedGuidance);
+  const systemPrompt = buildSystemPrompt(
+    persona,
+    contextText,
+    lang,
+    conversationMemory,
+    approvedGuidance,
+    trustedCustomerContext,
+    learningSettings.structured_memory_enabled,
+  );
   const generationStartedAt = Date.now();
   const defaultImgPrompt = lang === "en"
     ? "The customer sent this image. Please inspect it according to image rules."
@@ -1881,15 +2130,9 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     name: string;
     args: Record<string, unknown>;
     result_summary?: string;
-    result_meta?: {
-      disposition?: string;
-      selection_required?: boolean;
-      missing_fields?: string[];
-      selected_skus?: string[];
-      read_only_suppressed?: boolean;
-      reason?: string;
-    };
+    result_meta?: ToolResultMeta;
   }> = [];
+  const memoryToolOutcomes: MemoryToolOutcome[] = [];
   let usedModel = GEMINI_MODELS[0];
   let fullAnswer = "";
   let firstTokenMs: number | null = null;
@@ -1920,6 +2163,14 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const contextualProductQuery = ragRoutingQuery;
   const hasContextualProductQuery = contextualProductQuery !== query;
   let productSelectionPending = false;
+  // Raw-request lower bound, captured before tools run. This prevents one
+  // successful lookup from authorizing a partial answer to a multi-item ask.
+  const requestedProductItemCount = inferRequestedProductItemCount(query);
+  const exactPriceEligibleSkus = new Set<string>();
+  // Request-local only: stale tool results from conversation history never
+  // authorize a current price. Each outcome is bound to its SKU + quantity.
+  const exactPriceOutcomes = new Map<string, unknown | null>();
+  let trustedQuoteResult: unknown = null;
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let iterText = "";
     const llmStartedAt = Date.now();
@@ -1950,6 +2201,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         : call.args;
       let result: unknown;
       let executed = false;
+      let dispatchResultMeta: ToolResultMeta | undefined;
       const readOnlyDecision = readOnlyToolDecision(call.name, readOnly);
       const readOnlySuppressed = !readOnlyDecision.execute && readOnlyDecision.recordSuppressed;
       // Only an unresolved variant selection blocks workflow mutations. A
@@ -1957,6 +2209,16 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       // callback, draft quote, or quote-customer link in the same model turn.
       if (readOnlySuppressed) {
         result = readOnlyDecision.result;
+      } else if (
+        call.name === "get_exact_price" &&
+        !exactPriceEligibleSkus.has(String(effectiveArgs.sku ?? "").trim().toUpperCase())
+      ) {
+        result = {
+          ok: false,
+          suppressed: true,
+          reason: "exact_product_lookup_required",
+          message: "ให้เรียก find_products หรือ get_product_detail จนยืนยัน SKU ที่ตรงเพียงรายการเดียวก่อนตรวจราคา",
+        };
       } else if (shouldSuppressToolForProductSearch(
         call.name,
         productSelectionPending ? "needs_selection" : "none",
@@ -1964,17 +2226,36 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         result = { ok: false, suppressed: true, reason: "product_selection_or_lookup_already_handled" };
       } else {
         send({ type: "tool_call", name: call.name, args: effectiveArgs });
-        result = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0);
+        const dispatched = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0);
+        result = dispatched.response;
+        if (call.name === "get_exact_price") {
+          const request = normalizeExactPriceRequest(effectiveArgs.sku, effectiveArgs.qty);
+          if (request.ok) {
+            const requestKey = `${request.sku}\u0000${request.quantity}`;
+            exactPriceOutcomes.set(requestKey, isSuccessfulExactPriceResult(result) ? result : null);
+          }
+        } else if (call.name === "request_quote" && isTrustedQuoteResult(result)) {
+          trustedQuoteResult = result;
+        }
+        if (call.name === "get_exact_price" && dispatched.resultMeta) {
+          // Keep customer identity/provenance server-side. tool_calls are part
+          // of the public rag-chat response, so this metadata must not be
+          // copied into allToolCalls or the Gemini function response.
+          console.info("get_exact_price provenance", {
+            conversation_id: conversationId,
+            sku: String(effectiveArgs.sku ?? "").trim().toUpperCase(),
+            price_source: dispatched.resultMeta.price_source,
+            personalized_allowed: dispatched.resultMeta.personalized_allowed,
+            pricing_context_reason: dispatched.resultMeta.reason,
+          });
+        } else {
+          dispatchResultMeta = dispatched.resultMeta;
+        }
         executed = true;
       }
       responseParts[index] = { functionResponse: { name: call.name, response: result } };
 
-      let resultMeta: {
-        disposition: string;
-        selection_required: boolean;
-        missing_fields: string[];
-        selected_skus: string[];
-      } | undefined;
+      let resultMeta: ToolResultMeta | undefined = dispatchResultMeta;
       if (call.name === "find_products" || call.name === "get_product_detail") {
         const lookupDisposition = productSearchDisposition(result);
         if (lookupDisposition === "needs_selection") productSelectionPending = true;
@@ -1992,7 +2273,11 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         ]
           .filter((sku, skuIndex, skus) => sku && skus.indexOf(sku) === skuIndex)
           .slice(0, 12);
+        if (lookupDisposition === "resolved" && selectedSkus.length === 1) {
+          exactPriceEligibleSkus.add(selectedSkus[0].trim().toUpperCase());
+        }
         resultMeta = {
+          ...resultMeta,
           disposition: lookupDisposition,
           selection_required: lookupDisposition === "needs_selection",
           missing_fields: Array.isArray(selection?.missing_fields)
@@ -2005,6 +2290,12 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         }
       }
       if (executed) {
+        memoryToolOutcomes.push(sanitizeMemoryToolOutcome(
+          call.name,
+          effectiveArgs,
+          result,
+          resultMeta,
+        ) as MemoryToolOutcome);
         allToolCalls.push({
           name: call.name,
           args: effectiveArgs,
@@ -2035,6 +2326,29 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }
 
   fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);
+  const exactPriceResults = [...exactPriceOutcomes.values()].filter((result) => result !== null);
+  const guardedPriceAnswer = guardNumericSellingPriceAnswer({
+    query,
+    answer: fullAnswer,
+    lang,
+    exactPriceResults,
+    exactPriceAttemptCount: exactPriceOutcomes.size,
+    expectedExactProductCount: exactPriceEligibleSkus.size,
+    requestedProductItemCount,
+    trustedQuoteResult,
+  });
+  if (guardedPriceAnswer.guarded) {
+    console.warn("numeric selling price suppressed", {
+      request_id: telemetry.requestId,
+      reason: guardedPriceAnswer.reason,
+      exact_price_attempt_count: exactPriceOutcomes.size,
+      exact_price_success_count: exactPriceResults.length,
+      exact_product_count: exactPriceEligibleSkus.size,
+      requested_product_item_count: requestedProductItemCount,
+      trusted_quote: trustedQuoteResult !== null,
+    });
+  }
+  fullAnswer = guardedPriceAnswer.answer;
   if (fullAnswer) send({ type: "text", chunk: fullAnswer });
 
   const generationMs = Date.now() - generationStartedAt;
@@ -2045,12 +2359,6 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const elapsed = { embed: embed_ms, search: search_ms, llm: llm_ms };
   const toolNames = allToolCalls.map((t) => t.name);
   const responseCriticalWrites: Promise<unknown>[] = [];
-  if (!readOnly) {
-    // Keep this write on the response path. Moving a last-write-wins memory
-    // upsert to waitUntil widens the chance that an older concurrent turn
-    // overwrites the newer customer context.
-    responseCriticalWrites.push(saveConversationMemory(admin, conversationId, channel, query, toolNames, learningSettings));
-  }
   if (!readOnly && conversationId && fullAnswer.trim() && persistMessages) {
     responseCriticalWrites.push(saveMessage(admin, conversationId, "bot", fullAnswer, {
       model: usedModel, channel,
@@ -2062,6 +2370,20 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const totalMs = Date.now() - telemetry.startedAt;
   send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
   if (!readOnly) {
+    // This starts only after the response's final event. The RPC compares
+    // p_turn_at with the stored turn timestamp, so a slower older summary can
+    // never overwrite a newer turn while memory work stays off the reply path.
+    runInBackground("conversation_memory", updateConversationMemoryState(
+      admin,
+      conversationId,
+      channel,
+      query,
+      toolNames,
+      memoryToolOutcomes,
+      conversationMemory,
+      learningSettings,
+      telemetry.startedAt,
+    ));
     runInBackground("post_reply", Promise.all([
       recordAiRun(admin, {
       requestId: telemetry.requestId,

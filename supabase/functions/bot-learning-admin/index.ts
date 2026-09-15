@@ -8,6 +8,10 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  normalizeConversationState,
+  redactConversationMemoryText,
+} from "../_shared/conversation-memory.mjs";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -54,6 +58,58 @@ function normalizeTerms(value: unknown): string[] {
   return [...new Set(value.map((term) => String(term).trim()).filter(Boolean))].slice(0, 8);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isSafeStaffMemoryNote(value: string): boolean {
+  if (!value) return true;
+  const restrictedLabel = /(?:\b(?:cost|margin|price|stock|inventory|purchase\s*order|password|secret|token|bank\s*account|payment|address|e-?mail|phone)\b|ราคาทุน|กำไร|ราคา|สต็อก|คงเหลือ|ใบสั่งซื้อ|รหัสผ่าน|โทเคน|บัญชีธนาคาร|ชำระเงิน|ที่อยู่|อีเมล|เบอร์โทร|เลขผู้เสียภาษี)/iu;
+  const emailValue = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+[.][A-Z]{2,}\b/iu;
+  const thaiPhoneValue = /(?:^|[^\d])(?:(?:\+|00)?66|0)(?:[\s./()-]*\d){8,9}(?:[^\d]|$)/u;
+  const taxIdValue = /(?:^|[^\d])(?:\d[\s./()_-]*){12}\d(?:[^\d]|$)/u;
+  const moneyValue = /(?:฿\s*\d|\d[\d,.]*\s*(?:บาท|THB))/iu;
+  return ![restrictedLabel, emailValue, thaiPhoneValue, taxIdValue, moneyValue]
+    .some((pattern) => pattern.test(value));
+}
+
+function safeMemoryText(value: unknown, max: number): string {
+  return redactConversationMemoryText(value, max * 2)
+    .replace(/\[(?:image|email|phone|link|sensitive-number|restricted-detail)\]/giu, "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+function safeMemoryList(value: unknown, maxItems = 8): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => safeMemoryText(item, 160)).filter(Boolean))].slice(0, maxItems);
+}
+
+function memoryView(row: Record<string, unknown> | null) {
+  if (!row) return null;
+  const rawState = row.structured_state && typeof row.structured_state === "object"
+    ? row.structured_state as Record<string, unknown>
+    : {};
+  const state = normalizeConversationState(rawState);
+  return {
+    summary: safeMemoryText(row.summary, 1200),
+    topics: safeMemoryList(row.topics),
+    active_intent: state.active_intent ?? "",
+    products: state.products,
+    application: state.application ?? "",
+    machine: state.machine ?? "",
+    material: state.material ?? "",
+    confirmed_facts: state.confirmed_facts,
+    pending_questions: state.pending_questions.slice(0, 5),
+    preferences: state.preferences,
+    last_action: state.last_action ?? "",
+    staff_note: safeMemoryText(row.staff_note, 1000),
+    staff_locked: row.staff_locked === true,
+    updated_at: row.updated_at ? String(row.updated_at) : null,
+    expires_at: row.expires_at ? String(row.expires_at) : null,
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   if (req.method !== "POST") return fail("method_not_allowed", 405);
@@ -82,6 +138,10 @@ Deno.serve(async (req: Request) => {
     const { data, error } = await admin.from("bot_learning_settings").update({
       enabled: safeBoolean(patch.enabled, Boolean(current.enabled)),
       context_memory_enabled: safeBoolean(patch.context_memory_enabled, Boolean(current.context_memory_enabled)),
+      structured_memory_enabled: safeBoolean(
+        patch.structured_memory_enabled,
+        Boolean(current.structured_memory_enabled),
+      ),
       candidate_capture_enabled: safeBoolean(patch.candidate_capture_enabled, Boolean(current.candidate_capture_enabled)),
       memory_ttl_days: clampInt(patch.memory_ttl_days, 7, 365, Number(current.memory_ttl_days)),
       max_context_chars: clampInt(patch.max_context_chars, 160, 1200, Number(current.max_context_chars)),
@@ -89,6 +149,70 @@ Deno.serve(async (req: Request) => {
       updated_by: caller.id,
     }).eq("id", true).select("*").single();
     return error ? fail(error.message, 500) : ok({ settings: data });
+  }
+
+  if (action === "get_conversation_memory") {
+    const conversationId = String(body.conversation_id ?? "").trim();
+    if (!UUID_RE.test(conversationId)) return fail("invalid_conversation", 400);
+    const now = new Date().toISOString();
+    const { data, error } = await admin
+      .from("bot_conversation_memory")
+      .select("summary, topics, structured_state, staff_note, staff_locked, updated_at, expires_at")
+      .eq("conversation_id", conversationId)
+      .gt("expires_at", now)
+      .maybeSingle();
+    return error ? fail("memory_read_failed", 500) : ok({ memory: memoryView(data as Record<string, unknown> | null) });
+  }
+
+  if (action === "update_conversation_memory") {
+    const conversationId = String(body.conversation_id ?? "").trim();
+    if (!UUID_RE.test(conversationId)) return fail("invalid_conversation", 400);
+    const staffNote = safeMemoryText(body.staff_note, 1000);
+    if (!isSafeStaffMemoryNote(staffNote)) return fail("unsafe_memory_note", 400);
+    const staffLocked = body.staff_locked === true;
+
+    const { data: conversation, error: conversationError } = await admin
+      .from("chat_conversations")
+      .select("id, channel")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (conversationError) return fail("conversation_read_failed", 500);
+    if (!conversation) return fail("conversation_not_found", 404);
+
+    const { data: current, error: currentError } = await admin
+      .from("bot_conversation_memory")
+      .select("conversation_id, locked_fields, expires_at")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (currentError) return fail("memory_read_failed", 500);
+    if (current?.expires_at && Date.parse(String(current.expires_at)) <= Date.now()) {
+      return fail("memory_expired", 410);
+    }
+
+    const lockedFields = Array.isArray(current?.locked_fields)
+      ? current.locked_fields.map((field) => String(field)).filter(Boolean).slice(0, 32)
+      : [];
+    const { data: written, error: writeError } = await admin.rpc(
+      "set_bot_conversation_memory_staff_control",
+      {
+        p_conversation_id: conversationId,
+        p_locked_fields: lockedFields,
+        p_staff_note: staffNote || null,
+        p_staff_locked: staffLocked,
+      },
+    );
+    if (writeError) return fail("memory_write_failed", 500);
+    if (written !== true) return fail("conversation_not_found", 404);
+
+    const { data: saved, error: savedError } = await admin
+      .from("bot_conversation_memory")
+      .select("summary, topics, structured_state, staff_note, staff_locked, updated_at, expires_at")
+      .eq("conversation_id", conversationId)
+      .gt("expires_at", new Date().toISOString())
+      .single();
+    return savedError
+      ? fail("memory_read_failed", 500)
+      : ok({ memory: memoryView(saved as Record<string, unknown>) });
   }
 
   if (action === "list_candidates") {
@@ -107,7 +231,7 @@ Deno.serve(async (req: Request) => {
     const triggerTerms = normalizeTerms(review.trigger_terms);
     const guidance = String(review.approved_guidance ?? "").trim().slice(0, 1200);
     const reviewNote = String(review.review_note ?? "").trim().slice(0, 1000) || null;
-    if (!/^[0-9a-f-]{36}$/i.test(id) || triggerTerms.length === 0 || !guidance) return fail("invalid_review", 400);
+    if (!UUID_RE.test(id) || triggerTerms.length === 0 || !guidance) return fail("invalid_review", 400);
     if (!isSafeGuidance(guidance)) return fail("unsafe_guidance", 400);
     const now = new Date().toISOString();
     const { data, error } = await admin.from("bot_learning_candidates").update({
@@ -119,7 +243,7 @@ Deno.serve(async (req: Request) => {
 
   if (action === "dismiss_candidate") {
     const id = String(body.id ?? "");
-    if (!/^[0-9a-f-]{36}$/i.test(id)) return fail("invalid_candidate", 400);
+    if (!UUID_RE.test(id)) return fail("invalid_candidate", 400);
     const reviewNote = String(body.review_note ?? "").trim().slice(0, 1000) || null;
     const now = new Date().toISOString();
     const { data, error } = await admin.from("bot_learning_candidates").update({

@@ -222,6 +222,7 @@ export function prioritizeProductToolCalls(calls) {
 export function shouldSuppressToolForProductSearch(toolName, disposition) {
   if (disposition !== "needs_selection") return false;
   return toolName === "capture_lead" ||
+    toolName === "get_exact_price" ||
     toolName === "request_quote" ||
     toolName === "link_quote_customer";
 }

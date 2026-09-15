@@ -150,4 +150,5 @@ export const CK = {
   categories: 'categories',
   warehouses: 'warehouses',
   shippingInitial: 'shipping:initial',
+  customerPricing: (customerId: string) => `customer-pricing:${customerId}`,
 } as const;

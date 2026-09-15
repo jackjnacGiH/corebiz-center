@@ -3582,7 +3582,7 @@ export type BotLearningCandidateKind =
 
 export type BotLearningSettingsPatch = Pick<
   BotLearningSettings,
-  'enabled' | 'context_memory_enabled' | 'candidate_capture_enabled' | 'memory_ttl_days' | 'max_context_chars'
+  'enabled' | 'context_memory_enabled' | 'structured_memory_enabled' | 'candidate_capture_enabled' | 'memory_ttl_days' | 'max_context_chars'
 >;
 
 export interface BotLearningCandidateReview {
@@ -3648,8 +3648,8 @@ export const botLearningApi = {
   async dismissCandidate(id: string, reviewNote?: string): Promise<void> {
     await callBotLearning('dismiss_candidate', { id, review_note: reviewNote?.trim() || null });
   },
-};
 
+};
 
 // =========================================================================
 // Contact Panel — alias, tags, packer, notes, customer snapshot

@@ -223,8 +223,8 @@ test("detects hole pattern and backing only when those catalog facets vary", () 
   assert.deepEqual(selection?.missing_fields, ["holes", "backing"]);
 });
 
-test("suppresses lead and quote actions only while product selection is pending", () => {
-  for (const toolName of ["capture_lead", "request_quote", "link_quote_customer"]) {
+test("suppresses price and workflow actions only while product selection is pending", () => {
+  for (const toolName of ["get_exact_price", "capture_lead", "request_quote", "link_quote_customer"]) {
     assert.equal(shouldSuppressToolForProductSearch(toolName, "needs_selection"), true);
     assert.equal(shouldSuppressToolForProductSearch(toolName, "resolved"), false);
   }

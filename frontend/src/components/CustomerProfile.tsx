@@ -1,11 +1,13 @@
-import { useEffect, useState, useCallback, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, type ReactNode } from 'react';
 import {
     X, Loader2, AlertCircle, ShoppingCart, FileText, Award, MessageSquare,
     MapPin, Phone, Mail, Smartphone, Building2, Tag, Hash, Star, Sparkles,
-    UserCircle,
+    UserCircle, ArrowLeft, Percent,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '../lib/supabase';
+import { useLanguage } from '../i18n';
+import { customerPricingCopy } from '../lib/customer-pricing-copy';
 import {
     customerProfileApi,
     type CustomerProfileBundle,
@@ -13,6 +15,10 @@ import {
 } from '../lib/api';
 import type { Json } from '../lib/database.types';
 import LoyaltyActionsModal from './LoyaltyActionsModal';
+
+// Pricing is an infrequent, customer-scoped task. Keep it out of the CRM and
+// profile bundles until the user explicitly opens the section.
+const CustomerPricingSection = lazy(() => import('./customer-pricing/CustomerPricingSection'));
 
 const baht = (n: unknown) => '฿' + new Intl.NumberFormat('th-TH', { maximumFractionDigits: 0 }).format(Math.round(Number(n) || 0));
 const fmtDate = (iso: string | null | undefined) =>
@@ -107,11 +113,16 @@ interface PortalContact {
 }
 
 export default function CustomerProfile({ customerId, onClose }: { customerId: string; onClose: () => void }) {
+    const { language } = useLanguage();
+    const pricingWords = customerPricingCopy[language];
     const [data, setData] = useState<CustomerProfileBundle | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [manageLoyalty, setManageLoyalty] = useState(false);
+    const [pricingOpen, setPricingOpen] = useState(false);
     const [portalContacts, setPortalContacts] = useState<PortalContact[]>([]);
+
+    useEffect(() => { setPricingOpen(false); }, [customerId]);
 
     useEffect(() => {
         let live = true;
@@ -137,10 +148,14 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
     useEffect(() => { void reload(); }, [reload]);
 
     useEffect(() => {
-        function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
+        function onKey(e: KeyboardEvent) {
+            if (e.key !== 'Escape') return;
+            if (pricingOpen) setPricingOpen(false);
+            else onClose();
+        }
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
+    }, [onClose, pricingOpen]);
 
     const c = data?.customer;
     const rfm = data?.rfm;
@@ -154,8 +169,20 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
             <aside className="relative w-full max-w-2xl bg-neutral-50 h-full shadow-2xl overflow-y-auto">
                 {/* Header */}
                 <div className="sticky top-0 z-10 bg-white border-b border-neutral-200 px-4 py-3 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                        <div className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wider">โปรไฟล์ลูกค้า 360°</div>
+                    <div className="flex min-w-0 items-start gap-2">
+                        {pricingOpen && (
+                            <button
+                                type="button"
+                                onClick={() => setPricingOpen(false)}
+                                className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-md border border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
+                                title={pricingWords.back}
+                                aria-label={pricingWords.back}
+                            >
+                                <ArrowLeft size={16} />
+                            </button>
+                        )}
+                        <div className="min-w-0">
+                        <div className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wider">{pricingOpen ? pricingWords.title : 'โปรไฟล์ลูกค้า 360°'}</div>
                         <h2 className="text-base font-bold text-neutral-900 truncate">{c?.name ?? 'กำลังโหลด...'}</h2>
                         {c && (
                             <div className="flex flex-wrap items-center gap-1.5 mt-1">
@@ -173,6 +200,7 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                                 )}
                             </div>
                         )}
+                        </div>
                     </div>
                     <button type="button" onClick={onClose} className="text-neutral-400 hover:text-neutral-700 flex-shrink-0" title="ปิด (Esc)">
                         <X size={20} />
@@ -190,7 +218,19 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                     </div>
                 )}
 
-                {data && c && (
+                {data && c && pricingOpen && (
+                    <div className="p-3 sm:p-4">
+                        <Suspense fallback={(
+                            <div className="p-10 text-center text-sm text-neutral-500">
+                                <Loader2 size={18} className="animate-spin inline mr-2" /> กำลังโหลดราคา...
+                            </div>
+                        )}>
+                            <CustomerPricingSection customer={c} />
+                        </Suspense>
+                    </div>
+                )}
+
+                {data && c && !pricingOpen && (
                     <div className="p-4 flex flex-col gap-3">
                         {/* Key stats */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -199,6 +239,29 @@ export default function CustomerProfile({ customerId, onClose }: { customerId: s
                             <Stat label="ซื้อล่าสุด" value={rfm?.recency_days == null ? '—' : `${rfm.recency_days} วัน`} sub={fmtDate(rfm?.last_purchase_at)} />
                             <Stat label="แต้มสะสม" value={`${c.loyalty_points}`} sub="แต้ม" />
                         </div>
+
+                        <Section
+                            icon={<Percent size={13} className="text-sky-600" />}
+                            title={pricingWords.title}
+                            action={(
+                                <button
+                                    type="button"
+                                    onClick={() => setPricingOpen(true)}
+                                    className="inline-flex h-7 items-center gap-1 rounded-md bg-sky-700 px-2.5 text-[11px] font-bold text-white hover:bg-sky-800"
+                                >
+                                    {pricingWords.open}
+                                </button>
+                            )}
+                        >
+                            <button
+                                type="button"
+                                onClick={() => setPricingOpen(true)}
+                                className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-sky-50/60"
+                            >
+                                <span className="text-xs text-neutral-600">{pricingWords.summary}</span>
+                                <ArrowLeft size={14} className="shrink-0 rotate-180 text-sky-600" />
+                            </button>
+                        </Section>
 
                         {/* Contact */}
                         <Section icon={<Building2 size={13} className="text-indigo-500" />} title="ข้อมูลติดต่อ">

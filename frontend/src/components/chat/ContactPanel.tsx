@@ -10,7 +10,7 @@
  * without a daily cron pass; the SQL function `recalc_chat_auto_tags`
  * persists them in DB whenever the admin edits the conversation.
  */
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Check,
   Pencil,
@@ -22,6 +22,8 @@ import {
   Hash,
   Bot,
   Link2,
+  Brain,
+  Save,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,10 @@ import {
   type CustomerSnapshot,
   type Customer,
 } from '../../lib/api';
+import {
+  botMemoryApi,
+  type BotConversationMemoryView,
+} from '../../lib/bot-memory-api';
 import { supabase } from '../../lib/supabase';
 import { computeAutoTags, daysSince } from '../../utils/chatAutoTags';
 import TagChip from './TagChip';
@@ -49,6 +55,47 @@ import ChatAvatar from './ChatAvatar';
 interface Props {
   conversation: ChatConversation;
   onConversationChanged?: () => void;
+}
+
+const MEMORY_LABELS: Record<string, string> = {
+  quotation_request: 'ขอใบเสนอราคา',
+  product_purchase_inquiry: 'สอบถามราคาและสั่งซื้อสินค้า',
+  product_inquiry: 'สอบถามสินค้า',
+  product_search: 'ค้นหาสินค้า',
+  product_detail: 'ตรวจรายละเอียดสินค้า',
+  product_request_validation: 'ตรวจข้อมูลก่อนเสนอราคา',
+  quotation_customer_link: 'ผูกข้อมูลลูกค้ากับใบเสนอราคา',
+  staff_follow_up: 'ส่งเรื่องให้พนักงานติดตาม',
+  product_group_search: 'ค้นหากลุ่มสินค้า',
+  product_category_search: 'ค้นหาหมวดสินค้า',
+  product: 'สินค้า',
+  sku: 'รหัสสินค้า',
+  size: 'ขนาด',
+  grit: 'เบอร์',
+  unit: 'หน่วย',
+  quantity: 'จำนวน',
+  application: 'ลักษณะงาน',
+  machine: 'เครื่องที่ใช้',
+  material: 'วัสดุ',
+  holes: 'จำนวนรู',
+  backing: 'ชนิดแผ่นหลัง',
+  sanding: 'งานขัด',
+  polishing: 'งานขัดเงา',
+  grinding: 'งานเจียร',
+  cutting: 'งานตัด',
+  'stainless steel': 'สแตนเลส',
+  aluminium: 'อะลูมิเนียม',
+  steel: 'เหล็ก',
+  wood: 'ไม้',
+};
+
+function memoryLabel(value: string): string {
+  return MEMORY_LABELS[value] ?? value;
+}
+
+function memoryFactLabel(value: string): string {
+  const match = /^([a-z_]+)=(.+)$/i.exec(value);
+  return match ? `${memoryLabel(match[1])} ${memoryLabel(match[2])}` : memoryLabel(value);
 }
 
 export default function ContactPanel({ conversation, onConversationChanged }: Props) {
@@ -68,6 +115,14 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [custSearching, setCustSearching] = useState(false);
   const [linkBusy, setLinkBusy] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memory, setMemory] = useState<BotConversationMemoryView | null>(null);
+  const [memoryNote, setMemoryNote] = useState('');
+  const [memoryLocked, setMemoryLocked] = useState(false);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memorySaving, setMemorySaving] = useState(false);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+  const memoryRequestRef = useRef(0);
 
   // Debounced customer search while the link picker is open.
   useEffect(() => {
@@ -104,8 +159,64 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
   }
 
   useEffect(() => {
+    memoryRequestRef.current += 1;
     setAliasDraft(conversation.alias_name ?? '');
+    setMemoryOpen(false);
+    setMemory(null);
+    setMemoryNote('');
+    setMemoryLocked(false);
+    setMemoryError(null);
   }, [conversation.id, conversation.alias_name]);
+
+  const loadMemory = useCallback(async () => {
+    const requestId = ++memoryRequestRef.current;
+    const conversationId = conversation.id;
+    setMemoryLoading(true);
+    setMemoryError(null);
+    try {
+      const next = await botMemoryApi.getConversationMemory(conversationId);
+      if (memoryRequestRef.current !== requestId) return;
+      setMemory(next);
+      setMemoryNote(next?.staff_note ?? '');
+      setMemoryLocked(next?.staff_locked === true);
+    } catch {
+      if (memoryRequestRef.current !== requestId) return;
+      setMemoryError('โหลดความจำของบอทไม่สำเร็จ กรุณาลองใหม่');
+    } finally {
+      if (memoryRequestRef.current === requestId) setMemoryLoading(false);
+    }
+  }, [conversation.id]);
+
+  async function toggleMemory() {
+    const nextOpen = !memoryOpen;
+    setMemoryOpen(nextOpen);
+    if (nextOpen && !memory && !memoryLoading) await loadMemory();
+  }
+
+  async function saveMemoryNote() {
+    const requestId = ++memoryRequestRef.current;
+    const conversationId = conversation.id;
+    setMemorySaving(true);
+    setMemoryError(null);
+    try {
+      const saved = await botMemoryApi.updateConversationMemory(conversationId, {
+        staff_note: memoryNote,
+        staff_locked: memoryLocked,
+      });
+      if (memoryRequestRef.current !== requestId) return;
+      setMemory(saved);
+      setMemoryNote(saved.staff_note);
+      setMemoryLocked(saved.staff_locked);
+    } catch (e) {
+      if (memoryRequestRef.current !== requestId) return;
+      const code = e instanceof Error ? e.message : '';
+      setMemoryError(code === 'unsafe_memory_note'
+        ? 'โน้ตความจำห้ามใส่ราคา สต็อก ข้อมูลการชำระเงิน หรือข้อมูลส่วนบุคคล'
+        : 'บันทึกความจำไม่สำเร็จ กรุณาลองใหม่');
+    } finally {
+      if (memoryRequestRef.current === requestId) setMemorySaving(false);
+    }
+  }
 
   // Load customer snapshot (only when conversation has a linked customer)
   useEffect(() => {
@@ -526,6 +637,127 @@ export default function ContactPanel({ conversation, onConversationChanged }: Pr
               </div>
             </button>
           </div>
+        </div>
+
+        <Separator />
+
+        {/* Bot memory loads only when expanded so chat switching stays fast. */}
+        <div>
+          <button
+            type="button"
+            onClick={() => void toggleMemory()}
+            className="flex w-full items-center justify-between rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-left hover:bg-violet-100"
+          >
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-violet-800">
+              <Brain size={13} /> ความจำของบอทในห้องนี้
+            </span>
+            <span className="text-[10px] text-violet-600">{memoryOpen ? 'ซ่อน' : 'เปิดดู'}</span>
+          </button>
+
+          {memoryOpen && (
+            <div className="mt-2 space-y-3 rounded-md border border-violet-100 bg-white p-3">
+              {memoryLoading ? (
+                <div className="py-2 text-center text-xs text-neutral-400">
+                  <Loader2 size={12} className="mr-1 inline animate-spin" /> กำลังโหลด...
+                </div>
+              ) : (
+                <>
+                  {memory?.summary ? (
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-neutral-500">สรุปล่าสุด</div>
+                      <p className="mt-1 text-xs leading-relaxed text-neutral-700">{memory.summary}</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-neutral-400">ยังไม่มีสรุปจากบทสนทนา</p>
+                  )}
+
+                  {(memory?.active_intent || memory?.application || memory?.machine || memory?.material) && (
+                    <div className="flex flex-wrap gap-1">
+                      {[memory.active_intent, memory.application, memory.machine, memory.material]
+                        .filter(Boolean)
+                        .map((value, index) => (
+                          <span key={`${value}-${index}`} className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-600">{memoryLabel(value)}</span>
+                        ))}
+                    </div>
+                  )}
+
+                  {memory?.products?.length ? (
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-sky-700">สินค้าที่กำลังคุย</div>
+                      <div className="mt-1 space-y-1.5">
+                        {memory.products.map((product, index) => (
+                          <div key={`${product.sku ?? product.name ?? 'product'}-${index}`} className="rounded-md border border-sky-100 bg-sky-50/60 px-2 py-1.5 text-xs text-neutral-700">
+                            <div className="font-semibold">{product.name ?? product.sku ?? `สินค้า ${index + 1}`}</div>
+                            <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-neutral-600">
+                              {product.sku && product.name ? <span>รหัส {product.sku}</span> : null}
+                              {product.size ? <span>ขนาด {product.size}</span> : null}
+                              {product.grit ? <span>เบอร์ {product.grit}</span> : null}
+                              {product.unit ? <span>หน่วย {product.unit}</span> : null}
+                              {product.quantity ? <span>จำนวน {product.quantity}</span> : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {memory?.confirmed_facts?.length ? (
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">ข้อมูลที่ระบบยืนยันแล้ว</div>
+                      <ul className="mt-1 list-inside list-disc text-xs text-neutral-600">
+                        {memory.confirmed_facts.map((fact, index) => <li key={`${fact}-${index}`}>{memoryFactLabel(fact)}</li>)}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {memory?.pending_questions?.length ? (
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-amber-700">ข้อมูลที่ยังต้องถาม</div>
+                      <ul className="mt-1 list-inside list-disc text-xs text-neutral-600">
+                        {memory.pending_questions.map((question) => <li key={question}>{memoryLabel(question)}</li>)}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <label htmlFor={`bot-memory-note-${conversation.id}`} className="text-[10px] font-bold uppercase tracking-wide text-neutral-500">
+                      ข้อมูลที่พนักงานยืนยัน
+                    </label>
+                    <textarea
+                      id={`bot-memory-note-${conversation.id}`}
+                      rows={3}
+                      maxLength={1000}
+                      value={memoryNote}
+                      onChange={(e) => setMemoryNote(e.target.value)}
+                      placeholder="เช่น ใช้เครื่องขัดลม ต้องการคำตอบสั้นและระบุเบอร์กระดาษทราย"
+                      className="mt-1 w-full resize-y rounded-md border border-neutral-200 px-2 py-1.5 text-xs outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                    />
+                    <label className="mt-1.5 flex cursor-pointer items-start gap-2 text-[11px] text-neutral-600">
+                      <input
+                        type="checkbox"
+                        checked={memoryLocked}
+                        onChange={(e) => setMemoryLocked(e.target.checked)}
+                        className="mt-0.5"
+                      />
+                      ล็อกความจำทั้งห้อง ไม่ให้ AI อัปเดตสรุปและข้อมูลอัตโนมัติ
+                    </label>
+                  </div>
+
+                  {memoryError && <p className="text-[11px] text-red-600">{memoryError}</p>}
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-neutral-400">
+                      {memory?.updated_at ? `อัปเดต ${new Date(memory.updated_at).toLocaleString('th-TH')}` : ''}
+                    </span>
+                    <Button size="xs" onClick={() => void saveMemoryNote()} disabled={memorySaving} className="gap-1 bg-violet-600 hover:bg-violet-700">
+                      {memorySaving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
+                      บันทึก
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <Separator />
