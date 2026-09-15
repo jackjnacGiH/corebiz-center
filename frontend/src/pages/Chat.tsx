@@ -125,17 +125,113 @@ function statusLabel(
 // historical rows but no longer exposed — collapses into 'เสร็จสิ้น'.
 const ACTIVE_STATUSES: ChatStatus[] = ['open', 'assigned', 'resolved'];
 const CHAT_FAST_LOAD_ENABLED = import.meta.env.VITE_CHAT_FAST_LOAD_ENABLED !== 'false';
+const CHAT_PERSISTENT_CACHE_ENABLED = import.meta.env.VITE_CHAT_PERSISTENT_CACHE_ENABLED !== 'false';
 const MESSAGE_PAGE_SIZE = CHAT_FAST_LOAD_ENABLED ? 50 : 100;
 const CONVERSATION_REFRESH_DELAY_MS = 200;
 const MESSAGE_LOAD_TIMEOUT_MS = 10_000;
-const MESSAGE_CACHE_TTL_MS = 2 * 60_000;
+const MESSAGE_CACHE_TTL_MS = 10 * 60_000;
+const PERSISTENT_CACHE_TTL_MS = 12 * 60 * 60_000;
 const MAX_CACHED_CONVERSATIONS = 20;
+const MAX_PERSISTENT_MESSAGE_PAGES = 30;
+const MAX_PERSISTENT_CONVERSATION_LISTS = 8;
 
 interface CachedMessagePage extends ChatMessagePage {
     cachedAt: number;
 }
 
 const messagePageCache = new Map<string, CachedMessagePage>();
+
+type ChatCacheKind = 'message-page' | 'conversation-list';
+
+interface PersistentChatCacheRecord<T> {
+    key: string;
+    userId: string;
+    kind: ChatCacheKind;
+    cachedAt: number;
+    value: T;
+}
+
+let chatCacheDbPromise: Promise<IDBDatabase> | null = null;
+
+function openChatCacheDb(): Promise<IDBDatabase> {
+    if (chatCacheDbPromise) return chatCacheDbPromise;
+    chatCacheDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open('corebiz-chat-cache', 1);
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            const store = db.createObjectStore('entries', { keyPath: 'key' });
+            store.createIndex('by-user-kind-time', ['userId', 'kind', 'cachedAt']);
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+    return chatCacheDbPromise;
+}
+
+function persistentCacheKey(userId: string, kind: ChatCacheKind, id: string): string {
+    return `${userId}:${kind}:${id}`;
+}
+
+async function readPersistentChatCache<T>(
+    userId: string,
+    kind: ChatCacheKind,
+    id: string,
+): Promise<T | null> {
+    if (!CHAT_PERSISTENT_CACHE_ENABLED) return null;
+    try {
+        const db = await openChatCacheDb();
+        const key = persistentCacheKey(userId, kind, id);
+        const transaction = db.transaction('entries', 'readonly');
+        const request = transaction.objectStore('entries').get(key);
+        const record = await new Promise<PersistentChatCacheRecord<T> | undefined>((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result as PersistentChatCacheRecord<T> | undefined);
+            request.onerror = () => reject(request.error);
+        });
+        if (!record || Date.now() - record.cachedAt > PERSISTENT_CACHE_TTL_MS) return null;
+        return record.value;
+    } catch {
+        return null;
+    }
+}
+
+async function writePersistentChatCache<T>(
+    userId: string,
+    kind: ChatCacheKind,
+    id: string,
+    value: T,
+    maxRecords: number,
+): Promise<void> {
+    if (!CHAT_PERSISTENT_CACHE_ENABLED) return;
+    try {
+        const db = await openChatCacheDb();
+        const transaction = db.transaction('entries', 'readwrite');
+        const store = transaction.objectStore('entries');
+        const cachedAt = Date.now();
+        store.put({
+            key: persistentCacheKey(userId, kind, id),
+            userId,
+            kind,
+            cachedAt,
+            value,
+        } satisfies PersistentChatCacheRecord<T>);
+        const range = IDBKeyRange.bound(
+            [userId, kind, 0],
+            [userId, kind, Number.MAX_SAFE_INTEGER],
+        );
+        const keysRequest = store.index('by-user-kind-time').getAllKeys(range);
+        keysRequest.onsuccess = () => {
+            const overflow = keysRequest.result.length - maxRecords;
+            if (overflow <= 0) return;
+            keysRequest.result.slice(0, overflow).forEach((key) => store.delete(key));
+        };
+    } catch {
+        // Browser storage is an optional speed-up; network reads remain canonical.
+    }
+}
+
+function conversationCacheId(filters: { channel: ChatChannel | null; status: ChatStatus | null; search: string }): string {
+    return `${filters.channel ?? 'all'}|${filters.status ?? 'all'}|${filters.search.trim().toLowerCase()}`;
+}
 
 function readMessageCache(conversationId: string): ChatMessagePage | null {
     const cached = messagePageCache.get(conversationId);
@@ -165,13 +261,15 @@ function writeMessageCache(conversationId: string, page: ChatMessagePage) {
 function updateCachedMessageRows(
     conversationId: string,
     updater: (messages: ChatMessage[]) => ChatMessage[],
-) {
+): ChatMessagePage | null {
     const cached = messagePageCache.get(conversationId);
-    if (!cached) return;
-    writeMessageCache(conversationId, {
+    if (!cached) return null;
+    const page = {
         messages: updater(cached.messages),
         hasMore: cached.hasMore,
-    });
+    };
+    writeMessageCache(conversationId, page);
+    return page;
 }
 
 // Force-download an image. Storage URLs are cross-origin, so the <a download>
@@ -322,7 +420,8 @@ function messagePreview(content: string): string {
 
 export default function Chat() {
     const { t } = useLanguage();
-    const { profile } = useAuth();
+    const { profile, session } = useAuth();
+    const chatCacheUserId = session?.user.id ?? null;
     const { setTopBarContent } = useOutletContext<LayoutOutletContext>();
     const [searchParams, setSearchParams] = useSearchParams();
     const urlId = searchParams.get('id');
@@ -341,6 +440,8 @@ export default function Chat() {
     const conversationFiltersRef = useRef({ channel, status, search: debouncedSearch });
     const conversationRefreshRef = useRef({ inFlight: false, queued: false, version: 0 });
     const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const conversationNetworkCacheKeyRef = useRef<string | null>(null);
+    const conversationHydrationVersionRef = useRef(0);
     const localReadMutationUntilRef = useRef(new Map<string, number>());
     useEffect(() => {
         conversationFiltersRef.current = { channel, status, search: debouncedSearch };
@@ -499,14 +600,25 @@ export default function Chat() {
                 const filters = { ...conversationFiltersRef.current };
                 try {
                     const rows = await chatInboxApi.listConversations(filters);
+                    const cacheId = conversationCacheId(filters);
                     const latestFilters = conversationFiltersRef.current;
                     const isCurrent = requestVersion === refresh.version
                         && filters.channel === latestFilters.channel
                         && filters.status === latestFilters.status
                         && filters.search === latestFilters.search;
                     if (isCurrent) {
+                        conversationNetworkCacheKeyRef.current = cacheId;
                         setConversations(rows);
                         setListErr(null);
+                        if (chatCacheUserId) {
+                            void writePersistentChatCache(
+                                chatCacheUserId,
+                                'conversation-list',
+                                cacheId,
+                                rows,
+                                MAX_PERSISTENT_CONVERSATION_LISTS,
+                            );
+                        }
                     }
                 } catch (e) {
                     if (requestVersion === refresh.version) {
@@ -518,7 +630,7 @@ export default function Chat() {
             refresh.inFlight = false;
             setLoadingList(false);
         }
-    }, []);
+    }, [chatCacheUserId]);
 
     const topBarContent = useMemo(() => ({
         title: t.chat.title,
@@ -559,8 +671,31 @@ export default function Chat() {
     }, [loadConvs]);
 
     useEffect(() => {
+        const filters = { channel, status, search: debouncedSearch };
+        const cacheId = conversationCacheId(filters);
+        const hydrationVersion = ++conversationHydrationVersionRef.current;
+        conversationNetworkCacheKeyRef.current = null;
+        let cancelled = false;
+
+        if (CHAT_PERSISTENT_CACHE_ENABLED && chatCacheUserId) {
+            void readPersistentChatCache<ChatConversation[]>(
+                chatCacheUserId,
+                'conversation-list',
+                cacheId,
+            ).then((cachedRows) => {
+                if (
+                    cancelled
+                    || !cachedRows
+                    || hydrationVersion !== conversationHydrationVersionRef.current
+                    || conversationNetworkCacheKeyRef.current === cacheId
+                ) return;
+                setConversations(cachedRows);
+                setLoadingList(false);
+            });
+        }
         void loadConvs();
-    }, [loadConvs, channel, status, debouncedSearch]);
+        return () => { cancelled = true; };
+    }, [loadConvs, chatCacheUserId, channel, status, debouncedSearch]);
 
     useEffect(() => () => {
         if (conversationRefreshTimerRef.current) {
@@ -648,6 +783,19 @@ export default function Chat() {
         return true;
     }, []);
 
+    const cacheMessagePage = useCallback((conversationId: string, page: ChatMessagePage) => {
+        writeMessageCache(conversationId, page);
+        if (chatCacheUserId) {
+            void writePersistentChatCache(
+                chatCacheUserId,
+                'message-page',
+                conversationId,
+                page,
+                MAX_PERSISTENT_MESSAGE_PAGES,
+            );
+        }
+    }, [chatCacheUserId]);
+
     // Load messages for selected conversation + mark as read
     useEffect(() => {
         if (!selectedId) {
@@ -657,6 +805,7 @@ export default function Chat() {
             return;
         }
         let cancelled = false;
+        let networkResolved = false;
         const controller = new AbortController();
         const cached = CHAT_FAST_LOAD_ENABLED ? readMessageCache(selectedId) : null;
         setLoadingMsgs(!cached);
@@ -664,6 +813,23 @@ export default function Chat() {
         setHasOlderMessages(cached?.hasMore ?? false);
         setMessages(cached?.messages ?? []);
         setMsgErr(null);
+        if (!cached && CHAT_PERSISTENT_CACHE_ENABLED && chatCacheUserId) {
+            void readPersistentChatCache<ChatMessagePage>(
+                chatCacheUserId,
+                'message-page',
+                selectedId,
+            ).then((persistentPage) => {
+                if (cancelled || networkResolved || !persistentPage) return;
+                writeMessageCache(selectedId, persistentPage);
+                setMessages(persistentPage.messages);
+                setHasOlderMessages(persistentPage.hasMore);
+                setLoadingMsgs(false);
+                console.info('[chat-performance]', {
+                    phase: 'messages_persistent_cache',
+                    count: persistentPage.messages.length,
+                });
+            });
+        }
         void (async () => {
             const startedAt = performance.now();
             const timeout = window.setTimeout(() => controller.abort(), MESSAGE_LOAD_TIMEOUT_MS);
@@ -674,10 +840,11 @@ export default function Chat() {
                 });
                 window.clearTimeout(timeout);
                 if (cancelled) return;
+                networkResolved = true;
                 let rows = page.messages;
                 setMessages(rows);
                 setHasOlderMessages(page.hasMore);
-                writeMessageCache(selectedId, page);
+                cacheMessagePage(selectedId, page);
                 setLoadingMsgs(false);
                 console.info('[chat-performance]', {
                     phase: 'messages',
@@ -705,7 +872,7 @@ export default function Chat() {
                         rows = page.messages;
                         setMessages(rows);
                         setHasOlderMessages(page.hasMore);
-                        writeMessageCache(selectedId, page);
+                        cacheMessagePage(selectedId, page);
                         readThrough = newestCustomerMessageAt(rows)
                             ?? selectedConversationRef.current?.last_customer_message_at
                             ?? null;
@@ -729,7 +896,7 @@ export default function Chat() {
             cancelled = true;
             controller.abort();
         };
-    }, [selectedId, messageReloadKey, markConversationRead]);
+    }, [selectedId, messageReloadKey, markConversationRead, cacheMessagePage, chatCacheUserId]);
 
     async function loadOlderMessages() {
         if (!selectedId || loadingOlderMsgs || !hasOlderMessages || messages.length === 0) return;
@@ -750,7 +917,7 @@ export default function Chat() {
             preserveThreadScrollRef.current = scrollSnapshot;
             setMessages((current) => {
                 const next = mergeMessages(current, page.messages);
-                writeMessageCache(conversationId, { messages: next, hasMore: page.hasMore });
+                cacheMessagePage(conversationId, { messages: next, hasMore: page.hasMore });
                 return next;
             });
             setHasOlderMessages(page.hasMore);
@@ -782,7 +949,8 @@ export default function Chat() {
                     const row = payload.new as ChatMessage;
                     setMessages((prev) => {
                         const next = mergeMessages(prev, [row]);
-                        updateCachedMessageRows(selectedId, () => next);
+                        const cachedPage = updateCachedMessageRows(selectedId, () => next);
+                        if (cachedPage) cacheMessagePage(selectedId, cachedPage);
                         return next;
                     });
                     // The DB trigger re-opens the conversation as "ยังไม่อ่าน"
@@ -808,14 +976,15 @@ export default function Chat() {
                     const row = payload.new as ChatMessage;
                     setMessages((prev) => {
                         const next = prev.map((m) => (m.id === row.id ? { ...m, ...row } : m));
-                        updateCachedMessageRows(selectedId, () => next);
+                        const cachedPage = updateCachedMessageRows(selectedId, () => next);
+                        if (cachedPage) cacheMessagePage(selectedId, cachedPage);
                         return next;
                     });
                 },
             )
             .subscribe();
         return () => { void supabase.removeChannel(ch); };
-    }, [selectedId, markConversationRead]);
+    }, [selectedId, markConversationRead, cacheMessagePage]);
 
     // Auto-scroll on new/initial messages, but preserve the viewport when an
     // older page is prepended above the messages the admin is reading.
@@ -838,15 +1007,61 @@ export default function Chat() {
     const selectedConv = selectedConversation;
     const linkedTaxId = (quoteCustomerPreview?.tax_id ?? '').replace(/\D/g, '');
     const quoteCustomerReady = Boolean(selectedConv?.customer_id && linkedTaxId.length === 13);
-    const visibleConversations = status === 'open'
-        ? conversations.filter((conversation) => {
-            if (!Object.prototype.hasOwnProperty.call(readThroughByConversation, conversation.id)) return true;
-            return hasNewerCustomerActivity(
-                conversation,
-                readThroughByConversation[conversation.id] ?? null,
-            );
-        })
-        : conversations;
+    const visibleConversations = useMemo(() => (
+        status === 'open'
+            ? conversations.filter((conversation) => {
+                if (!Object.prototype.hasOwnProperty.call(readThroughByConversation, conversation.id)) return true;
+                return hasNewerCustomerActivity(
+                    conversation,
+                    readThroughByConversation[conversation.id] ?? null,
+                );
+            })
+            : conversations
+    ), [conversations, readThroughByConversation, status]);
+
+    // Warm only the first few likely rooms while the browser is idle. The
+    // network remains authoritative when a room is opened.
+    useEffect(() => {
+        if (!CHAT_PERSISTENT_CACHE_ENABLED || !chatCacheUserId || visibleConversations.length === 0) return;
+        const controller = new AbortController();
+        const candidates = visibleConversations
+            .filter((conversation) => conversation.id !== selectedId)
+            .slice(0, 3);
+        const idleWindow = window as typeof window & {
+            requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+            cancelIdleCallback?: (handle: number) => void;
+        };
+        let idleHandle: number | null = null;
+        let timerHandle: number | null = null;
+
+        const prefetch = () => {
+            void Promise.allSettled(candidates.map(async (conversation) => {
+                if (readMessageCache(conversation.id)) return;
+                const persistentPage = await readPersistentChatCache<ChatMessagePage>(
+                    chatCacheUserId,
+                    'message-page',
+                    conversation.id,
+                );
+                if (persistentPage) writeMessageCache(conversation.id, persistentPage);
+                const freshPage = await chatInboxApi.listMessages(conversation.id, {
+                    limit: MESSAGE_PAGE_SIZE,
+                    signal: controller.signal,
+                });
+                if (!controller.signal.aborted) cacheMessagePage(conversation.id, freshPage);
+            }));
+        };
+
+        if (idleWindow.requestIdleCallback) {
+            idleHandle = idleWindow.requestIdleCallback(prefetch, { timeout: 1_500 });
+        } else {
+            timerHandle = window.setTimeout(prefetch, 1_200);
+        }
+        return () => {
+            controller.abort();
+            if (idleHandle !== null) idleWindow.cancelIdleCallback?.(idleHandle);
+            if (timerHandle !== null) window.clearTimeout(timerHandle);
+        };
+    }, [cacheMessagePage, chatCacheUserId, selectedId, visibleConversations]);
 
     // Drop any queued attachments when switching conversations. Only blob
     // previews (local files) need revoking; hosted product URLs don't.
@@ -1219,6 +1434,10 @@ export default function Chat() {
                         {visibleConversations.map((c) => (
                             <button
                                 key={c.id}
+                                style={CHAT_PERSISTENT_CACHE_ENABLED ? {
+                                    contentVisibility: 'auto',
+                                    containIntrinsicSize: '80px',
+                                } : undefined}
                                 onClick={() => {
                                     setSelectedConversation(c);
                                     setSelectedId(c.id);
