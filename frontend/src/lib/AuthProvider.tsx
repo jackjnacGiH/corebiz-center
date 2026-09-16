@@ -68,7 +68,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profileRequest.current = controller;
       try {
         p = await withTimeout(
-          fetchProfile(s.user.id, controller.signal),
+          fetchProfile(
+            s.user.id,
+            controller.signal,
+            activeSession.current?.user.id === s.user.id
+              ? activeSession.current.access_token
+              : s.access_token
+          ),
           timeoutMs,
           'Profile request timed out',
           () => controller.abort()
