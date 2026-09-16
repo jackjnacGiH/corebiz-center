@@ -59,11 +59,12 @@ export interface Profile {
 
 export type { Session, User };
 
-export async function fetchProfile(userId: string): Promise<Profile | null> {
+export async function fetchProfile(userId: string, signal: AbortSignal): Promise<Profile | null> {
   const { data, error } = await supabase
     .from('profiles')
     .select('id, email, full_name, phone, avatar_url, role, language, provider, is_active, notification_prefs')
     .eq('id', userId)
+    .abortSignal(signal)
     .maybeSingle();
 
   if (error) {
