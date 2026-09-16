@@ -12,15 +12,19 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const AUTH_BOOTSTRAP_TIMEOUT_MS = 8_000;
-const PROFILE_LOAD_TIMEOUT_MS = 10_000;
+const PROFILE_LOAD_TIMEOUT_MS = [6_000, 8_000] as const;
+const PROFILE_ERROR_RETRY_DELAY_MS = 30_000;
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string, onTimeout: () => void): Promise<T> {
   let timer: number | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+        timer = window.setTimeout(() => {
+          reject(new Error(message));
+          onTimeout();
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -35,14 +39,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const profileLoadVersion = useRef(0);
   const activeSession = useRef<Session | null | undefined>(undefined);
+  const profileLoadingFor = useRef<string | null>(null);
+  const profileResolvedFor = useRef<string | null>(null);
+  const profileUnavailableAt = useRef(0);
+  const profileRequest = useRef<AbortController | null>(null);
 
   const loadProfile = useCallback(async (s: Session | null, version = ++profileLoadVersion.current) => {
     // An auth event can supersede a deferred query before it even starts.
     if (version !== profileLoadVersion.current) return;
+    profileLoadingFor.current = s?.user.id ?? null;
     setLoading(true);
 
     if (!s) {
       if (version === profileLoadVersion.current) {
+        profileResolvedFor.current = null;
         setProfile(null);
         setProfileIssue(null);
         setLoading(false);
@@ -50,23 +60,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    profileRequest.current?.abort();
     let p: Profile | null = null;
     let issue: 'missing' | 'unavailable' | null = null;
-    try {
-      p = await withTimeout(
-        fetchProfile(s.user.id),
-        PROFILE_LOAD_TIMEOUT_MS,
-        'Profile request timed out'
-      );
-      issue = p ? null : 'missing';
-    } catch (error) {
-      // Failed or stalled revalidation must release the spinner without
-      // retaining access. Keep the session so the user can retry without
-      // signing in again, while ProtectedRoute continues to fail closed.
-      issue = 'unavailable';
-      console.error('[auth] Unable to load profile', error);
+    for (const [attempt, timeoutMs] of PROFILE_LOAD_TIMEOUT_MS.entries()) {
+      const controller = new AbortController();
+      profileRequest.current = controller;
+      try {
+        p = await withTimeout(
+          fetchProfile(s.user.id, controller.signal),
+          timeoutMs,
+          'Profile request timed out',
+          () => controller.abort()
+        );
+        issue = p ? null : 'missing';
+        break;
+      } catch (error) {
+        if (version !== profileLoadVersion.current) return;
+        if (attempt === 0 && error instanceof Error && error.message === 'Profile request timed out') continue;
+        // A genuine failure still denies access until a profile is verified.
+        issue = 'unavailable';
+        console.error('[auth] Unable to load profile', error);
+        break;
+      } finally {
+        if (profileRequest.current === controller) profileRequest.current = null;
+        controller.abort();
+      }
     }
     if (version === profileLoadVersion.current) {
+      profileLoadingFor.current = null;
+      profileResolvedFor.current = issue === 'unavailable' ? null : s.user.id;
+      profileUnavailableAt.current = issue === 'unavailable' ? Date.now() : 0;
       setProfile(p);
       setProfileIssue(issue);
       setLoading(false);
@@ -82,12 +106,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (disposed) return;
       window.clearTimeout(bootstrapTimer);
       const version = ++versions.current;
+      profileRequest.current?.abort();
       // List requests are shared only within one authenticated identity. Clear
       // both cached results and pending reads before the next user can mount.
       if (activeSession.current === undefined || activeSession.current?.user.id !== s?.user.id) {
         clearListCache();
       }
       activeSession.current = s;
+      profileLoadingFor.current = s?.user.id ?? null;
+      profileResolvedFor.current = null;
+      profileUnavailableAt.current = 0;
       setSession(s);
       setProfile(null);
       setProfileIssue(null);
@@ -114,14 +142,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // while the stored session is being read. Supabase calls remain outside the
     // auth callback to avoid the documented onAuthStateChange deadlock.
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
-      // getSession may win the bootstrap race. Ignore the later duplicate
-      // INITIAL_SESSION event, but always process real auth changes.
-      if (
-        event === 'INITIAL_SESSION' &&
-        activeSession.current !== undefined &&
-        activeSession.current?.access_token === s?.access_token &&
-        activeSession.current?.user.id === s?.user.id
-      ) return;
+      // SIGNED_IN can also fire when an existing tab regains focus. Reusing
+      // the same verified profile avoids blanking the whole app and repeating
+      // a query on every focus; a real token refresh still revalidates it.
+      const sameUser = !!s && activeSession.current?.user.id === s.user.id;
+      if (sameUser && event !== 'USER_UPDATED' && (
+        profileLoadingFor.current === s.user.id ||
+        ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') &&
+          (profileResolvedFor.current === s.user.id ||
+            Date.now() - profileUnavailableAt.current < PROFILE_ERROR_RETRY_DELAY_MS))
+      )) {
+        activeSession.current = s;
+        setSession(s);
+        return;
+      }
       applySession(s);
     });
 
@@ -139,6 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ++versions.current;
       window.clearTimeout(timer);
       window.clearTimeout(bootstrapTimer);
+      profileRequest.current?.abort();
       sub.subscription.unsubscribe();
     };
   }, [loadProfile]);
