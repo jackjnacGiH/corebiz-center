@@ -421,6 +421,8 @@ export default function ContactPanel({
         <div className="flex flex-col items-center text-center">
           <ChatAvatar
             key={`${conversation.id}:${conversation.avatar_url ?? ''}`}
+            conversationId={conversation.id}
+            channel={conversation.channel}
             src={conversation.avatar_url}
             alt={conversation.display_name}
             imageClassName="w-16 h-16 rounded-full object-cover mb-2 border border-neutral-200 bg-neutral-100"

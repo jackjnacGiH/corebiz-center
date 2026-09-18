@@ -1508,6 +1508,8 @@ export default function Chat() {
                                 <div className="flex items-start gap-2">
                                     <ChatAvatar
                                         key={`${c.id}:${c.avatar_url ?? ''}`}
+                                        conversationId={c.id}
+                                        channel={c.channel}
                                         src={c.avatar_url}
                                         alt={c.display_name}
                                         imageClassName="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
@@ -1565,6 +1567,8 @@ export default function Chat() {
                                 </button>
                                 <ChatAvatar
                                     key={`${selectedConv.id}:${selectedConv.avatar_url ?? ''}`}
+                                    conversationId={selectedConv.id}
+                                    channel={selectedConv.channel}
                                     src={selectedConv.avatar_url}
                                     alt={selectedConv.display_name}
                                     imageClassName="w-9 h-9 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
