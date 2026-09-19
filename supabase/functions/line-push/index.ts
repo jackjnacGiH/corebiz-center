@@ -18,6 +18,13 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const BLOCKED_NOTICE_MARKER = /(?:🚨\s*)?ประกาศแจ้งเตือนสำคัญ/iu;
+const BLOCKED_NOTICE_FINGERPRINT = /(?:LINE\s*Official\s*Account|LINE\s*OA)[\s\S]{0,600}(?:งดการติดต่อ|ตอบกลับ|กดลิงก์)[\s\S]{0,600}(?:โทรศัพท์เท่านั้น|080161700)/iu;
+
+function containsBlockedEmergencyNotice(text: string): boolean {
+  return BLOCKED_NOTICE_MARKER.test(text) || BLOCKED_NOTICE_FINGERPRINT.test(text);
+}
+
 type LineMessage =
   | { type: "text"; text: string; quoteToken?: string }
   | { type: "image"; originalContentUrl: string; previewImageUrl: string };
@@ -66,6 +73,12 @@ Deno.serve(async (req: Request) => {
   if (!conversationId || !text) {
     return new Response(JSON.stringify({ ok: false, error: "missing_conversation_or_text" }), {
       status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
+  }
+  if (containsBlockedEmergencyNotice(text)) {
+    console.warn("LINE push blocked by outbound safety filter", { conversationId });
+    return new Response(JSON.stringify({ ok: false, error: "outbound_content_blocked" }), {
+      status: 422, headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
   }
 
