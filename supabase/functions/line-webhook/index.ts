@@ -394,7 +394,21 @@ async function startLineLoading(accessToken: string, userId: string): Promise<vo
   }
 }
 
+const BLOCKED_NOTICE_MARKER = /(?:🚨\s*)?ประกาศแจ้งเตือนสำคัญ/iu;
+const BLOCKED_NOTICE_FINGERPRINT = /(?:LINE\s*Official\s*Account|LINE\s*OA)[\s\S]{0,600}(?:งดการติดต่อ|ตอบกลับ|กดลิงก์)[\s\S]{0,600}(?:โทรศัพท์เท่านั้น|080161700)/iu;
+
+function stripBlockedEmergencyNotice(text: string): string {
+  if (!text) return text;
+  const markerIndex = text.search(BLOCKED_NOTICE_MARKER);
+  if (markerIndex >= 0) return text.slice(0, markerIndex).trim();
+  // Fail closed when the heading was changed/omitted but the distinctive body
+  // is still present. This announcement is internal-only and must never be
+  // emitted by the chatbot.
+  return BLOCKED_NOTICE_FINGERPRINT.test(text) ? "" : text;
+}
+
 function sanitizeReply(text: string): string {
+  text = stripBlockedEmergencyNotice(text);
   if (!text) return text;
   // A transfer receipt is not proof of payment. Never repeat, extract, or
   // guess any monetary amount from a slip; accounting must verify it.
@@ -651,7 +665,13 @@ function textToLineMessages(text: string): LineMessage[] {
 }
 
 async function replyToLine(accessToken: string, replyToken: string, texts: string | string[]): Promise<boolean> {
-  const arr = Array.isArray(texts) ? texts : [texts];
+  const arr = (Array.isArray(texts) ? texts : [texts])
+    .map(stripBlockedEmergencyNotice)
+    .filter((text) => text.length > 0);
+  if (arr.length === 0) {
+    console.warn("LINE reply blocked by outbound safety filter");
+    return false;
+  }
   const messages = arr.flatMap((t) => textToLineMessages(t)).slice(0, 5);
   const res = await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
@@ -726,7 +746,7 @@ async function loadHistory(admin: SupabaseClient, conversationId: string): Promi
     .filter((r) => !(r.metadata && r.metadata.quote_link))   // drop dedicated quote-link messages
     .map((r) => ({
       role: r.sender_type === "customer" ? "user" : "assistant",
-      content: stripQuoteLink(r.content),                     // strip any echoed link from other messages
+      content: stripBlockedEmergencyNotice(stripQuoteLink(r.content)),
     }))
     .filter((m) => m.content.length > 0)
     .slice(-CHAT_HISTORY_ITEM_LIMIT);
@@ -767,15 +787,15 @@ async function hasRecentCustomerImage(admin: SupabaseClient, conversationId: str
   }
 }
 
-async function shouldBotReply(admin: SupabaseClient, conversationId: string): Promise<boolean> {
+async function shouldBotReply(admin: SupabaseClient, conversationId: string, forceFresh = false): Promise<boolean> {
   try {
     const now = Date.now();
-    const cachedGlobal = globalBotFlagCache && globalBotFlagCache.expiresAt > now
+    const cachedGlobal = !forceFresh && globalBotFlagCache && globalBotFlagCache.expiresAt > now
       ? globalBotFlagCache.value : undefined;
-    const cachedChannel = channelBotFlagCache && channelBotFlagCache.expiresAt > now
+    const cachedChannel = !forceFresh && channelBotFlagCache && channelBotFlagCache.expiresAt > now
       ? channelBotFlagCache.value : undefined;
     const convEntry = conversationBotFlagCache.get(conversationId);
-    const cachedConversation = convEntry && convEntry.expiresAt > now ? convEntry.value : undefined;
+    const cachedConversation = !forceFresh && convEntry && convEntry.expiresAt > now ? convEntry.value : undefined;
     if (convEntry && convEntry.expiresAt <= now) conversationBotFlagCache.delete(conversationId);
 
     const globalPromise: Promise<boolean | null> = cachedGlobal !== undefined
@@ -955,7 +975,12 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       phaseTimings.quote_link_ms = Date.now() - quoteStartedAt;
       const replyText = composeQuoteReply(aiReply, linkMsg);
       let delivered = false;
-      if (ev.replyToken) {
+      const finalFlagStartedAt = Date.now();
+      const finalAllowed = await shouldBotReply(admin, conversationId, true);
+      phaseTimings.bot_flags_final_ms = Date.now() - finalFlagStartedAt;
+      if (!finalAllowed) {
+        console.log("LINE bot reply cancelled by final bot flag check", { requestId, conversationId });
+      } else if (ev.replyToken) {
         const replyStartedAt = Date.now();
         delivered = await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
         const replyAttemptMs = Date.now() - replyStartedAt;
@@ -1072,7 +1097,12 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
 
     const replyText = composeQuoteReply(aiReply, linkMsg);
     let delivered = false;
-    if (ev.replyToken) {
+    const finalFlagStartedAt = Date.now();
+    const finalAllowed = await shouldBotReply(admin, conversationId, true);
+    phaseTimings.bot_flags_final_ms = Date.now() - finalFlagStartedAt;
+    if (!finalAllowed) {
+      console.log("LINE bot reply cancelled by final bot flag check", { requestId, conversationId });
+    } else if (ev.replyToken) {
       const replyStartedAt = Date.now();
       delivered = await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
       const replyAttemptMs = Date.now() - replyStartedAt;
