@@ -596,11 +596,12 @@ function extractQuickReplies(text: string) {
         // Use the sequential nextIndex for the button label prefix to keep it clean (e.g. 1, 2, 3...)
         const prefix = `${nextIndex}. `;
         const maxLabelLen = 20 - prefix.length;
-        const model = /\b(?:[A-Z]{2,6}\d+[A-Z0-9-]*|MIRKA\s+GOLD)\b/iu.exec(optionText)?.[0] ?? "";
+        const model = /\b(?:[A-Z]{2,6}\d+[A-Z0-9-]*|MIRKA\s+GOLD|Eco)\b/iu.exec(optionText)?.[0] ?? "";
         const grit = /#\s*\d{1,5}[A-Z]?\b/iu.exec(optionText)?.[0] ?? "";
+        const backing = /หลัง(?:อ่อน|แข็ง)/u.exec(optionText)?.[0] ?? "";
         // Product names share a long Thai prefix; expose the differentiating
         // model/grit in the 20-character LINE button label.
-        let labelName = [model, grit].filter(Boolean).join(" ") || optionText;
+        let labelName = [model, grit].filter(Boolean).join(" ") || backing || optionText;
         if (labelName.length > maxLabelLen) {
           labelName = labelName.slice(0, maxLabelLen - 1) + "…";
         }

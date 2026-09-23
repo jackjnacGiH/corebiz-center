@@ -28,6 +28,16 @@ const adhesiveCatalog = [
     name_th: 'กระดาษทรายกลมสักหลาด PS36 5" #120',
     name_en: 'Klingspor PS36 Velcro Sanding Disc 5" #120' },
 ];
+const flapDiscCatalog = ["หลังอ่อน", "หลังแข็ง"].flatMap((backing, backingIndex) =>
+  ["CS310X", "Eco", "XA911", "XA945"].flatMap((model, modelIndex) =>
+    [40, 60, 80, 100, 120, 150, 180, 220, 240, ...(model === "CS310X" ? [280] : []), 320, 400]
+      .map((grit, gritIndex) => ({
+        sku: String(2020090000 + backingIndex * 1000 + modelIndex * 100 + gritIndex),
+        status: "active", brand: "jnac",
+        name_th: model === "CS310X"
+          ? `จานทราย${backing} ${model} ${backing === "หลังอ่อน" ? "48P" : "72P"} 4" #${grit}`
+          : `จานทราย${backing} ${model} 4" ${backing === "หลังอ่อน" ? (model === "XA911" ? "48P" : "46P") : "72P"} #${grit}`,
+      }))));
 const productFields = ["sku", "name_th", "name_en", "brand"];
 
 async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true) {
@@ -170,6 +180,75 @@ test("adhesive disc question offers the two real model families before asking gr
   const exact = await guidedProductDecision('กระดาษทรายกลมหลังกาว PS36 5" #120', [], "th", lookup);
   assert.equal(exact.answer, null);
   assert.equal(exact.result.products[0].sku, "2020003337");
+});
+test("flap-disc question offers catalog backings before model and grit", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
+  const first = await guidedProductDecision("มีจานทรายซ้อนจำหน่ายไหมครับ", [], "th", lookup);
+  assert.equal(first.lookupQuery, "จานทราย");
+  assert.deepEqual(first.result.missing_fields, ["backing"]);
+  assert.match(first.answer, /1\. จานทรายหลังอ่อน 4 นิ้ว/);
+  assert.match(first.answer, /2\. จานทรายหลังแข็ง 4 นิ้ว/);
+  assert.doesNotMatch(first.answer, /รบกวนระบุรุ่น ขนาด และเบอร์/);
+
+  const backHistory = [
+    { role: "user", content: "มีจานทรายซ้อนจำหน่ายไหมครับ" },
+    { role: "assistant", content: first.answer },
+  ];
+  const soft = await guidedProductDecision("1", backHistory, "th", lookup);
+  assert.deepEqual(soft.result.missing_fields, ["model"]);
+  assert.match(soft.answer, /จานทรายหลังอ่อน CS310X/);
+  assert.match(soft.answer, /จานทรายหลังอ่อน Eco/);
+  assert.doesNotMatch(soft.answer, /จานทรายหลังแข็ง/);
+
+  const modelHistory = [...backHistory,
+    { role: "user", content: "1" }, { role: "assistant", content: soft.answer },
+  ];
+  const model = await guidedProductDecision("1", modelHistory, "th", lookup);
+  assert.deepEqual(model.result.missing_fields, ["grit"]);
+  assert.match(model.answer, /#40/);
+  assert.match(model.answer, /#400/);
+  assert.doesNotMatch(model.answer, /หลังแข็ง/);
+
+  const exact = await guidedProductDecision('จานทรายหลังอ่อน CS310X 48P 4" #80', [], "th", lookup);
+  assert.equal(exact.answer, null);
+  assert.equal(exact.result.products.length, 1);
+  assert.match(exact.result.products[0].name_th, /หลังอ่อน CS310X.*#80/);
+
+  const eco = await guidedProductDecision('จานทรายหลังอ่อน Eco 4" 46P', modelHistory, "th", lookup);
+  assert.deepEqual(eco.result.missing_fields, ["grit"]);
+  assert.match(eco.answer, /จานทรายหลังอ่อน Eco.*#80/);
+  const hard = await guidedProductDecision('จานทรายหลังแข็ง Eco 4" 72P #80', [], "th", lookup);
+  assert.equal(hard.result.products.length, 1);
+  assert.match(hard.result.products[0].name_th, /หลังแข็ง Eco.*#80/);
+});
+test("flap-disc typo and short replies retain the requested grit and size", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
+  const history = [
+    { role: "user", content: "มีจานทรายซ้อนจำหน่ายไหมครับ" },
+    { role: "assistant", content: "มีจานทรายให้เลือกค่ะ" },
+    { role: "user", content: "ต้องการเบอร์ 80" },
+    { role: "assistant", content: "เลือกแบบได้เลยค่ะ" },
+    { role: "user", content: "จาานรายมีรุ่นไหนบ้างครับ" },
+    { role: "assistant", content: "เลือกแบบได้เลยค่ะ" },
+  ];
+  const size = await guidedProductDecision('ขนาด 4"', history, "th", lookup);
+  assert.match(size.lookupQuery, /จานทราย.*4นิ้ว.*#80/);
+  assert.deepEqual(size.result.missing_fields, ["backing"]);
+  const chosen = await guidedProductDecision("จานทรายหลังอ่อน 4 นิ้ว", [
+    ...history, { role: "user", content: 'ขนาด 4"' }, { role: "assistant", content: size.answer },
+  ], "th", lookup);
+  assert.match(chosen.lookupQuery, /หลังอ่อน.*#80/);
+  assert.deepEqual(chosen.result.missing_fields, ["model"]);
+  assert.match(chosen.answer, /CS310X.*#80/);
+  assert.doesNotMatch(chosen.answer, /หลังแข็ง/);
+});
+test("unavailable flap-disc grit offers real backing choices before staff handoff", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
+  const result = await guidedProductDecision("จานทราย #800", [], "th", lookup);
+  assert.match(result.answer, /ยังไม่พบเบอร์ #800/);
+  assert.match(result.answer, /1\. จานทรายหลังอ่อน/);
+  assert.match(result.answer, /2\. จานทรายหลังแข็ง/);
+  assert.equal(result.escalate, undefined);
 });
 test("unavailable #800 offers verified adhesive models instead of escalating immediately", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
