@@ -129,6 +129,8 @@ function extractBackings(value) {
   const values = [];
   if (/สักหลาด|velcro|hook\s*(?:and|&)\s*loop/i.test(text)) values.push("สักหลาด");
   if (/หลังกาว|adhesive|\bpsa\b/i.test(text)) values.push("หลังกาว");
+  if (/หลังอ่อน/i.test(text)) values.push("หลังอ่อน");
+  if (/หลังแข็ง/i.test(text)) values.push("หลังแข็ง");
   return unique(values);
 }
 

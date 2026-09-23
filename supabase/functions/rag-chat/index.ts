@@ -1,5 +1,6 @@
 /**
- * rag-chat v59 — search the catalog first for a named product type
+ * rag-chat v60 — guide flap-disc backing, model and grit from the live catalog
+ * v59 search the catalog first for a named product type.
  * v58 guide catalog choices through SKU, quantity and quote consent.
  * v57 resolve product follow-ups and grit lists on empty completions.
  * v56 recover empty model completions with catalog clarification.
@@ -72,6 +73,7 @@ import {
   guidedExactProductAnswer,
   guidedProductDecision,
   guidedRequestedQuantity,
+  normalizeGuidedProductTerm,
 } from "../_shared/guided-product-selection.mjs";
 import {
   readOnlyToolDecision,
@@ -696,7 +698,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
   if (!original) return { products: [], note: "empty query" };
 
   const { rewritten, applied } = await rewriteWithKeywords(admin, original);
-  const q = normalizeProductSearchQuery(rewritten);
+  const q = normalizeProductSearchQuery(normalizeGuidedProductTerm(rewritten));
   const requestedFamily = productFamilyFor(q);
   const requestedProductType = productFamilyLabel(requestedFamily) ?? productTypeLabel(productTypeFor(q));
 
@@ -729,7 +731,24 @@ async function findProducts(admin: SupabaseClient, query: string) {
     const requestedGrit = productMatchFacets(q).grit.length > 0;
     const modelOptions = [...new Set(catalogNames.map((name) =>
       requestedGrit ? name : name.replace(/\s*#\s*\d{1,5}[A-Z]?\s*$/iu, "")))];
-    if (extractModelCodes(q).length === 0 && modelOptions.length > 1 && modelOptions.length <= 13
+    const flapBackings = productTypeFor(q) === "flap_disc"
+      ? ["หลังอ่อน", "หลังแข็ง"].filter((backing) => directMatches.some(({ p }) =>
+        productMatchFacets(String(p.name_th || p.name_en || "")).backing.includes(backing)))
+      : [];
+    const catalogSizes = [...new Set(directMatches.flatMap(({ p }) =>
+      productMatchFacets(String(p.name_th || p.name_en || "")).size))];
+    const oneSize = catalogSizes.length === 1 ? catalogSizes[0].replace("นิ้ว", " นิ้ว") : "";
+    if (flapBackings.length > 1 && !productMatchFacets(q).backing.some((value) => flapBackings.includes(value))
+      && (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN) {
+      const options = flapBackings.map((backing) => `จานทราย${backing}${oneSize ? ` ${oneSize}` : ""}`);
+      selection = {
+        selection_required: true,
+        missing_fields: ["backing"],
+        available_values: { backing: flapBackings },
+        clarification_question_th: `มีจานทราย${oneSize ? `ขนาด ${oneSize}` : ""}ในระบบค่ะ เลือกแบบที่ต้องการได้เลย\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+        clarification_question_en: `I found flap discs${oneSize ? ` in ${oneSize}` : ""}. Which backing would you like?\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+      };
+    } else if (extractModelCodes(q).length === 0 && modelOptions.length > 1 && modelOptions.length <= 13
       && (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN) {
       const options = modelOptions.sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
       selection = {
