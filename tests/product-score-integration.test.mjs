@@ -4,10 +4,30 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { recoverEmptyProductAnswer } from "../supabase/functions/_shared/empty-product-recovery.mjs";
+import {
+  confirmedGuidedQuoteRequest, guidedCatalogQuery, guidedExactProductAnswer,
+  guidedProductDecision, guidedRequestedQuantity,
+} from "../supabase/functions/_shared/guided-product-selection.mjs";
 const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
 const sourceUrl = new URL("../supabase/functions/rag-chat/index.ts", import.meta.url);
 const catalog = JSON.parse(readFileSync(new URL("fixtures/sa331-catalog.json", import.meta.url), "utf8"));
+const adhesiveCatalog = [
+  ...[60, 80, 100, 120, 150, 180, 220].map((grit, index) => ({
+    sku: String(2020003334 + index), status: "active", brand: "Klingspor",
+    name_th: `กระดาษทรายกลมหลังกาว PS36 5" #${grit}`,
+    // The live English title conflicts with the Thai catalog classification.
+    name_en: `Klingspor PS36 Velcro Sanding Disc 5" #${grit}`,
+  })),
+  ...[80, 100, 120, 150, 180, 220, 240, 280, 320, 400, 500].map((grit, index) => ({
+    sku: String(2020003033 + index), status: "active", brand: "Mrika",
+    name_th: `กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #${grit}`,
+    name_en: `MIRKA GOLD PSA Link Roll Disc 5" #${grit}`,
+  })),
+  { sku: "2020002810", status: "active", brand: "Klingspor",
+    name_th: 'กระดาษทรายกลมสักหลาด PS36 5" #120',
+    name_en: 'Klingspor PS36 Velcro Sanding Disc 5" #120' },
+];
 const productFields = ["sku", "name_th", "name_en", "brand"];
 
 async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true) {
@@ -129,4 +149,100 @@ test("SA331 5-inch grit question lists real available grits and correct backing"
   assert.match(recovered.answer, /#2000/);
   assert.doesNotMatch(recovered.answer, /ใช้ขนาดเท่าไร/);
   assert.doesNotMatch(recovered.answer, /ยังยืนยันรุ่น SA331/);
+});
+test("adhesive disc question offers the two real model families before asking grit", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
+  const guided = await guidedProductDecision("มีกระดาษทรายหลังกาาว จำหน่ายไหมครับ", [], "th", lookup);
+  assert.equal(guided.result.selection_required, true);
+  assert.deepEqual(guided.result.missing_fields, ["model"]);
+  assert.match(guided.answer, /1\. กระดาษทรายกลมหลังกาว MIRKA GOLD 5"/);
+  assert.match(guided.answer, /2\. กระดาษทรายกลมหลังกาว PS36 5"/);
+  assert.doesNotMatch(guided.answer, /สักหลาด/);
+
+  const chosen = await guidedProductDecision("2", [
+    { role: "user", content: "มีกระดาษทรายหลังกาาว จำหน่ายไหมครับ" },
+    { role: "assistant", content: guided.answer },
+  ], "th", lookup);
+  assert.equal(chosen.result.selection_required, true);
+  assert.deepEqual(chosen.result.missing_fields, ["grit"]);
+  assert.match(chosen.answer, /1\. กระดาษทรายกลมหลังกาว PS36 5" #60/);
+  assert.match(chosen.answer, /7\. กระดาษทรายกลมหลังกาว PS36 5" #220/);
+  const exact = await guidedProductDecision('กระดาษทรายกลมหลังกาว PS36 5" #120', [], "th", lookup);
+  assert.equal(exact.answer, null);
+  assert.equal(exact.result.products[0].sku, "2020003337");
+});
+test("unavailable #800 offers verified adhesive models instead of escalating immediately", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
+  const result = await guidedProductDecision('ต้องการหลังกาว 5" #800 ครับ', [
+    { role: "user", content: "มีกระดาษทรายหลังกาวไหมครับ" },
+    { role: "assistant", content: "มีสินค้าหลังกาวให้เลือกค่ะ" },
+  ], "th", lookup);
+  assert.match(result.answer, /ยังไม่พบเบอร์ #800/);
+  assert.match(result.answer, /MIRKA GOLD/);
+  assert.match(result.answer, /PS36/);
+  assert.doesNotMatch(result.answer, /เชอร์รี่|ไม่มีสินค้า/);
+  const insisted = await guidedProductDecision('ต้องเป็นหลังกาว 5" #800 เท่านั้น', [], "th", lookup);
+  assert.equal(insisted.escalate, true);
+  assert.equal(insisted.answer, null);
+});
+test("Mika follow-up stays in adhesive catalog and offers actual MIRKA GOLD grits", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
+  const result = await guidedProductDecision("แล้วรุ่น Mika มีไหมครับ", [
+    { role: "user", content: 'ต้องการหลังกาว 5" #800 ครับ' },
+    { role: "assistant", content: "มีรุ่นที่ต้องการให้เลือกค่ะ" },
+  ], "th", lookup);
+  assert.equal(result.result.selection_required, true);
+  assert.match(result.answer, /MIRKA GOLD 5" #80/);
+  assert.match(result.answer, /MIRKA GOLD 5" #500/);
+  assert.doesNotMatch(result.answer, /สักหลาด/);
+});
+test("quantity reply keeps the confirmed SKU and quotes only a matching resolver result", async () => {
+  const history = [
+    { role: "user", content: 'กระดาษทรายกลมหลังกาว PS36 5" #120' },
+    { role: "assistant", content: "พบสินค้า SKU 2020003337 ค่ะ ต้องการกี่ชิ้นคะ" },
+  ];
+  assert.equal(guidedCatalogQuery("100 ชิ้น", history), 'กระดาษทรายกลมหลังกาว PS36 5นิ้ว #120');
+  assert.equal(guidedRequestedQuantity("100 ชิ้น", history), 100);
+  const guided = await guidedProductDecision("100 ชิ้น", history, "th",
+    q => edge.findProducts(fakeAdmin(adhesiveCatalog), q));
+  assert.equal(guided.result.products[0].sku, "2020003337");
+  const product = { ...guided.result.products[0], stock: 800, unit: "ชิ้น", min_order_qty: 100 };
+  const answer = guidedExactProductAnswer(product, 100, {
+    ok: true, exact_match: true, sku: "2020003337", unit_price: 8.5,
+  });
+  assert.match(answer, /SKU 2020003337/);
+  assert.match(answer, /ราคา 8\.5 บาท\/ชิ้น/);
+  assert.match(answer, /สต็อกที่ตรวจได้ 800 ชิ้น/);
+  assert.match(answer, /ให้เอยทำใบเสนอราคาให้เลยไหมคะ/);
+  assert.equal(guidedExactProductAnswer(product, 100, { ok: true, exact_match: true, sku: "wrong", unit_price: 8.5 }), null);
+  assert.doesNotMatch(guidedExactProductAnswer(product), /8\.5/);
+  assert.deepEqual(confirmedGuidedQuoteRequest("ได้เลยครับ", [
+    { role: "assistant", content: answer },
+  ]), { sku: "2020003337", qty: 100 });
+  assert.equal(confirmedGuidedQuoteRequest("ได้เลยครับ", [
+    { role: "assistant", content: "อยากให้ทำใบเสนอราคาไหมคะ" },
+  ]), null);
+});
+test("model choice keeps an already supplied grit and quantity", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
+  const first = await guidedProductDecision('ขอกระดาษทรายหลังกาว 5" #120 100 ชิ้น', [], "th", lookup);
+  assert.match(first.answer, /1\. กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #120/);
+  assert.match(first.answer, /2\. กระดาษทรายกลมหลังกาว PS36 5" #120/);
+  const history = [
+    { role: "user", content: 'ขอกระดาษทรายหลังกาว 5" #120 100 ชิ้น' },
+    { role: "assistant", content: first.answer },
+  ];
+  const chosen = await guidedProductDecision("2", history, "th", lookup);
+  assert.equal(chosen.result.products[0].sku, "2020003337");
+  assert.equal(guidedRequestedQuantity("2", history, chosen.lookupQuery), 100);
+  const twoStepHistory = [
+    history[0], history[1],
+    { role: "user", content: 'กระดาษทรายกลมหลังกาว PS36 5"' },
+    { role: "assistant", content: 'พบ PS36 ค่ะ เลือกเบอร์ที่ต้องการ' },
+  ];
+  assert.equal(guidedRequestedQuantity('กระดาษทรายกลมหลังกาว PS36 5" #120', twoStepHistory), 100);
+  assert.equal(guidedRequestedQuantity('กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #120', [
+    { role: "user", content: 'กระดาษทรายกลมหลังกาว PS36 5" #120 100 ชิ้น' },
+    { role: "assistant", content: "เลือกรุ่นได้ค่ะ" },
+  ]), null);
 });

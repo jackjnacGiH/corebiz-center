@@ -84,7 +84,7 @@ test("facet-only product follow-up bypasses unrelated knowledge retrieval", () =
   const skipStart = source.indexOf("function shouldSkipRAG");
   const skipEnd = source.indexOf("const TOOL_DEFINITIONS", skipStart);
   const skipRag = source.slice(skipStart, skipEnd);
-  const routingStart = source.indexOf("const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history)");
+  const routingStart = source.indexOf("const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, history)");
   const routingEnd = source.indexOf("const systemPrompt", routingStart);
   const routing = source.slice(routingStart, routingEnd);
 

@@ -81,6 +81,10 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   const buttons = extract(pendingProductQuestion(result()));
   assert.equal(buttons.items.length, 1);
   assert.equal(buttons.items[0].action.text, product.name_th);
+  assert.match(buttons.items[0].action.label, /SA331 #1500/);
+  const guided = extract('เลือกเบอร์ค่ะ\n1. กระดาษทรายกลมหลังกาว PS36 5" #60\n2. กระดาษทรายกลมหลังกาว PS36 5" #80');
+  assert.deepEqual(guided.items.map(item => item.action.label), ["1. PS36 #60", "2. PS36 #80"]);
+  assert.equal(guided.items[1].action.text, 'กระดาษทรายกลมหลังกาว PS36 5" #80');
   const longName = "กระดาษทราย".repeat(12);
   assert.equal(extract(`1. ${longName}`).items[0].action.text, longName);
   assert.equal(extract("ไม่มีตัวเลือก"), undefined);
