@@ -1,5 +1,7 @@
 /**
- * rag-chat v54 — authoritative customer-aware price lookup
+ * rag-chat v56 — recover empty model completions with catalog clarification
+ * v55 scored product suggestions with explicit customer confirmation.
+ * v54 authoritative customer-aware price lookup remains mandatory after selection.
  *
  * Selling prices now come only from the centralized quote-price resolver.
  * Product search still resolves the exact SKU and missing variant facets, but
@@ -52,9 +54,15 @@ import {
   shouldSuppressToolForProductSearch,
 } from "../_shared/product-selection.mjs";
 import {
+  buildScoredProductSelection,
+  productModelSearchRoot,
+  scoreProductCandidate,
+} from "../_shared/product-match-score.mjs";
+import {
   mergeFacetOnlyProductQuery,
   pendingProductQuestion,
 } from "../_shared/product-turn-context.mjs";
+import { recoverEmptyProductAnswer } from "../_shared/empty-product-recovery.mjs";
 import {
   readOnlyToolDecision,
   resolveReadOnlyRequest,
@@ -392,6 +400,8 @@ function selectToolDefinitions(
 const PRODUCT_COLUMNS_CUSTOMER = "sku, name_th, name_en, brand, unit, status, weight_kg, feature_tags, tags, barcode, images, min_order_qty";
 const PRODUCT_MATCH_COLUMNS = "sku, name_th, name_en, brand, status, feature_tags, tags, barcode, group:product_groups(name)";
 const MAX_PRODUCT_MATCH_SCAN = 1_000;
+// Set false for immediate rollback to exact catalog matching.
+const PRODUCT_SCORE_SUGGESTIONS_ENABLED = Deno.env.get("PRODUCT_SCORE_SUGGESTIONS_ENABLED") !== "false";
 const MAX_PRODUCTS_IN_TOOL_RESULT = TOKEN_OPTIMIZATION_ENABLED ? 8 : 25;
 const MAX_PRODUCTS_DURING_SELECTION = TOKEN_OPTIMIZATION_ENABLED ? 8 : 12;
 
@@ -726,7 +736,40 @@ async function findProducts(admin: SupabaseClient, query: string) {
     };
   }
 
-  try {
+  if (PRODUCT_SCORE_SUGGESTIONS_ENABLED) {
+    const modelRoot = productModelSearchRoot(q);
+    let candidates: Record<string, unknown>[] = [];
+    if (modelRoot) {
+      // Retrieve a bounded same-root pool, then score exact facets. The root
+      // is NOT an alias: SA331VC must still be confirmed against SA331.
+      const { data: rows, error: candidateError } = await admin.from("products")
+        .select(PRODUCT_MATCH_COLUMNS).eq("status", "active")
+        .or(`name_th.ilike.%${modelRoot.replace(/^([A-Z]+)(\d+)$/, "$1%$2")}%,name_en.ilike.%${modelRoot.replace(/^([A-Z]+)(\d+)$/, "$1%$2")}%`)
+        .order("sku", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
+      if (!candidateError) candidates = (rows ?? []) as Record<string, unknown>[];
+    } else {
+      const { data: fuzzy } = await admin.rpc("search_products_fuzzy", {
+        p_query: q, p_limit: 30, p_threshold: 0.2,
+      });
+      const skus = (fuzzy ?? []).map((row: { sku: string }) => row.sku).filter(Boolean);
+      if (skus.length) {
+        const { data: rows } = await admin.from("products").select(PRODUCT_MATCH_COLUMNS)
+          .eq("status", "active").in("sku", skus);
+        candidates = (rows ?? []) as Record<string, unknown>[];
+      }
+    }
+    const scored = buildScoredProductSelection(q, candidates.map((product) => {
+      const candidateText = [product.name_th, product.name_en, (product.group as { name?: string } | null)?.name].filter(Boolean).join(" ");
+      return { product, match: scoreProductCandidate(q, product, {
+        requestedFamily, candidateFamily: productFamilyFor(candidateText),
+        requestedProductType: productTypeFor(q), candidateProductType: productTypeFor(candidateText),
+      }) };
+    }));
+    if (scored) return { ...scored, original_query: original, synonym_rewrites: applied };
+  }
+
+  // With scoring enabled, no older 70%-name fallback may bypass the 80% gate.
+  if (!PRODUCT_SCORE_SUGGESTIONS_ENABLED) try {
     const { data: fuzzy } = await admin.rpc("search_products_fuzzy", {
       p_query: q, p_limit: 3, p_threshold: 0.2,
     }) as { data: Array<{ product_id: string; sku: string; name_th: string; name_en: string; sim: number }> | null };
@@ -757,7 +800,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
     tokens,
     stripped: rawTokens.length !== tokens.length ? rawTokens.filter((t) => !tokens.includes(t)) : [],
     requested_product_family: requestedFamily, requested_product_type: requestedProductType, count: 0, products: [],
-    note: `ยังไม่มีตัวเลือกที่ยืนยันได้ว่าเป็นชนิดเดียวกันหรือชื่อที่ normalize แล้วตรงตั้งแต่ 70%${requestedProductType ? ` สำหรับ${requestedProductType}` : ""} — ห้ามเสนอสินค้าคนละชนิด. ให้ส่งเรื่องตรวจสอบจัดหา/สั่งผลิตแทน`,
+    note: `ยังไม่มีตัวเลือกที่ผ่านเกณฑ์${PRODUCT_SCORE_SUGGESTIONS_ENABLED ? "คะแนนข้อมูลตรงกันอย่างน้อย 80% และไม่ขัดกับสเปกที่ระบุ" : "การจับคู่ชื่อเดิม"}${requestedProductType ? ` สำหรับ${requestedProductType}` : ""} — ห้ามเสนอสินค้าคนละชนิด. ให้ส่งเรื่องตรวจสอบจัดหา/สั่งผลิตแทน`,
   };
 }
 
@@ -1478,8 +1521,9 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
    - เสนอสินค้าได้เฉพาะผลจาก tool ที่มี safe_alternative=true เท่านั้น
    - ถ้า tool ส่ง requested_product_family มา: เสนอได้เฉพาะ product_family เดียวกันเท่านั้น แม้ขนาด/เบอร์ใกล้เคียงก็ห้ามข้ามชนิด เช่น "ผ้าทรายสายพาน" ห้ามเสนอ "ล้อทรายมีแกน" เด็ดขาด
    - ถ้า tool ส่ง requested_product_type มา (เช่น จานทราย, ล้อทราย, ผ้าทรายม้วน): ให้ถือเป็น hard gate ก่อนดูขนาด/เบอร์/คะแนน และเสนอได้เฉพาะ product_type เดียวกันเท่านั้น ห้ามข้ามคำระบุชนิดสินค้านี้เด็ดขาด
-   - ถ้าไม่มี requested_product_family: เสนอได้เฉพาะ safe_name_score ตั้งแต่ 0.70 ขึ้นไป
-   - safe_name_score / safe_match_basis เป็นค่าจาก tool เท่านั้น ห้ามคำนวณหรือเดาเอง
+   - ถ้า tool ส่ง match_policy=weighted_evidence_v1: ใช้เฉพาะ clarification_candidates ที่ match_score >= 80 และถาม clarification_question_th เพื่อให้ลูกค้าเลือก แม้มีเพียงรายการเดียว ห้ามถือว่ารหัสรุ่นที่ต่างกันเป็นรุ่นเดียวกัน และห้ามส่งต่อเจ้าหน้าที่ระหว่างรอเลือก
+   - match_score เป็นคะแนนข้อมูลตรงกันจากระบบ ไม่ใช่โอกาสถูกต้อง ห้ามคำนวณคะแนนเอง ห้ามบอกราคา/ออกใบเสนอราคาจนกว่าลูกค้าจะเลือก SKU แล้วผ่าน get_exact_price ตามกฎราคาเดิม
+   - ผลค้นหาปกติใช้ safe_alternative / safe_match_basis จาก tool เท่านั้น ห้ามสร้างสินค้าทดแทนเอง
    - หากไม่มีตัวเลือก safe_alternative: ห้ามแสดงชื่อสินค้าอื่น ให้ capture_lead เพื่อให้ทีมตรวจสอบจัดหา/สั่งผลิต และต้องระบุ requested_product_type ในคำตอบเพื่อยืนยันว่ากำลังตรวจสอบสินค้าชนิดที่ลูกค้าถาม
    - สินค้าที่เป็น same_family แต่ขนาด/เบอร์ไม่ตรง เป็น "ทางเลือก" เท่านั้น: ต้องบอกความต่างให้ชัด และห้ามสร้างใบเสนอราคาจนกว่าลูกค้าจะยืนยัน SKU/ขนาดนั้น
 
@@ -1519,8 +1563,9 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
    - Offer only tool results with safe_alternative=true.
    - When requested_product_family is provided, candidate product_family MUST match exactly. Never cross product types (for example sanding belt -> mounted flap wheel), even when dimensions or grit look similar.
    - When requested_product_type is provided (for example flap disc, mounted wheel, sanding roll), it is a hard gate before dimensions, grit, or scoring: candidate product_type MUST match exactly.
-   - Without requested_product_family, only offer candidates with safe_name_score >= 0.70.
-   - safe_name_score and safe_match_basis come from the tool; never estimate them yourself.
+   - For match_policy=weighted_evidence_v1, offer only clarification_candidates with match_score >= 80 and ask clarification_question_en. Even one candidate needs customer selection. Different model suffixes are not confirmed aliases. Do not escalate while awaiting selection.
+   - match_score measures matching evidence, not probability. Never invent scores or quote a price until customer selection resolves a SKU and get_exact_price succeeds under the existing pricing rules.
+   - For ordinary search results, trust only the tool's safe_alternative / safe_match_basis; never invent alternatives.
    - If no safe_alternative exists, do not list another product; call capture_lead for sourcing/made-to-order and explicitly name requested_product_type in the reply.
    - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.
 📷 If the customer sends any IMAGE (whether uploaded as a photo, doc screenshot, or any file) → You must interpret the intent of the image first:
@@ -2479,6 +2524,33 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     }
   }
 
+  // Gemini can finish with HTTP 200, zero completion tokens and no tool call.
+  // Recover product questions from the catalog so LINE never silently drops
+  // an otherwise valid customer message.
+  if (!fullAnswer.trim() && images.length === 0 && allToolCalls.length === 0) {
+    try {
+      const recovered = await recoverEmptyProductAnswer(query, history, lang, (lookupQuery) => findProducts(admin, lookupQuery));
+      if (recovered.answer) {
+        appendAnswer(recovered.answer);
+        const recoveredResult = recovered.result;
+        allToolCalls.push({
+          name: "find_products", args: { query: recovered.lookupQuery ?? query },
+          result_summary: JSON.stringify(recoveredResult).slice(0, 200),
+          result_meta: { disposition: productSearchDisposition(recoveredResult),
+            selection_required: recoveredResult?.selection_required === true },
+        });
+        console.warn("empty model output recovered with product lookup", { request_id: telemetry.requestId });
+      }
+    } catch (error) {
+      console.warn("empty model output catalog recovery failed", { request_id: telemetry.requestId, error: (error as Error).message });
+    }
+  }
+  if (!fullAnswer.trim()) {
+    appendAnswer(lang === "th"
+      ? "ขออภัยค่ะ เอยตอบไม่ครบ รบกวนพิมพ์คำถามอีกครั้งนะคะ"
+      : "Sorry, I could not complete my reply. Please send your question again.");
+    console.warn("empty model output recovered with retry request", { request_id: telemetry.requestId });
+  }
   fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);
   const exactPriceResults = [...exactPriceOutcomes.values()].filter((result) => result !== null);
   const guardedPriceAnswer = guardNumericSellingPriceAnswer({
