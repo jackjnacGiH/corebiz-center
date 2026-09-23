@@ -592,7 +592,7 @@ function extractQuickReplies(text: string) {
 
     if (optionText) {
       // Avoid matching lines that look like sentences or are too short/long
-      if (optionText.length >= 3 && optionText.length < 80) {
+      if (optionText.length >= 3 && optionText.length <= 300) {
         // Use the sequential nextIndex for the button label prefix to keep it clean (e.g. 1, 2, 3...)
         const prefix = `${nextIndex}. `;
         const maxLabelLen = 20 - prefix.length;
@@ -618,8 +618,8 @@ function extractQuickReplies(text: string) {
   }
 
   // LINE only allows between 1 and 13 quick reply items.
-  // We show them if there are at least 2 distinct options.
-  if (items.length >= 2) {
+  // A single scored candidate also requires an explicit customer selection.
+  if (items.length >= 2 || (items.length === 1 && /^\s*1[.)]\s+/m.test(text))) {
     return { items: items.slice(0, 13) };
   }
   return undefined;
@@ -1084,7 +1084,9 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     requestId, routingVariant,
   );
   phaseTimings.rag_ms = Date.now() - ragStartedAt;
-  const aiReply = sanitizeReply(rag.answer);
+  // rag-chat may return HTTP 200 with an empty model completion. Keep the
+  // customer informed even if its catalog recovery cannot produce a reply.
+  const aiReply = sanitizeReply(rag.answer) || "ขออภัยค่ะ เอยตอบไม่ครบ รบกวนพิมพ์คำถามอีกครั้งนะคะ";
 
   let lineReplyMs: number | null = null;
   let replyCompletedAt = Date.now();

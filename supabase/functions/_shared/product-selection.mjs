@@ -139,6 +139,10 @@ const FIELD_DEFINITIONS = [
   { key: "backing", questionTh: "ต้องการแบบสักหลาดหรือหลังกาว", questionEn: "which backing type do you need", extract: extractBackings },
 ];
 
+export function productMatchFacets(value) {
+  return Object.fromEntries(FIELD_DEFINITIONS.map((field) => [field.key, field.extract(value)]));
+}
+
 /**
  * Post-filter substring database matches when the customer supplied a precise
  * facet. For example, `%#120%` also matches `#1200`; this guard keeps only the
