@@ -1,5 +1,6 @@
 /**
- * rag-chat v57 — resolve product follow-ups and grit lists on empty completions
+ * rag-chat v58 — guide catalog choices through SKU, quantity and quote consent
+ * v57 resolve product follow-ups and grit lists on empty completions.
  * v56 recover empty model completions with catalog clarification.
  * v55 scored product suggestions with explicit customer confirmation.
  * v54 authoritative customer-aware price lookup remains mandatory after selection.
@@ -50,6 +51,7 @@ import {
   matchesExplicitProductVariant,
   normalizeProductSearchQuery,
   prioritizeProductToolCalls,
+  productMatchFacets,
   productIdentitySearchText,
   productSearchDisposition,
   shouldSuppressToolForProductSearch,
@@ -64,6 +66,12 @@ import {
   pendingProductQuestion,
 } from "../_shared/product-turn-context.mjs";
 import { recoverEmptyProductAnswer } from "../_shared/empty-product-recovery.mjs";
+import {
+  confirmedGuidedQuoteRequest,
+  guidedExactProductAnswer,
+  guidedProductDecision,
+  guidedRequestedQuantity,
+} from "../_shared/guided-product-selection.mjs";
 import {
   readOnlyToolDecision,
   resolveReadOnlyRequest,
@@ -406,6 +414,8 @@ const PRODUCT_MATCH_COLUMNS = "sku, name_th, name_en, brand, status, feature_tag
 const MAX_PRODUCT_MATCH_SCAN = 1_000;
 // Set false for immediate rollback to exact catalog matching.
 const PRODUCT_SCORE_SUGGESTIONS_ENABLED = Deno.env.get("PRODUCT_SCORE_SUGGESTIONS_ENABLED") !== "false";
+// Disable for an immediate return to the model-led product conversation.
+const PRODUCT_GUIDED_SELECTION_ENABLED = Deno.env.get("PRODUCT_GUIDED_SELECTION_ENABLED") !== "false";
 const MAX_PRODUCTS_IN_TOOL_RESULT = TOKEN_OPTIMIZATION_ENABLED ? 8 : 25;
 const MAX_PRODUCTS_DURING_SELECTION = TOKEN_OPTIMIZATION_ENABLED ? 8 : 12;
 
@@ -625,9 +635,12 @@ function evaluateProductMatch(query: string, product: Record<string, unknown>): 
   ]
     .filter(Boolean).join(" ");
   const requestedFamily = productFamilyFor(query);
-  const candidateFamily = productFamilyFor(candidateText);
+  // The Thai catalog title is the customer-facing classification. Some older
+  // English titles (notably PS36 adhesive rows) still say "Velcro".
+  const catalogTitle = String(product.name_th || product.name_en || candidateText);
+  const candidateFamily = productFamilyFor(catalogTitle);
   const requestedProductType = productTypeFor(query);
-  const candidateProductType = productTypeFor(candidateText);
+  const candidateProductType = productTypeFor(catalogTitle);
   const sku = String(product.sku ?? "").trim();
   const exactSku = Boolean(sku) && query.toLowerCase().includes(sku.toLowerCase());
   const requestedModelCodes = extractModelCodes(query);
@@ -710,7 +723,33 @@ async function findProducts(admin: SupabaseClient, query: string) {
     .filter(({ p, match }) => match.safe && matchesExplicitProductVariant(q, p));
 
   if (directMatches.length > 0) {
-    const selection = buildProductSelection(q, directMatches.map(({ p }) => p));
+    let selection = buildProductSelection(q, directMatches.map(({ p }) => p));
+    const catalogNames = [...new Set(directMatches.map(({ p }) => String(p.name_th || p.name_en || "").trim()).filter(Boolean))];
+    const requestedGrit = productMatchFacets(q).grit.length > 0;
+    const modelOptions = [...new Set(catalogNames.map((name) =>
+      requestedGrit ? name : name.replace(/\s*#\s*\d{1,5}[A-Z]?\s*$/iu, "")))];
+    if (extractModelCodes(q).length === 0 && modelOptions.length > 1 && modelOptions.length <= 13) {
+      const options = modelOptions.sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
+      selection = {
+        selection_required: true,
+        missing_fields: ["model"],
+        available_values: { model: options },
+        clarification_question_th: `มีสินค้าในระบบให้เลือกค่ะ เลือกรุ่นที่สนใจได้เลย\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+        clarification_question_en: `I found these catalog models. Which one would you like?\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+      };
+    } else if (modelOptions.length === 1 && selection?.missing_fields?.includes("grit") && catalogNames.length <= 13) {
+      const options = catalogNames.sort((a, b) => {
+        const aGrit = Number(/#\s*(\d+)/u.exec(a)?.[1] ?? 0);
+        const bGrit = Number(/#\s*(\d+)/u.exec(b)?.[1] ?? 0);
+        return aGrit - bGrit;
+      });
+      selection = {
+        ...selection,
+        missing_fields: ["grit"],
+        clarification_question_th: `พบ ${modelOptions[0]} ค่ะ เลือกเบอร์ที่ต้องการได้เลย\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+        clarification_question_en: `I found ${modelOptions[0]}. Which grit would you like?\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+      };
+    }
     const selectedMatches = directMatches.slice(
       0,
       selection ? MAX_PRODUCTS_DURING_SELECTION : MAX_PRODUCTS_IN_TOOL_RESULT,
@@ -765,8 +804,8 @@ async function findProducts(admin: SupabaseClient, query: string) {
     const scored = buildScoredProductSelection(q, candidates.map((product) => {
       const candidateText = [product.name_th, product.name_en, (product.group as { name?: string } | null)?.name].filter(Boolean).join(" ");
       return { product, match: scoreProductCandidate(q, product, {
-        requestedFamily, candidateFamily: productFamilyFor(candidateText),
-        requestedProductType: productTypeFor(q), candidateProductType: productTypeFor(candidateText),
+        requestedFamily, candidateFamily: productFamilyFor(String(product.name_th || product.name_en || candidateText)),
+        requestedProductType: productTypeFor(q), candidateProductType: productTypeFor(String(product.name_th || product.name_en || candidateText)),
       }) };
     }));
     if (scored) return { ...scored, original_query: original, synonym_rewrites: applied };
@@ -1009,7 +1048,7 @@ async function captureLead(
   const name = cleanStr(args.name), phone = cleanStr(args.phone), interest = cleanStr(args.interest), note = cleanStr(args.note);
   const summary = [name && `ชื่อ: ${name}`, phone && `ติดต่อ: ${phone}`,
     interest && `สนใจ: ${interest}`, note && `รายละเอียด: ${note}`].filter(Boolean).join(" · ");
-  await admin.rpc("agent_propose", {
+  const { error } = await admin.rpc("agent_propose", {
     p_category: "sales",
     p_kind: "sales.lead",
     p_title: `Lead ใหม่จากแชท: ${interest || name || phone || "ลูกค้า"}`,
@@ -1024,6 +1063,7 @@ async function captureLead(
     p_dedupe_key: conversationId ? `sales.lead.${conversationId}` : null,
     p_source: "bot",
   });
+  if (error) return { ok: false, saved: false, message: "บันทึกงานติดตามไม่สำเร็จ" };
   return { ok: true, saved: true, message: "บันทึกข้อมูลแล้ว ทีมงานขายจะติดต่อกลับโดยเร็ว" };
 }
 
@@ -1514,6 +1554,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 ⚠️ ถ้า find_products ส่ง selection_required=true: ให้ถาม clarification_question_th เพียงคำถามเดียว รอคำตอบ แล้วค้นใหม่โดยรวมชื่อ/รุ่นเดิมกับข้อมูลที่ลูกค้าเพิ่งตอบ ห้ามเสนอราคา ห้ามเดา SKU และห้ามเรียก capture_lead จนกว่าจะถามข้อมูลที่ขาดและค้นซ้ำแล้วไม่พบสินค้าจริง
 💰 เมื่อลูกค้าถามราคา: ต้องค้นจนได้ SKU ที่ตรงเพียงรายการเดียวและทราบจำนวนที่ลูกค้าต้องการก่อน แล้วเรียก get_exact_price ทุกครั้ง ถ้ายังไม่ทราบจำนวนให้ถามจำนวนก่อน ห้ามใช้ตัวเลขราคาจากผลค้นสินค้า ประวัติแชต หรือคำนวณส่วนลดเอง และห้ามบอกลูกค้าว่าราคามาจาก Tier ราคาเฉพาะลูกค้า ประวัติ FlowAccount หรือสถานะการยืนยันตัวตน
+✅ เมื่อลูกค้าเลือกสินค้าจนได้ SKU เดียวแล้ว ให้แจ้งชื่อสินค้ากับสต็อกจากผลค้นล่าสุดและถามจำนวนถ้ายังไม่ทราบ เมื่อได้จำนวนและตรวจราคาด้วย get_exact_price แล้ว ให้สรุปราคา/สต็อกและถามสั้นๆ ว่า "ให้เอยทำใบเสนอราคาให้เลยไหมคะ" ห้ามเรียก request_quote จนกว่าลูกค้าจะตอบตกลงและมีข้อมูลบังคับครบ
 
 🚫 ห้ามเสนอสินค้าเพียงเพราะขนาด เบอร์ หรือการใช้งานใกล้เคียงกัน หากเป็นคนละชนิดสินค้า. เมื่อไม่มีตัวเลือกที่ผ่านเงื่อนไข ให้บอกว่าจะตรวจสอบจัดหา/สั่งผลิตกับคุณเชอร์รี่ แทนการเดาสินค้าทดแทน
 
@@ -1558,6 +1599,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 3. If you say let me check → you MUST call a tool in the SAME reply.
 ⚠️ When find_products returns selection_required=true: ask clarification_question_en only, wait for the answer, then search again using the original product/model plus the new details. Do not quote a price, guess a SKU, or call capture_lead until the missing details have been asked and the refined search truly has no match.
 💰 When the customer asks for a price: first resolve exactly one SKU and obtain the customer's exact quantity, then call get_exact_price every time. Ask for quantity when it is missing. Never use a number from product search/chat history or calculate a discount yourself. Never reveal whether the price came from Tier, a customer rule, FlowAccount history, or identity-verification state.
+✅ After the customer selects one exact SKU, share its name and freshly checked stock, then ask for quantity if missing. Once quantity and get_exact_price are available, summarize price and stock and ask whether they want a quotation. Do not call request_quote until the customer agrees and all required details are present.
 🚫 NEVER offer a product merely because its size, grit, or use is similar when it is a different product type. If no safe option exists, escalate for sourcing/made-to-order instead of guessing a substitute.
 4. 0 results + no candidates and no selection_required after clarification → offer made-to-order via Khun Cherry.
 5. ⚠️ Whenever offering product options, alternatives, similar items, or lists of sizes/grits/specs for the customer to choose from (including made-to-order variant choices): You MUST present them as a numbered list starting with "1.", "2.", "3." (do NOT use emojis like ✨ or bullet points like • for these lists under any circumstances) so that the numbers align exactly with the Quick Reply buttons.
@@ -2117,11 +2159,132 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     return;
   }
 
+  const acceptedQuote = images.length === 0 ? confirmedGuidedQuoteRequest(query, history) : null;
+  if (acceptedQuote) {
+    const startedAt = Date.now();
+    const args = { items: [acceptedQuote] };
+    const decision = readOnlyToolDecision("request_quote", readOnly);
+    const verified = await findProducts(admin, acceptedQuote.sku) as Record<string, unknown>;
+    const verifiedRows = Array.isArray(verified.products) ? verified.products as Array<Record<string, unknown>> : [];
+    const exactSkuVerified = verified.selection_required !== true
+      && verifiedRows.length === 1 && verifiedRows[0].sku === acceptedQuote.sku;
+    const response = !exactSkuVerified
+      ? { ok: false, saved: false, reason: "exact_sku_recheck_failed" }
+      : decision.execute
+      ? await requestQuote(admin, args, channel, conversationId, query, false)
+      : decision.result;
+    const quote = response && typeof response === "object" ? response as Record<string, unknown> : {};
+    const answer = readOnly
+      ? "โหมดทดสอบรับคำขอใบเสนอราคาแล้ว แต่ไม่ได้สร้างเอกสารจริงค่ะ"
+      : quote.customer_details_required === true
+      ? "เอยทำใบเสนอราคาให้ได้ค่ะ ขอชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) ก่อนนะคะ"
+      : quote.quote_created === true && typeof quote.quote_code === "string"
+      ? `เอยทำใบเสนอราคาเลขที่ ${quote.quote_code} เรียบร้อยแล้วค่ะ`
+      : quote.quote_reused === true && typeof quote.existing_quote_code === "string"
+      ? `ใช้ใบเสนอราคาเลขที่ ${quote.existing_quote_code} สำหรับรายการเดิมได้เลยค่ะ`
+      : quote.saved === true
+      ? "เอยส่งคำขอใบเสนอราคาให้ทีมตรวจสอบแล้วค่ะ"
+      : "เอยยังทำใบเสนอราคาไม่สำเร็จค่ะ จะให้ทีมช่วยตรวจสอบให้นะคะ";
+    const toolCalls = decision.execute && exactSkuVerified ? [{
+      name: "request_quote", args,
+      result_summary: JSON.stringify(response).slice(0, 200),
+    }] : [];
+    const firstTokenMs = Date.now() - telemetry.startedAt;
+    send({ type: "text", chunk: answer });
+    if (conversationId && persistMessages) {
+      await saveMessage(admin, conversationId, "bot", answer, {
+        model: "catalog:quote_acceptance", channel,
+        tool_calls: toolCalls.map((call) => ({ name: call.name, args: call.args })),
+      });
+    }
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "catalog:quote_acceptance", tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
+    scheduleSimpleRun("catalog:quote_acceptance", "ok", firstTokenMs, toolCalls.map((call) => call.name), Date.now() - startedAt, toolCalls.length);
+    return;
+  }
+
+  let guidedQuery: string | null = null;
+  if (PRODUCT_GUIDED_SELECTION_ENABLED && query && images.length === 0) {
+    const guidedStartedAt = Date.now();
+    try {
+      const guided = await guidedProductDecision(query, history, lang, (catalogQuery) => findProducts(admin, catalogQuery));
+      guidedQuery = guided?.lookupQuery ?? null;
+      const exactRows = Array.isArray(guided?.result?.products) ? guided.result.products : [];
+      const exactProduct = !guided?.result?.selection_required && exactRows.length === 1
+        ? exactRows[0] : null;
+      const quantity = guidedRequestedQuantity(query, history, guidedQuery ?? query);
+      const isQuoteRequest = /ใบเสนอราคา|quotation|\bquote\b/iu.test(query);
+      let guidedAnswer = guided?.answer ?? null;
+      let leadResult: Record<string, unknown> | null = null;
+      let leadExecuted = false;
+      let priceResult: Record<string, unknown> | null = null;
+      if (guided?.escalate) {
+        const args = { interest: guided.lookupQuery, note: query };
+        const decision = readOnlyToolDecision("capture_lead", readOnly);
+        leadExecuted = decision.execute;
+        leadResult = decision.execute
+          ? await captureLead(admin, args, channel, conversationId) as Record<string, unknown>
+          : decision.result as Record<string, unknown>;
+        guidedAnswer = leadResult?.saved === true
+          ? (lang === "th"
+            ? "เอยส่งเรื่องให้ทีมตรวจสอบจัดหาสเปกที่ต้องการแล้วค่ะ แล้วจะแจ้งกลับนะคะ"
+            : "I have asked our team to check sourcing for that exact specification.")
+          : (lang === "th"
+            ? "เอยยังยืนยันสินค้าตามสเปกนี้ไม่ได้ค่ะ รบกวนให้ทีมตรวจสอบเพิ่มเติมนะคะ"
+            : "I could not verify that exact specification. Our team needs to check it.");
+      }
+      if (!guidedAnswer && exactProduct && !isQuoteRequest) {
+        if (quantity != null && quantity >= Math.max(1, Number(exactProduct.min_order_qty ?? 1))) {
+          const priced = await getExactPrice(admin, { sku: exactProduct.sku, qty: quantity }, conversationId);
+          priceResult = isSuccessfulExactPriceResult(priced.response)
+            ? priced.response as Record<string, unknown> : null;
+        }
+        guidedAnswer = guidedExactProductAnswer(exactProduct, quantity, priceResult, lang);
+      }
+      if (guidedAnswer && guided) {
+        const toolCalls: Array<{
+          name: string; args: Record<string, unknown>; result_summary: string;
+          result_meta: { disposition: string; selection_required: boolean };
+        }> = [{
+          name: "find_products",
+          args: { query: guided.lookupQuery },
+          result_summary: JSON.stringify(guided.result).slice(0, 200),
+          result_meta: { disposition: guided.escalate ? "unresolved" : guided.result?.selection_required ? "needs_selection" : "resolved",
+            selection_required: guided.result?.selection_required === true },
+        }];
+        if (leadResult && leadExecuted) toolCalls.push({
+          name: "capture_lead",
+          args: { interest: guided.lookupQuery, note: query },
+          result_summary: JSON.stringify(leadResult).slice(0, 200),
+          result_meta: { disposition: "unresolved", selection_required: false },
+        });
+        if (priceResult) toolCalls.push({
+          name: "get_exact_price",
+          args: { sku: exactProduct?.sku, qty: quantity },
+          result_summary: JSON.stringify(priceResult).slice(0, 200),
+          result_meta: { disposition: "resolved", selection_required: false },
+        });
+        const firstTokenMs = Date.now() - telemetry.startedAt;
+        send({ type: "text", chunk: guidedAnswer });
+        if (conversationId && persistMessages) {
+          await saveMessage(admin, conversationId, "bot", guidedAnswer, {
+            model: "catalog:guided_selection", channel,
+            tool_calls: toolCalls.map((call) => ({ name: call.name, args: call.args })),
+          });
+        }
+        send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "catalog:guided_selection", tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
+        scheduleSimpleRun("catalog:guided_selection", "ok", firstTokenMs, toolCalls.map((call) => call.name), Date.now() - guidedStartedAt, toolCalls.length);
+        return;
+      }
+    } catch (error) {
+      console.warn("guided catalog lookup failed", { request_id: telemetry.requestId, error: (error as Error).message });
+    }
+  }
+
   const setupStartedAt = Date.now();
   const learningSettings = await getLearningSettings(admin);
   // Decide retrieval before loading the rest of the prompt context so the
   // embedding request can overlap independent database reads.
-  const ragRoutingQuery = mergeFacetOnlyProductQuery(query, history);
+  const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, history);
   const requestToolDefinitions = selectToolDefinitions(ragRoutingQuery, history, images.length > 0);
   const requestToolCount = requestToolDefinitions.length > 0
     ? ((requestToolDefinitions[0] as { functionDeclarations?: unknown[] }).functionDeclarations?.length ?? 0)
@@ -2312,7 +2475,11 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const defaultImgPrompt = lang === "en"
     ? "The customer sent this image. Please inspect it according to image rules."
     : "ลูกค้าส่งรูปภาพนี้มา ช่วยตรวจสอบตามกฎการจัดการรูปภาพ";
-  const userParts: Array<Record<string, unknown>> = [{ text: query || defaultImgPrompt }];
+  const userParts: Array<Record<string, unknown>> = [{
+    text: guidedQuery && guidedQuery !== query
+      ? `${query}\n[สินค้าในตัวเลือกที่ลูกค้าหมายถึง: ${guidedQuery}]`
+      : query || defaultImgPrompt,
+  }];
   for (const im of images) userParts.push({ inlineData: { mimeType: im.mimeType, data: im.data } });
   const contents: unknown[] = [
     ...history.map((h) => ({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.content }] })),
@@ -2533,7 +2700,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   // an otherwise valid customer message.
   if (!fullAnswer.trim() && images.length === 0 && allToolCalls.length === 0) {
     try {
-      const recovered = await recoverEmptyProductAnswer(query, history, lang, (lookupQuery) => findProducts(admin, lookupQuery));
+      const recovered = await recoverEmptyProductAnswer(guidedQuery ?? query, history, lang, (lookupQuery) => findProducts(admin, lookupQuery));
       if (recovered.answer) {
         appendAnswer(recovered.answer);
         const recoveredResult = recovered.result;
