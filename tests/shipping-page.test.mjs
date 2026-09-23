@@ -426,6 +426,10 @@ test('a safe provider rejection detail replaces the generic error with an action
   await settle(); h.render();
 
   assert.equal(h.find(node => node.props.role === 'alert').props.children, 'invalid_phone');
+  assert.equal(
+    h.find(node => node.props['data-testid'] === 'shipping-error-bottom').props.children,
+    'invalid_phone',
+  );
   h.unmount();
 });
 

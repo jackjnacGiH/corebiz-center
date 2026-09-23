@@ -1582,6 +1582,14 @@ export default function Shipping() {
               )}
             </div>
           )}
+          {error && view === "editor" && (
+            <div
+              data-testid="shipping-error-bottom"
+              className="rounded-lg bg-red-50 p-3 text-red-800"
+            >
+              {errorMessage}
+            </div>
+          )}
         </>
       )}
       <Dialog open={!!pendingDelete} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
