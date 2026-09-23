@@ -54,7 +54,7 @@ export function scoreProductCandidate(query, product, identity = {}) {
         const found = modelParts(code);
         return wanted && found && wanted[1] === found[1] && Boolean(wanted[2]) !== Boolean(found[2]);
       });
-      if (suffixCandidate) { points.model = 15; modelRelation = "suffix_unconfirmed"; }
+      if (suffixCandidate) { points.model = 20; modelRelation = "suffix_unconfirmed"; }
       else conflicts.push("model");
     }
   } else missing.push("model");

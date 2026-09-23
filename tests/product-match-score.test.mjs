@@ -14,11 +14,11 @@ const query = 'กระดาษทราย DEERFOS SA331VC 5" #1500';
 const score = (q = query, p = product, identity = generic) => scoreProductCandidate(q, p, identity);
 const result = () => buildScoredProductSelection(query, [{ product, match: score() }]);
 
-test("SA331VC: 80 points at boundary, confirmation only", () => {
-  assert.equal(score().score, 80);
+test("SA331VC: qualifying points require customer confirmation", () => {
+  assert.equal(score().score, 85);
   assert.equal(score().eligible, true);
   assert.equal(score().model_relation, "suffix_unconfirmed");
-  assert.equal(score(query, product, exactType).score, 85);
+  assert.equal(score(query, product, exactType).score, 90);
   assert.equal(productModelSearchRoot(query), "SA331");
   assert.equal(productSearchDisposition(result()), "needs_selection");
   assert.deepEqual(result().products, []);
@@ -27,8 +27,9 @@ test("SA331VC: 80 points at boundary, confirmation only", () => {
 });
 test("exact model and full evidence scores 100; absent brand does not get points", () => {
   assert.equal(score(query.replace("SA331VC", "SA331"), product, exactType).score, 100);
-  assert.equal(score(query.replace("DEERFOS", "")).score, 70);
+  assert.equal(score(query.replace("DEERFOS", "")).score, 75);
   assert.equal(score(query.replace("DEERFOS", "")).eligible, false);
+  assert.equal(score('กระดาษทรายกลมสักหลาด SA331VC 5" #1500', product, exactType).score, 80);
 });
 for (const [label, q, p, identity, conflict] of [
   ["wrong size", query.replace('5"', '6"'), product, generic, "size"],
