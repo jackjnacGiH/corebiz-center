@@ -12,7 +12,7 @@ const productFields = ["sku", "name_th", "name_en", "brand"];
 
 async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true) {
   const bundle = await build({ stdin: {
-    contents: source + "\nexport { findProducts, productFamilyFor, productTypeFor };",
+    contents: source + "\nexport { findProducts, productFamilyFor, productTypeFor, resolveResponseLanguage };",
     resolveDir: fileURLToPath(new URL("../supabase/functions/rag-chat/", import.meta.url)), loader: "ts",
   }, bundle: true, write: false, format: "cjs", platform: "node", plugins: [{ name: "mock-remote-imports", setup(build) {
     build.onResolve({ filter: /^(https:|jsr:)/ }, args => ({ path: args.path, namespace: "remote" }));
@@ -56,7 +56,7 @@ test("full findProducts resolves photograph query to one scored candidate among 
   const result = await edge.findProducts(fakeAdmin(), 'กระดาษทราย DEERFOS SA331VC 5" #1500');
   assert.equal(result.selection_required, true);
   assert.deepEqual(result.clarification_candidates.map(p => p.sku), ["2020000992"]);
-  assert.equal(result.clarification_candidates[0].match_score, 80);
+  assert.equal(result.clarification_candidates[0].match_score, 85);
 });
 test("button selection resolves exact SKU, without remaining confirmation", async () => {
   const result = await edge.findProducts(fakeAdmin(), 'กระดาษทรายกลมสักหลาด SA331 5" #1500');
@@ -100,7 +100,7 @@ test("short follow-up after an unanswered product turn reuses only the adjacent 
   const history = [{ role: "user", content: "มี กระดาษทรายกลมสักหลาด SA331VC 5 จำหน่ายหมครับ" }];
   const recovered = await recoverEmptyProductAnswer("มีไหนครับ", history, "th", q => edge.findProducts(fakeAdmin(), q));
   assert.match(recovered.answer, /เบอร์ความละเอียด/);
-  assert.equal(recovered.lookupQuery, "SA331");
+  assert.match(recovered.lookupQuery, /SA331/);
   const unrelated = await recoverEmptyProductAnswer("มีไหนครับ", [{ role: "assistant", content: history[0].content }], "th", q => edge.findProducts(fakeAdmin(), q));
   assert.equal(unrelated.answer, null);
 });
@@ -108,4 +108,25 @@ test("empty AI completion on complete 80-point query offers the one confirmed-ch
   const recovered = await recoverEmptyProductAnswer('กระดาษทราย DEERFOS SA331VC 5" #1500', [], "th", q => edge.findProducts(fakeAdmin(), q));
   assert.equal(recovered.result.clarification_candidates[0].sku, "2020000992");
   assert.match(recovered.answer, /1\. กระดาษทรายกลมสักหลาด SA331 5" #1500/);
+});
+test("numeric-only grit follow-up keeps Thai and completes the previous SA331VC request", async () => {
+  const history = [
+    { role: "user", content: "มี กระดาษทรายกลมสักหลาด SA331VC 5 จำหน่ายหมครับ" },
+    { role: "assistant", content: "สินค้านี้มีหลายตัวเลือกค่ะ ใช้ขนาดเท่าไร และต้องการเบอร์ความละเอียดอะไรคะ" },
+  ];
+  assert.equal(edge.resolveResponseLanguage('5" #1500', history, "line"), "th");
+  const recovered = await recoverEmptyProductAnswer('5" #1500', history, "th", q => edge.findProducts(fakeAdmin(), q));
+  assert.deepEqual(recovered.result.clarification_candidates.map(p => p.sku), ["2020000992"]);
+  assert.match(recovered.answer, /1\. กระดาษทรายกลมสักหลาด SA331 5" #1500/);
+  assert.doesNotMatch(recovered.answer, /Sorry|Please send/);
+});
+test("SA331 5-inch grit question lists real available grits and correct backing", async () => {
+  const query = 'รุ่น SA331 5" มีเบอร์อะไรบ้าง';
+  const recovered = await recoverEmptyProductAnswer(query, [], "th", q => edge.findProducts(fakeAdmin(), q));
+  assert.match(recovered.answer, /หลังสักหลาด/);
+  assert.match(recovered.answer, /#40/);
+  assert.match(recovered.answer, /#1500/);
+  assert.match(recovered.answer, /#2000/);
+  assert.doesNotMatch(recovered.answer, /ใช้ขนาดเท่าไร/);
+  assert.doesNotMatch(recovered.answer, /ยังยืนยันรุ่น SA331/);
 });

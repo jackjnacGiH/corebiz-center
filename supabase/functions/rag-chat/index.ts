@@ -1,5 +1,6 @@
 /**
- * rag-chat v56 — recover empty model completions with catalog clarification
+ * rag-chat v57 — resolve product follow-ups and grit lists on empty completions
+ * v56 recover empty model completions with catalog clarification.
  * v55 scored product suggestions with explicit customer confirmation.
  * v54 authoritative customer-aware price lookup remains mandatory after selection.
  *
@@ -221,7 +222,10 @@ function resolveResponseLanguage(
   history: Array<{ role: string; content: string }>,
   channel: string,
 ): Lang {
-  if (query.trim()) return detectLanguage(query);
+  if (query.trim() && detectLanguage(query) === "th") return "th";
+  // Size/grit/model-only follow-ups do not establish an English language.
+  const nonModelText = query.replace(/\b[A-Z]{2,6}[\s._/-]*\d+[A-Z0-9-]*\b/gi, " ");
+  if (/[A-Za-z]{2,}/.test(nonModelText)) return "en";
   const priorCustomerText = [...history].reverse().find(
     (message) => message.role === "user" && message.content.trim() && !isImageOnlyHistoryEntry(message.content),
   )?.content;
@@ -2547,8 +2551,8 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }
   if (!fullAnswer.trim()) {
     appendAnswer(lang === "th"
-      ? "ขออภัยค่ะ เอยตอบไม่ครบ รบกวนพิมพ์คำถามอีกครั้งนะคะ"
-      : "Sorry, I could not complete my reply. Please send your question again.");
+      ? "เอยรับข้อความแล้วค่ะ ช่วยบอกรายละเอียดสินค้าหรือคำถามเพิ่มอีกนิดนะคะ"
+      : "Could you tell me which product or detail you are looking for?");
     console.warn("empty model output recovered with retry request", { request_id: telemetry.requestId });
   }
   fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);

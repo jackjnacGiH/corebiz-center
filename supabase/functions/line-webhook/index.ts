@@ -1086,7 +1086,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   phaseTimings.rag_ms = Date.now() - ragStartedAt;
   // rag-chat may return HTTP 200 with an empty model completion. Keep the
   // customer informed even if its catalog recovery cannot produce a reply.
-  const aiReply = sanitizeReply(rag.answer) || "ขออภัยค่ะ เอยตอบไม่ครบ รบกวนพิมพ์คำถามอีกครั้งนะคะ";
+  const aiReply = sanitizeReply(rag.answer) || "เอยรับข้อความแล้วค่ะ ช่วยบอกรายละเอียดสินค้าหรือคำถามเพิ่มอีกนิดนะคะ";
 
   let lineReplyMs: number | null = null;
   let replyCompletedAt = Date.now();
