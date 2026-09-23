@@ -2034,6 +2034,9 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
                     {isCustomer ? t.chat.customer : isBot ? 'AI' : msg.sender_name ?? 'Staff'}
                     {' · '}
                     {new Date(msg.created_at).toLocaleString('th-TH', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
                         hour: '2-digit',
                         minute: '2-digit',
                     })}
