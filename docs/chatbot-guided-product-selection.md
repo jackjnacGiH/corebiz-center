@@ -1,6 +1,6 @@
 # Guided catalog selection — 2026-09-23
 
-Deployed to Supabase project `owoedccmuqnzdtxvywgt`: rag-chat v81 and line-webhook v44.
+Deployed to Supabase project `owoedccmuqnzdtxvywgt`: rag-chat v82 and line-webhook v44.
 
 The LINE bot now uses current catalog matches to lead an adhesive sanding-disc conversation:
 
@@ -10,6 +10,7 @@ The LINE bot now uses current catalog matches to lead an adhesive sanding-disc c
 4. If a requested grit is unavailable, the bot shows verified choices without claiming the whole product family is unavailable. It routes to staff when the customer insists on the unavailable specification.
 
 The 80-point scored-candidate gate remains for near matches such as SA331VC versus SA331. Family and grit choices are navigation through active catalog rows, not a claim that a partial request identifies one SKU.
+For other named product types, the bot prompt now directs `find_products` before broad category tools; numbered catalog model choices are only offered when the bounded scan is complete.
 
 Production catalog data has 7 active PS36 adhesive 5-inch grits and 11 active MIRKA GOLD adhesive 5-inch grits. Some PS36 rows have an English title saying `Velcro` while their Thai customer-facing title says `หลังกาว`. Matching uses the Thai title when present. The catalog wording should be reviewed separately; no product record was edited in this release.
 

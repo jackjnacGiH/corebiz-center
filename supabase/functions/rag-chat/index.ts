@@ -1,5 +1,6 @@
 /**
- * rag-chat v58 — guide catalog choices through SKU, quantity and quote consent
+ * rag-chat v59 — search the catalog first for a named product type
+ * v58 guide catalog choices through SKU, quantity and quote consent.
  * v57 resolve product follow-ups and grit lists on empty completions.
  * v56 recover empty model completions with catalog clarification.
  * v55 scored product suggestions with explicit customer confirmation.
@@ -728,7 +729,8 @@ async function findProducts(admin: SupabaseClient, query: string) {
     const requestedGrit = productMatchFacets(q).grit.length > 0;
     const modelOptions = [...new Set(catalogNames.map((name) =>
       requestedGrit ? name : name.replace(/\s*#\s*\d{1,5}[A-Z]?\s*$/iu, "")))];
-    if (extractModelCodes(q).length === 0 && modelOptions.length > 1 && modelOptions.length <= 13) {
+    if (extractModelCodes(q).length === 0 && modelOptions.length > 1 && modelOptions.length <= 13
+      && (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN) {
       const options = modelOptions.sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
       selection = {
         selection_required: true,
@@ -1548,8 +1550,8 @@ const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 
 const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคัญมาก — ต้องทำตาม)
 
-1. ลูกค้าถามสินค้าเฉพาะ (มีชื่อ/รหัส/เบอร์) → เรียก find_products ทันที (ห้ามตอบว่า ไม่พบ ก่อนเรียก tool) — ยกเว้นเลข QT-/SO-/DN- ซึ่งเป็นเลขเอกสาร ให้ใช้ SAFETY ข้อ 5
-2. คำถามกว้างๆ → เรียก list_product_groups หรือ list_categories ก่อน
+1. ลูกค้าระบุชนิดสินค้าชัดเจนหรือชื่อรุ่น (เช่น กระดาษทรายหลังกาว, ผ้าทรายสายพาน) แม้ยังไม่รู้ขนาด/เบอร์ → เรียก find_products ก่อนเพื่อเสนอรุ่นและตัวเลือกที่มีจริง ห้ามตอบว่าไม่พบก่อนค้น — ยกเว้นเลข QT-/SO-/DN- ซึ่งเป็นเลขเอกสาร ให้ใช้ SAFETY ข้อ 5
+2. ใช้ list_product_groups หรือ list_categories เมื่อถามภาพรวมโดยไม่ระบุชนิดสินค้าเท่านั้น
 3. ถ้าพูดว่า เดี๋ยวเช็คให้ → ต้อง CALL TOOL จริงใน reply เดียวกัน
 
 ⚠️ ถ้า find_products ส่ง selection_required=true: ให้ถาม clarification_question_th เพียงคำถามเดียว รอคำตอบ แล้วค้นใหม่โดยรวมชื่อ/รุ่นเดิมกับข้อมูลที่ลูกค้าเพิ่งตอบ ห้ามเสนอราคา ห้ามเดา SKU และห้ามเรียก capture_lead จนกว่าจะถามข้อมูลที่ขาดและค้นซ้ำแล้วไม่พบสินค้าจริง
@@ -1594,8 +1596,8 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 • ห้ามสัญญาราคาพิเศษ/ส่วนลดเองถ้าไม่มีข้อมูลจริง`;
 
 const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
-1. Specific product → call find_products FIRST. Never say not available before calling. (Exception: QT-/SO-/DN- numbers are document numbers — use SAFETY rule 5.)
-2. Broad question → call list_product_groups / list_categories first.
+1. When the customer names a product type or model (for example adhesive sanding discs or sanding belts), call find_products FIRST even if size/grit are missing, and offer verified catalog choices. Never say it is unavailable before searching. (Exception: QT-/SO-/DN- document numbers — use SAFETY rule 5.)
+2. Call list_product_groups / list_categories only for an overview with no product type specified.
 3. If you say let me check → you MUST call a tool in the SAME reply.
 ⚠️ When find_products returns selection_required=true: ask clarification_question_en only, wait for the answer, then search again using the original product/model plus the new details. Do not quote a price, guess a SKU, or call capture_lead until the missing details have been asked and the refined search truly has no match.
 💰 When the customer asks for a price: first resolve exactly one SKU and obtain the customer's exact quantity, then call get_exact_price every time. Ask for quantity when it is missing. Never use a number from product search/chat history or calculate a discount yourself. Never reveal whether the price came from Tier, a customer rule, FlowAccount history, or identity-verification state.
