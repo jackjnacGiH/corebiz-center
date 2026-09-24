@@ -44,7 +44,7 @@ function signatureRoles(title: string): { left: string; right: string } {
  * order-management quote detail so they render identically. Pure presentation.
  */
 export default function QuoteDocument({
-  org, title = 'ใบเสนอราคา', code, dateLabel, customerName, customerAddress, customerTaxId,
+  org, title = 'ใบเสนอราคา', code, dateLabel, validUntilLabel, customerName, customerAddress, customerTaxId,
   contactName, contactPhone, items, subtotal, discount = 0, discountLabel,
   net, vat, total, note, editableNote, format, showSignature = false,
 }: {
@@ -52,6 +52,7 @@ export default function QuoteDocument({
   title?: string;
   code?: string | null;
   dateLabel: string;
+  validUntilLabel?: string | null;
   customerName: string;
   customerAddress?: string | null;
   customerTaxId?: string | null;
@@ -75,14 +76,25 @@ export default function QuoteDocument({
   return (
     <div className="qd-root text-neutral-800">
       {/* ── Company header (seller) ─────────────────────────── */}
-      <div className="flex items-start justify-between gap-6 border-b-2 border-[#1696F4] pb-4">
-        <div className="flex items-start gap-3 min-w-0">
-          {org?.logo_url ? (
-            <img src={org.logo_url} alt="โลโก้" className="w-12 h-12 flex-shrink-0 object-contain" />
-          ) : (
-            <JnacLogo className="w-12 h-12 flex-shrink-0" />
-          )}
-          <div className="min-w-0">
+      <div className="flex items-start gap-3 border-b-2 border-[#1696F4] pb-4">
+        {org?.logo_url ? (
+          <img src={org.logo_url} alt="โลโก้" className="w-12 h-12 flex-shrink-0 object-contain" />
+        ) : (
+          <JnacLogo className="w-12 h-12 flex-shrink-0" />
+        )}
+        <div className="min-w-0 flex-1 flow-root">
+          <div className="float-right ml-6 mb-1 text-right">
+            <div className="text-2xl font-extrabold text-neutral-800">{title}</div>
+            {/* Filled + shown at print time (ต้นฉบับ/สำเนา) by lib/print.ts */}
+            <div className="doc-copy-label text-sm font-bold text-rose-600" style={{ display: 'none' }} />
+            <div className="mt-2 text-[11px] text-neutral-600 space-y-0.5 min-w-[160px]">
+              <div className="flex justify-between gap-4"><span className="text-neutral-400">เลขที่</span><span className="font-mono font-medium">{code ?? '(ออกเมื่อบันทึก)'}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-neutral-400">วันที่</span><span className="font-medium">{dateLabel}</span></div>
+              {validUntilLabel && <div className="text-right font-medium">{validUntilLabel}</div>}
+              {contactName && <div className="flex justify-between gap-4"><span className="text-neutral-400">ผู้ติดต่อ</span><span className="font-medium">{contactName}</span></div>}
+              {contactPhone && <div className="flex justify-between gap-4"><span className="text-neutral-400">เบอร์โทร</span><span className="font-medium">{contactPhone}</span></div>}
+            </div>
+          </div>
           <div className="text-xl font-extrabold text-[#1696F4] leading-tight">
             {org?.business_name ?? 'บริษัท เจ แนค (ประเทศไทย) จำกัด'} <span className="text-[11px] font-medium text-neutral-400">(สำนักงานใหญ่)</span>
           </div>
@@ -91,18 +103,6 @@ export default function QuoteDocument({
             {org?.tax_id && <div>เลขประจำตัวผู้เสียภาษี {org.tax_id}</div>}
             {org?.phone && <div>โทร. {org.phone}</div>}
             {(org?.website || org?.email) && <div>{org?.website}{org?.website && org?.email ? ' · ' : ''}{org?.email && `Email: ${org.email}`}</div>}
-          </div>
-          </div>
-        </div>
-        <div className="text-right flex-shrink-0">
-          <div className="text-2xl font-extrabold text-neutral-800">{title}</div>
-          {/* Filled + shown at print time (ต้นฉบับ/สำเนา) by lib/print.ts */}
-          <div className="doc-copy-label text-sm font-bold text-rose-600" style={{ display: 'none' }} />
-          <div className="mt-2 text-[11px] text-neutral-600 space-y-0.5 min-w-[160px]">
-            <div className="flex justify-between gap-4"><span className="text-neutral-400">เลขที่</span><span className="font-mono font-medium">{code ?? '(ออกเมื่อบันทึก)'}</span></div>
-            <div className="flex justify-between gap-4"><span className="text-neutral-400">วันที่</span><span className="font-medium">{dateLabel}</span></div>
-            {contactName && <div className="flex justify-between gap-4"><span className="text-neutral-400">ผู้ติดต่อ</span><span className="font-medium">{contactName}</span></div>}
-            {contactPhone && <div className="flex justify-between gap-4"><span className="text-neutral-400">เบอร์โทร</span><span className="font-medium">{contactPhone}</span></div>}
           </div>
         </div>
       </div>
