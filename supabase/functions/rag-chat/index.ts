@@ -1,5 +1,6 @@
 /**
- * rag-chat v60 — guide flap-disc backing, model and grit from the live catalog
+ * rag-chat v61 — preserve product topic, language and SKU through short replies
+ * v60 guide flap-disc backing, model and grit from the live catalog.
  * v59 search the catalog first for a named product type.
  * v58 guide catalog choices through SKU, quantity and quote consent.
  * v57 resolve product follow-ups and grit lists on empty completions.
@@ -235,10 +236,14 @@ function resolveResponseLanguage(
 ): Lang {
   if (query.trim() && detectLanguage(query) === "th") return "th";
   // Size/grit/model-only follow-ups do not establish an English language.
-  const nonModelText = query.replace(/\b[A-Z]{2,6}[\s._/-]*\d+[A-Z0-9-]*\b/gi, " ");
+  const withoutModel = (value: string) => value
+    .replace(/\b[A-Z]{2,6}[\s._/-]*\d+[A-Z0-9-]*\b/gi, " ")
+    .replace(/^\s*(?:Eco|MIRKA(?:\s+GOLD)?)\s*$/iu, " ");
+  const nonModelText = withoutModel(query);
   if (/[A-Za-z]{2,}/.test(nonModelText)) return "en";
   const priorCustomerText = [...history].reverse().find(
-    (message) => message.role === "user" && message.content.trim() && !isImageOnlyHistoryEntry(message.content),
+    (message) => message.role === "user" && !isImageOnlyHistoryEntry(message.content)
+      && (detectLanguage(message.content) === "th" || /[A-Za-z]{2,}/.test(withoutModel(message.content))),
   )?.content;
   if (priorCustomerText) return detectLanguage(priorCustomerText);
   return channel === "line" ? "th" : "en";
