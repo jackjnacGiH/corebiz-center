@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { recoverEmptyProductAnswer } from "../supabase/functions/_shared/empty-product-recovery.mjs";
 import {
   confirmedGuidedQuoteRequest, guidedCatalogQuery, guidedExactProductAnswer,
-  guidedProductDecision, guidedRequestedQuantity,
+  guidedProductDecision, guidedRequestedQuantity, quoteCreationBlockReason,
 } from "../supabase/functions/_shared/guided-product-selection.mjs";
 const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
@@ -42,7 +42,7 @@ const productFields = ["sku", "name_th", "name_en", "brand"];
 
 async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true) {
   const bundle = await build({ stdin: {
-    contents: source + "\nexport { findProducts, productFamilyFor, productTypeFor, resolveResponseLanguage };",
+    contents: source + "\nexport { findProducts, productFamilyFor, productTypeFor, resolveResponseLanguage, requestQuote };",
     resolveDir: fileURLToPath(new URL("../supabase/functions/rag-chat/", import.meta.url)), loader: "ts",
   }, bundle: true, write: false, format: "cjs", platform: "node", plugins: [{ name: "mock-remote-imports", setup(build) {
     build.onResolve({ filter: /^(https:|jsr:)/ }, args => ({ path: args.path, namespace: "remote" }));
@@ -94,6 +94,39 @@ test("button selection resolves exact SKU, without remaining confirmation", asyn
   assert.equal(result.count, 1);
   assert.equal(result.products[0].sku, "2020000992");
   assert.equal(result.products[0].price_lookup_required, true);
+});
+test("payment and ordering follow-ups cannot create a second quote", async () => {
+  const history = [{ role: "assistant", content: "เอยทำใบเสนอราคาเลขที่ QT-01000127 เรียบร้อยแล้วค่ะ" }];
+  const cases = [
+    ["สั่งเลยครับ ต้องชำระเงินก่อนหรือไม่", "payment_question"],
+    ["ต้องโอนเงินก่อนไหมครับ", "payment_question"],
+    ["สั่งสินค้ายังไงครับ", "ordering_information"],
+    ["สั่งเลยครับ", "not_explicit_quote_request"],
+    ["QT-01000127 ใช้สั่งซื้อได้ไหม", "existing_quote_followup"],
+    ["ขอใบเสนอราคาเดิมอีกใบ", "existing_quote_followup"],
+    ["ส่งใบเสนอราคาแล้วหรือยัง", "existing_quote_followup"],
+    ["ทำเลยครับ", "not_explicit_quote_request"],
+  ];
+  const admin = {
+    from() { throw new Error("A follow-up must not read billing details or write a quote"); },
+    rpc() { throw new Error("A follow-up must not call the quote RPC"); },
+  };
+  for (const [query, reason] of cases) {
+    assert.equal(quoteCreationBlockReason(query, false, history), reason);
+    const result = await edge.requestQuote(admin, { items: [{ sku: "2020003657", qty: 100 }] },
+      "line", "00000000-0000-4000-8000-000000000001", query, false, history);
+    assert.equal(result.reason, reason);
+    assert.equal(result.quote_created, false);
+    assert.equal(result.skipped, true);
+  }
+});
+test("direct quotation requests and consent to the immediately preceding offer remain allowed", () => {
+  const offer = [{ role: "assistant", content: "พบ SKU 2020003657 จำนวน 100 ชิ้น ให้เอยทำใบเสนอราคาให้เลยไหมคะ" }];
+  assert.equal(quoteCreationBlockReason("ทำเลยครับ", false, offer), null);
+  assert.equal(quoteCreationBlockReason("ขอใบเสนอราคา SKU 2020003657 จำนวน 100 ชิ้น", false, []), null);
+  assert.equal(quoteCreationBlockReason("ช่วยออกใบเสนอราคาให้หน่อยครับ", false, []), null);
+  assert.equal(quoteCreationBlockReason("ขอเช็คใบเสนอราคา QT-01000127", false, []), "existing_quote_followup");
+  assert.equal(quoteCreationBlockReason("ขอใบเสนอราคาใหม่แทน QT-01000127", false, []), null);
 });
 test("existing SA331 query still asks size and grit", async () => {
   const result = await edge.findProducts(fakeAdmin(), "สนใจกระดาษทราย DEERFOS SA331");
