@@ -164,9 +164,8 @@ export default function PublicQuote() {
     );
   }
 
-  const dateLabel = q.valid_until
-    ? `${fmtDate(q.created_at)} (ยืนราคาถึง ${fmtDate(q.valid_until)})`
-    : fmtDate(q.created_at);
+  const dateLabel = fmtDate(q.created_at);
+  const validUntilLabel = q.valid_until ? `(ยืนราคาถึง ${fmtDate(q.valid_until)})` : null;
 
   // ---- Ready: sticky header + the in-system quote document ---------------
   return (
@@ -201,6 +200,7 @@ export default function PublicQuote() {
               title="ใบเสนอราคา"
               code={q.code}
               dateLabel={dateLabel}
+              validUntilLabel={validUntilLabel}
               customerName={q.customerName}
               customerAddress={q.customerAddress}
               customerTaxId={q.customerTaxId}
