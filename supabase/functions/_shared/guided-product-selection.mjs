@@ -167,6 +167,34 @@ export function confirmedGuidedQuoteRequest(query, history = []) {
   return sku && quantity ? { sku, qty: Number(quantity) } : null;
 }
 
+/** A model tool call is not consent to issue a document. Check the customer turn. */
+export function quoteCreationBlockReason(query, hasImages, history = []) {
+  if (hasImages) return "image_or_document";
+  const text = clean(query);
+  if (!text) return "empty_message";
+  if (/^(?:ขอบคุณ|ขอบใจ|thanks?|thank\s+you)(?:\s*(?:มาก|มากครับ|มากค่ะ|ครับ|ค่ะ|นะ|นะครับ|นะคะ|so\s+much|very\s+much|again|!|🙏|😊|🙂))*$/iu.test(text)) {
+    return "acknowledgement";
+  }
+  if (/(?:สั่งสินค้า|สั่งของ).{0,16}(?:ยังไง|อย่างไร|วิธี)|(?:วิธี|ขั้นตอน).{0,16}(?:สั่งสินค้า|สั่งของ)/iu.test(text)) {
+    return "ordering_information";
+  }
+  if (/(?:ชำระ|ชําระ|จ่าย|โอน|มัดจำ|มัดจํา|payment|pay\b)/iu.test(text)
+    && /(?:ก่อน|ไหม|มั้ย|หรือไม่|อย่างไร|ยังไง|วิธี|เมื่อไร|\?)/iu.test(text)) {
+    return "payment_question";
+  }
+  if (/(?:QT-\d+|ใบเสนอราคา(?:ฉบับ)?เดิม|ใบเสนอราคา.{0,20}(?:เลขที่|ที่ส่ง|ที่ทำ|แล้วหรือยัง|ส่งแล้ว|สถานะ))/iu.test(text)
+    && !/ใบเสนอราคาใหม่/iu.test(text)) {
+    return "existing_quote_followup";
+  }
+  const directRequest = /(?:ขอ|ต้องการ|อยากได้|ออก|ทำ|ทํา|จัดทำ|จัดทํา|ส่ง)\s*(?:ใบเสนอราคา|ใบราคา)|\b(?:issue|prepare|create|make|send|need|want|request)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:quotation|quote)\b/iu.test(text);
+  if (directRequest) return null;
+  const shortConsent = /^(?:เอา|ได้|ตกลง|ทำเลย|ทําเลย|จัดเลย|โอเค|ครับ|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu.test(text);
+  const last = history.at(-1);
+  const quoteOffer = last?.role === "assistant"
+    && /(?:ใบเสนอราคา|quotation).{0,40}(?:ไหม|มั้ย|หรือเปล่า|หรือไม่|\?)/iu.test(last.content);
+  return shortConsent && quoteOffer ? null : "not_explicit_quote_request";
+}
+
 export async function guidedProductDecision(query, history, lang, lookup) {
   const lookupQuery = guidedCatalogQuery(query, history);
   if (!lookupQuery) return null;
