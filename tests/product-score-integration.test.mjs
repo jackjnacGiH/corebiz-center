@@ -242,6 +242,62 @@ test("flap-disc typo and short replies retain the requested grit and size", asyn
   assert.match(chosen.answer, /CS310X.*#80/);
   assert.doesNotMatch(chosen.answer, /หลังแข็ง/);
 });
+test("numbered flap-disc choices and quantity replies keep the customer's Thai language", () => {
+  const history = [
+    { role: "user", content: "ต้องการจานทรายซ้อนเบอร์ 80 ครับ" },
+    { role: "assistant", content: "1. จานทรายหลังอ่อน 4 นิ้ว\n2. จานทรายหลังแข็ง 4 นิ้ว" },
+    { role: "user", content: "1" },
+    { role: "assistant", content: '1. จานทรายหลังอ่อน CS310X 48P 4" #80' },
+  ];
+  assert.equal(edge.resolveResponseLanguage("1", history, "line"), "th");
+  assert.equal(edge.resolveResponseLanguage("Eco", history, "line"), "th");
+  assert.equal(edge.resolveResponseLanguage("10", history, "line"), "th");
+  assert.equal(edge.resolveResponseLanguage("1", [
+    { role: "user", content: "Do you have flap discs?" },
+    { role: "assistant", content: "1. Soft backing\n2. Hard backing" },
+  ], "line"), "en");
+});
+test("quantity after a confirmed flap-disc SKU stays on that SKU", async () => {
+  const product = flapDiscCatalog.find((item) => /หลังอ่อน CS310X.*#80$/u.test(item.name_th));
+  const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
+  const answer = `พบ ${product.name_th} (SKU ${product.sku}) ค่ะ ต้องการกี่ชิ้นคะ (ขั้นต่ำ 10 ชิ้น)`;
+  const history = [
+    { role: "user", content: "1" },
+    { role: "assistant", content: answer },
+  ];
+  for (const reply of ["10", "10 ชิ้น"]) {
+    const selected = await guidedProductDecision(reply, history, "th", lookup);
+    assert.equal(selected.lookupQuery, product.sku);
+    assert.equal(selected.result.products.length, 1);
+    assert.equal(selected.result.products[0].sku, product.sku);
+    assert.equal(guidedRequestedQuantity(reply, history, selected.lookupQuery), 10);
+  }
+  const belowMinimum = [
+    { role: "user", content: "3" },
+    { role: "assistant", content: `พบ ${product.name_th} (SKU ${product.sku}) ค่ะ ขั้นต่ำ 10 ชิ้น ต้องการปรับจำนวนเป็นเท่าไรคะ` },
+  ];
+  assert.equal(guidedCatalogQuery("10", belowMinimum), product.sku);
+  assert.equal(guidedRequestedQuantity("10", belowMinimum, product.sku), 10);
+});
+test("switching product type stops carrying flap-disc size and grit", () => {
+  const history = [
+    { role: "user", content: "มีจานทรายซ้อนจำหน่ายไหมครับ" },
+    { role: "assistant", content: "เลือกจานทรายได้เลยค่ะ" },
+    { role: "user", content: "ต้องการเบอร์ 80" },
+    { role: "assistant", content: "เลือกแบบได้เลยค่ะ" },
+  ];
+  assert.equal(guidedCatalogQuery("ขอเปลี่ยนเป็นใบเจียร 4 นิ้ว", history), null);
+  assert.equal(guidedCatalogQuery("ขนาด 5 นิ้ว", [
+    ...history,
+    { role: "user", content: "ขอเปลี่ยนเป็นใบเจียร 4 นิ้ว" },
+    { role: "assistant", content: "กำลังดูใบเจียรค่ะ" },
+  ]), null);
+  assert.equal(guidedCatalogQuery("ขนาด 5 นิ้ว", [
+    ...history,
+    { role: "user", content: "ขอเปลี่ยนเป็นสว่านลม" },
+    { role: "assistant", content: "กำลังดูสว่านลมค่ะ" },
+  ]), null);
+});
 test("unavailable flap-disc grit offers real backing choices before staff handoff", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
   const result = await guidedProductDecision("จานทราย #800", [], "th", lookup);

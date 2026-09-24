@@ -4,7 +4,8 @@ import { pendingProductQuestion } from "./product-turn-context.mjs";
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const PRODUCT_RE = /กระดาษทราย|จานทราย|จาานราย|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const FLAP_DISC_RE = /จานทราย|\bflap\s*disc\b/iu;
-const OTHER_PRODUCT_RE = /กระดาษทราย|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
+const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
+const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)/iu;
 const FOLLOW_UP_RE = /(?:^|\s)(?:#\s*\d+|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+\s*(?:ชิ้น|ใบ|กล่อง|pcs?))|มีรุ่นไหน|รุ่นไหน|แนะนำ|\bmi(?:r)?ka\b|^\d{1,6}$/iu;
 
 export function normalizeGuidedProductTerm(value) {
@@ -16,6 +17,8 @@ export function normalizeGuidedProductTerm(value) {
 }
 
 const normalized = normalizeGuidedProductTerm;
+const isOtherProductTurn = (value) => !FLAP_DISC_RE.test(value)
+  && (OTHER_PRODUCT_RE.test(value) || PRODUCT_SWITCH_RE.test(value));
 
 function numberedChoice(query, history) {
   if (!/^\d{1,2}$/u.test(query)) return query;
@@ -27,21 +30,27 @@ function numberedChoice(query, history) {
   return choice && PRODUCT_RE.test(choice) ? choice : query;
 }
 
+function pendingExactQuantitySku(query, history) {
+  if (!/^(?:จำนวน\s*)?\d{1,6}(?:\s*(?:ชิ้น|ใบ|กล่อง|pcs?))?$/iu.test(query)) return null;
+  const last = history.at(-1);
+  if (last?.role !== "assistant" || !/ต้องการกี่|ต้องการปรับจำนวน|how many|what quantity/iu.test(last.content)) return null;
+  return /\(SKU\s+([A-Z0-9._/-]+)\)/iu.exec(last.content)?.[1] ?? null;
+}
+
 function guidedFlapDiscQuery(current, history) {
   const currentIsFlapDisc = FLAP_DISC_RE.test(current) && !OTHER_PRODUCT_RE.test(current);
   const userTurns = history.slice(-12).filter((item) => item.role === "user")
     .map((item) => normalized(item.content));
   const lastProductTurn = [...userTurns].reverse().find((item) =>
-    FLAP_DISC_RE.test(item) || OTHER_PRODUCT_RE.test(item));
+    FLAP_DISC_RE.test(item) || isOtherProductTurn(item));
   if (!currentIsFlapDisc && (!lastProductTurn || !FLAP_DISC_RE.test(lastProductTurn)
-    || OTHER_PRODUCT_RE.test(current))) return null;
+    || isOtherProductTurn(current))) return null;
   const currentFacets = productMatchFacets(current);
   if (!currentIsFlapDisc && !FOLLOW_UP_RE.test(current)
     && !currentFacets.size.length && !currentFacets.grit.length
     && !/หลังอ่อน|หลังแข็ง|\bEco\b/iu.test(current)) return null;
 
-  const lastOtherIndex = userTurns.findLastIndex((item) =>
-    OTHER_PRODUCT_RE.test(item) && !FLAP_DISC_RE.test(item));
+  const lastOtherIndex = userTurns.findLastIndex(isOtherProductTurn);
   const sameTopicTurns = userTurns.slice(lastOtherIndex + 1);
   const freshRequestIndex = sameTopicTurns.findLastIndex((item) =>
     /^(?:มี|ขอ|สนใจ|ต้องการ|อยากได้)\s*จานทราย/iu.test(item));
@@ -65,6 +74,8 @@ function guidedFlapDiscQuery(current, history) {
 
 /** A narrow, catalog-derived query for disc selections and adjacent replies. */
 export function guidedCatalogQuery(query, history = []) {
+  const quantitySku = pendingExactQuantitySku(clean(query), history);
+  if (quantitySku) return quantitySku;
   const current = normalized(numberedChoice(clean(query), history));
   const flapDiscQuery = guidedFlapDiscQuery(current, history);
   if (flapDiscQuery) return flapDiscQuery;
@@ -99,7 +110,7 @@ export function guidedRequestedQuantity(query, history = [], resolvedQuery = que
   const current = clean(query);
   const explicit = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|ใบ|กล่อง|pcs?)(?:\s|$)/iu.exec(current);
   if (explicit) return Number(explicit[1]);
-  if (/^\d{1,6}$/u.test(current) && /(?:กี่ชิ้น|จำนวน(?:เท่าไร|กี่)|quantity|how many)/iu.test(String(history.at(-1)?.content ?? ""))) {
+  if (/^\d{1,6}$/u.test(current) && /(?:กี่ชิ้น|จำนวน(?:เป็น)?(?:เท่าไร|กี่)|quantity|how many)/iu.test(String(history.at(-1)?.content ?? ""))) {
     return Number(current);
   }
   if (PRODUCT_RE.test(clean(resolvedQuery)) && history.at(-1)?.role === "assistant") {
