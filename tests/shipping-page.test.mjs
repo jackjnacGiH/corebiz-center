@@ -210,11 +210,10 @@ test('list actions copy tracking, open a carrier label, and refresh a row withou
   card.props.onCopyTracking('https://tracking.example.test/TRACK-1');
   await settle(); h.render();
   assert.deepEqual(h.clipboard, ['https://tracking.example.test/TRACK-1']);
-  const copyToast = h.find(node => node.props['data-testid'] === 'shipping-copy-toast');
-  assert.equal(copyToast.props.role, 'status');
-  assert.equal(copyToast.props.children.at(-1).props.children, 'trackingCopied');
+  assert.equal(h.card(row.id).props.copyConfirmed, true, 'The copied row owns the nearby success popup');
+  assert.equal(h.find(node => node.props['data-testid'] === 'shipping-copy-toast'), undefined, 'List copy does not use a screen-corner toast');
   h.runTimers();
-  assert.equal(h.find(node => node.props['data-testid'] === 'shipping-copy-toast'), undefined);
+  assert.equal(h.card(row.id).props.copyConfirmed, false);
   assert.equal(h.requests.filter(request => request.action === 'get').length, 0, 'A list action must not open the editor');
 
   h.card(row.id).props.onCarrierLabel();
@@ -496,7 +495,7 @@ test('actual list card stays compact until expanded and preserves shipment actio
   };
   const buttons = value => nodes(value).filter(node => node.type === 'Button');
   const renderCard = (row, changes = {}) => exports.default({
-    shipment: row, expanded: false, busy: false, readReady: true, activeAction: null,
+    shipment: row, expanded: false, busy: false, readReady: true, activeAction: null, copyConfirmed: false,
     onToggle() {}, onOpen() {}, onDelete() {}, onJnacLabel() {}, onCopyTracking() {}, onCarrierLabel() {}, onRefreshStatus() {},
     ...changes,
   });
@@ -571,6 +570,12 @@ test('actual list card stays compact until expanded and preserves shipment actio
   assert.equal(refreshed, 1);
   assert.equal(bubbles, 5, 'Every list action stops the surrounding card event');
   assert.equal(trackingAnchor.props.rel, 'noopener noreferrer');
+
+  const copiedTree = renderCard(tracked, { expanded: true, copyConfirmed: true });
+  const copyConfirmation = nodes(copiedTree).find(node => node.props?.['data-testid'] === 'tracking-copy-success');
+  assert.equal(copyConfirmation.props.role, 'status');
+  assert.match(copyConfirmation.props.className, /absolute bottom-full/, 'Copy confirmation is anchored immediately above the clicked button');
+  assert.match(JSON.stringify(copyConfirmation), /trackingCopied/);
 
   const workingTree = renderCard(tracked, { expanded: true, activeAction: 'refresh_status' });
   const workingPoll = buttons(workingTree).find(button => button.props['aria-label'] === 'poll');
