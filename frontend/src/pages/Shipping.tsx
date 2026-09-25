@@ -138,6 +138,9 @@ export default function Shipping() {
     shipmentId: string;
     action: ShipmentListAction;
   } | null>(null);
+  const [trackingCopyNotice, setTrackingCopyNotice] = useState<{
+    target: string;
+  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ shipment: Shipment; unsaved: boolean } | null>(null);
   const [initialOrderId] = useState(() => params.get("order"));
   const draftId = useRef(crypto.randomUUID());
@@ -161,12 +164,12 @@ export default function Shipping() {
     };
   }, []);
   useEffect(() => {
-    if (notice !== c.trackingCopied) return;
+    if (!trackingCopyNotice) return;
     const timer = window.setTimeout(() => {
-      setNotice((current) => current === c.trackingCopied ? "" : current);
+      setTrackingCopyNotice(null);
     }, 2200);
     return () => window.clearTimeout(timer);
-  }, [notice, c.trackingCopied]);
+  }, [trackingCopyNotice]);
   useEffect(() => {
     if (
       expandedShipmentId &&
@@ -877,20 +880,9 @@ export default function Shipping() {
         </div>
       )}
       {notice && (
-        notice === c.trackingCopied ? (
-          <div
-            role="status"
-            data-testid="shipping-copy-toast"
-            className="fixed bottom-5 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-xl sm:left-auto sm:right-6 sm:translate-x-0"
-          >
-            <CircleCheck size={18} aria-hidden="true" />
-            <span>{notice}</span>
-          </div>
-        ) : (
-          <div role="status" className="rounded-lg bg-blue-50 p-3 text-blue-800">
-            {notice}
-          </div>
-        )
+        <div role="status" className="rounded-lg bg-blue-50 p-3 text-blue-800">
+          {notice}
+        </div>
       )}
       {!bootstrap && !error && <p>{c.loading}</p>}
       {bootstrap && (
@@ -952,6 +944,7 @@ export default function Shipping() {
                       busy={busy}
                       readReady={bootstrap.readReady}
                       activeAction={listAction?.shipmentId === s.id ? listAction.action : null}
+                      copyConfirmed={trackingCopyNotice?.target === s.id}
                       onToggle={() =>
                         setExpandedShipmentId((current) =>
                           current === s.id ? null : s.id,
@@ -970,7 +963,7 @@ export default function Shipping() {
                       onCopyTracking={(url) =>
                         void runListAction(s, "copy_tracking", async () => {
                           await copyText(url);
-                          setNotice(c.trackingCopied);
+                          setTrackingCopyNotice({ target: s.id });
                         })
                       }
                       onCarrierLabel={() => openListCarrierLabel(s)}
@@ -1510,19 +1503,31 @@ export default function Shipping() {
                     <>
                       {trackingUrl && (
                         <>
-                          <Button
-                            variant="outline"
-                            disabled={busy}
-                            onClick={() =>
-                              void run(async () => {
-                                await copyText(trackingUrl);
-                                setNotice(c.trackingCopied);
-                              })
-                            }
-                          >
-                            <Copy size={16} />
-                            {c.copyTrackingLink}
-                          </Button>
+                          <span className="relative inline-flex">
+                            <Button
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() =>
+                                void run(async () => {
+                                  await copyText(trackingUrl);
+                                  setTrackingCopyNotice({ target: "editor" });
+                                })
+                              }
+                            >
+                              <Copy size={16} />
+                              {c.copyTrackingLink}
+                            </Button>
+                            {trackingCopyNotice?.target === "editor" && (
+                              <span
+                                role="status"
+                                data-testid="shipping-copy-toast"
+                                className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white shadow-lg"
+                              >
+                                <CircleCheck size={15} aria-hidden="true" />
+                                {c.trackingCopied}
+                              </span>
+                            )}
+                          </span>
                           <Button asChild variant="outline">
                             <a
                               href={trackingUrl}

@@ -1,5 +1,6 @@
 import {
   ChevronDown,
+  CircleCheck,
   Copy,
   ExternalLink,
   Loader2,
@@ -43,6 +44,7 @@ interface ShipmentListCardProps {
   busy: boolean;
   readReady: boolean;
   activeAction: ShipmentListAction | null;
+  copyConfirmed: boolean;
   onToggle: () => void;
   onOpen: () => void;
   onDelete: () => void;
@@ -58,6 +60,7 @@ export default function ShipmentListCard({
   busy,
   readReady,
   activeAction,
+  copyConfirmed,
   onToggle,
   onOpen,
   onDelete,
@@ -405,25 +408,37 @@ export default function ShipmentListCard({
                   <>
                     {trackingUrl && (
                       <>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className={actionClass("copy_tracking")}
-                          disabled={busy}
-                          aria-label={c.copyTrackingLink}
-                          onClick={(event) => {
-                            stopPropagation(event);
-                            onCopyTracking(trackingUrl);
-                          }}
-                        >
-                          {activeAction === "copy_tracking" ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <Copy />
+                        <span className="relative inline-flex">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className={actionClass("copy_tracking")}
+                            disabled={busy}
+                            aria-label={c.copyTrackingLink}
+                            onClick={(event) => {
+                              stopPropagation(event);
+                              onCopyTracking(trackingUrl);
+                            }}
+                          >
+                            {activeAction === "copy_tracking" ? (
+                              <Loader2 className="animate-spin" />
+                            ) : (
+                              <Copy />
+                            )}
+                            {activeAction === "copy_tracking" ? c.actionWorking : c.copyTrackingLink}
+                          </Button>
+                          {copyConfirmed && (
+                            <span
+                              role="status"
+                              data-testid="tracking-copy-success"
+                              className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white shadow-lg"
+                            >
+                              <CircleCheck size={14} aria-hidden="true" />
+                              {c.trackingCopied}
+                            </span>
                           )}
-                          {activeAction === "copy_tracking" ? c.actionWorking : c.copyTrackingLink}
-                        </Button>
+                        </span>
                         <Button asChild size="sm" variant="outline" className={actionClass()}>
                           <a
                             href={trackingUrl}
