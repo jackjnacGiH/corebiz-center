@@ -8,6 +8,7 @@ import {
   Printer,
   X,
   Copy,
+  CircleCheck,
   ExternalLink,
   Loader2,
   Trash2,
@@ -159,6 +160,13 @@ export default function Shipping() {
       listRequest.current = null;
     };
   }, []);
+  useEffect(() => {
+    if (notice !== c.trackingCopied) return;
+    const timer = window.setTimeout(() => {
+      setNotice((current) => current === c.trackingCopied ? "" : current);
+    }, 2200);
+    return () => window.clearTimeout(timer);
+  }, [notice, c.trackingCopied]);
   useEffect(() => {
     if (
       expandedShipmentId &&
@@ -869,9 +877,20 @@ export default function Shipping() {
         </div>
       )}
       {notice && (
-        <div role="status" className="rounded-lg bg-blue-50 text-blue-800 p-3">
-          {notice}
-        </div>
+        notice === c.trackingCopied ? (
+          <div
+            role="status"
+            data-testid="shipping-copy-toast"
+            className="fixed bottom-5 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-xl sm:left-auto sm:right-6 sm:translate-x-0"
+          >
+            <CircleCheck size={18} aria-hidden="true" />
+            <span>{notice}</span>
+          </div>
+        ) : (
+          <div role="status" className="rounded-lg bg-blue-50 p-3 text-blue-800">
+            {notice}
+          </div>
+        )
       )}
       {!bootstrap && !error && <p>{c.loading}</p>}
       {bootstrap && (

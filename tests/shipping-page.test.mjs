@@ -210,7 +210,11 @@ test('list actions copy tracking, open a carrier label, and refresh a row withou
   card.props.onCopyTracking('https://tracking.example.test/TRACK-1');
   await settle(); h.render();
   assert.deepEqual(h.clipboard, ['https://tracking.example.test/TRACK-1']);
-  assert.equal(h.find(node => node.props.role === 'status').props.children, 'trackingCopied');
+  const copyToast = h.find(node => node.props['data-testid'] === 'shipping-copy-toast');
+  assert.equal(copyToast.props.role, 'status');
+  assert.equal(copyToast.props.children.at(-1).props.children, 'trackingCopied');
+  h.runTimers();
+  assert.equal(h.find(node => node.props['data-testid'] === 'shipping-copy-toast'), undefined);
   assert.equal(h.requests.filter(request => request.action === 'get').length, 0, 'A list action must not open the editor');
 
   h.card(row.id).props.onCarrierLabel();
