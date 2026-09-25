@@ -85,7 +85,7 @@ export default function AddressFields({
       htmlFor={`${prefix}-${key}`}
       className={`text-sm space-y-1 ${className}`}
     >
-      <span>{c[key]}</span>
+      <span className="font-semibold text-blue-800">{c[key]}</span>
       <Input
         id={`${prefix}-${key}`}
         value={value[key] ?? ""}
@@ -126,7 +126,7 @@ export default function AddressFields({
           htmlFor={`${prefix}-postcode`}
           className="text-sm space-y-1"
         >
-          <span>{c.postcode}</span>
+          <span className="font-semibold text-blue-800">{c.postcode}</span>
           <div className="flex gap-1.5">
             <Input
               id={`${prefix}-postcode`}
@@ -181,7 +181,7 @@ export default function AddressFields({
           htmlFor={`${prefix}-county`}
           className="text-sm space-y-1"
         >
-          <span>{c.county}</span>
+          <span className="font-semibold text-blue-800">{c.county}</span>
           {zipOptions.length > 1 ? (
             <select
               id={`${prefix}-county`}

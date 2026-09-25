@@ -52,6 +52,7 @@ test('phone field reports punctuation and explains the provider-safe format inli
   assert.equal(phone.props.inputMode, 'numeric');
   assert.equal(phone.props.pattern, '[0-9]*');
   assert.equal(phone.props['aria-invalid'], true);
+  assert.match(invalid.find(node => node.type === 'span' && node.props.children === 'telephone1').props.className, /font-semibold text-blue-800/);
   assert.equal(invalid.find(node => node.props.role === 'alert').props.children, 'digits-only');
 
   const valid = nodes(render('0814420000'));

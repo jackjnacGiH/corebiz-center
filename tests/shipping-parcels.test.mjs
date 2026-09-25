@@ -26,6 +26,7 @@ const words = {
   box_weight: "Weight",
   boxDimensionLimit: "Dimensions must be no more than 180 cm.",
   boxWeightInvalid: "Weight must be greater than 0.",
+  gramUnit: "grams",
   parcelTotalHint: "Labels are numbered automatically",
 };
 
@@ -40,7 +41,7 @@ function render(draft, onChange = () => {}) {
           jsxs: (type, props) => ({ type, props }),
         };
       if (name === "lucide-react") return { Copy: "Copy" };
-      if (name === "@/i18n") return { useLanguage: () => ({ t: { shipping: words } }) };
+      if (name === "@/i18n") return { useLanguage: () => ({ language: "th", t: { shipping: words } }) };
       if (name === "@/components/ui/button") return { Button: "Button" };
       if (name === "@/components/ui/input") return { Input: "Input" };
       if (name.endsWith("/shipping-domain")) return domain;
@@ -63,7 +64,7 @@ function nodes(value, result = []) {
 test("parcel inputs use width-length-height order and show kilograms without changing stored grams", () => {
   const draft = emptyDraft();
   draft.box_length = SHIPPING_BOX_DIMENSION_MAX_CM + 1;
-  draft.box_weight = 580;
+  draft.box_weight = 6260;
   let changed;
   const rendered = nodes(render(draft, (parcels) => { changed = parcels; }));
   const inputs = rendered.filter((node) => node.type === "Input");
@@ -83,7 +84,9 @@ test("parcel inputs use width-length-height order and show kilograms without cha
   assert.equal(weight.props.min, "0.01");
   assert.equal(weight.props.max, 1000);
   assert.equal(weight.props.step, "0.01");
-  assert.equal(weight.props.value, 0.58);
+  assert.equal(weight.props.value, 6.26);
+  const grams = rendered.find((node) => node.props?.["data-testid"] === "shipping-box-weight-grams-0");
+  assert.equal(Array.from(grams.props.children).join(""), "(6,260 grams)");
   weight.props.onChange({ target: { value: "1.55" } });
   assert.equal(changed[0].box_weight, 1550);
   weight.props.onChange({ target: { value: "1.555" } });

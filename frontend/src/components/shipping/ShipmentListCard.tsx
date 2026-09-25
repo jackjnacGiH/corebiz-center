@@ -102,6 +102,12 @@ export default function ShipmentListCard({
         maximumFractionDigits: 2,
       }).format(s.order_shipping_fee as number)
     : null;
+  const actionButtonClass =
+    "transition-transform duration-150 active:scale-95 active:ring-2 active:ring-blue-300";
+  const actionClass = (action?: ShipmentListAction) =>
+    `${actionButtonClass} ${activeAction === action
+      ? "border-blue-400 bg-blue-100 text-blue-950 ring-2 ring-blue-200"
+      : ""}`;
 
   return (
     <article
@@ -354,11 +360,13 @@ export default function ShipmentListCard({
               <div
                 className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 sm:flex sm:flex-wrap sm:justify-end"
                 aria-busy={activeAction !== null}
+                aria-live="polite"
               >
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
+                  className={actionClass()}
                   disabled={busy}
                   onClick={onOpen}
                 >
@@ -370,7 +378,7 @@ export default function ShipmentListCard({
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="text-destructive hover:bg-red-50 hover:text-destructive"
+                    className={`${actionClass()} text-destructive hover:bg-red-50 hover:text-destructive`}
                     disabled={busy}
                     onClick={onDelete}
                   >
@@ -382,7 +390,7 @@ export default function ShipmentListCard({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="border-blue-300 bg-blue-50 text-blue-950 hover:bg-blue-100 hover:text-blue-950"
+                  className={`${actionClass()} border-blue-300 bg-blue-50 text-blue-950 hover:bg-blue-100 hover:text-blue-950`}
                   disabled={busy}
                   aria-label={`${c.jnacPrint} ${s.reference_no}`}
                   onClick={(event) => {
@@ -401,6 +409,7 @@ export default function ShipmentListCard({
                           type="button"
                           size="sm"
                           variant="outline"
+                          className={actionClass("copy_tracking")}
                           disabled={busy}
                           aria-label={c.copyTrackingLink}
                           onClick={(event) => {
@@ -413,9 +422,9 @@ export default function ShipmentListCard({
                           ) : (
                             <Copy />
                           )}
-                          {c.copyTrackingLink}
+                          {activeAction === "copy_tracking" ? c.actionWorking : c.copyTrackingLink}
                         </Button>
-                        <Button asChild size="sm" variant="outline">
+                        <Button asChild size="sm" variant="outline" className={actionClass()}>
                           <a
                             href={trackingUrl}
                             target="_blank"
@@ -433,6 +442,7 @@ export default function ShipmentListCard({
                       type="button"
                       size="sm"
                       variant="outline"
+                      className={actionClass("carrier_label")}
                       disabled={busy || !providerActionsReady}
                       title={
                         !providerActionsReady
@@ -450,12 +460,13 @@ export default function ShipmentListCard({
                       ) : (
                         <Printer />
                       )}
-                      {c.carrierPrint}
+                      {activeAction === "carrier_label" ? c.actionWorking : c.carrierPrint}
                     </Button>
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
+                      className={actionClass("refresh_status")}
                       disabled={busy || !providerActionsReady}
                       title={
                         !providerActionsReady
@@ -473,7 +484,7 @@ export default function ShipmentListCard({
                       ) : (
                         <RefreshCw />
                       )}
-                      {c.poll}
+                      {activeAction === "refresh_status" ? c.actionWorking : c.poll}
                     </Button>
                   </>
                 )}

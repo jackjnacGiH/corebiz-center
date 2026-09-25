@@ -1104,7 +1104,7 @@ export default function Shipping() {
               >
                 <fieldset disabled={busy || locked} className="space-y-4">
                   <label className="block text-sm space-y-1">
-                    {c.purpose}
+                    <span className="font-semibold text-blue-800">{c.purpose}</span>
                     <Input
                       value={draft.purpose}
                       maxLength={300}
@@ -1113,7 +1113,7 @@ export default function Shipping() {
                   </label>
                   <section className="rounded-xl border p-4 space-y-3">
                     <label className="block text-sm space-y-1">
-                      {c.handlingNote}
+                      <span className="font-semibold text-blue-800">{c.handlingNote}</span>
                       <Input
                         value={draft.handling_note}
                         maxLength={120}
@@ -1157,7 +1157,7 @@ export default function Shipping() {
                       beforeFields={
                         <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-3">
                           <label className="block text-sm font-medium">
-                            {c.recipientSearch}
+                            <span className="font-semibold text-blue-800">{c.recipientSearch}</span>
                             <span className="relative mt-1 block">
                               <Input
                                 value={recipientSearch}
@@ -1257,7 +1257,7 @@ export default function Shipping() {
                           data-shipping-product={index}
                           className="relative col-span-2 space-y-1 text-sm lg:col-span-1"
                         >
-                          <span>{c.code}</span>
+                          <span className="font-semibold text-blue-800">{c.code}</span>
                           <Input
                             aria-label={`${c.code} ${index + 1}`}
                             autoComplete="off"
@@ -1322,7 +1322,7 @@ export default function Shipping() {
                             )}
                         </label>
                         <label className="col-span-2 space-y-1 text-sm lg:col-span-1">
-                          <span>{c.itemName}</span>
+                          <span className="font-semibold text-blue-800">{c.itemName}</span>
                           <Input
                             aria-label={`${c.itemName} ${index + 1}`}
                             value={item.name}
@@ -1340,7 +1340,7 @@ export default function Shipping() {
                           />
                         </label>
                         <label className="space-y-1 text-sm">
-                          <span>{c.qty}</span>
+                          <span className="font-semibold text-blue-800">{c.qty}</span>
                           <Input
                             aria-label={`${c.qty} ${index + 1}`}
                             value={item.qty}
@@ -1403,7 +1403,7 @@ export default function Shipping() {
                     <h2 className="section-heading">{c.cod}</h2>
                     <div className="grid sm:grid-cols-2 gap-3">
                       <label className="text-sm space-y-1">
-                        {c.cod_amount}
+                        <span className="font-semibold text-blue-800">{c.cod_amount}</span>
                         <Input
                           inputMode="decimal"
                           value={draft.cod_amount}
@@ -1412,7 +1412,7 @@ export default function Shipping() {
                         <small>{c.amountHint}</small>
                       </label>
                       <label className="text-sm space-y-1">
-                        {c.codAccount}
+                        <span className="font-semibold text-blue-800">{c.codAccount}</span>
                         <select
                           className={selectClass}
                           value={draft.cod_account_id ?? ""}
