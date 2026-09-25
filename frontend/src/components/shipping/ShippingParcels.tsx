@@ -10,6 +10,9 @@ import {
   type ShippingParcel,
 } from "../../../../supabase/functions/_shared/shipping-domain";
 
+const GRAMS_PER_KILOGRAM = 1000;
+const MAX_BOX_WEIGHT_KG = 1000;
+
 export default function ShippingParcels({ draft, onChange }: {
   draft: ShippingDraft;
   onChange: (parcels: ShippingParcel[]) => void;
@@ -42,20 +45,29 @@ export default function ShippingParcels({ draft, onChange }: {
               </Button>}
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {(["box_width", "box_height", "box_length", "box_weight"] as const).map((key) => {
+              {(["box_width", "box_length", "box_height", "box_weight"] as const).map((key) => {
                 const overLimit = key !== "box_weight" && parcel[key] > SHIPPING_BOX_DIMENSION_MAX_CM;
                 const invalidNumber = !Number.isFinite(parcel[key]) || parcel[key] <= 0;
                 const invalid = overLimit || invalidNumber;
                 const errorId = `shipping-box-${index}-${key}-error`;
+                const value = key === "box_weight"
+                  ? parcel[key] / GRAMS_PER_KILOGRAM
+                  : parcel[key];
                 return <label key={key} className="space-y-1 text-sm">
                   {c[key]}
                   <Input aria-label={`${c[key]} ${c.box} ${index + 1}`} type="number"
-                    min={key === "box_weight" ? "1" : "0.01"}
-                    max={key === "box_weight" ? 1000000 : SHIPPING_BOX_DIMENSION_MAX_CM}
-                    step={key === "box_weight" ? 1 : "any"} value={parcel[key]}
+                    min="0.01"
+                    max={key === "box_weight" ? MAX_BOX_WEIGHT_KG : SHIPPING_BOX_DIMENSION_MAX_CM}
+                    step={key === "box_weight" ? "0.01" : "any"} value={value}
                     aria-invalid={invalid || undefined}
                     aria-describedby={invalid ? errorId : undefined}
-                    onChange={(e) => onChange(parcels.map((p, i) => i === index ? { ...p, [key]: Number(e.target.value) } : p))} />
+                    onChange={(e) => {
+                      const inputValue = Number(e.target.value);
+                      const nextValue = key === "box_weight"
+                        ? Math.round(inputValue * 100) * (GRAMS_PER_KILOGRAM / 100)
+                        : inputValue;
+                      onChange(parcels.map((p, i) => i === index ? { ...p, [key]: nextValue } : p));
+                    }} />
                   {invalid && <span id={errorId} role="alert" className="block text-xs text-destructive">
                     {key === "box_weight"
                       ? c.boxWeightInvalid
