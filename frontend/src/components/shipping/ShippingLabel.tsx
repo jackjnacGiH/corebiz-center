@@ -4,7 +4,10 @@ import type { Shipment, ShippingAddress } from "@/lib/shipping-api";
 import { shippingCarrierBrand } from "@/lib/shipping-carriers";
 import lineAddQrUrl from "@/assets/line-add-jnac.jpg";
 import shippingCompanyLogoUrl from "@/assets/shipping/jnac-logo.png";
-import { summarizeShippingItems } from "../../../../supabase/functions/_shared/shipping-domain";
+import {
+  shippingParcels,
+  summarizeShippingItems,
+} from "../../../../supabase/functions/_shared/shipping-domain";
 
 export const SHIPPING_LABEL_ID = "shipping-label-batch";
 
@@ -12,6 +15,12 @@ function addressLine(a: ShippingAddress) {
   return [a.address, a.county, a.city, a.state, a.postcode]
     .filter(Boolean)
     .join(" ");
+}
+
+function formatDimension(value: number) {
+  return Number.isFinite(value) && value > 0
+    ? value.toLocaleString("th-TH", { maximumFractionDigits: 2 })
+    : "—";
 }
 
 function ContactBlock({
@@ -142,17 +151,24 @@ function ShippingLabelPage({
   const itemSummary = summarizeShippingItems(shipment.draft.products);
   const quantity = itemSummary.totalQuantity;
   const cod = Number(shipment.draft.cod_amount || 0);
+  const parcel = shippingParcels(shipment.draft)[parcelNumber - 1];
+  const dimensionText = parcel
+    ? `${formatDimension(parcel.box_width)} × ${formatDimension(parcel.box_length)} × ${formatDimension(parcel.box_height)} ซม.`
+    : "—";
+  const weightText = parcel?.box_weight > 0
+    ? `${(parcel.box_weight / 1000).toLocaleString("th-TH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })} Kg.`
+    : "—";
   const handlingNote =
     shipment.draft.handling_note || "กรุณาอย่าโยน • ระวังของแตก";
-  // Reclaim unused padding, keeping the warning text size, when names need room.
-  const compactFooter = handlingNote === "กรุณาอย่าโยน • ระวังของแตก" &&
-    [shipment.draft.origin.company, shipment.draft.destination.company].some((name) => (name?.length ?? 0) > 80);
   const handlingSize =
     handlingNote.length > 60
-      ? "text-[9px] leading-[12px]"
+      ? "text-[7px] leading-[9px]"
       : handlingNote.length > 36
-        ? "text-[13px] leading-[18px]"
-        : "text-[16px] leading-[20px]";
+        ? "text-[9px] leading-[11px]"
+        : "text-[12px] leading-[14px]";
 
   useEffect(() => {
     if (!barcodeRef.current || !barcodeValue) return;
@@ -173,7 +189,7 @@ function ShippingLabelPage({
     <article
       aria-label={`ตัวอย่างใบปะหน้าขนส่ง กล่อง ${parcelNumber}/${parcelTotal}`}
       className="shipping-label-document box-border grid h-[150mm] w-[100mm] overflow-hidden border-2 border-black bg-white font-sans text-black"
-      style={{ gridTemplateRows: `20mm 35mm minmax(28mm,max-content) minmax(21mm,max-content) 10mm minmax(0,1fr) ${compactFooter ? "8mm" : "12mm"}` }}
+      style={{ gridTemplateRows: "19mm 33mm minmax(28mm,max-content) minmax(21mm,max-content) 9mm minmax(0,1fr) 18mm" }}
     >
       <header className="relative flex min-h-0 items-center gap-[2mm] border-b-2 border-black px-[3mm] pb-[1mm] pt-[2.5mm]">
         <span
@@ -200,7 +216,7 @@ function ShippingLabelPage({
         </div>
       </header>
 
-      <section className="grid min-h-0 grid-rows-[2.4mm_5.3mm_24mm_2.4mm] content-center gap-y-[0.1mm] border-b-2 border-black px-[4mm] text-center">
+      <section className="grid min-h-0 grid-rows-[2.4mm_5.3mm_22mm_2.4mm] content-center gap-y-[0.1mm] border-b-2 border-black px-[4mm] text-center">
         <p className="text-[8px] font-bold uppercase leading-[9px] tracking-[0.15em]">
           Tracking Number
         </p>
@@ -210,7 +226,7 @@ function ShippingLabelPage({
         <svg
           ref={barcodeRef}
           aria-label={`Barcode ${barcodeValue}`}
-          className="block h-[24mm] w-full"
+          className="block h-[22mm] w-full"
         />
         <p className="text-[7px] font-semibold leading-[9px]">{barcodeValue}</p>
       </section>
@@ -284,12 +300,25 @@ function ShippingLabelPage({
         </ul>
       </section>
 
-      <footer className="flex min-h-0 items-center justify-center border-t-2 border-black bg-black px-[3mm] py-[0.75mm] text-center text-white">
-        <p
-          className={`${handlingSize} line-clamp-3 break-words font-black`}
-        >
-          {handlingNote}
-        </p>
+      <footer
+        data-testid="shipping-label-parcel-metrics"
+        className="grid min-h-0 grid-rows-[10mm_8mm] border-t-2 border-black"
+      >
+        <div className="grid min-h-0 grid-cols-[1.3fr_.7fr] bg-white text-black">
+          <div className="flex min-w-0 flex-col justify-center border-r-2 border-black px-[3mm]">
+            <p className="text-[7px] font-bold leading-[8px]">ขนาดกล่อง (ก × ย × ส)</p>
+            <p className="truncate text-[11px] font-black leading-[13px]">{dimensionText}</p>
+          </div>
+          <div className="flex min-w-0 flex-col items-center justify-center px-[2mm] text-center">
+            <p className="text-[7px] font-bold leading-[8px]">น้ำหนักรวม</p>
+            <p className="text-[13px] font-black leading-[15px]">{weightText}</p>
+          </div>
+        </div>
+        <div className="flex min-h-0 items-center justify-center bg-black px-[3mm] py-[0.5mm] text-center text-white">
+          <p className={`${handlingSize} line-clamp-2 break-words font-black`}>
+            {handlingNote}
+          </p>
+        </div>
       </footer>
     </article>
   );
