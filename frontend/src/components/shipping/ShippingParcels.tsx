@@ -17,7 +17,7 @@ export default function ShippingParcels({ draft, onChange }: {
   draft: ShippingDraft;
   onChange: (parcels: ShippingParcel[]) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const c = t.shipping;
   const parcels = shippingParcels(draft);
   return (
@@ -27,7 +27,7 @@ export default function ShippingParcels({ draft, onChange }: {
         <p className="mt-1 text-sm text-muted-foreground">{c.parcelBeforeCarrier}</p>
       </div>
       <label className="block max-w-sm space-y-1 text-sm">
-        {c.parcelTotal}
+        <span className="font-semibold text-blue-800">{c.parcelTotal}</span>
         <Input type="number" min="1" max="99" step="1" value={parcels.length}
           onChange={(e) => {
             const count = Math.max(1, Math.min(99, Math.trunc(Number(e.target.value)) || 1));
@@ -38,7 +38,7 @@ export default function ShippingParcels({ draft, onChange }: {
         {parcels.map((parcel, index) => (
           <div key={index} className="rounded-lg border bg-muted/20 p-3 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-medium">{c.box} {index + 1}/{parcels.length}</h3>
+              <h3 className="font-bold text-blue-900">{c.box} {index + 1}/{parcels.length}</h3>
               {index > 0 && <Button type="button" size="sm" variant="outline"
                 onClick={() => onChange(parcels.map((p, i) => i === index ? { ...parcels[index - 1] } : p))}>
                 <Copy size={14} />{c.copyPreviousBox}
@@ -54,7 +54,17 @@ export default function ShippingParcels({ draft, onChange }: {
                   ? parcel[key] / GRAMS_PER_KILOGRAM
                   : parcel[key];
                 return <label key={key} className="space-y-1 text-sm">
-                  {c[key]}
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-semibold text-blue-800">{c[key]}</span>
+                    {key === "box_weight" && (
+                      <span
+                        data-testid={`shipping-box-weight-grams-${index}`}
+                        className="text-xs font-medium tabular-nums text-slate-500"
+                      >
+                        ({parcel.box_weight.toLocaleString(language === "th" ? "th-TH" : "en-GB")} {c.gramUnit})
+                      </span>
+                    )}
+                  </span>
                   <Input aria-label={`${c[key]} ${c.box} ${index + 1}`} type="number"
                     min="0.01"
                     max={key === "box_weight" ? MAX_BOX_WEIGHT_KG : SHIPPING_BOX_DIMENSION_MAX_CM}

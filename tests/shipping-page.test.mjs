@@ -553,6 +553,7 @@ test('actual list card stays compact until expanded and preserves shipment actio
   }
   const controls = buttons(tree);
   assert.equal(controls.length, 6, 'Open plus the J NAC label and four tracked-shipment actions');
+  assert.ok(controls.every(button => button.props.className.includes('active:scale-95')), 'Every command button has visible press feedback');
   const event = { stopPropagation: () => bubbles++ };
   controls.find(button => button.props['aria-label'] === `jnacPrint ${tracked.reference_no}`).props.onClick(event);
   controls.find(button => button.props['aria-label'] === 'copyTrackingLink').props.onClick(event);
@@ -566,6 +567,11 @@ test('actual list card stays compact until expanded and preserves shipment actio
   assert.equal(refreshed, 1);
   assert.equal(bubbles, 5, 'Every list action stops the surrounding card event');
   assert.equal(trackingAnchor.props.rel, 'noopener noreferrer');
+
+  const workingTree = renderCard(tracked, { expanded: true, activeAction: 'refresh_status' });
+  const workingPoll = buttons(workingTree).find(button => button.props['aria-label'] === 'poll');
+  assert.equal(workingPoll.props.children.at(-1), 'actionWorking');
+  assert.match(workingPoll.props.className, /bg-blue-100/);
 
   const pricedTree = renderCard({ ...tracked, order_shipping_fee: 45.5 }, { expanded: false });
   assert.match(JSON.stringify(pricedTree), /45\.50/, 'The compact row displays the persisted order shipping fee');
