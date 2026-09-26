@@ -178,7 +178,7 @@ test("rag-chat has one authoritative numeric-price path", () => {
   assert.match(ragSource, /const priced = await getExactPrice\(admin, \{ sku: exactProduct\.sku, qty: quantity \}, conversationId\)/);
   assert.match(ragSource, /isSuccessfulExactPriceResult\(priced\.response\)/);
   assert.match(ragSource, /const verified = await findProducts\(admin, acceptedQuote\.sku\)/);
-  assert.match(ragSource, /exactSkuVerified[\s\S]+requestQuote\(admin, args, channel, conversationId, query, false, productHistory\)/);
+  assert.match(ragSource, /exactSkuVerified[\s\S]+requestQuote\(admin, args, channel, conversationId, query, false, productHistory, trustedQuoteHistory\)/);
   assert.match(ragSource, /const exactPriceEligibleSkus = new Set<string>\(\)/);
   assert.match(ragSource, /call\.name === "get_exact_price"[\s\S]+exact_product_lookup_required/);
   assert.match(ragSource, /lookupDisposition === "resolved" && selectedSkus\.length === 1/);

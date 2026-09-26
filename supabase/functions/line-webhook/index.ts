@@ -85,8 +85,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const TOKEN_OPTIMIZATION_ENABLED = Deno.env.get("CHAT_TOKEN_OPTIMIZATION_ENABLED") !== "false";
-const CHAT_HISTORY_FETCH_LIMIT = TOKEN_OPTIMIZATION_ENABLED ? 12 : 20;
-const CHAT_HISTORY_ITEM_LIMIT = TOKEN_OPTIMIZATION_ENABLED ? 8 : 20;
+const CHAT_HISTORY_FETCH_LIMIT = 24;
+const CHAT_HISTORY_ITEM_LIMIT = TOKEN_OPTIMIZATION_ENABLED ? 16 : 20;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -745,18 +745,23 @@ function composeQuoteReply(answer: string, quoteLink: string | null): string {
 async function loadHistory(admin: SupabaseClient, conversationId: string, incomingMessageId: string): Promise<Array<{ role: string; content: string }>> {
   const { data } = await admin.from("chat_messages")
     .select("sender_type, content, metadata, external_msg_id").eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false }).limit(CHAT_HISTORY_FETCH_LIMIT);
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(CHAT_HISTORY_FETCH_LIMIT);
   const rows = (data ?? []) as Array<{ sender_type: string; content: string; metadata: Record<string, unknown> | null; external_msg_id: string | null }>;
   const chronological = rows.reverse();
   const currentIndex = chronological.findIndex((row) => row.external_msg_id === incomingMessageId);
   // A newer event can be stored while this webhook runs. Use only turns before
   // this event, identified by its LINE ID; never feed a future turn to the bot.
   return (currentIndex >= 0 ? chronological.slice(0, currentIndex) : [])
-    .filter((r) => !(r.metadata && r.metadata.quote_link))   // drop dedicated quote-link messages
-    .map((r) => ({
-      role: r.sender_type === "customer" ? "user" : "assistant",
-      content: stripBlockedEmergencyNotice(stripQuoteLink(r.content)),
-    }))
+    .filter((r) => r.sender_type === "customer" || r.sender_type === "bot" || r.sender_type === "agent")
+    .map((r) => {
+      const content = stripBlockedEmergencyNotice(stripQuoteLink(r.content));
+      return {
+        role: r.sender_type === "customer" ? "user" : "assistant",
+        // Keep the staff response in sequence, including its source, so a short
+        // customer reply can answer the question the human actually asked.
+        content: r.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content,
+      };
+    })
     .filter((m) => m.content.length > 0)
     .slice(-CHAT_HISTORY_ITEM_LIMIT);
 }

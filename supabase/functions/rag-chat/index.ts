@@ -76,7 +76,10 @@ import {
   guidedProductDecision,
   guidedRequestedQuantity,
   normalizeGuidedProductTerm,
+  normalizeQuoteProductReference,
+  pendingQuoteQuantityRequest,
   quoteCreationBlockReason,
+  sameProductReference,
 } from "../_shared/guided-product-selection.mjs";
 import {
   readOnlyToolDecision,
@@ -110,6 +113,7 @@ const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const OPENAI_EMBED_MODEL = "text-embedding-3-small";
 const TOKEN_OPTIMIZATION_ENABLED = Deno.env.get("CHAT_TOKEN_OPTIMIZATION_ENABLED") !== "false";
+const QUOTE_QUANTITY_CONTINUATION_ENABLED = Deno.env.get("CHAT_QUOTE_QUANTITY_CONTINUATION_ENABLED") !== "false";
 const PARALLEL_RETRIEVAL_ENABLED = Deno.env.get("CHAT_PARALLEL_RETRIEVAL_ENABLED") !== "false";
 const MAX_TOOL_ITERATIONS = TOKEN_OPTIMIZATION_ENABLED ? 3 : 5;
 const RETRY_PER_MODEL = 5;
@@ -118,7 +122,7 @@ const DEFAULT_MATCH_THRESHOLD = 0.3;
 const MAX_CONTEXT_CHUNKS = TOKEN_OPTIMIZATION_ENABLED ? 5 : 30;
 const MAX_KNOWLEDGE_CONTEXT_CHARS = 6_000;
 const MAX_QUERY_CHARS = 4_000;
-const MAX_HISTORY_ITEMS = TOKEN_OPTIMIZATION_ENABLED ? 8 : 20;
+const MAX_HISTORY_ITEMS = TOKEN_OPTIMIZATION_ENABLED ? 16 : 20;
 const MAX_HISTORY_ITEM_CHARS = TOKEN_OPTIMIZATION_ENABLED ? 1_200 : 4_000;
 const MAX_HISTORY_TOTAL_CHARS = TOKEN_OPTIMIZATION_ENABLED ? 8_000 : 80_000;
 const MAX_IMAGE_BASE64_CHARS = 8_000_000;
@@ -365,7 +369,7 @@ const TOOL_DEFINITIONS = [
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
       { name: "capture_lead", description: "Save a SALES LEAD or FOLLOW-UP REQUEST for the JNAC team. Call when a customer asks to be contacted, OR asks anything the bot cannot answer/verify itself after using the relevant tools (e.g. document status QT-/SO-/DN-, delivery status) — put the customer's question in note. Do NOT call while find_products reports selection_required; ask the customer for those missing variant details first. It does NOT message the customer — it only notifies the internal team. Never promise special prices yourself.", parameters: { type: "object", properties: { name: { type: "string", description: "customer name if given" }, phone: { type: "string", description: "phone or contact if given" }, interest: { type: "string", description: "product/SKU/category or topic the customer asks about" }, note: { type: "string", description: "short Thai summary of the request/question" } }, required: ["interest"] } },
       { name: "link_quote_customer", description: "Link the current chat to CRM before creating a quotation. Call only when a quotation is pending and the customer supplies billing details in text or a clearly readable company document/image. Extract exactly what is visible; NEVER guess. Tax ID must contain exactly 13 digits and is the ONLY customer matching key. Require company_name and billing_address too. If any required field is missing or unclear, ask the customer instead of calling.", parameters: { type: "object", properties: { tax_id: { type: "string", description: "exact 13-digit Thai tax ID" }, company_name: { type: "string", description: "legal customer/company name" }, billing_address: { type: "string", description: "complete billing address as one string" }, branch: { type: "string", description: "head office or branch label/code if visible" }, phone: { type: "string", description: "phone if supplied" } }, required: ["tax_id", "company_name", "billing_address"] } },
-      { name: "request_quote", description: "Create one REAL draft quotation only when the CURRENT customer message directly asks for a quotation, or confirms the immediately preceding quotation offer. Never call for an order/payment question, a thank-you, or a follow-up about a quotation already sent. The chat MUST already be linked to a CRM customer with a valid 13-digit tax ID; otherwise the tool asks for company name, billing address, tax ID and branch. Pass EXACT SKUs from find_products/get_product_detail results. An image may lead to a quote only when it is the requested billing document and link_quote_customer succeeded in the same flow. Only tell the customer a quote_code when quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", maxItems: "100", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "integer", description: "quantity", minimum: 1, maximum: 1000000 } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
+      { name: "request_quote", description: "Create one REAL draft quotation only when the CURRENT customer message directly asks for a quotation, confirms the immediately preceding quotation offer, or supplies the quantity to the immediately preceding exact-product question after their own explicit quote request. Never call for an order/payment question, a thank-you, or a follow-up about a quotation already sent. The chat MUST already be linked to a CRM customer with a valid 13-digit tax ID; otherwise the tool asks for company name, billing address, tax ID and branch. Pass EXACT SKUs from find_products/get_product_detail results. An image may lead to a quote only when it is the requested billing document and link_quote_customer succeeded in the same flow. Only tell the customer a quote_code when quote_created=true. Prices are computed server-side — never invent prices.", parameters: { type: "object", properties: { items: { type: "array", maxItems: "100", items: { type: "object", properties: { sku: { type: "string", description: "exact product SKU" }, qty: { type: "integer", description: "quantity", minimum: 1, maximum: 1000000 } }, required: ["sku", "qty"] }, description: "exact SKUs + quantities" }, name: { type: "string" }, phone: { type: "string" }, note: { type: "string", description: "short Thai note" } }, required: ["items"] } },
     ],
   },
 ];
@@ -1029,6 +1033,7 @@ async function dispatchTool(
   userQuery: string,
   hasImages: boolean,
   history: Array<{ role: string; content: string }>,
+  trustedQuoteHistory: boolean,
 ): Promise<DispatchedToolResult> {
   try {
     switch (name) {
@@ -1049,7 +1054,7 @@ async function dispatchTool(
       case "list_categories":     return toolResponse(await listCategories(admin));
       case "capture_lead":        return toolResponse(await captureLead(admin, args, channel, conversationId));
       case "link_quote_customer": return toolResponse(await linkQuoteCustomer(admin, args, conversationId));
-      case "request_quote":       return toolResponse(await requestQuote(admin, args, channel, conversationId, userQuery, hasImages, history));
+      case "request_quote":       return toolResponse(await requestQuote(admin, args, channel, conversationId, userQuery, hasImages, history, trustedQuoteHistory));
       default: return toolResponse({ error: `Unknown tool: ${name}` });
     }
   } catch (e) { return toolResponse({ error: (e as Error).message ?? String(e) }); }
@@ -1154,14 +1159,35 @@ async function requestQuote(
   userQuery: string,
   hasImages: boolean,
   history: Array<{ role: string; content: string }>,
+  trustedQuoteHistory = false,
 ): Promise<unknown> {
-  const blockReason = hasImages ? null : quoteCreationBlockReason(userQuery, false, history);
+  const contextualAuthorization = !hasImages
+    && quoteCreationBlockReason(userQuery, false, []) !== null
+    && quoteCreationBlockReason(userQuery, false, history) === null;
+  const blockReason = !QUOTE_QUANTITY_CONTINUATION_ENABLED && pendingQuoteQuantityRequest(userQuery, history)
+    ? "quote_quantity_continuation_disabled"
+    : contextualAuthorization && !trustedQuoteHistory ? "unverified_quote_history"
+    : hasImages ? null : quoteCreationBlockReason(userQuery, false, history);
   if (blockReason) {
     return {
       ok: true, saved: false, skipped: true, quote_created: false, quote_reused: false,
       reason: blockReason,
       message: "ข้อความนี้ไม่ใช่คำขอออกใบเสนอราคาใหม่โดยตรง — ห้ามสร้างใบเสนอราคาใหม่ ให้ตอบคำถามลูกค้าจากข้อมูลที่ตรวจสอบได้",
     };
+  }
+  const pendingQuantity = pendingQuoteQuantityRequest(userQuery, history);
+  const acceptedOffer = confirmedGuidedQuoteRequest(userQuery, history);
+  const expectedItem = pendingQuantity ?? acceptedOffer;
+  if (expectedItem) {
+    const items = Array.isArray(args.items) ? args.items : [];
+    if (items.length !== 1 || String(items[0]?.sku ?? "") !== expectedItem.sku
+      || Number(items[0]?.qty) !== expectedItem.qty) {
+      return {
+        ok: false, saved: false, skipped: true, quote_created: false, quote_reused: false,
+        reason: "quote_continuation_item_mismatch",
+        message: "รายการหรือจำนวนไม่ตรงกับคำขอที่ลูกค้ายืนยัน จึงยังไม่ออกใบเสนอราคา",
+      };
+    }
   }
   const customerState = await getQuoteCustomerState(admin, conversationId);
   if (!customerState.ready) {
@@ -1657,7 +1683,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 • ก่อนออกใบเสนอราคา ต้องมีลูกค้า CRM ที่ผูกด้วยเลขผู้เสียภาษี 13 หลักเสมอ ถ้า request_quote แจ้ง customer_details_required ให้ถามชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) แล้วรอข้อมูล ห้ามบอกว่าสร้างใบเสนอราคาแล้ว
 • เมื่อลูกค้าส่งข้อมูลออกบิลเป็นข้อความหรือรูปเอกสารที่อ่านชัด ให้เรียก link_quote_customer โดยคัดลอกข้อมูลตามจริง ห้ามเดาหรือเติมข้อมูลเอง เลขผู้เสียภาษีเป็นกุญแจเดียวที่ใช้ผูกลูกค้า
 • ถ้ารูปเป็นหนังสือรับรอง/ภ.พ.20/นามบัตรที่ส่งมาเพื่อตอบคำถามข้อมูลออกบิล ไม่ถือเป็น PO และสามารถเรียก link_quote_customer ได้ เมื่อข้อมูลบังคับครบและอ่านชัด
-• เรียก request_quote ได้เฉพาะเมื่อลูกค้าขอ "ออกใบเสนอราคา" โดยตรง และยืนยันสินค้า+จำนวนชัดเจนเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)\n• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน\n• หลังส่งใบเสนอราคาแล้ว ถ้าลูกค้าถามว่าจะสั่งซื้ออย่างไรหรือต้องชำระเงินก่อนหรือไม่ ให้ตอบจากข้อมูลเงื่อนไขชำระเงินที่ตรวจสอบได้ ห้ามออกใบใหม่จากคำถามนี้ หากข้อมูลไม่พอให้รับเรื่องให้ทีมขายตรวจสอบผ่าน capture_lead\n• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
+• เรียก request_quote เมื่อคำขอล่าสุดขอใบเสนอราคาโดยตรง หรือเมื่อลูกค้าตอบจำนวนต่อจากคำถามสินค้ารุ่นที่ระบุชัด หลังจากลูกค้าขอใบเสนอราคาไว้ในบทสนทนาเดียวกันเท่านั้น → ใส่ SKU จริงจากผล find_products (ถ้ายังไม่รู้ SKU ให้ค้นก่อน)\n• ห้ามเรียก request_quote เมื่อเป็นคำขอบคุณ, คำถามวิธีสั่งสินค้า, หรือรูป/เอกสารที่ส่งมาอย่างเดียวเด็ดขาด — ให้ตอบตามเจตนาของลูกค้าแทน\n• หลังส่งใบเสนอราคาแล้ว ถ้าลูกค้าถามว่าจะสั่งซื้ออย่างไรหรือต้องชำระเงินก่อนหรือไม่ ให้ตอบจากข้อมูลเงื่อนไขชำระเงินที่ตรวจสอบได้ ห้ามออกใบใหม่จากคำถามนี้ หากข้อมูลไม่พอให้รับเรื่องให้ทีมขายตรวจสอบผ่าน capture_lead\n• หาก tool คืน quote_created=true เท่านั้น จึงแจ้งเลข quote_code ว่าเป็นใบที่เพิ่งสร้าง; ถ้า quote_reused=true ให้บอกว่าใช้ใบเดิมและห้ามสร้าง/อ้างว่าเกิดใบใหม่
 • เมื่อ request_quote คืน quote_created=true ราคาถูกคำนวณจาก resolver แล้ว ให้แจ้งเลข quote_code ได้ทันทีโดยไม่บอกว่าต้องรอ Owner หรือทีมงานยืนยันราคา
 • ถ้าลูกค้ายังไม่ระบุขนาด/เบอร์/รุ่นย่อย → ถามข้อมูลที่ขาดและค้นซ้ำก่อน; ใช้ capture_lead เฉพาะเมื่อค้นซ้ำแล้วยังหา SKU ที่ตรงไม่ได้ อย่าเดา SKU
 • tool เหล่านี้ ไม่ได้ ส่งข้อความหาลูกค้า แค่บันทึกในระบบ+แจ้งทีมขาย JNAC ภายใน
@@ -1696,7 +1722,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 • A quotation requires a CRM customer linked by an exact 13-digit tax ID. If request_quote returns customer_details_required, ask for legal company name, billing address, 13-digit tax ID, and branch (if any). Do not claim a quote exists yet.
 • When the customer supplies readable billing details in text or a document image, call link_quote_customer with exact visible values. Never infer missing data. Tax ID is the only matching key.
 • A certificate/VAT registration/business card sent specifically to answer the billing-data request is not a PO and may be processed with link_quote_customer when all required fields are legible.
-• Call request_quote only for a DIRECT request to issue a quote with confirmed specific items+quantities. Never call it for a thank-you, an ordering-process question, or an image/document alone.\n• After sending a quote, answer ordering or advance-payment questions using verified payment terms. Never issue another quote because of such a question. If the terms are unclear, capture the question for the sales team instead of assuming advance payment is required.\n• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
+• Call request_quote only for a direct customer quotation request with confirmed items and quantity, or a quantity reply to the immediately preceding exact-product question after that customer's quotation request in the same conversation. Never call it for a thank-you, an ordering-process question, or an image/document alone.\n• After sending a quote, answer ordering or advance-payment questions using verified payment terms. Never issue another quote because of such a question. If the terms are unclear, capture the question for the sales team instead of assuming advance payment is required.\n• Tell the customer a newly created quote_code only when the tool returns quote_created=true. If quote_reused=true, use the existing draft and never claim that a new quote was created.
 • When request_quote returns quote_created=true, its prices have already been resolved. Share the quote_code immediately without saying that an Owner or staff member must confirm the price.
 • If a size/grit/variant is still unclear, ask for it and search again first. Use capture_lead only after the refined search still cannot resolve a SKU; never guess SKUs.
 • These tools do NOT message the customer — they record in the system + notify the internal JNAC team.
@@ -1865,6 +1891,36 @@ async function saveMessage(admin: SupabaseClient, conversationId: string, sender
     conversation_id: conversationId, sender_type: senderType, content, content_type: contentType, metadata,
   });
   if (error) { console.warn("chat msg insert failed:", error.message); return; }
+}
+
+// Browser history is a display cache. Read the persisted customer, bot and
+// staff turns before this request for context-sensitive document decisions.
+async function loadVerifiedChatHistory(
+  admin: SupabaseClient, conversationId: string, requestStartedAt: number,
+): Promise<Array<{ role: string; content: string }> | null> {
+  const { data, error } = await admin.from("chat_messages")
+    .select("sender_type, content").eq("conversation_id", conversationId)
+    .lt("created_at", new Date(requestStartedAt).toISOString())
+    .order("created_at", { ascending: false }).order("id", { ascending: false })
+    .limit(24);
+  if (error) {
+    console.warn("verified chat history read failed:", error.message);
+    return null;
+  }
+  const rows = (data ?? []) as Array<{ sender_type: string; content: string }>;
+  return rows.reverse()
+    .filter((row) => row.sender_type === "customer" || row.sender_type === "bot" || row.sender_type === "agent")
+    .map((row) => {
+      const content = String(row.content ?? "")
+        .replace(/https?:\/\/[^\s]*\/center\/q\/\S+/giu, "")
+        .replace(/📄[^\n]*\n?/gu, "")
+        .replace(/ดูรายละเอียดและดาวน์โหลด[^\n]*\n?/gu, "")
+        .trim().slice(0, MAX_HISTORY_ITEM_CHARS);
+      return { role: row.sender_type === "customer" ? "user" : "assistant",
+        content: row.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content };
+    })
+    .filter((row) => row.content)
+    .slice(-MAX_HISTORY_ITEMS);
 }
 
 /** Best-effort, privacy-safe run telemetry. Raw prompts/responses and tool
@@ -2230,23 +2286,40 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     return;
   }
 
+  const persistedHistory = !trustedConversationId && conversationId
+    ? await loadVerifiedChatHistory(admin, conversationId, telemetry.startedAt)
+    : null;
+  const trustedQuoteHistory = Boolean(trustedConversationId || persistedHistory !== null);
+  const contextHistory = persistedHistory ?? history;
   const latestTurn = images.length > 0 || !CHAT_LATEST_TURN_ROUTING_ENABLED
-    ? { kind: "follow_up", history, topicQuery: null }
-    : routeLatestTurn(query, history);
+    ? { kind: "follow_up", history: contextHistory, topicQuery: null }
+    : routeLatestTurn(query, contextHistory);
   const productHistory = latestTurn.history;
-  const acceptedQuote = images.length === 0 ? confirmedGuidedQuoteRequest(query, productHistory) : null;
+  const acceptedQuote = trustedQuoteHistory && images.length === 0
+    ? confirmedGuidedQuoteRequest(query, productHistory)
+      ?? (QUOTE_QUANTITY_CONTINUATION_ENABLED ? pendingQuoteQuantityRequest(query, productHistory) : null)
+    : null;
   if (acceptedQuote) {
     const startedAt = Date.now();
-    const args = { items: [acceptedQuote] };
+    const args = { items: [{ sku: acceptedQuote.sku, qty: acceptedQuote.qty }] };
     const decision = readOnlyToolDecision("request_quote", readOnly);
     const verified = await findProducts(admin, acceptedQuote.sku) as Record<string, unknown>;
     const verifiedRows = Array.isArray(verified.products) ? verified.products as Array<Record<string, unknown>> : [];
+    const requestedProducts = "productQuery" in acceptedQuote
+      ? [acceptedQuote.productQuery, acceptedQuote.customerProductQuery].filter(Boolean).map(String) : [];
+    const verifiedName = verifiedRows.length === 1
+      ? String(verifiedRows[0].name_th || verifiedRows[0].name_en || "") : "";
+    const sameRequestedProduct = requestedProducts.every((requestedProduct) =>
+      verifiedRows.length === 1
+      && matchesExplicitProductVariant(normalizeQuoteProductReference(requestedProduct), verifiedRows[0])
+      && sameProductReference(requestedProduct, verifiedName));
     const exactSkuVerified = verified.selection_required !== true
-      && verifiedRows.length === 1 && verifiedRows[0].sku === acceptedQuote.sku;
+      && verifiedRows.length === 1 && verifiedRows[0].sku === acceptedQuote.sku
+      && sameRequestedProduct;
     const response = !exactSkuVerified
       ? { ok: false, saved: false, reason: "exact_sku_recheck_failed" }
       : decision.execute
-      ? await requestQuote(admin, args, channel, conversationId, query, false, productHistory)
+      ? await requestQuote(admin, args, channel, conversationId, query, false, productHistory, trustedQuoteHistory)
       : decision.result;
     const quote = response && typeof response === "object" ? response as Record<string, unknown> : {};
     const answer = readOnly
@@ -2669,7 +2742,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         result = { ok: false, suppressed: true, reason: "product_selection_or_lookup_already_handled" };
       } else {
         send({ type: "tool_call", name: call.name, args: effectiveArgs });
-        const dispatched = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0, productHistory);
+        const dispatched = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0, productHistory, trustedQuoteHistory);
         result = dispatched.response;
         if (call.name === "get_exact_price") {
           const request = normalizeExactPriceRequest(effectiveArgs.sku, effectiveArgs.qty);
