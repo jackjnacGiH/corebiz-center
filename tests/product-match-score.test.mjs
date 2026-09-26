@@ -90,7 +90,7 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   assert.deepEqual(backings.items.map(item => item.action.label), ["1. หลังอ่อน", "2. หลังแข็ง"]);
   assert.equal(backings.items[0].action.text, "จานทรายหลังอ่อน 4 นิ้ว");
   const quote = extract(guidedExactProductAnswer({ ...product, unit: "ชิ้น", stock: 0 }, 200,
-    { ok: true, exact_match: true, sku: product.sku, unit_price: 7 }));
+    { ok: true, exact_match: true, sku: product.sku, quantity: 200, unit_price: 7, line_total: 1400 }));
   assert.deepEqual(quote.items.map(item => item.action.text), ["ต้องการใบเสนอราคา", "ไม่ต้องการ"]);
   assert.deepEqual(quote.items.map(item => item.action.label), ["1. ต้องการใบเสนอราคา", "2. ไม่ต้องการ"]);
   const models = extract('เลือกรุ่นค่ะ\n1. จานทรายหลังอ่อน Eco 4" 46P\n2. จานทรายหลังอ่อน CS310X 48P 4"');

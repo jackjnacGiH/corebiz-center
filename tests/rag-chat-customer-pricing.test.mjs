@@ -175,8 +175,11 @@ test("rag-chat has one authoritative numeric-price path", () => {
   assert.match(ragSource, /console\.info\("get_exact_price provenance"/);
   assert.match(ragSource, /else \{\s*dispatchResultMeta = dispatched\.resultMeta/);
   assert.match(ragSource, /functionResponse: \{ name: call\.name, response: modelResult \}/);
-  assert.match(ragSource, /const priced = await getExactPrice\(admin, \{ sku: exactProduct\.sku, qty: quantity \}, conversationId\)/);
-  assert.match(ragSource, /isSuccessfulExactPriceResult\(priced\.response\)/);
+  assert.match(ragSource, /priceLookupQuantity = quantity == null \|\| quantity < minimum \? minimum : quantity/);
+  assert.match(ragSource, /const priced = await getExactPrice\(admin, \{ sku: exactProduct\.sku, qty: priceLookupQuantity \}, conversationId\)/);
+  assert.match(ragSource, /isSuccessfulExactPriceResult\(candidate\)/);
+  assert.match(ragSource, /Number\(candidate\.quantity\) === priceLookupQuantity/);
+  assert.match(ragSource, /guardedPriceAnswer\.reason === "verified_exact_price_reply"[\s\S]+guidedExactProductAnswer\(verifiedExactProduct, requestedQuantity, exactReplyPrice, lang\)/);
   assert.match(ragSource, /const verified = await findProducts\(admin, acceptedQuote\.sku\)/);
   assert.match(ragSource, /exactSkuVerified[\s\S]+requestQuote\(admin, args, channel, conversationId, query, false, productHistory, trustedQuoteHistory\)/);
   assert.match(ragSource, /const exactPriceEligibleSkus = new Set<string>\(\)/);
@@ -186,7 +189,8 @@ test("rag-chat has one authoritative numeric-price path", () => {
 
 test("bot prompt requires exact quantity and hides pricing provenance", () => {
   assert.match(ragSource, /ตัวเลขราคาขายต้องมาจาก get_exact_price เท่านั้น/);
-  assert.match(ragSource, /ถ้ายังไม่ทราบจำนวนให้ถามจำนวนก่อน/);
+  assert.match(ragSource, /ถ้ายังไม่ทราบจำนวนลูกค้า ให้ตรวจราคาที่จำนวนขั้นต่ำจากแค็ตตาล็อก/);
+  assert.match(ragSource, /เมื่อได้จำนวนจริงให้เรียก get_exact_price อีกครั้งที่จำนวนนั้น/);
   assert.match(ragSource, /ห้ามบอกลูกค้าว่าราคามาจาก Tier ราคาเฉพาะลูกค้า ประวัติ FlowAccount หรือสถานะการยืนยันตัวตน/);
   assert.match(ragSource, /A numeric selling price must come from get_exact_price only/);
 });

@@ -858,14 +858,14 @@ test("quantity reply keeps the confirmed SKU and quotes only a matching resolver
   assert.equal(guided.result.products[0].sku, "2020003337");
   const product = { ...guided.result.products[0], stock: 800, unit: "ชิ้น", min_order_qty: 100 };
   const answer = guidedExactProductAnswer(product, 100, {
-    ok: true, exact_match: true, sku: "2020003337", unit_price: 8.5,
+    ok: true, exact_match: true, sku: "2020003337", quantity: 100, unit_price: 8.5, line_total: 850,
   });
   assert.match(answer, /SKU 2020003337/);
-  assert.match(answer, /ราคา 8\.5 บาท\/ชิ้น/);
+  assert.match(answer, /8\.50 บาท\/ชิ้น สำหรับ 100 ชิ้น \(รวม 850\.00 บาท\)/);
   assert.match(answer, /สต็อกที่ตรวจได้ 800 ชิ้น/);
   assert.match(answer, /ให้เอยทำใบเสนอราคาให้เลยไหมคะ/);
   assert.match(answer, /1\. ต้องการใบเสนอราคา\n2\. ไม่ต้องการ/);
-  assert.equal(guidedExactProductAnswer(product, 100, { ok: true, exact_match: true, sku: "wrong", unit_price: 8.5 }), null);
+  assert.match(guidedExactProductAnswer(product, 100, { ok: true, exact_match: true, sku: "wrong", quantity: 100, unit_price: 8.5, line_total: 850 }), /รับจำนวน 100 ชิ้น.*ยังตรวจราคาปัจจุบันจากระบบไม่ได้/);
   assert.doesNotMatch(guidedExactProductAnswer(product), /8\.5/);
   assert.deepEqual(confirmedGuidedQuoteRequest("ได้เลยครับ", [
     { role: "assistant", content: answer },
@@ -875,9 +875,113 @@ test("quantity reply keeps the confirmed SKU and quotes only a matching resolver
   ]), null);
 });
 
+test("PS33 exact item shows MOQ price first and uses a short quantity reply for a fresh total", () => {
+  const product = {
+    sku: "2020006681", name_th: 'กระดาษทรายกลมสักหลาด PS33 5" #180',
+    unit: "ชิ้น", min_order_qty: 100, stock: 0,
+  };
+  const minimumPrice = {
+    ok: true, exact_match: true, sku: product.sku,
+    quantity: 100, unit_price: 8.5, line_total: 850,
+  };
+  const initial = guidedExactProductAnswer(product, null, minimumPrice);
+  assert.match(initial, /SKU 2020006681/);
+  assert.match(initial, /ราคา ณ จำนวนขั้นต่ำ 100 ชิ้น: 8\.50 บาท\/ชิ้น/);
+  assert.match(initial, /สต็อกที่ตรวจได้ 0 ชิ้น \(สินค้าสั่งผลิต\)/);
+  assert.match(initial, /ต้องการกี่ชิ้นคะ/);
+  assert.match(guidedExactProductAnswer(product, 50, minimumPrice), /ราคา ณ จำนวนขั้นต่ำ 100 ชิ้น: 8\.50 บาท\/ชิ้น.*ต้องการปรับจำนวน/);
+  const history = [
+    { role: "user", content: 'กระดาษทรายกลมสักหลาด PS33 5" #180' },
+    { role: "assistant", content: initial },
+  ];
+  for (const reply of ["100", "200", "200 ชิ้นครับ", "ต้องการ 200 ชิ้นครับ"]) {
+    const quantity = reply === "100" ? 100 : 200;
+    assert.equal(guidedCatalogQuery(reply, history), product.sku);
+    assert.equal(guidedRequestedQuantity(reply, history, product.sku), quantity);
+    const priced = quantity === 100 ? minimumPrice : {
+      ...minimumPrice, quantity: 200, unit_price: 8, line_total: 1600,
+    };
+    const answer = guidedExactProductAnswer(product, quantity, priced);
+    assert.match(answer, new RegExp(`สำหรับ ${quantity} ชิ้น \\(รวม ${quantity === 100 ? "850\\.00" : "1,600\\.00"} บาท\\)`));
+    assert.match(answer, /เป็นสินค้าสั่งผลิตค่ะ/);
+    assert.match(answer, /ให้เอยทำใบเสนอราคาให้เลยไหมคะ\n1\. ต้องการใบเสนอราคา\n2\. ไม่ต้องการ/);
+    assert.deepEqual(confirmedGuidedQuoteRequest("1", [{ role: "assistant", content: answer }]), {
+      sku: product.sku, qty: quantity,
+    });
+  }
+  assert.doesNotMatch(guidedExactProductAnswer(product, null, { ...minimumPrice, quantity: 200 }), /8\.50 บาท/);
+  const unpriced = guidedExactProductAnswer(product, 200, minimumPrice);
+  assert.match(unpriced, /รับจำนวน 200 ชิ้น.*ยังตรวจราคาปัจจุบันจากระบบไม่ได้/);
+  assert.doesNotMatch(unpriced, /ต้องการกี่ชิ้นคะ|ให้เอยทำใบเสนอราคา/);
+  assert.equal(guidedRequestedQuantity("ขอใบเสนอราคา SKU 2020006681 จำนวน 200"), 200);
+});
+
+test("an exact catalog SKU is searched directly even when the customer gives no long product name", async () => {
+  const row = {
+    sku: "2020006681", status: "active", name_th: 'กระดาษทรายกลมสักหลาด PS33 5" #180',
+    unit: "ชิ้น", min_order_qty: 100, inventory: [],
+  };
+  for (const query of ["ราคา 2020006681", "ขอราคา SKU 2020006681", "2020006681"]) {
+    assert.equal(guidedCatalogQuery(query), row.sku);
+    const guided = await guidedProductDecision(query, [], "th",
+      term => edge.findProducts(fakeAdmin([row]), term));
+    assert.equal(guided.result.products?.[0]?.sku, row.sku);
+    assert.equal(guided.answer, null);
+  }
+  const quoteQuery = "ขอใบเสนอราคา SKU 2020006681";
+  const quoteLookup = await guidedProductDecision(quoteQuery, [], "th",
+    term => edge.findProducts(fakeAdmin([row]), term));
+  assert.equal(quoteLookup.result.products?.[0]?.sku, row.sku);
+  const initialQuoteAnswer = guidedExactProductAnswer(row, null, {
+    ok: true, exact_match: true, sku: row.sku, quantity: 100, unit_price: 8.5, line_total: 850,
+  });
+  assert.deepEqual(pendingQuoteQuantityRequest("200", [
+    { role: "user", content: quoteQuery },
+    { role: "assistant", content: initialQuoteAnswer },
+  ]), { sku: row.sku, qty: 200, productQuery: row.name_th, customerProductQuery: "" });
+  assert.equal(guidedCatalogQuery("SKU 2020006681 และ SKU 2020003043 ขอราคา"), null);
+  for (const conflictingType of ["abrasive belt", "sanding belt"]) {
+    const query = `${conflictingType} SKU 2020006681`;
+    assert.notEqual(guidedCatalogQuery(query), row.sku);
+    const conflict = await guidedProductDecision(query, [], "en",
+      term => edge.findProducts(fakeAdmin([row]), term));
+    assert.equal(conflict.result.products?.length ?? 0, 0);
+  }
+  const conflicting = 'กระดาษทรายกลมสักหลาด PS33 5" #180 SKU 2020003043';
+  assert.notEqual(guidedCatalogQuery(conflicting), "2020003043");
+  const mismatch = await guidedProductDecision(conflicting, [], "th",
+    term => edge.findProducts(fakeAdmin([row, {
+      sku: "2020003043", status: "active",
+      name_th: 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500',
+    }]), term));
+  assert.equal(mismatch.result.products?.length ?? 0, 0);
+});
+
+test("a direct quotation request without customer quantity cannot use catalog MOQ", async () => {
+  const noDatabase = {
+    from() { throw new Error("A missing quantity must be stopped before CRM access"); },
+    rpc() { throw new Error("A missing quantity must be stopped before quote creation"); },
+  };
+  const result = await edge.requestQuote(noDatabase, { items: [{ sku: "2020006681", qty: 100 }] },
+    "line", "00000000-0000-4000-8000-000000000001", "ขอใบเสนอราคา SKU 2020006681",
+    false, []);
+  assert.equal(result.quote_created, false);
+  assert.equal(result.reason, "quote_quantity_required");
+  for (const items of [
+    [{ sku: "2020006681", qty: 100 }],
+    [{ sku: "2020003043", qty: 200 }],
+  ]) {
+    const mismatch = await edge.requestQuote(noDatabase, { items }, "line",
+      "00000000-0000-4000-8000-000000000001", "ขอใบเสนอราคา SKU 2020006681 จำนวน 200 ชิ้น",
+      false, []);
+    assert.equal(mismatch.quote_created, false);
+    assert.equal(mismatch.reason, "quote_continuation_item_mismatch");
+  }
+});
+
 test("verified zero stock is always named made-to-order and unknown stock is not", () => {
   const product = { sku: "2020003043", name_th: 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500', unit: "ชิ้น", stock: 0, min_order_qty: 100 };
-  const price = { ok: true, exact_match: true, sku: product.sku, unit_price: 7 };
+  const price = { ok: true, exact_match: true, sku: product.sku, quantity: 200, unit_price: 7, line_total: 1400 };
   for (const answer of [
     guidedExactProductAnswer(product),
     guidedExactProductAnswer(product, 50),

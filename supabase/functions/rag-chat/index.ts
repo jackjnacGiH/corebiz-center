@@ -366,7 +366,7 @@ const TOOL_DEFINITIONS = [
     functionDeclarations: [
       { name: "find_products", description: "Search products. Multi-word AND on (sku, name_th, name_en, brand). Stop-words are stripped server-side. Each result includes min_order_qty. Query is auto-rewritten using keyword_synonyms before search (alias to canonical). If selection_required=true, ask clarification_question_th/en and wait for the missing variant details; do not call capture_lead. If result contains clarification_candidates the customer used an unrecognised name — ask which product they mean.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
       { name: "get_product_detail", description: "Full product detail by SKU, including min_order_qty.", parameters: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"] } },
-      { name: "get_exact_price", description: "Return the CURRENT authoritative selling price for one exact SKU and exact quantity. For every numeric selling-price answer, first resolve the exact product with find_products/get_product_detail, obtain the customer's quantity, then call this tool. Never infer a quantity, use a price from product search, or reveal internal price source/customer verification details. If product selection is still pending, ask the missing size/grit/hole/backing first.", parameters: { type: "object", properties: { sku: { type: "string", description: "exact product SKU returned by product search" }, qty: { type: "integer", description: "exact positive whole-number quantity requested by the customer", minimum: 1, maximum: 1000000 } }, required: ["sku", "qty"] } },
+      { name: "get_exact_price", description: "Return the CURRENT authoritative selling price for one exact SKU and quantity. Once exactly one SKU is confirmed, if customer quantity is missing, call at the catalog minimum quantity and label that quantity as the price basis before asking for quantity. When the customer supplies quantity, call again at that exact quantity before summarizing the total. Never use a price from product search or reveal internal price source/customer verification details. If product selection is still pending, ask the missing size/grit/hole/backing first.", parameters: { type: "object", properties: { sku: { type: "string", description: "exact product SKU returned by product search" }, qty: { type: "integer", description: "customer's exact positive whole-number quantity, or catalog minimum for an initial indicative unit price", minimum: 1, maximum: 1000000 } }, required: ["sku", "qty"] } },
       { name: "list_product_groups", description: "All product groups.", parameters: { type: "object", properties: {} } },
       { name: "get_group_members", description: "SKUs in a product group.", parameters: { type: "object", properties: { group_name: { type: "string" } }, required: ["group_name"] } },
       { name: "list_categories", description: "All product categories.", parameters: { type: "object", properties: {} } },
@@ -1187,6 +1187,15 @@ async function requestQuote(
   const pendingQuantity = pendingQuoteQuantityRequest(userQuery, history);
   const acceptedOffer = confirmedGuidedQuoteRequest(userQuery, history);
   const expectedItem = pendingQuantity ?? acceptedOffer;
+  const quantityInCurrentRequest = guidedRequestedQuantity(userQuery, [], userQuery)
+    ?? Number(/(?:จำนวน|qty|quantity)\s*[:：]?\s*(\d{1,6})(?!\d)/iu.exec(userQuery)?.[1] ?? 0);
+  if (!expectedItem && !quantityInCurrentRequest) {
+    return {
+      ok: true, saved: false, skipped: true, quote_created: false, quote_reused: false,
+      reason: "quote_quantity_required",
+      message: "ยังไม่มีจำนวนที่ลูกค้าระบุสำหรับใบเสนอราคา กรุณาถามจำนวนก่อน ห้ามใช้จำนวนขั้นต่ำจากแค็ตตาล็อกแทน",
+    };
+  }
   if (expectedItem) {
     const items = Array.isArray(args.items) ? args.items : [];
     if (items.length !== 1 || String(items[0]?.sku ?? "") !== expectedItem.sku
@@ -1195,6 +1204,20 @@ async function requestQuote(
         ok: false, saved: false, skipped: true, quote_created: false, quote_reused: false,
         reason: "quote_continuation_item_mismatch",
         message: "รายการหรือจำนวนไม่ตรงกับคำขอที่ลูกค้ายืนยัน จึงยังไม่ออกใบเสนอราคา",
+      };
+    }
+  } else {
+    const items = Array.isArray(args.items) ? args.items : [];
+    const explicitSkus = [...userQuery.matchAll(/\bSKU\s*[:：]?\s*([A-Z0-9._/-]{4,})\b/giu)]
+      .map((match) => match[1].toUpperCase());
+    const singleItemRequest = inferRequestedProductItemCount(userQuery) <= 1;
+    if (singleItemRequest && items.length !== 1
+      || items.length === 1 && (Number(items[0]?.qty) !== quantityInCurrentRequest
+        || explicitSkus.length === 1 && String(items[0]?.sku ?? "").toUpperCase() !== explicitSkus[0])) {
+      return {
+        ok: false, saved: false, skipped: true, quote_created: false, quote_reused: false,
+        reason: "quote_continuation_item_mismatch",
+        message: "รายการหรือจำนวนไม่ตรงกับคำขอที่ลูกค้าระบุ จึงยังไม่ออกใบเสนอราคา",
       };
     }
   }
@@ -1659,8 +1682,8 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 3. ถ้าพูดว่า เดี๋ยวเช็คให้ → ต้อง CALL TOOL จริงใน reply เดียวกัน
 
 ⚠️ ถ้า find_products ส่ง selection_required=true: ให้ถาม clarification_question_th เพียงคำถามเดียว รอคำตอบ แล้วค้นใหม่โดยรวมชื่อ/รุ่นเดิมกับข้อมูลที่ลูกค้าเพิ่งตอบ ห้ามเสนอราคา ห้ามเดา SKU และห้ามเรียก capture_lead จนกว่าจะถามข้อมูลที่ขาดและค้นซ้ำแล้วไม่พบสินค้าจริง
-💰 เมื่อลูกค้าถามราคา: ต้องค้นจนได้ SKU ที่ตรงเพียงรายการเดียวและทราบจำนวนที่ลูกค้าต้องการก่อน แล้วเรียก get_exact_price ทุกครั้ง ถ้ายังไม่ทราบจำนวนให้ถามจำนวนก่อน ห้ามใช้ตัวเลขราคาจากผลค้นสินค้า ประวัติแชต หรือคำนวณส่วนลดเอง และห้ามบอกลูกค้าว่าราคามาจาก Tier ราคาเฉพาะลูกค้า ประวัติ FlowAccount หรือสถานะการยืนยันตัวตน
-✅ เมื่อลูกค้าเลือกสินค้าจนได้ SKU เดียวแล้ว ให้แจ้งชื่อสินค้ากับสต็อกจากผลค้นล่าสุดและถามจำนวนถ้ายังไม่ทราบ เมื่อได้จำนวนและตรวจราคาด้วย get_exact_price แล้ว ให้สรุปราคา/สต็อกและถามสั้นๆ ว่า "ให้เอยทำใบเสนอราคาให้เลยไหมคะ" พร้อมตัวเลือกขึ้นบรรทัดใหม่ "1. ต้องการใบเสนอราคา" และ "2. ไม่ต้องการ" เพื่อให้ LINE แสดงปุ่ม Quick Reply ห้ามเรียก request_quote จนกว่าลูกค้าจะตอบตกลงและมีข้อมูลบังคับครบ
+💰 เมื่อได้ SKU ที่ตรงเพียงรายการเดียว ให้เรียก get_exact_price เพื่อแสดงราคาต่อหน่วยพร้อมสต็อกทันที ถ้ายังไม่ทราบจำนวนลูกค้า ให้ตรวจราคาที่จำนวนขั้นต่ำจากแค็ตตาล็อกและบอกชัดว่าเป็นราคาที่จำนวนขั้นต่ำ แล้วถามจำนวน เมื่อได้จำนวนจริงให้เรียก get_exact_price อีกครั้งที่จำนวนนั้นก่อนสรุปยอด ห้ามใช้ตัวเลขราคาจากผลค้นสินค้า ประวัติแชต หรือคำนวณส่วนลดเอง และห้ามบอกลูกค้าว่าราคามาจาก Tier ราคาเฉพาะลูกค้า ประวัติ FlowAccount หรือสถานะการยืนยันตัวตน
+✅ เมื่อลูกค้าตอบจำนวนต่อจากคำถามจำนวนสินค้าเดิม เช่น "100", "200 ชิ้นครับ" หรือ "ต้องการ 200 ชิ้น" ให้ใช้ SKU จากคำถามล่าสุดและจำนวนที่ตอบ ห้ามถามสินค้าหรือจำนวนซ้ำ หลังตรวจราคาจริงด้วย get_exact_price ให้สรุปราคาต่อหน่วย ยอดรวม และสต็อก แล้วถาม "ให้เอยทำใบเสนอราคาให้เลยไหมคะ" พร้อมตัวเลือกขึ้นบรรทัดใหม่ "1. ต้องการใบเสนอราคา" และ "2. ไม่ต้องการ" เพื่อให้ LINE แสดงปุ่ม Quick Reply ห้ามเรียก request_quote จนกว่าลูกค้าจะตอบตกลงและมีข้อมูลบังคับครบ
 
 🚫 ห้ามเสนอสินค้าเพียงเพราะขนาด เบอร์ หรือการใช้งานใกล้เคียงกัน หากเป็นคนละชนิดสินค้า. เมื่อไม่มีตัวเลือกที่ผ่านเงื่อนไข ให้บอกว่าจะตรวจสอบจัดหา/สั่งผลิตกับคุณเชอร์รี่ แทนการเดาสินค้าทดแทน
 
@@ -1704,8 +1727,8 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 2. Call list_product_groups / list_categories only for an overview with no product type specified.
 3. If you say let me check → you MUST call a tool in the SAME reply.
 ⚠️ When find_products returns selection_required=true: ask clarification_question_en only, wait for the answer, then search again using the original product/model plus the new details. Do not quote a price, guess a SKU, or call capture_lead until the missing details have been asked and the refined search truly has no match.
-💰 When the customer asks for a price: first resolve exactly one SKU and obtain the customer's exact quantity, then call get_exact_price every time. Ask for quantity when it is missing. Never use a number from product search/chat history or calculate a discount yourself. Never reveal whether the price came from Tier, a customer rule, FlowAccount history, or identity-verification state.
-✅ After the customer selects one exact SKU, share its name and freshly checked stock, then ask for quantity if missing. Once quantity and get_exact_price are available, summarize price and stock and ask whether they want a quotation, followed by numbered "1. Request a quotation" and "2. No quotation" choices for LINE Quick Reply. Do not call request_quote until the customer agrees and all required details are present.
+💰 Once exactly one SKU is confirmed, call get_exact_price to share a unit price and current stock immediately. If customer quantity is missing, resolve price at the catalog minimum, label that quantity as the price basis, and ask for quantity. Recheck with get_exact_price at the customer's actual quantity before summarizing the total. Never use a number from product search/chat history or calculate a discount yourself. Never reveal whether the price came from Tier, a customer rule, FlowAccount history, or identity-verification state.
+✅ Treat a short quantity reply to the immediately preceding exact-product question as that product's quantity; do not ask for the product or quantity again. Once actual quantity and get_exact_price are available, summarize unit price, total and stock, then ask whether they want a quotation, followed by numbered "1. Request a quotation" and "2. No quotation" choices for LINE Quick Reply. Do not call request_quote until the customer agrees and all required details are present.
 🚫 NEVER offer a product merely because its size, grit, or use is similar when it is a different product type. If no safe option exists, escalate for sourcing/made-to-order instead of guessing a substitute.
 4. 0 results + no candidates and no selection_required after clarification → offer made-to-order via Khun Cherry.
 5. ⚠️ Whenever offering product options, alternatives, similar items, or lists of sizes/grits/specs for the customer to choose from (including made-to-order variant choices): You MUST present them as a numbered list starting with "1.", "2.", "3." (do NOT use emojis like ✨ or bullet points like • for these lists under any circumstances) so that the numbers align exactly with the Quick Reply buttons.
@@ -2404,6 +2427,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       let leadResult: Record<string, unknown> | null = null;
       let leadExecuted = false;
       let priceResult: Record<string, unknown> | null = null;
+      let priceLookupQuantity: number | null = null;
       if (guided?.escalate) {
         const args = { interest: guided.lookupQuery, note: query };
         const decision = readOnlyToolDecision("capture_lead", readOnly);
@@ -2419,11 +2443,17 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
             ? "เอยยังยืนยันสินค้าตามสเปกนี้ไม่ได้ค่ะ รบกวนให้ทีมตรวจสอบเพิ่มเติมนะคะ"
             : "I could not verify that exact specification. Our team needs to check it.");
       }
-      if (!guidedAnswer && exactProduct && !isQuoteRequest) {
-        if (quantity != null && quantity >= Math.max(1, Number(exactProduct.min_order_qty ?? 1))) {
-          const priced = await getExactPrice(admin, { sku: exactProduct.sku, qty: quantity }, conversationId);
-          priceResult = isSuccessfulExactPriceResult(priced.response)
-            ? priced.response as Record<string, unknown> : null;
+      if (!guidedAnswer && exactProduct && (!isQuoteRequest || quantity == null)) {
+        const minimum = Math.max(1, Math.ceil(Number(exactProduct.min_order_qty) || 1));
+        priceLookupQuantity = quantity == null || quantity < minimum ? minimum : quantity;
+        try {
+          const priced = await getExactPrice(admin, { sku: exactProduct.sku, qty: priceLookupQuantity }, conversationId);
+          const candidate = priced.response as Record<string, unknown>;
+          priceResult = isSuccessfulExactPriceResult(candidate)
+            && String(candidate.sku).toUpperCase() === String(exactProduct.sku).toUpperCase()
+            && Number(candidate.quantity) === priceLookupQuantity ? candidate : null;
+        } catch (error) {
+          console.warn("guided exact price lookup failed", { request_id: telemetry.requestId, error: (error as Error).message });
         }
         guidedAnswer = guidedExactProductAnswer(exactProduct, quantity, priceResult, lang);
       }
@@ -2446,7 +2476,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         });
         if (priceResult) toolCalls.push({
           name: "get_exact_price",
-          args: { sku: exactProduct?.sku, qty: quantity },
+          args: { sku: exactProduct?.sku, qty: priceLookupQuantity },
           result_summary: JSON.stringify(priceResult).slice(0, 200),
           result_meta: { disposition: "resolved", selection_required: false },
         });
@@ -2725,8 +2755,10 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   // Request-local only: stale tool results from conversation history never
   // authorize a current price. Each outcome is bound to its SKU + quantity.
   const exactPriceOutcomes = new Map<string, unknown | null>();
+  let verifiedExactProduct: Record<string, unknown> | null = null;
   let verifiedZeroStockProduct: Record<string, unknown> | null = null;
   let trustedQuoteResult: unknown = null;
+  let quoteCustomerDetailsRequired = false;
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let iterText = "";
     const llmStartedAt = Date.now();
@@ -2790,8 +2822,11 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
             const requestKey = `${request.sku}\u0000${request.quantity}`;
             exactPriceOutcomes.set(requestKey, isSuccessfulExactPriceResult(result) ? result : null);
           }
-        } else if (call.name === "request_quote" && isTrustedQuoteResult(result)) {
-          trustedQuoteResult = result;
+        } else if (call.name === "request_quote") {
+          if (isTrustedQuoteResult(result)) trustedQuoteResult = result;
+          else if ((result as Record<string, unknown> | null)?.customer_details_required === true) {
+            quoteCustomerDetailsRequired = true;
+          }
         }
         if (call.name === "get_exact_price" && dispatched.resultMeta) {
           // Keep customer identity/provenance server-side. tool_calls are part
@@ -2816,6 +2851,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
 
       let resultMeta: ToolResultMeta | undefined = dispatchResultMeta;
       if (call.name === "find_products" || call.name === "get_product_detail") {
+        verifiedExactProduct = null;
         verifiedZeroStockProduct = null;
         const lookupDisposition = productSearchDisposition(result);
         if (lookupDisposition === "needs_selection") productSelectionPending = true;
@@ -2837,6 +2873,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
           exactPriceEligibleSkus.add(selectedSkus[0].trim().toUpperCase());
           const exactProduct = productRows.length === 1 ? productRows[0]
             : selection?.sku === selectedSkus[0] ? selection : null;
+          verifiedExactProduct = exactProduct;
           verifiedZeroStockProduct = exactProduct?.stock === 0 ? exactProduct : null;
         }
         resultMeta = {
@@ -2939,6 +2976,32 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     });
   }
   fullAnswer = guardedPriceAnswer.answer;
+  const requestedQuantity = guidedRequestedQuantity(query, productHistory, query);
+  const directQuoteRequest = /ใบเสนอราคา|quotation|\bquote\b/iu.test(query);
+  const minimum = Math.max(1, Math.ceil(Number(verifiedExactProduct?.min_order_qty) || 1));
+  const replyQuantity = requestedQuantity == null || requestedQuantity < minimum ? minimum : requestedQuantity;
+  const matchingPrices = exactPriceResults.filter((result) => verifiedExactProduct
+    && String(result.sku).toUpperCase() === String(verifiedExactProduct.sku).toUpperCase()
+    && Number(result.quantity) === replyQuantity);
+  const exactReplyPrice = matchingPrices.length === 1 ? matchingPrices[0] as Record<string, unknown> : null;
+  if (guardedPriceAnswer.reason === "verified_exact_price_reply"
+    && exactPriceEligibleSkus.size === 1 && verifiedExactProduct && exactReplyPrice
+    && (!directQuoteRequest || requestedQuantity == null)) {
+    fullAnswer = guidedExactProductAnswer(verifiedExactProduct, requestedQuantity, exactReplyPrice, lang);
+  }
+  if (directQuoteRequest && requestedQuantity != null && verifiedExactProduct
+    && guardedPriceAnswer.reason === "verified_exact_price_reply" && !exactReplyPrice) {
+    fullAnswer = guidedExactProductAnswer(verifiedExactProduct, requestedQuantity, null, lang);
+  }
+  if (quoteCustomerDetailsRequired && !trustedQuoteResult) {
+    const verifiedPriceText = guardedPriceAnswer.reason === "verified_exact_price_reply"
+      && (requestedQuantity == null || exactReplyPrice)
+      ? guardedPriceAnswer.answer : "";
+    const billingQuestion = lang === "th"
+      ? "ก่อนทำใบเสนอราคา รบกวนแจ้งชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) ค่ะ"
+      : "To prepare the quotation, please provide your company name, billing address, 13-digit tax ID, and branch (if any).";
+    fullAnswer = [verifiedPriceText, billingQuestion].filter(Boolean).join("\n");
+  }
   if (!productSelectionPending && verifiedZeroStockProduct) {
     fullAnswer = withVerifiedZeroStockLabel(fullAnswer, verifiedZeroStockProduct, lang);
   }
