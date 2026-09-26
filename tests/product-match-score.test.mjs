@@ -6,6 +6,7 @@ import { scoreProductCandidate, buildScoredProductSelection, productModelSearchR
 import { productSearchDisposition, shouldSuppressToolForProductSearch, matchesExplicitProductVariant, buildProductSelection } from "../supabase/functions/_shared/product-selection.mjs";
 import { pendingProductQuestion } from "../supabase/functions/_shared/product-turn-context.mjs";
 import { guardNumericSellingPriceAnswer } from "../supabase/functions/_shared/price-answer-guard.mjs";
+import { guidedExactProductAnswer } from "../supabase/functions/_shared/guided-product-selection.mjs";
 
 const product = { sku: "2020000992", name_th: 'กระดาษทรายกลมสักหลาด SA331 5" #1500', name_en: 'DEERFOS Velcro Sanding Disc 5" #1500', brand: "DEERFOS" };
 const generic = { candidateProductType: "sanding_disc" };
@@ -88,6 +89,10 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   const backings = extract('เลือกแบบค่ะ\n1. จานทรายหลังอ่อน 4 นิ้ว\n2. จานทรายหลังแข็ง 4 นิ้ว');
   assert.deepEqual(backings.items.map(item => item.action.label), ["1. หลังอ่อน", "2. หลังแข็ง"]);
   assert.equal(backings.items[0].action.text, "จานทรายหลังอ่อน 4 นิ้ว");
+  const quote = extract(guidedExactProductAnswer({ ...product, unit: "ชิ้น", stock: 0 }, 200,
+    { ok: true, exact_match: true, sku: product.sku, unit_price: 7 }));
+  assert.deepEqual(quote.items.map(item => item.action.text), ["ต้องการใบเสนอราคา", "ไม่ต้องการ"]);
+  assert.deepEqual(quote.items.map(item => item.action.label), ["1. ต้องการใบเสนอราคา", "2. ไม่ต้องการ"]);
   const models = extract('เลือกรุ่นค่ะ\n1. จานทรายหลังอ่อน Eco 4" 46P\n2. จานทรายหลังอ่อน CS310X 48P 4"');
   assert.deepEqual(models.items.map(item => item.action.label), ["1. Eco", "2. CS310X"]);
   const longName = "กระดาษทราย".repeat(12);

@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import { recoverEmptyProductAnswer } from "../supabase/functions/_shared/empty-product-recovery.mjs";
 import { routeLatestTurn } from "../supabase/functions/_shared/latest-turn-context.mjs";
 import {
-  confirmedGuidedQuoteRequest, guidedCatalogQuery, guidedExactProductAnswer,
+  confirmedGuidedQuoteRequest, declinedGuidedQuoteRequest, guidedCatalogQuery, guidedExactProductAnswer,
   guidedProductDecision, guidedRequestedQuantity, pendingQuoteQuantityRequest,
-  quoteCreationBlockReason, sameProductReference,
+  quoteCreationBlockReason, sameProductReference, withQuoteQuickReplies, withVerifiedZeroStockLabel,
 } from "../supabase/functions/_shared/guided-product-selection.mjs";
 const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
@@ -240,10 +240,39 @@ test("payment and ordering follow-ups cannot create a second quote", async () =>
 test("direct quotation requests and consent to the immediately preceding offer remain allowed", () => {
   const offer = [{ role: "assistant", content: "พบ SKU 2020003657 จำนวน 100 ชิ้น ให้เอยทำใบเสนอราคาให้เลยไหมคะ" }];
   assert.equal(quoteCreationBlockReason("ทำเลยครับ", false, offer), null);
+  assert.equal(quoteCreationBlockReason("ต้องการครับ", false, offer), null);
+  assert.equal(quoteCreationBlockReason("ต้องการครับ", false, []), "not_explicit_quote_request");
   assert.equal(quoteCreationBlockReason("ขอใบเสนอราคา SKU 2020003657 จำนวน 100 ชิ้น", false, []), null);
   assert.equal(quoteCreationBlockReason("ช่วยออกใบเสนอราคาให้หน่อยครับ", false, []), null);
   assert.equal(quoteCreationBlockReason("ขอเช็คใบเสนอราคา QT-01000127", false, []), "existing_quote_followup");
   assert.equal(quoteCreationBlockReason("ขอใบเสนอราคาใหม่แทน QT-01000127", false, []), null);
+});
+
+test("quote buttons preserve the exact offer and declining never creates a quote", async () => {
+  const offer = { role: "assistant", content: "พบ กระดาษทรายกลมหลังกาว MIRKA GOLD 5\" #500 (SKU 2020003043) ค่ะ จำนวน 200 ชิ้น ราคา 7 บาท/ชิ้น สต็อกที่ตรวจได้ 0 ชิ้น (สินค้าสั่งผลิต)\nให้เอยทำใบเสนอราคาให้เลยไหมคะ\n1. ต้องการใบเสนอราคา\n2. ไม่ต้องการ" };
+  const item = { sku: "2020003043", qty: 200 };
+  assert.deepEqual(confirmedGuidedQuoteRequest("ต้องการครับ", [offer]), item);
+  assert.deepEqual(confirmedGuidedQuoteRequest("ต้องการใบเสนอราคา", [offer]), item);
+  assert.deepEqual(confirmedGuidedQuoteRequest("1", [offer]), item);
+  assert.deepEqual(confirmedGuidedQuoteRequest("1.", [offer]), item);
+  assert.equal(confirmedGuidedQuoteRequest("1", []), null);
+  assert.equal(confirmedGuidedQuoteRequest("ไม่ต้องการใบเสนอราคา", [offer]), null);
+  assert.equal(declinedGuidedQuoteRequest("ไม่ต้องการ", [offer]), true);
+  assert.equal(declinedGuidedQuoteRequest("2", [offer]), true);
+  assert.equal(declinedGuidedQuoteRequest("2", []), false);
+  assert.equal(quoteCreationBlockReason("1", false, [offer]), null);
+  assert.equal(declinedGuidedQuoteRequest("ไม่ต้องการ", [offer, { role: "user", content: "เรื่องอื่น" }]), false);
+  const noDatabase = {
+    from() { throw new Error("declining must not read CRM or create a quote"); },
+    rpc() { throw new Error("declining must not call the quote RPC"); },
+  };
+  for (const reply of ["ไม่ต้องการ", "ไม่ต้องการใบเสนอราคา", "ยังไม่ต้องการครับ", "ไม่ต้องการให้ทำใบเสนอราคา", "ไม่ต้องทำใบเสนอราคา", "2"]) {
+    assert.equal(quoteCreationBlockReason(reply, false, [offer]), "quote_declined");
+    const result = await edge.requestQuote(noDatabase, { items: [item] }, "line",
+      "00000000-0000-4000-8000-000000000001", reply, false, [offer], true);
+    assert.equal(result.quote_created, false);
+    assert.equal(result.reason, "quote_declined");
+  }
 });
 
 test("PVA quote consent and a repeated request reuse the exact offered SKU and quantity", async () => {
@@ -835,6 +864,7 @@ test("quantity reply keeps the confirmed SKU and quotes only a matching resolver
   assert.match(answer, /ราคา 8\.5 บาท\/ชิ้น/);
   assert.match(answer, /สต็อกที่ตรวจได้ 800 ชิ้น/);
   assert.match(answer, /ให้เอยทำใบเสนอราคาให้เลยไหมคะ/);
+  assert.match(answer, /1\. ต้องการใบเสนอราคา\n2\. ไม่ต้องการ/);
   assert.equal(guidedExactProductAnswer(product, 100, { ok: true, exact_match: true, sku: "wrong", unit_price: 8.5 }), null);
   assert.doesNotMatch(guidedExactProductAnswer(product), /8\.5/);
   assert.deepEqual(confirmedGuidedQuoteRequest("ได้เลยครับ", [
@@ -843,6 +873,47 @@ test("quantity reply keeps the confirmed SKU and quotes only a matching resolver
   assert.equal(confirmedGuidedQuoteRequest("ได้เลยครับ", [
     { role: "assistant", content: "อยากให้ทำใบเสนอราคาไหมคะ" },
   ]), null);
+});
+
+test("verified zero stock is always named made-to-order and unknown stock is not", () => {
+  const product = { sku: "2020003043", name_th: 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500', unit: "ชิ้น", stock: 0, min_order_qty: 100 };
+  const price = { ok: true, exact_match: true, sku: product.sku, unit_price: 7 };
+  for (const answer of [
+    guidedExactProductAnswer(product),
+    guidedExactProductAnswer(product, 50),
+    guidedExactProductAnswer(product, 200, price),
+    guidedExactProductAnswer(product, null, null, "en"),
+    withVerifiedZeroStockLabel("พบสินค้าแล้วค่ะ", product),
+  ]) assert.match(answer, /สินค้าสั่งผลิต/);
+  assert.doesNotMatch(guidedExactProductAnswer({ ...product, stock: null }), /สินค้าสั่งผลิต|สต็อกที่ตรวจได้ 0/);
+  assert.doesNotMatch(guidedExactProductAnswer({ ...product, stock: 10 }), /สินค้าสั่งผลิต/);
+  assert.equal(withVerifiedZeroStockLabel("พบสินค้าแล้วค่ะ", { ...product, stock: null }), "พบสินค้าแล้วค่ะ");
+  const exactOffer = `พบ ${product.name_th} (SKU ${product.sku}) จำนวน 200 ชิ้น ให้เอยทำใบเสนอราคาให้เลยไหมคะ`;
+  assert.match(withQuoteQuickReplies(exactOffer), /1\. ต้องการใบเสนอราคา\n2\. ไม่ต้องการ/);
+  const variedOffer = `พบ ${product.name_th} (SKU ${product.sku}) จำนวน 200 ชิ้น คุณลูกค้าสนใจให้เอยทำใบเสนอราคาไหมคะ`;
+  assert.match(withQuoteQuickReplies(variedOffer), /ให้เอยทำใบเสนอราคาให้เลยไหมคะ\n1\. ต้องการใบเสนอราคา\n2\. ไม่ต้องการ/);
+  assert.equal(withQuoteQuickReplies("ให้เอยทำใบเสนอราคาให้เลยไหมคะ"), "ให้เอยทำใบเสนอราคาให้เลยไหมคะ");
+  assert.equal(withQuoteQuickReplies("สนใจให้เอยทำใบเสนอราคาไหมคะ"), "สนใจให้เอยทำใบเสนอราคาไหมคะ");
+  assert.equal(withQuoteQuickReplies("ต้องการจำนวนกี่ชิ้นคะ"), "ต้องการจำนวนกี่ชิ้นคะ");
+});
+
+test("catalog formatting distinguishes a verified empty inventory from missing inventory data", async () => {
+  const name_th = 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500';
+  const row = { sku: "2020003043", status: "active", name_th, unit: "ชิ้น" };
+  const verified = await edge.findProducts(fakeAdmin([{ ...row, inventory: [] }]), name_th);
+  const unknown = await edge.findProducts(fakeAdmin([row]), name_th);
+  assert.equal(verified.products[0].stock, 0);
+  assert.equal(unknown.products[0].stock, null);
+  assert.match(guidedExactProductAnswer(verified.products[0]), /สินค้าสั่งผลิต/);
+  assert.doesNotMatch(guidedExactProductAnswer(unknown.products[0]), /สินค้าสั่งผลิต/);
+});
+
+test("empty model output recovery still labels verified zero stock", async () => {
+  const row = { sku: "2020003043", status: "active", name_th: 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500', unit: "ชิ้น", inventory: [] };
+  const recovered = await recoverEmptyProductAnswer(row.name_th, [], "th",
+    query => edge.findProducts(fakeAdmin([row]), query));
+  assert.match(recovered.answer, /สินค้าสั่งผลิต/);
+  assert.equal(recovered.result.products[0].stock, 0);
 });
 test("model choice keeps an already supplied grit and quantity", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);

@@ -72,6 +72,7 @@ import { recoverEmptyProductAnswer } from "../_shared/empty-product-recovery.mjs
 import { routeLatestTurn } from "../_shared/latest-turn-context.mjs";
 import {
   confirmedGuidedQuoteRequest,
+  declinedGuidedQuoteRequest,
   guidedExactProductAnswer,
   guidedProductDecision,
   guidedRequestedQuantity,
@@ -80,6 +81,8 @@ import {
   pendingQuoteQuantityRequest,
   quoteCreationBlockReason,
   sameProductReference,
+  withQuoteQuickReplies,
+  withVerifiedZeroStockLabel,
 } from "../_shared/guided-product-selection.mjs";
 import {
   readOnlyToolDecision,
@@ -1013,14 +1016,14 @@ async function listCategories(admin: SupabaseClient) {
 }
 
 function formatProductForLLM(p: Record<string, unknown>, detail = false) {
-  const inv = (p.inventory as Array<{ quantity: number }> | null) ?? [];
-  const stock = inv.reduce((acc, i) => acc + Number(i.quantity ?? 0), 0);
+  const inv = Array.isArray(p.inventory) ? p.inventory as Array<{ quantity: number }> : null;
+  const stock = inv?.reduce((acc, i) => acc + Number(i.quantity ?? 0), 0) ?? null;
   const imgs = Array.isArray(p.images) ? (p.images as string[]) : [];
   const base = {
     sku: p.sku, name_th: p.name_th, name_en: p.name_en, brand: p.brand,
     category: (p.category as { name_th?: string } | null)?.name_th ?? null,
     group: (p.group as { name?: string } | null)?.name ?? null,
-    unit: p.unit, stock, in_stock: stock > 0, status: p.status,
+    unit: p.unit, stock, in_stock: stock == null ? null : stock > 0, status: p.status,
     min_order_qty: Math.max(1, Number(p.min_order_qty ?? 1)),
     price_lookup_required: true,
     image_thumb: imgs.length > 0 ? imgs[0] : null,
@@ -1657,13 +1660,13 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 ⚠️ ถ้า find_products ส่ง selection_required=true: ให้ถาม clarification_question_th เพียงคำถามเดียว รอคำตอบ แล้วค้นใหม่โดยรวมชื่อ/รุ่นเดิมกับข้อมูลที่ลูกค้าเพิ่งตอบ ห้ามเสนอราคา ห้ามเดา SKU และห้ามเรียก capture_lead จนกว่าจะถามข้อมูลที่ขาดและค้นซ้ำแล้วไม่พบสินค้าจริง
 💰 เมื่อลูกค้าถามราคา: ต้องค้นจนได้ SKU ที่ตรงเพียงรายการเดียวและทราบจำนวนที่ลูกค้าต้องการก่อน แล้วเรียก get_exact_price ทุกครั้ง ถ้ายังไม่ทราบจำนวนให้ถามจำนวนก่อน ห้ามใช้ตัวเลขราคาจากผลค้นสินค้า ประวัติแชต หรือคำนวณส่วนลดเอง และห้ามบอกลูกค้าว่าราคามาจาก Tier ราคาเฉพาะลูกค้า ประวัติ FlowAccount หรือสถานะการยืนยันตัวตน
-✅ เมื่อลูกค้าเลือกสินค้าจนได้ SKU เดียวแล้ว ให้แจ้งชื่อสินค้ากับสต็อกจากผลค้นล่าสุดและถามจำนวนถ้ายังไม่ทราบ เมื่อได้จำนวนและตรวจราคาด้วย get_exact_price แล้ว ให้สรุปราคา/สต็อกและถามสั้นๆ ว่า "ให้เอยทำใบเสนอราคาให้เลยไหมคะ" ห้ามเรียก request_quote จนกว่าลูกค้าจะตอบตกลงและมีข้อมูลบังคับครบ
+✅ เมื่อลูกค้าเลือกสินค้าจนได้ SKU เดียวแล้ว ให้แจ้งชื่อสินค้ากับสต็อกจากผลค้นล่าสุดและถามจำนวนถ้ายังไม่ทราบ เมื่อได้จำนวนและตรวจราคาด้วย get_exact_price แล้ว ให้สรุปราคา/สต็อกและถามสั้นๆ ว่า "ให้เอยทำใบเสนอราคาให้เลยไหมคะ" พร้อมตัวเลือกขึ้นบรรทัดใหม่ "1. ต้องการใบเสนอราคา" และ "2. ไม่ต้องการ" เพื่อให้ LINE แสดงปุ่ม Quick Reply ห้ามเรียก request_quote จนกว่าลูกค้าจะตอบตกลงและมีข้อมูลบังคับครบ
 
 🚫 ห้ามเสนอสินค้าเพียงเพราะขนาด เบอร์ หรือการใช้งานใกล้เคียงกัน หากเป็นคนละชนิดสินค้า. เมื่อไม่มีตัวเลือกที่ผ่านเงื่อนไข ให้บอกว่าจะตรวจสอบจัดหา/สั่งผลิตกับคุณเชอร์รี่ แทนการเดาสินค้าทดแทน
 
 4. Tool คืน 0 ผล + ไม่มี clarification_candidates และไม่มี selection_required หลังจากถามข้อมูลที่ขาดแล้ว → ห้ามบอกว่า ไม่มี/ไม่พบ ให้บอกว่าขอให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิต/จัดหาได้ไหม แล้วแจ้งกลับ
 5. ⚠️ ทุกครั้งที่เสนอตัวเลือกสินค้า, สินค้าทดแทน, สินค้าใกล้เคียง หรือรายการเบอร์/ขนาด/สเป็กสินค้าใดๆ ให้ลูกค้าเลือก (รวมถึงกรณีเสนอนำเสนอตัวเลือกเพื่อสั่งผลิต/สั่งซื้อ): ต้องจัดรูปแบบเป็นรายการลำดับตัวเลข "1.", "2.", "3." เสมอ (ห้ามใช้สัญลักษณ์หรืออีโมจิอื่นๆ เช่น ✨ หรือ • นำหน้าชื่อตัวเลือกเด็ดขาด) เพื่อให้หมายเลขตรงกับปุ่มกด Quick Reply
-6. เจอสินค้าแต่ in_stock=false → เสนอสั่งผลิตเสมอ ไม่ใช่ตอบแค่ หมด
+6. เจอสินค้าแต่ stock=0 ที่ตรวจสอบแล้ว → ระบุคำว่า "สินค้าสั่งผลิต" เสมอ ไม่ใช่ตอบแค่ หมด; stock=null คือยังไม่ได้ตรวจสต็อก ห้ามเดาว่าเป็นศูนย์
 7. query: ใส่เฉพาะตัวระบุสินค้า (ชื่อ/SKU/ขนาด)
 8. 🔒 กฎสินค้าทดแทน (ห้ามฝ่าฝืน):
    - เสนอสินค้าได้เฉพาะผลจาก tool ที่มี safe_alternative=true เท่านั้น
@@ -1680,7 +1683,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 - หากตีความได้ว่าเป็น "สลิปโอนเงิน / สลิปแจ้งชำระเงิน": ห้ามแนะนำสินค้า ค้นหาสินค้า หรือเรียกใช้ tool ใดๆ ทั้งสิ้น และห้ามนำข้อมูลในสลิปมาเสนอขายต่อ ให้ตอบเพียงว่า "ขอบพระคุณค่ะ เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ" ห้ามระบุ/อ่าน/คาดเดายอดเงิน วันที่ เวลา เลขบัญชี ชื่อผู้โอน เลขอ้างอิง หรือยืนยันว่าชำระสำเร็จโดยเด็ดขาด แม้เห็นข้อมูลในภาพ
 - หากเป็นรูปภาพอื่นๆ (เช่น รูปสินค้าจริง ชิ้นงานหน้างาน หรือตัวอย่างการใช้งานทั่วไป): ให้ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ และเรียก find_products เพื่อค้นหาสินค้าที่เกี่ยวข้องหรือใกล้เคียงเสนอให้ลูกค้า — ห้ามเดาราคา/สเป็กจากรูปเอง
 
-📦 ช่องข้อมูลจาก tool: stock (0=หมด), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
+📦 ช่องข้อมูลจาก tool: stock (0=สินค้าสั่งผลิต, null=ยังไม่ได้ตรวจ), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
 🧠 อ่านประวัติ: ทักทายแล้วห้ามทักซ้ำ; อันนั้น = สินค้าที่เพิ่งคุย
 🖼️ รูปสินค้า: ใช้ image_thumb เป็น ![ชื่อ SKU](url)
 
@@ -1702,11 +1705,11 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 3. If you say let me check → you MUST call a tool in the SAME reply.
 ⚠️ When find_products returns selection_required=true: ask clarification_question_en only, wait for the answer, then search again using the original product/model plus the new details. Do not quote a price, guess a SKU, or call capture_lead until the missing details have been asked and the refined search truly has no match.
 💰 When the customer asks for a price: first resolve exactly one SKU and obtain the customer's exact quantity, then call get_exact_price every time. Ask for quantity when it is missing. Never use a number from product search/chat history or calculate a discount yourself. Never reveal whether the price came from Tier, a customer rule, FlowAccount history, or identity-verification state.
-✅ After the customer selects one exact SKU, share its name and freshly checked stock, then ask for quantity if missing. Once quantity and get_exact_price are available, summarize price and stock and ask whether they want a quotation. Do not call request_quote until the customer agrees and all required details are present.
+✅ After the customer selects one exact SKU, share its name and freshly checked stock, then ask for quantity if missing. Once quantity and get_exact_price are available, summarize price and stock and ask whether they want a quotation, followed by numbered "1. Request a quotation" and "2. No quotation" choices for LINE Quick Reply. Do not call request_quote until the customer agrees and all required details are present.
 🚫 NEVER offer a product merely because its size, grit, or use is similar when it is a different product type. If no safe option exists, escalate for sourcing/made-to-order instead of guessing a substitute.
 4. 0 results + no candidates and no selection_required after clarification → offer made-to-order via Khun Cherry.
 5. ⚠️ Whenever offering product options, alternatives, similar items, or lists of sizes/grits/specs for the customer to choose from (including made-to-order variant choices): You MUST present them as a numbered list starting with "1.", "2.", "3." (do NOT use emojis like ✨ or bullet points like • for these lists under any circumstances) so that the numbers align exactly with the Quick Reply buttons.
-6. in_stock=false → offer made-to-order, never just out of stock.
+6. Verified stock=0 → explicitly say "made to order", never just out of stock. A null stock has not been verified; do not call it zero.
 7. query: pass ONLY product identifier.
 8. 🔒 SUBSTITUTION GATE (non-negotiable):
    - Offer only tool results with safe_alternative=true.
@@ -1721,7 +1724,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 - If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team. Never use a product from old chat history as a substitute for the document contents.
 - If interpreted as a "bank transfer slip / payment receipt": DO NOT recommend products, search products, or call any tools. Reply only with a generic accounting-review acknowledgement. Never state, extract, infer, or confirm an amount, date, time, account number, payer, reference, or payment success from the image.
 - If it is any other image (e.g., product photo, physical workpiece, general usage example): Describe what you see briefly and call find_products to recommend matching or related products to the customer. Never invent price/specs from a photo.
-📦 Fields: stock (0=oos), in_stock, min_order_qty (always use), unit.
+📦 Fields: stock (0=made to order, null=not verified), in_stock, min_order_qty (always use), unit.
 
 🤝 CAPTURE LEADS / QUOTES (sales opportunity)
 • Call capture_lead only when the customer explicitly requests human contact, leaves a phone number for contact, places a bulk request with quantity, or asks something the relevant tools still cannot verify. Mere product interest or a price, stock, image, or detail question is not a reason to call capture_lead.
@@ -2311,6 +2314,17 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     ? { kind: "follow_up", history: contextHistory, topicQuery: null }
     : routeLatestTurn(query, contextHistory);
   const productHistory = latestTurn.history;
+  if (trustedQuoteHistory && images.length === 0 && declinedGuidedQuoteRequest(query, productHistory)) {
+    const answer = lang === "th"
+      ? "รับทราบค่ะ หากต้องการใบเสนอราคาภายหลังแจ้งเอยได้เลยนะคะ"
+      : "Understood. Let me know if you would like a quotation later.";
+    const firstTokenMs = Date.now() - telemetry.startedAt;
+    send({ type: "text", chunk: answer });
+    if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", answer, { model: "catalog:quote_declined", channel });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "catalog:quote_declined", tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
+    scheduleSimpleRun("catalog:quote_declined", "ok", firstTokenMs, [], 0, 0);
+    return;
+  }
   const acceptedQuote = trustedQuoteHistory && images.length === 0
     ? confirmedGuidedQuoteRequest(query, productHistory)
       ?? (QUOTE_QUANTITY_CONTINUATION_ENABLED ? pendingQuoteQuantityRequest(query, productHistory) : null)
@@ -2711,6 +2725,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   // Request-local only: stale tool results from conversation history never
   // authorize a current price. Each outcome is bound to its SKU + quantity.
   const exactPriceOutcomes = new Map<string, unknown | null>();
+  let verifiedZeroStockProduct: Record<string, unknown> | null = null;
   let trustedQuoteResult: unknown = null;
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let iterText = "";
@@ -2735,7 +2750,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     contents.push({ role: "model", parts: r.allParts });
     const toolsStartedAt = Date.now();
     const responseParts: Array<{ functionResponse: { name: string; response: unknown } }> = new Array(r.toolCalls.length);
-    let forcedSelectionQuestion: string | null = null;
+      let forcedSelectionQuestion: string | null = null;
     for (const { call, index } of prioritizeProductToolCalls(r.toolCalls)) {
       const effectiveArgs = call.name === "find_products" && hasContextualProductQuery
         ? { ...call.args, query: contextualProductQuery }
@@ -2801,6 +2816,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
 
       let resultMeta: ToolResultMeta | undefined = dispatchResultMeta;
       if (call.name === "find_products" || call.name === "get_product_detail") {
+        verifiedZeroStockProduct = null;
         const lookupDisposition = productSearchDisposition(result);
         if (lookupDisposition === "needs_selection") productSelectionPending = true;
         const selection = result && typeof result === "object" ? result as Record<string, unknown> : null;
@@ -2819,6 +2835,9 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
           .slice(0, 12);
         if (lookupDisposition === "resolved" && selectedSkus.length === 1) {
           exactPriceEligibleSkus.add(selectedSkus[0].trim().toUpperCase());
+          const exactProduct = productRows.length === 1 ? productRows[0]
+            : selection?.sku === selectedSkus[0] ? selection : null;
+          verifiedZeroStockProduct = exactProduct?.stock === 0 ? exactProduct : null;
         }
         resultMeta = {
           ...resultMeta,
@@ -2920,6 +2939,10 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     });
   }
   fullAnswer = guardedPriceAnswer.answer;
+  if (!productSelectionPending && verifiedZeroStockProduct) {
+    fullAnswer = withVerifiedZeroStockLabel(fullAnswer, verifiedZeroStockProduct, lang);
+  }
+  fullAnswer = withQuoteQuickReplies(fullAnswer, lang);
   if (fullAnswer) send({ type: "text", chunk: fullAnswer });
 
   const generationMs = Date.now() - generationStartedAt;

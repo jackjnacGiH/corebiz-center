@@ -293,20 +293,20 @@ export function guidedExactProductAnswer(product, quantity = null, price = null,
     ? `${name} สี${verifiedColor}` : name;
   const sku = clean(product.sku);
   const unit = clean(product.unit) || (lang === "th" ? "ชิ้น" : "piece");
-  const stock = Number(product.stock);
+  const stock = product.stock == null ? NaN : Number(product.stock);
   const stockText = Number.isFinite(stock)
-    ? lang === "th" ? `สต็อกที่ตรวจได้ ${stock} ${unit}` : `Current stock: ${stock} ${unit}`
+    ? lang === "th" ? `สต็อกที่ตรวจได้ ${stock} ${unit}${stock === 0 ? " (สินค้าสั่งผลิต)" : ""}` : `Current stock: ${stock} ${unit}${stock === 0 ? " (made to order / สินค้าสั่งผลิต)" : ""}`
     : "";
   const minimum = Math.max(1, Number(product.min_order_qty ?? 1));
   if (quantity != null && quantity < minimum) {
     return lang === "th"
-      ? `พบ ${displayName} (SKU ${sku}) ค่ะ ขั้นต่ำ ${minimum} ${unit} ต้องการปรับจำนวนเป็นเท่าไรคะ`
-      : `I found ${name} (SKU ${sku}). The minimum is ${minimum} ${unit}. What quantity would you like?`;
+      ? `พบ ${displayName} (SKU ${sku}) ค่ะ${stockText ? ` ${stockText}` : ""} ขั้นต่ำ ${minimum} ${unit} ต้องการปรับจำนวนเป็นเท่าไรคะ`
+      : `I found ${name} (SKU ${sku}).${stockText ? ` ${stockText}.` : ""} The minimum is ${minimum} ${unit}. What quantity would you like?`;
   }
   if (quantity != null && price?.ok === true && price?.exact_match === true && price?.sku === sku) {
     return lang === "th"
-      ? `พบ ${displayName} (SKU ${sku}) ค่ะ จำนวน ${quantity} ${unit} ราคา ${price.unit_price} บาท/${unit}${stockText ? ` ${stockText}` : ""}\nให้เอยทำใบเสนอราคาให้เลยไหมคะ`
-      : `I found ${name} (SKU ${sku}). For ${quantity} ${unit}, the price is THB ${price.unit_price}/${unit}.${stockText ? ` ${stockText}.` : ""} Would you like a quotation?`;
+      ? `พบ ${displayName} (SKU ${sku}) ค่ะ จำนวน ${quantity} ${unit} ราคา ${price.unit_price} บาท/${unit}${stockText ? ` ${stockText}` : ""}\nให้เอยทำใบเสนอราคาให้เลยไหมคะ\n1. ต้องการใบเสนอราคา\n2. ไม่ต้องการ`
+      : `I found ${name} (SKU ${sku}). For ${quantity} ${unit}, the price is THB ${price.unit_price}/${unit}.${stockText ? ` ${stockText}.` : ""} Would you like a quotation?\n1. Request a quotation\n2. No quotation`;
   }
   if (quantity != null) return null;
   return lang === "th"
@@ -314,11 +314,43 @@ export function guidedExactProductAnswer(product, quantity = null, price = null,
     : `I found ${name} (SKU ${sku}).${stockText ? ` ${stockText}.` : ""} How many ${unit} would you like?${minimum > 1 ? ` (Minimum ${minimum} ${unit})` : ""}`;
 }
 
-const SHORT_QUOTE_CONSENT_RE = /^(?:เอา|ได้|ตกลง|ทำ|ทํา|จัด|โอเค|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu;
+/** Keep quote choices actionable in LINE even when the answer came from the model. */
+export function withQuoteQuickReplies(answer, lang = "th") {
+  const text = String(answer ?? "");
+  const offerQuestion = /(?:คุณลูกค้า)?(?:ให้เอยทำใบเสนอราคาให้เลยไหมคะ|(?:ต้องการ|สนใจ|ให้เอย|ให้เรา).{0,40}ใบเสนอราคา.{0,30}(?:(?:ไหม|มั้ย|หรือไม่)(?:คะ|ครับ|ค่ะ)?|\?))|Would you like a quotation\?/iu.exec(text)?.[0];
+  const exactOffer = new Set(skuCodes(text)).size === 1
+    && /(?:จำนวน|For)\s+\d{1,6}\s+/iu.test(text);
+  if (!offerQuestion || /ใบเสนอราคา(?:เดิม|อีก|ซ้ำ|เลขที่)|QT-\d+/iu.test(offerQuestion)
+    || !exactOffer || /^\s*\d{1,2}[.)]\s+/mu.test(text)) return text;
+  const canonicalQuestion = lang === "th" ? "ให้เอยทำใบเสนอราคาให้เลยไหมคะ" : "Would you like a quotation?";
+  return `${text.replace(offerQuestion, canonicalQuestion).trimEnd()}\n${lang === "th"
+    ? "1. ต้องการใบเสนอราคา\n2. ไม่ต้องการ"
+    : "1. Request a quotation\n2. No quotation"}`;
+}
+
+/** Only label a product made-to-order when the current lookup verified zero stock. */
+export function withVerifiedZeroStockLabel(answer, product, lang = "th") {
+  const stock = product?.stock == null ? NaN : Number(product.stock);
+  const text = String(answer ?? "");
+  if (stock !== 0 || /สินค้าสั่งผลิต|made.to.order/iu.test(text)) return text;
+  const name = clean(lang === "th" ? product.name_th || product.name_en : product.name_en || product.name_th);
+  if (!name) return text;
+  return `${text.trimEnd()}\n${lang === "th" ? `${name} เป็นสินค้าสั่งผลิตค่ะ` : `${name} is made to order (สินค้าสั่งผลิต).`}`;
+}
+
+const SHORT_QUOTE_CONSENT_RE = /^(?:เอา|ได้|ตกลง|ทำ|ทํา|จัด|โอเค|ต้องการ|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu;
+const QUOTE_DECLINE_RE = /^(?:(?:ขอ\s*)?(?:ยัง\s*)?ไม่\s*(?:ต้องการ|เอา|(?:ต้อง)?(?:ทำ|ทํา|ออก)|อยากได้)(?:\s*(?:ให้(?:เอย|เรา)?\s*)?(?:ทำ|ทํา|ออก))?(?:\s*ใบ(?:เสนอ)?ราคา)?(?:\s*(?:ก่อน|ตอนนี้|แล้ว))?|no(?:\s+quotation)?|not\s+now|no\s+thanks)(?:ครับ|ค่ะ|คะ|นะครับ|นะคะ)?[.!?\s]*$/iu;
 const DIRECT_QUOTE_RE = /(?:ขอ|ต้องการ|อยากได้|ออก|ทำ|ทํา|จัดทำ|จัดทํา|ส่ง)\s*(?:ใบเสนอราคา|ใบราคา)|\b(?:issue|prepare|create|make|send|need|want|request)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:quotation|quote)\b/iu;
 const EXACT_QUOTE_OFFER_RE = /ให้เอยทำใบเสนอราคาให้เลยไหมคะ|Would you like a quotation\?/iu;
 const COMPLETED_QUOTE_RE = /(?:ทำ|ทํา|สร้าง|ออก|ใช้)ใบเสนอราคา(?:ฉบับ)?(?:เลขที่|หมายเลข)?\s*(QT-\d+)/iu;
-const bareQuoteRequest = (text) => DIRECT_QUOTE_RE.test(text)
+const numberedQuoteChoice = (text, history, number) => {
+  if (!new RegExp(`^${number}[.)]?$`, "u").test(text)) return false;
+  const last = history.at(-1);
+  return last?.role === "assistant" && EXACT_QUOTE_OFFER_RE.test(last.content)
+    && /^\s*1\.\s+(?:ต้องการใบเสนอราคา|Request a quotation)\s*$/imu.test(last.content)
+    && /^\s*2\.\s+(?:ไม่ต้องการ(?:ใบเสนอราคา)?|No quotation)\s*$/imu.test(last.content);
+};
+const bareQuoteRequest = (text) => !QUOTE_DECLINE_RE.test(text) && DIRECT_QUOTE_RE.test(text)
   && !/ใบเสนอราคาใหม่|\bnew\s+(?:quotation|quote)\b|\bQT-\d+\b/iu.test(text)
   && !OTHER_PRODUCT_RE.test(text) && extractModelCodes(text).length === 0
   && !/(?:\bSKU\s*[:：]?\s*[A-Z0-9._/-]+|\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|#\s*\d+|(?:เบอร์|ขนาด|ไซซ์|size|grit)\s*\d+)/iu.test(text);
@@ -326,7 +358,8 @@ const bareQuoteRequest = (text) => DIRECT_QUOTE_RE.test(text)
 /** Resolve a confirmed exact offer, including a direct repeat after one short consent. */
 export function confirmedGuidedQuoteRequest(query, history = []) {
   const text = clean(query);
-  const shortConsent = SHORT_QUOTE_CONSENT_RE.test(text);
+  if (QUOTE_DECLINE_RE.test(text)) return null;
+  const shortConsent = SHORT_QUOTE_CONSENT_RE.test(text) || numberedQuoteChoice(text, history, 1);
   const directRequest = bareQuoteRequest(text);
   if (!shortConsent && !directRequest) return null;
   const offerIndex = history.findLastIndex((item) => item.role === "assistant"
@@ -349,13 +382,23 @@ export function confirmedGuidedQuoteRequest(query, history = []) {
     : { sku: skus[0], qty: Number(quantity) };
 }
 
+/** A decline applies only to the immediately preceding exact-item offer. */
+export function declinedGuidedQuoteRequest(query, history = []) {
+  const text = clean(query);
+  if (!QUOTE_DECLINE_RE.test(text) && !numberedQuoteChoice(text, history, 2)) return false;
+  const last = history.at(-1);
+  if (last?.role !== "assistant" || !EXACT_QUOTE_OFFER_RE.test(last.content)) return false;
+  return new Set(skuCodes(last.content)).size === 1
+    && /(?:จำนวน|For)\s+\d{1,6}\s+/iu.test(last.content);
+}
+
 /** Quantity may finish only the customer's immediately pending, exact-SKU quote request. */
 export function pendingQuoteQuantityRequest(query, history = []) {
   const prompt = quantityPrompt(query, history);
   if (!prompt || /\bQT-\d+\b|(?:สร้าง|ทำ|ส่ง)ใบเสนอราคา(?:เลขที่|แล้ว)/iu.test(prompt.question)) return null;
   const quoteIndex = history.findLastIndex((item) => item.role === "user");
   const quoteText = clean(history[quoteIndex]?.content);
-  if (quoteIndex < 0 || !DIRECT_QUOTE_RE.test(quoteText)
+  if (quoteIndex < 0 || QUOTE_DECLINE_RE.test(quoteText) || !DIRECT_QUOTE_RE.test(quoteText)
     || /\bQT-\d+\b|ใบเสนอราคา(?:ฉบับ)?เดิม/iu.test(quoteText)) return null;
   if (history.slice(quoteIndex + 1).some((item) => /\bQT-\d+\b|(?:สร้าง|ทำ|ส่ง)ใบเสนอราคา(?:เลขที่|แล้ว)/iu.test(item.content))) return null;
   if (!/ใบเสนอราคาใหม่|new\s+(?:quotation|quote)/iu.test(quoteText)
@@ -388,6 +431,7 @@ export function quoteCreationBlockReason(query, hasImages, history = []) {
   if (hasImages) return "image_or_document";
   const text = clean(query);
   if (!text) return "empty_message";
+  if (QUOTE_DECLINE_RE.test(text) || declinedGuidedQuoteRequest(text, history)) return "quote_declined";
   if (/^(?:ขอบคุณ|ขอบใจ|thanks?|thank\s+you)(?:\s*(?:มาก|มากครับ|มากค่ะ|ครับ|ค่ะ|นะ|นะครับ|นะคะ|so\s+much|very\s+much|again|!|🙏|😊|🙂))*$/iu.test(text)) {
     return "acknowledgement";
   }
@@ -402,6 +446,8 @@ export function quoteCreationBlockReason(query, hasImages, history = []) {
     && !/ใบเสนอราคาใหม่/iu.test(text)) {
     return "existing_quote_followup";
   }
+  const acceptedExactOffer = confirmedGuidedQuoteRequest(text, history);
+  if (acceptedExactOffer) return "existingQuoteCode" in acceptedExactOffer ? "existing_quote_followup" : null;
   const directRequest = DIRECT_QUOTE_RE.test(text);
   const latestOfferIndex = history.findLastIndex((item) => item.role === "assistant"
     && EXACT_QUOTE_OFFER_RE.test(item.content));
@@ -414,7 +460,8 @@ export function quoteCreationBlockReason(query, hasImages, history = []) {
   const last = history.at(-1);
   const quoteOffer = last?.role === "assistant"
     && /(?:ใบเสนอราคา|quotation).{0,40}(?:ไหม|มั้ย|หรือเปล่า|หรือไม่|\?)/iu.test(last.content);
-  return shortConsent && quoteOffer ? null : "not_explicit_quote_request";
+  return shortConsent && quoteOffer && confirmedGuidedQuoteRequest(text, history)
+    ? null : "not_explicit_quote_request";
 }
 
 export async function guidedProductDecision(query, history, lang, lookup) {

@@ -1,6 +1,7 @@
 import { extractModelCodes, productMatchFacets } from "./product-selection.mjs";
 import { productModelSearchRoot } from "./product-match-score.mjs";
 import { mergeFacetOnlyProductQuery, pendingProductQuestion } from "./product-turn-context.mjs";
+import { withVerifiedZeroStockLabel } from "./guided-product-selection.mjs";
 
 const PRODUCT_WORD_RE = /กระดาษทราย|ผ้าทราย|จานทราย|ล้อทราย|สายพาน|ใบขัด|ใบตัด|ใบเจียร|แผ่นขัด|\b(?:sku|abrasive|sanding|product)\b/iu;
 const SHORT_FOLLOW_UP_RE = /^(?:มี(?:ตัว)?ไหน|มี(?:สินค้า)?ไหม|มีมั้ย|มีหรือเปล่า|ยังมี|มีไหมครับ|มีไหมคะ|อันไหน|รุ่นไหน)(?:ครับ|ค่ะ|คะ|นะ)?[?.!\s]*$/iu;
@@ -82,7 +83,7 @@ export async function recoverEmptyProductAnswer(query, history, lang, lookup) {
     const answer = lang === "th"
       ? `พบสินค้า ${name} รหัส ${sku} ค่ะ ต้องการกี่ชิ้นคะ`
       : `I found ${name} (SKU ${sku}). How many pieces would you like?`;
-    return { answer, lookupQuery: structuredQuery, result };
+    return { answer: withVerifiedZeroStockLabel(answer, p, lang), lookupQuery: structuredQuery, result };
   }
   if (Array.isArray(result?.products) && result.products.length > 1) {
     const choices = result.products.slice(0, 3).map((p, i) => `${i + 1}. ${clean(lang === "th" ? p.name_th || p.name_en : p.name_en || p.name_th)}`).join("\n");
