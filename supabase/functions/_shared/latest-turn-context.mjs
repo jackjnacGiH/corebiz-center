@@ -74,7 +74,14 @@ function isFollowUpTurn(query, precedingAssistant) {
 /** Scope old turns to the latest product topic before any product routing. */
 export function routeLatestTurn(query, history = []) {
   const turns = (Array.isArray(history) ? history : [])
-    .map((item) => ({ role: item?.role === "assistant" ? "assistant" : "user", content: clean(item?.content) }))
+    .map((item) => {
+      const role = item?.role === "assistant" ? "assistant" : "user";
+      const raw = String(item?.content ?? "").trim();
+      // The product resolver reads one numbered choice per line. Keep only
+      // those bot offers multiline; normalize all other turns as before.
+      const content = role === "assistant" && /^\s*1\.\s+/mu.test(raw) ? raw : clean(raw);
+      return { role, content };
+    })
     .filter((item) => item.content);
   let topicStart = -1;
   let topicQuery = null;

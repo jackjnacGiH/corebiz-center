@@ -95,6 +95,42 @@ export function normalizeGuidedProductTerm(value) {
 }
 
 const normalized = normalizeGuidedProductTerm;
+const CATALOG_PAGE_SIZE = 10;
+const MORE_CHOICES = { th: "แสดงเพิ่มเติม", en: "Show more" };
+
+function nextCatalogPage(query, history) {
+  const offer = history.at(-1);
+  if (offer?.role !== "assistant") return null;
+  const text = clean(query);
+  const more = /^11\.\s+(?:แสดงเพิ่มเติม|Show more)\s*$/imu.exec(offer.content);
+  if (!more || !/^(?:11|แสดงเพิ่มเติม|Show more)$/iu.test(text)) return null;
+  const page = /(?:หน้า|page)\s*(\d+)\s*\/\s*(\d+)/iu.exec(offer.content);
+  const firstOption = /^1\.\s+(.+)$/mu.exec(offer.content)?.[1];
+  const catalogQuery = /^(.+?)\s*#\s*\d{1,5}[A-Z]?\s*$/iu.exec(firstOption ?? "")?.[1]?.trim();
+  return page && catalogQuery
+    ? { lookupQuery: catalogQuery, pageIndex: Number(page[1]) } : null;
+}
+
+function pagedGritQuestion(result, lang, pageIndex = 0) {
+  const answer = pendingProductQuestion(result, lang);
+  if (result?.match_scan_complete !== true || !result?.missing_fields?.includes("grit")) return answer;
+  const lines = answer.split(/\r?\n/u);
+  const choices = lines.map((line) => /^\s*(\d{1,2})\.\s+(.+)$/u.exec(line)).filter(Boolean);
+  if (choices.length <= CATALOG_PAGE_SIZE
+    || !choices.every((choice, index) => Number(choice[1]) === index + 1)) return answer;
+  const bases = choices.map((choice) => /^(.+?)\s*#\s*\d{1,5}[A-Z]?\s*$/iu.exec(choice[2])?.[1]?.trim());
+  if (!bases[0] || !bases.every((base) => base === bases[0])) return answer;
+  const totalPages = Math.ceil(choices.length / CATALOG_PAGE_SIZE);
+  const currentPage = Math.min(Math.max(0, pageIndex), totalPages - 1);
+  const intro = lines.slice(0, lines.findIndex((line) => /^\s*1\.\s+/u.test(line)))
+    .join("\n").replace(/ หากไม่เห็นปุ่ม พิมพ์หมายเลขหน้ารายการได้ค่ะ/gu, "")
+    .replace(/ or type its list number/giu, "").trim();
+  const pageChoices = choices.slice(currentPage * CATALOG_PAGE_SIZE, (currentPage + 1) * CATALOG_PAGE_SIZE)
+    .map((choice, index) => `${index + 1}. ${choice[2]}`);
+  const more = currentPage + 1 < totalPages ? [`11. ${MORE_CHOICES[lang === "th" ? "th" : "en"]}`] : [];
+  const marker = lang === "th" ? `หน้า ${currentPage + 1}/${totalPages}` : `Page ${currentPage + 1}/${totalPages}`;
+  return [intro, marker, ...pageChoices, ...more].join("\n");
+}
 const isOtherProductTurn = (value) => !FLAP_DISC_RE.test(value)
   && (OTHER_PRODUCT_RE.test(value) || PRODUCT_SWITCH_RE.test(value)
     && !productMatchFacets(value).size.length && !productMatchFacets(value).grit.length
@@ -382,11 +418,12 @@ export function quoteCreationBlockReason(query, hasImages, history = []) {
 }
 
 export async function guidedProductDecision(query, history, lang, lookup) {
-  const lookupQuery = guidedCatalogQuery(query, history);
+  const nextPage = nextCatalogPage(query, history);
+  const lookupQuery = nextPage?.lookupQuery ?? guidedCatalogQuery(query, history);
   if (!lookupQuery) return null;
   const result = await lookup(lookupQuery);
   if (result?.selection_required) {
-    return { answer: pendingProductQuestion(result, lang), lookupQuery, result };
+    return { answer: pagedGritQuestion(result, lang, nextPage?.pageIndex), lookupQuery, result };
   }
 
   // An unavailable grit is not proof that the product family is unavailable.
@@ -403,7 +440,7 @@ export async function guidedProductDecision(query, history, lang, lookup) {
         ? `ยังไม่พบเบอร์ ${grit} ของสินค้าที่ระบุในรายการที่ตรวจได้ค่ะ ตัวเลือกที่มีในระบบ:`
         : `I could not find grit ${grit} for that product. Available catalog choices:`;
       return {
-        answer: `${intro}\n${pendingProductQuestion(available, lang)}`,
+        answer: `${intro}\n${pagedGritQuestion(available, lang)}`,
         lookupQuery: relaxedQuery,
         result: available,
       };

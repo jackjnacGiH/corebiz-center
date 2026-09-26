@@ -531,27 +531,62 @@ test("SA331 5-inch grit question lists real available grits and correct backing"
   assert.doesNotMatch(recovered.answer, /ใช้ขนาดเท่าไร/);
   assert.doesNotMatch(recovered.answer, /ยังยืนยันรุ่น SA331/);
 });
-test("SA331 5-inch catalog offer lists all nineteen grits and accepts the last number", async () => {
+test("SA331 5-inch grit choices paginate and resolve both new and old numbered replies", async () => {
   const query = 'กระดาษทรายกลมสักหลาด SA331 5"';
   const lookup = value => edge.findProducts(fakeAdmin(), value);
-  const guided = await guidedProductDecision(query, [], "th", lookup);
-  assert.equal(guided.result.count, 19);
-  assert.equal(guided.result.match_scan_complete, true);
-  assert.equal(guided.result.selection_required, true);
-  assert.deepEqual(guided.result.missing_fields, ["grit"]);
-  assert.doesNotMatch(guided.answer, /ตัวอย่างสินค้า/);
-  assert.match(guided.answer, /พิมพ์หมายเลขหน้ารายการ/);
-  const options = guided.answer.split(/\r?\n/u).filter(line => /^\d{1,2}\. /u.test(line));
-  assert.equal(options.length, 19);
-  assert.deepEqual(options.map(line => Number(/#(\d+)$/u.exec(line)?.[1])),
-    [40, 60, 80, 100, 120, 150, 180, 220, 240, 280, 320, 400, 500, 600, 800, 1000, 1200, 1500, 2000]);
-  assert.ok(guided.answer.length <= 5_000);
+  const first = await guidedProductDecision(query, [], "th", lookup);
+  assert.equal(first.result.count, 19);
+  assert.equal(first.result.match_scan_complete, true);
+  assert.deepEqual(first.result.missing_fields, ["grit"]);
+  assert.match(first.answer, /หน้า 1\/2/);
+  assert.match(first.answer, /11\. แสดงเพิ่มเติม/);
+  assert.doesNotMatch(first.answer, /#1500|พิมพ์หมายเลขหน้ารายการ/);
+  const firstOptions = first.answer.split(/\r?\n/u).filter(line => /^\d{1,2}\. /u.test(line));
+  assert.equal(firstOptions.length, 11);
+  assert.deepEqual(firstOptions.slice(0, 10).map(line => Number(/#(\d+)$/u.exec(line)?.[1])),
+    [40, 60, 80, 100, 120, 150, 180, 220, 240, 280]);
 
-  const history = [{ role: "user", content: query }, { role: "assistant", content: guided.answer }];
-  assert.equal(routeLatestTurn("19", history).kind, "follow_up");
-  const chosen = await guidedProductDecision("19", history, "th", lookup);
+  const firstHistory = [{ role: "user", content: query }, { role: "assistant", content: first.answer }];
+  const moreRoute = routeLatestTurn("แสดงเพิ่มเติม", firstHistory);
+  assert.equal(moreRoute.kind, "follow_up");
+  const second = await guidedProductDecision("แสดงเพิ่มเติม", moreRoute.history, "th", lookup);
+  assert.match(second.answer, /หน้า 2\/2/);
+  assert.doesNotMatch(second.answer, /แสดงเพิ่มเติม|^\d+\..*#40$/mu);
+  const secondOptions = second.answer.split(/\r?\n/u).filter(line => /^\d{1,2}\. /u.test(line));
+  assert.equal(secondOptions.length, 9);
+  assert.deepEqual(secondOptions.map(line => Number(/#(\d+)$/u.exec(line)?.[1])),
+    [320, 400, 500, 600, 800, 1000, 1200, 1500, 2000]);
+  assert.match(secondOptions[7], /^8\..*#1500$/u);
+
+  const typedMore = routeLatestTurn("11", firstHistory);
+  assert.equal((await guidedProductDecision("11", typedMore.history, "th", lookup)).answer, second.answer);
+  const secondHistory = [...firstHistory, { role: "user", content: "แสดงเพิ่มเติม" },
+    { role: "assistant", content: second.answer }];
+  const chosenRoute = routeLatestTurn("8", secondHistory);
+  const chosen = await guidedProductDecision("8", chosenRoute.history, "th", lookup);
   assert.equal(chosen.result.selection_required, undefined);
-  assert.equal(chosen.result.products[0].sku, "2020000993");
+  assert.equal(chosen.result.products[0].sku, "2020000992");
+
+  const oldOffer = (await lookup(query)).clarification_question_th;
+  const oldRoute = routeLatestTurn("18", [{ role: "user", content: query }, { role: "assistant", content: oldOffer }]);
+  assert.equal(oldRoute.kind, "follow_up");
+  const oldChoice = await guidedProductDecision("18", oldRoute.history, "th", lookup);
+  assert.equal(oldChoice.result.products[0].sku, "2020000992");
+});
+test("an unavailable SA331 grit still paginates the catalog alternatives", async () => {
+  const query = 'กระดาษทรายกลมสักหลาด SA331 5" #999';
+  const lookup = value => edge.findProducts(fakeAdmin(), value);
+  const first = await guidedProductDecision(query, [], "th", lookup);
+  assert.match(first.answer, /ยังไม่พบเบอร์ #999/);
+  assert.match(first.answer, /หน้า 1\/2/);
+  assert.match(first.answer, /11\. แสดงเพิ่มเติม/);
+  assert.doesNotMatch(first.answer, /^\d+\..*#1500$/mu);
+
+  const history = [{ role: "user", content: query }, { role: "assistant", content: first.answer }];
+  const more = await guidedProductDecision("แสดงเพิ่มเติม",
+    routeLatestTurn("แสดงเพิ่มเติม", history).history, "th", lookup);
+  assert.match(more.answer, /หน้า 2\/2/);
+  assert.match(more.answer, /^8\..*#1500$/mu);
 });
 test("adhesive disc question offers the two real model families before asking grit", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
@@ -629,7 +664,12 @@ test("flap-disc question offers catalog backings before model and grit", async (
   const model = await guidedProductDecision("1", modelHistory, "th", lookup);
   assert.deepEqual(model.result.missing_fields, ["grit"]);
   assert.match(model.answer, /#40/);
-  assert.match(model.answer, /#400/);
+  assert.match(model.answer, /11\. แสดงเพิ่มเติม/);
+  const moreHistory = [...modelHistory, { role: "user", content: "1" },
+    { role: "assistant", content: model.answer }];
+  const more = await guidedProductDecision("แสดงเพิ่มเติม",
+    routeLatestTurn("แสดงเพิ่มเติม", moreHistory).history, "th", lookup);
+  assert.match(more.answer, /#400/);
   assert.doesNotMatch(model.answer, /หลังแข็ง/);
 
   const exact = await guidedProductDecision('จานทรายหลังอ่อน CS310X 48P 4" #80', [], "th", lookup);
@@ -765,7 +805,16 @@ test("Mika follow-up stays in adhesive catalog and offers actual MIRKA GOLD grit
   ], "th", lookup);
   assert.equal(result.result.selection_required, true);
   assert.match(result.answer, /MIRKA GOLD 5" #80/);
-  assert.match(result.answer, /MIRKA GOLD 5" #500/);
+  assert.match(result.answer, /11\. แสดงเพิ่มเติม/);
+  const history = [
+    { role: "user", content: 'ต้องการหลังกาว 5" #800 ครับ' },
+    { role: "assistant", content: "มีรุ่นที่ต้องการให้เลือกค่ะ" },
+    { role: "user", content: "แล้วรุ่น Mika มีไหมครับ" },
+    { role: "assistant", content: result.answer },
+  ];
+  const more = await guidedProductDecision("แสดงเพิ่มเติม",
+    routeLatestTurn("แสดงเพิ่มเติม", history).history, "th", lookup);
+  assert.match(more.answer, /MIRKA GOLD 5" #500/);
   assert.doesNotMatch(result.answer, /สักหลาด/);
 });
 test("quantity reply keeps the confirmed SKU and quotes only a matching resolver result", async () => {
