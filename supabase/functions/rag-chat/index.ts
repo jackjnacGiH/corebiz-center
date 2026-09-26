@@ -2315,7 +2315,9 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     : routeLatestTurn(query, contextHistory);
   const productHistory = latestTurn.history;
   if (trustedQuoteHistory && images.length === 0 && declinedGuidedQuoteRequest(query, productHistory)) {
-    const answer = "รับทราบค่ะ หากต้องการใบเสนอราคาภายหลังแจ้งเอยได้เลยนะคะ";
+    const answer = lang === "th"
+      ? "รับทราบค่ะ หากต้องการใบเสนอราคาภายหลังแจ้งเอยได้เลยนะคะ"
+      : "Understood. Let me know if you would like a quotation later.";
     const firstTokenMs = Date.now() - telemetry.startedAt;
     send({ type: "text", chunk: answer });
     if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", answer, { model: "catalog:quote_declined", channel });
