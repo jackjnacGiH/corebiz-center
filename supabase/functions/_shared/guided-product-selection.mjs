@@ -1,13 +1,13 @@
-import { extractModelCodes, productMatchFacets } from "./product-selection.mjs";
+import { extractModelCodes, normalizeProductSearchQuery, productMatchFacets } from "./product-selection.mjs";
 import { pendingProductQuestion } from "./product-turn-context.mjs";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const PRODUCT_RE = /กระดาษทราย|จานทราย|จาานราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const FLAP_DISC_RE = /จานทราย|\bflap\s*disc\b/iu;
 const NONWOVEN_ROLL_RE = /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:nonwoven|scotch\s*brite)\s*roll\b/iu;
-const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
+const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|หินเจียร|แผ่น(?:ขัด|เจียร)|แปรง(?:ลวด|ขัด)|สายพาน(?:ขัด|ทราย)|สว่านลม|เครื่องมือ(?:ลม)?|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)/iu;
-const FOLLOW_UP_RE = /(?:^|\s)(?:#\s*\d+|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+\s*(?:ชิ้น|ใบ|กล่อง|pcs?))|มีรุ่นไหน|รุ่นไหน|แนะนำ|\bmi(?:r)?ka\b|^\d{1,6}$/iu;
+const FOLLOW_UP_RE = /(?:^|\s)(?:#\s*\d+|(?:เบอร์|grit)\s*#?\s*\d+|(?:ขนาด|ไซซ์|size)\s*\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+\s*(?:ชิ้น|ใบ|กล่อง|pcs?))|มีรุ่นไหน|รุ่นไหน|แนะนำ|\bmi(?:r)?ka\b|^\d{1,6}$/iu;
 
 export function normalizeGuidedProductTerm(value) {
   return clean(value)
@@ -21,16 +21,25 @@ export function normalizeGuidedProductTerm(value) {
 
 const normalized = normalizeGuidedProductTerm;
 const isOtherProductTurn = (value) => !FLAP_DISC_RE.test(value)
-  && (OTHER_PRODUCT_RE.test(value) || PRODUCT_SWITCH_RE.test(value));
+  && (OTHER_PRODUCT_RE.test(value) || PRODUCT_SWITCH_RE.test(value)
+    && !productMatchFacets(value).size.length && !productMatchFacets(value).grit.length
+    && !/หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด/iu.test(value));
 
 function numberedChoice(query, history) {
-  if (!/^\d{1,2}$/u.test(query)) return query;
   const last = history.at(-1);
   if (last?.role !== "assistant") return query;
-  const line = String(last.content ?? "").split(/\r?\n/u)
-    .find((item) => new RegExp(`^\\s*${Number(query)}\\.\\s+`).test(item));
-  const choice = line?.replace(/^\s*\d{1,2}\.\s+/u, "").trim();
-  return choice && PRODUCT_RE.test(choice) ? choice : query;
+  const options = String(last.content ?? "").split(/\r?\n/u)
+    .map((line) => /^\s*\d{1,2}\.\s+(.+)$/u.exec(line)?.[1]?.trim())
+    .filter(Boolean);
+  const choice = /^\d{1,2}$/u.test(query)
+    ? options[Number(query) - 1]
+    : (() => {
+      const term = query.replace(/^(?:ขอ(?:เป็น|เอา)|เอา)\s*/iu, "");
+      if (!/^[A-Z][A-Z0-9 ._-]{2,30}$/iu.test(term)) return null;
+      const matches = options.filter((option) => option.toUpperCase().includes(term.toUpperCase()));
+      return matches.length === 1 ? matches[0] : null;
+    })();
+  return choice && (PRODUCT_RE.test(choice) || OTHER_PRODUCT_RE.test(choice)) ? choice : query;
 }
 
 function pendingExactQuantitySku(query, history) {
@@ -94,7 +103,24 @@ export function guidedCatalogQuery(query, history = []) {
     : /สักหลาด|velcro/iu.test(current) ? "สักหลาด"
     : /หลังกาว/iu.test(prior) ? "หลังกาว"
     : /สักหลาด|velcro/iu.test(prior) ? "สักหลาด" : "";
-  if (!backingText || !/(?:กระดาษทราย|SA331|PS36|MIRKA)/iu.test(current + " " + prior) && !/หลังกาว/iu.test(current)) return null;
+  if (!backingText || !/(?:กระดาษทราย|SA331|PS36|MIRKA)/iu.test(current + " " + prior) && !/หลังกาว/iu.test(current)) {
+    if (OTHER_PRODUCT_RE.test(current) || extractModelCodes(current).length) {
+      return normalizeProductSearchQuery(current);
+    }
+    if (!FOLLOW_UP_RE.test(current)) return null;
+    const lastProduct = [...history].reverse().find((item) => item.role === "user"
+      && (OTHER_PRODUCT_RE.test(normalized(item.content)) || extractModelCodes(item.content).length
+        || isOtherProductTurn(normalized(item.content))));
+    if (!lastProduct) return null;
+    if (!OTHER_PRODUCT_RE.test(normalized(lastProduct.content)) && !extractModelCodes(lastProduct.content).length) return null;
+    let base = normalized(normalizeProductSearchQuery(lastProduct.content));
+    const facets = productMatchFacets(current);
+    if (facets.size.length) base = base.replace(/\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)/giu, " ");
+    if (facets.grit.length) base = base.replace(/#\s*\d{1,5}[A-Z]?|(?:เบอร์|grit)\s*#?\s*\d{1,5}[A-Z]?/giu, " ");
+    const additional = [facets.size[0], facets.grit[0], facets.backing[0], facets.holes[0]]
+      .filter(Boolean).join(" ");
+    return clean(`${base} ${additional}`);
+  }
 
   const currentModel = extractModelCodes(current)[0]
     ?? (/MIRKA\s+GOLD/iu.test(current) ? "MIRKA GOLD" : /\bMIRKA\b/iu.test(current) ? "MIRKA" : "");

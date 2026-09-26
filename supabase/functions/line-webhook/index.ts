@@ -742,12 +742,16 @@ function composeQuoteReply(answer: string, quoteLink: string | null): string {
   return quoteLink ? [cleanAnswer, quoteLink].filter(Boolean).join("\n\n") : cleanAnswer;
 }
 
-async function loadHistory(admin: SupabaseClient, conversationId: string): Promise<Array<{ role: string; content: string }>> {
+async function loadHistory(admin: SupabaseClient, conversationId: string, incomingMessageId: string): Promise<Array<{ role: string; content: string }>> {
   const { data } = await admin.from("chat_messages")
-    .select("sender_type, content, metadata").eq("conversation_id", conversationId)
+    .select("sender_type, content, metadata, external_msg_id").eq("conversation_id", conversationId)
     .order("created_at", { ascending: false }).limit(CHAT_HISTORY_FETCH_LIMIT);
-  const rows = (data ?? []) as Array<{ sender_type: string; content: string; metadata: Record<string, unknown> | null }>;
-  return rows.reverse()
+  const rows = (data ?? []) as Array<{ sender_type: string; content: string; metadata: Record<string, unknown> | null; external_msg_id: string | null }>;
+  const chronological = rows.reverse();
+  const currentIndex = chronological.findIndex((row) => row.external_msg_id === incomingMessageId);
+  // A newer event can be stored while this webhook runs. Use only turns before
+  // this event, identified by its LINE ID; never feed a future turn to the bot.
+  return (currentIndex >= 0 ? chronological.slice(0, currentIndex) : [])
     .filter((r) => !(r.metadata && r.metadata.quote_link))   // drop dedicated quote-link messages
     .map((r) => ({
       role: r.sender_type === "customer" ? "user" : "assistant",
@@ -958,8 +962,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       aiReply = "ขออภัยค่ะ ตอนนี้เอยเปิดดูรูปไม่ได้ รบกวนพิมพ์ชื่อ/รุ่นสินค้ามาได้ไหมคะ เอยจะช่วยหาให้นะคะ 😊";
     } else {
       const historyStartedAt = Date.now();
-      const history = await loadHistory(admin, conversationId);
-      const priorHistory = history.slice(0, -1);
+      const priorHistory = await loadHistory(admin, conversationId, msg.id);
       phaseTimings.history_ms = Date.now() - historyStartedAt;
       phaseTimings.before_rag_ms = Date.now() - processingStartedAt;
       const ragStartedAt = Date.now();
@@ -1079,8 +1082,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   void startLineLoading(channel.channel_access_token, userId);
 
   const historyStartedAt = Date.now();
-  const history = await loadHistory(admin, conversationId);
-  const priorHistory = history.slice(0, -1);
+  const priorHistory = await loadHistory(admin, conversationId, msg.id);
   phaseTimings.history_ms = Date.now() - historyStartedAt;
   phaseTimings.before_rag_ms = Date.now() - processingStartedAt;
   const ragStartedAt = Date.now();

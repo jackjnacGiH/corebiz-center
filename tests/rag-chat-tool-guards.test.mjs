@@ -84,7 +84,7 @@ test("facet-only product follow-up bypasses unrelated knowledge retrieval", () =
   const skipStart = source.indexOf("function shouldSkipRAG");
   const skipEnd = source.indexOf("const TOOL_DEFINITIONS", skipStart);
   const skipRag = source.slice(skipStart, skipEnd);
-  const routingStart = source.indexOf("const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, history)");
+  const routingStart = source.indexOf("const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, productHistory)");
   const routingEnd = source.indexOf("const systemPrompt", routingStart);
   const routing = source.slice(routingStart, routingEnd);
 
@@ -92,6 +92,17 @@ test("facet-only product follow-up bypasses unrelated knowledge retrieval", () =
   assert.ok(routingStart >= 0);
   assert.match(routing, /!shouldSkipRAG\(ragRoutingQuery\)/);
   assert.match(source, /const contextualProductQuery = ragRoutingQuery/);
+});
+
+test("latest-turn scope gates every product decision path before old history reaches the model", () => {
+  assert.match(source, /const latestTurn = images\.length > 0 \|\| !CHAT_LATEST_TURN_ROUTING_ENABLED[\s\S]*?routeLatestTurn\(query, history\)/);
+  assert.match(source, /guidedProductDecision\(query, productHistory,/);
+  assert.match(source, /guidedRequestedQuantity\(query, productHistory,/);
+  assert.match(source, /selectToolDefinitions\(ragRoutingQuery, productHistory,/);
+  assert.match(source, /\.\.\.productHistory\.map\(\(h\)/);
+  assert.match(source, /recoverEmptyProductAnswer\(guidedQuery \?\? query, productHistory,/);
+  assert.match(source, /images\.length > 0 \? conversationMemory : null/);
+  assert.match(source, /trustedCustomerContext && \{ \.\.\.trustedCustomerContext, history: \[\] \}/);
 });
 
 test("multi-turn product identity carry-forward fails closed across topic changes", () => {

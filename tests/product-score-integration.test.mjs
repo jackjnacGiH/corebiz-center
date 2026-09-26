@@ -46,6 +46,11 @@ const nonwovenRoll = {
   inventory: [{ quantity: 18 }],
 };
 const nonwovenRollQuestion = 'ม้วนใยสังเคราะห์ สก๊อตไบรท์ สีแดง #400 Size 6"x10 M. ราคาเท่าไหร่';
+const grindingDiscCatalog = [
+  { sku: "2020011111", status: "active", name_th: 'ใบเจียร 4" #80' },
+  { sku: "2020011112", status: "active", name_th: 'ใบเจียร 4" #120' },
+  { sku: "2020011113", status: "active", name_th: 'ใบเจียร 5" #80' },
+];
 const productFields = ["sku", "name_th", "name_en", "brand"];
 
 async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true) {
@@ -263,9 +268,39 @@ test("adhesive disc question offers the two real model families before asking gr
   assert.deepEqual(chosen.result.missing_fields, ["grit"]);
   assert.match(chosen.answer, /1\. กระดาษทรายกลมหลังกาว PS36 5" #60/);
   assert.match(chosen.answer, /7\. กระดาษทรายกลมหลังกาว PS36 5" #220/);
+
+  const typed = await guidedProductDecision("PS36", [
+    { role: "user", content: "มีกระดาษทรายหลังกาาว จำหน่ายไหมครับ" },
+    { role: "assistant", content: guided.answer },
+  ], "th", lookup);
+  assert.equal(typed.lookupQuery, "กระดาษทรายกลมหลังกาว PS36 5นิ้ว");
+  assert.deepEqual(typed.result.missing_fields, ["grit"]);
+
+  const typedMirka = await guidedProductDecision("MIRKA GOLD", [
+    { role: "user", content: "มีกระดาษทรายหลังกาาว จำหน่ายไหมครับ" },
+    { role: "assistant", content: guided.answer },
+  ], "th", lookup);
+  assert.equal(typedMirka.lookupQuery, "กระดาษทรายกลมหลังกาว MIRKA GOLD 5นิ้ว");
+  assert.deepEqual(typedMirka.result.missing_fields, ["grit"]);
   const exact = await guidedProductDecision('กระดาษทรายกลมหลังกาว PS36 5" #120', [], "th", lookup);
   assert.equal(exact.answer, null);
   assert.equal(exact.result.products[0].sku, "2020003337");
+});
+test("a newly requested generic product searches the catalog and offers real choices", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(grindingDiscCatalog), q);
+  const first = await guidedProductDecision("มีใบเจียร 4 นิ้วไหมครับ", [], "th", lookup);
+  assert.equal(first.result.selection_required, true);
+  assert.match(first.answer, /1\. ใบเจียร 4" #80/);
+  assert.match(first.answer, /2\. ใบเจียร 4" #120/);
+  assert.doesNotMatch(first.answer, /5"|XA945/);
+
+  const history = [
+    { role: "user", content: "มีใบเจียร 4 นิ้วไหมครับ" },
+    { role: "assistant", content: first.answer },
+  ];
+  const selected = await guidedProductDecision("เบอร์ 120", history, "th", lookup);
+  assert.equal(selected.result.products[0].sku, "2020011112");
+  assert.equal(selected.answer, null);
 });
 test("flap-disc question offers catalog backings before model and grit", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
@@ -372,17 +407,31 @@ test("switching product type stops carrying flap-disc size and grit", () => {
     { role: "user", content: "ต้องการเบอร์ 80" },
     { role: "assistant", content: "เลือกแบบได้เลยค่ะ" },
   ];
-  assert.equal(guidedCatalogQuery("ขอเปลี่ยนเป็นใบเจียร 4 นิ้ว", history), null);
+  assert.equal(guidedCatalogQuery("ขอเปลี่ยนเป็นใบเจียร 4 นิ้ว", history), "ใบเจียร 4 นิ้ว");
+  assert.equal(guidedCatalogQuery("ขอเป็นใบเจียร 4 นิ้ว", history), "ใบเจียร 4 นิ้ว");
   assert.equal(guidedCatalogQuery("ขนาด 5 นิ้ว", [
     ...history,
     { role: "user", content: "ขอเปลี่ยนเป็นใบเจียร 4 นิ้ว" },
     { role: "assistant", content: "กำลังดูใบเจียรค่ะ" },
-  ]), null);
+  ]), "ใบเจียร 5นิ้ว");
   assert.equal(guidedCatalogQuery("ขนาด 5 นิ้ว", [
     ...history,
     { role: "user", content: "ขอเปลี่ยนเป็นสว่านลม" },
     { role: "assistant", content: "กำลังดูสว่านลมค่ะ" },
-  ]), null);
+  ]), "สว่านลม 5นิ้ว");
+});
+test("changing only the grit keeps the latest flap-disc model and size", () => {
+  const history = [
+    { role: "user", content: 'จานทรายหลังอ่อน XA945 4" #80' },
+    { role: "assistant", content: "พบจานทรายหลังอ่อน XA945 ค่ะ" },
+  ];
+  for (const query of ["ขอเปลี่ยนเป็นเบอร์ 120", "เปลี่ยนเป็น #120", "เปลี่ยนเบอร์เป็น #120"]) {
+    const guided = guidedCatalogQuery(query, history);
+    assert.match(guided ?? "", /XA945/);
+    assert.match(guided ?? "", /4(?:"|นิ้ว)/);
+    assert.match(guided ?? "", /#120/);
+    assert.doesNotMatch(guided ?? "", /#80/);
+  }
 });
 test("unavailable flap-disc grit offers real backing choices before staff handoff", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
