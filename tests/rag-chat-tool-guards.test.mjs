@@ -95,7 +95,7 @@ test("facet-only product follow-up bypasses unrelated knowledge retrieval", () =
 });
 
 test("latest-turn scope gates every product decision path before old history reaches the model", () => {
-  assert.match(source, /const latestTurn = images\.length > 0 \|\| !CHAT_LATEST_TURN_ROUTING_ENABLED[\s\S]*?routeLatestTurn\(query, history\)/);
+  assert.match(source, /const contextHistory = persistedHistory \?\? history;[\s\S]*?const latestTurn = images\.length > 0 \|\| !CHAT_LATEST_TURN_ROUTING_ENABLED[\s\S]*?routeLatestTurn\(query, contextHistory\)/);
   assert.match(source, /guidedProductDecision\(query, productHistory,/);
   assert.match(source, /guidedRequestedQuantity\(query, productHistory,/);
   assert.match(source, /selectToolDefinitions\(ragRoutingQuery, productHistory,/);
@@ -103,6 +103,23 @@ test("latest-turn scope gates every product decision path before old history rea
   assert.match(source, /recoverEmptyProductAnswer\(guidedQuery \?\? query, productHistory,/);
   assert.match(source, /images\.length > 0 \? conversationMemory : null/);
   assert.match(source, /trustedCustomerContext && \{ \.\.\.trustedCustomerContext, history: \[\] \}/);
+});
+
+test("a pending quote quantity is verified against the catalog before any quote request", () => {
+  const quoteStart = source.indexOf("const acceptedQuote = trustedQuoteHistory && images.length === 0");
+  const guidedStart = source.indexOf("let guidedQuery:", quoteStart);
+  assert.ok(quoteStart >= 0 && guidedStart > quoteStart);
+  const branch = source.slice(quoteStart, guidedStart);
+  const pending = branch.indexOf("pendingQuoteQuantityRequest(query, productHistory)");
+  const catalog = branch.indexOf("findProducts(admin, acceptedQuote.sku)");
+  const productCheck = branch.indexOf("matchesExplicitProductVariant(normalizeQuoteProductReference(requestedProduct), verifiedRows[0])");
+  const itemCheck = branch.indexOf("const exactSkuVerified =");
+  const create = branch.indexOf("requestQuote(admin, args, channel, conversationId, query, false, productHistory, trustedQuoteHistory)");
+  assert.ok(pending >= 0 && pending < catalog && catalog < productCheck
+    && productCheck < itemCheck && itemCheck < create);
+  assert.match(branch, /verifiedRows\[0\]\.sku === acceptedQuote\.sku/);
+  const load = source.indexOf("await loadVerifiedChatHistory(admin, conversationId, telemetry.startedAt)");
+  assert.ok(load >= 0 && load < quoteStart, "trusted database history must load before quote routing");
 });
 
 test("multi-turn product identity carry-forward fails closed across topic changes", () => {

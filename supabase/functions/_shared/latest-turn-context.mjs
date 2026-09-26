@@ -5,8 +5,10 @@ const PRODUCT_BRAND_RE = /\b(?:DEERFOS|MIRKA|MIKA|KLINGSPOR|NORTON|VSM)\b/iu;
 const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)|แทน(?:ตัว|รุ่น|สินค้า)เดิม/iu;
 const FACET_SWITCH_RE = /^(?:ขอ)?เปลี่ยน(?:เป็น|ไป)?\s*(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด|#\s*\d+)|^(?:ขอ)?เปลี่ยน(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลัง).{0,12}เป็น/iu;
 const DEPENDENT_PRODUCT_RE = /^(?:แล้ว|ส่วน|ถ้า|เลือก|รุ่น|ตัว|อัน|แบบ|ของ|อีก|ขอ(?:เป็น|เอา))\s*/iu;
-const DEICTIC_FOLLOW_UP_RE = /^(?:(?:สินค้า|รุ่น|จาน|ตัว|อัน|แบบ)นี้|เอา(?:รุ่น|ตัว|อัน|แบบ)?นี้|(?:สั่ง|เอา|ต้องการ)\s*(?:จำนวน\s*)?\d+\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?)|(?:ใช้|เอา|ขอ)\s*(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด))/iu;
-const FOLLOW_UP_RE = /^(?:\d{1,2}(?:\s|$)|(?:จำนวน\s*)?\d{1,6}\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?)|#\s*\d{1,5}|(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|มี(?:รุ่น|แบบ|เบอร์)ไหน|รุ่นไหน|แนะนำ|ราคา(?:เท่าไร|เท่าไหร่|อะไร)|กี่บาท|เท่าไร|เท่าไหร่|(?:ทำ|ขอ|เอา)ใบเสนอราคา|เอา\s*\d|(?:เอา|ได้|ตกลง|โอเค|ครับ|yes)(?:เลย)?(?:ครับ|ค่ะ|คะ)?$|(?:ทำ|จัด)เลย(?:ครับ|ค่ะ|คะ)?$)/iu;
+const DEICTIC_FOLLOW_UP_RE = /^(?:(?:สินค้า|รุ่น|จาน|ตัว|อัน|แบบ)นี้|เอา(?:รุ่น|ตัว|อัน|แบบ)?นี้|(?:สั่ง|เอา|ต้องการ)\s*(?:จำนวน\s*)?\d+\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|(?:ใช้|เอา|ขอ)\s*(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด))/iu;
+const FOLLOW_UP_RE = /^(?:\d{1,2}(?:\s|$)|(?:จำนวน\s*)?\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|#\s*\d{1,5}|(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|มี(?:รุ่น|แบบ|เบอร์)ไหน|รุ่นไหน|แนะนำ|ราคา(?:เท่าไร|เท่าไหร่|อะไร)|กี่บาท|เท่าไร|เท่าไหร่|(?:ทำ|ขอ|เอา)ใบเสนอราคา|เอา\s*\d|(?:เอา|ได้|ตกลง|โอเค|ครับ|yes)(?:เลย)?(?:ครับ|ค่ะ|คะ)?$|(?:ทำ|จัด)เลย(?:ครับ|ค่ะ|คะ)?$)/iu;
+const QUANTITY_REPLY_RE = /^(?:(?:ต้องการ|เอา|สั่ง|จำนวน)\s*)?\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:\s*(?:ครับ|ค่ะ|คะ))?$/iu;
+const QUANTITY_QUESTION_RE = /(?:จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|ต้องการปรับจำนวน|how many|what quantity)/iu;
 const INDEPENDENT_QUESTION_RE = /(?:ชำระ|ชําระ|จ่าย|โอน|มัดจำ|มัดจํา|payment|pay\b|ค่าขนส่ง|จัดส่ง|ส่งของ|เวลาทำการ|เปิดกี่โมง|ที่อยู่|แผนที่|ใบเสนอราคา(?:เดิม|เลขที่|ที่ส่ง|ที่ทำ|แล้ว)|\bQT-\d+)/iu;
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
@@ -61,6 +63,7 @@ function isFollowUpTurn(query, precedingAssistant) {
   if (!text) return false;
   if (catalogChoice(text, precedingAssistant)) return true;
   if (INDEPENDENT_QUESTION_RE.test(text) && !/(?:ทำ|ขอ|เอา)ใบเสนอราคา/iu.test(text)) return false;
+  if (QUANTITY_REPLY_RE.test(text) && QUANTITY_QUESTION_RE.test(precedingAssistant)) return true;
   return FACET_SWITCH_RE.test(text) || DEICTIC_FOLLOW_UP_RE.test(text)
     || DEPENDENT_PRODUCT_RE.test(text) || FOLLOW_UP_RE.test(text);
 }
@@ -93,7 +96,7 @@ export function routeLatestTurn(query, history = []) {
   if (topicStart < 0) {
     // The upstream history window can start with the bot's last offer. A short
     // response may still use that one adjacent offer, never an older product.
-    const adjacentOffer = lastAssistant && /(?:SKU\s+[A-Z0-9._/-]+|^\s*1\.\s+|ใบเสนอราคา.{0,30}(?:ไหม|มั้ย)|ต้องการกี่)/imu.test(lastAssistant);
+    const adjacentOffer = lastAssistant && /(?:SKU\s*[:：]?\s*[A-Z0-9._/-]+|^\s*1\.\s+|ใบเสนอราคา.{0,30}(?:ไหม|มั้ย)|จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน))/imu.test(lastAssistant);
     return adjacentOffer
       ? { kind: "follow_up", history: turns.slice(-1), topicQuery: null }
       : { kind: "independent", history: [], topicQuery: null };

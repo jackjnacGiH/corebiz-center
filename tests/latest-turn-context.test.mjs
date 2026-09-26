@@ -161,3 +161,41 @@ test("typing a uniquely offered model is a choice, not a new topic", () => {
     assert.match(textOf(route.history), /หลังกาว/);
   }
 });
+
+test("a belt quantity reply retains the customer, bot, and staff turns of one quote request", () => {
+  const history = [
+    { role: "user", content: 'จานทราย XA945 4" #80 ราคาเท่าไหร่' },
+    { role: "assistant", content: "พบจานทราย XA945 ค่ะ" },
+    { role: "user", content: "กระดาษทรายสายพาน 10x330 mm. สีฟ้า No.60 ขอราคา" },
+    { role: "assistant", content: "ขอให้คุณเชอร์รี่ตรวจสอบสินค้าเพิ่มเติมก่อนนะคะ" },
+    // LINE maps staff/agent and bot messages to assistant turns for routing.
+    { role: "assistant", content: "ผ้าทรายสายพาน PACO รุ่น Y966 10x330mm. #60 SKU: 2020000905 ราคา 18 บาท/ชิ้น" },
+    { role: "user", content: "ทำใบเสนอราคาให้หน่อยครับ" },
+    { role: "assistant", content: "ไม่ทราบว่าคุณลูกค้าต้องการผ้าทรายสายพาน PACO รุ่น Y966 10x330mm. #60 จำนวนกี่ชิ้นดีคะ" },
+  ];
+
+  const route = routeLatestTurn("ต้องการ 100 เส้น", history);
+  assert.equal(route.kind, "follow_up");
+  assert.match(textOf(route.history), /กระดาษทรายสายพาน 10x330/);
+  assert.match(textOf(route.history), /PACO รุ่น Y966 10x330mm\. #60 SKU: 2020000905/);
+  assert.match(textOf(route.history), /ทำใบเสนอราคาให้หน่อยครับ/);
+  assert.match(textOf(route.history), /จำนวนกี่ชิ้นดีคะ/);
+  assert.doesNotMatch(textOf(route.history), /XA945/);
+});
+
+test("a short belt quantity reply can continue from the latest bot question when older turns were trimmed", () => {
+  const latestPrompt = { role: "assistant", content: "ไม่ทราบว่าคุณลูกค้าต้องการผ้าทรายสายพาน PACO รุ่น Y966 10x330mm. #60 จำนวนกี่ชิ้นดีคะ" };
+  const route = routeLatestTurn("ต้องการ 100 เส้น", [latestPrompt]);
+  assert.equal(route.kind, "follow_up");
+  assert.deepEqual(route.history, [latestPrompt]);
+});
+
+test("a new product question after the belt quote starts without the old quote authorization", () => {
+  const history = [
+    { role: "user", content: 'ผ้าทรายสายพาน PACO Y966 10x330mm. #60 ขอใบเสนอราคา' },
+    { role: "assistant", content: "ต้องการจำนวนกี่เส้นคะ" },
+  ];
+  const route = routeLatestTurn("มีใบเจียร 4 นิ้วไหมครับ", history);
+  assert.equal(route.kind, "new_product");
+  assert.deepEqual(route.history, []);
+});

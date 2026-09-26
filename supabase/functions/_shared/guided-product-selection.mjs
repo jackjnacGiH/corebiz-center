@@ -2,12 +2,78 @@ import { extractModelCodes, normalizeProductSearchQuery, productMatchFacets } fr
 import { pendingProductQuestion } from "./product-turn-context.mjs";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
-const PRODUCT_RE = /กระดาษทราย|จานทราย|จาานราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
+const PRODUCT_RE = /กระดาษทราย|ผ้าทราย|สายพาน(?:ขัด|ทราย)|จานทราย|จาานราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const FLAP_DISC_RE = /จานทราย|\bflap\s*disc\b/iu;
 const NONWOVEN_ROLL_RE = /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:nonwoven|scotch\s*brite)\s*roll\b/iu;
 const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|หินเจียร|แผ่น(?:ขัด|เจียร)|แปรง(?:ลวด|ขัด)|สายพาน(?:ขัด|ทราย)|สว่านลม|เครื่องมือ(?:ลม)?|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)/iu;
-const FOLLOW_UP_RE = /(?:^|\s)(?:#\s*\d+|(?:เบอร์|grit)\s*#?\s*\d+|(?:ขนาด|ไซซ์|size)\s*\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+\s*(?:ชิ้น|ใบ|กล่อง|pcs?))|มีรุ่นไหน|รุ่นไหน|แนะนำ|\bmi(?:r)?ka\b|^\d{1,6}$/iu;
+const FOLLOW_UP_RE = /(?:^|\s)(?:#\s*\d+|(?:เบอร์|grit)\s*#?\s*\d+|(?:ขนาด|ไซซ์|size)\s*\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?))|มีรุ่นไหน|รุ่นไหน|แนะนำ|\bmi(?:r)?ka\b|^\d{1,6}$/iu;
+const QUANTITY_REPLY_RE = /^(?:(?:ต้องการ|เอา|สั่ง|จำนวน)\s*)?(\d{1,6})\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:\s*(?:ครับ|ค่ะ|คะ))?$/iu;
+const QUANTITY_QUESTION_RE = /(?:จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|ต้องการปรับจำนวน|how many|what quantity)/iu;
+const SKU_RE = /\bSKU\s*[:：]?\s*([A-Z0-9._/-]+)/giu;
+const PRODUCT_IN_QUESTION_RE = /(?:กระดาษทราย|ผ้าทราย|สายพาน(?:ขัด|ทราย)|จานทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|ล้อทราย|ใบ(?:ขัด|ตัด|เจียร))/iu;
+
+function quantityPrompt(query, history) {
+  const match = QUANTITY_REPLY_RE.exec(clean(query));
+  const last = history.at(-1);
+  return match && last?.role === "assistant" && QUANTITY_QUESTION_RE.test(last.content)
+    ? { qty: Number(match[1]), question: clean(last.content) } : null;
+}
+
+function productInQuantityQuestion(question) {
+  const text = clean(question);
+  const start = PRODUCT_IN_QUESTION_RE.exec(text)?.index;
+  if (start == null) return null;
+  return clean(text.slice(start)
+    .split(/(?:จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?))/iu)[0]
+    .replace(/\(?SKU\s*[:：]?\s*[A-Z0-9._/-]+\)?/giu, ""));
+}
+
+function skuCodes(text) {
+  return [...String(text ?? "").matchAll(SKU_RE)].map((match) => match[1]);
+}
+
+export function normalizeQuoteProductReference(text) {
+  return String(text ?? "").replace(/\bNo\.?\s*(\d{1,5}[A-Z]?)\b/giu, "#$1");
+}
+
+export function sameProductReference(question, card) {
+  const family = (text) => {
+    if (/สายพาน|\b(?:abrasive|sanding)\s+belt\b/iu.test(text)) return "belt";
+    if (/ผ้าทราย\s*ม้วน|\bsanding\s*roll\b/iu.test(text)) return "sanding_roll";
+    if (/จานทราย|\bflap\s*disc\b/iu.test(text)) return "flap_disc";
+    if (/ใบเจียร|แผ่นเจียร|\bgrinding\s*disc\b/iu.test(text)) return "grinding_disc";
+    if (/ใบตัด|\bcutting\s*disc\b/iu.test(text)) return "cutting_disc";
+    if (/กระดาษทราย|ผ้าทราย|\bsanding\s*disc\b/iu.test(text)) return "sandpaper";
+    return null;
+  };
+  const askedFamily = family(question);
+  const cardFamily = family(card);
+  if (askedFamily && cardFamily && askedFamily !== cardFamily) return false;
+  const color = (text) => {
+    const value = /(?:สี\s*(ฟ้า|น้ำเงิน|แดง|เขียว|ดำ|ขาว|เหลือง|เทา|ชมพู|ส้ม)|\b(blue|red|green|black|white|yellow|grey|gray|pink|orange)\b)/iu.exec(text)?.[1]
+      ?? /\b(blue|red|green|black|white|yellow|grey|gray|pink|orange)\b/iu.exec(text)?.[1];
+    if (!value) return null;
+    const names = { ฟ้า: "blue", น้ำเงิน: "blue", แดง: "red", เขียว: "green",
+      ดำ: "black", ขาว: "white", เหลือง: "yellow", เทา: "gray", ชมพู: "pink", ส้ม: "orange", grey: "gray" };
+    return names[value.toLowerCase()] ?? value.toLowerCase();
+  };
+  const askedColor = color(question);
+  const cardColor = color(card);
+  // A customer who asks for a quote after the exact SKU card has selected that
+  // item. Reject a stated color conflict, but never invent an unstated color.
+  if (askedColor && cardColor && askedColor !== cardColor) return false;
+  const models = (text) => [...String(text).toUpperCase().matchAll(/\b[A-Z]{1,6}[- ]?\d{2,}[A-Z0-9-]*\b/gu)]
+    .map((match) => match[0].replace(/[^A-Z0-9]/gu, ""));
+  const askedModels = models(question);
+  const cardModels = models(card);
+  if (askedModels.length && cardModels.length && !askedModels.some((model) => cardModels.includes(model))) return false;
+  const askedFacets = productMatchFacets(normalizeQuoteProductReference(question));
+  const cardFacets = productMatchFacets(normalizeQuoteProductReference(card));
+  return ["size", "grit", "backing"].every((field) =>
+    !askedFacets[field].length || !cardFacets[field].length
+      || askedFacets[field].some((value) => cardFacets[field].includes(value)));
+}
 
 export function normalizeGuidedProductTerm(value) {
   return clean(value)
@@ -43,10 +109,16 @@ function numberedChoice(query, history) {
 }
 
 function pendingExactQuantitySku(query, history) {
-  if (!/^(?:จำนวน\s*)?\d{1,6}(?:\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?))?$/iu.test(query)) return null;
-  const last = history.at(-1);
-  if (last?.role !== "assistant" || !/ต้องการกี่|ต้องการปรับจำนวน|how many|what quantity/iu.test(last.content)) return null;
-  return /\(SKU\s+([A-Z0-9._/-]+)\)/iu.exec(last.content)?.[1] ?? null;
+  const prompt = quantityPrompt(query, history);
+  if (!prompt) return null;
+  const exactSku = /\(SKU\s+([A-Z0-9._/-]+)\)/iu.exec(prompt.question)?.[1];
+  if (exactSku) return exactSku;
+  const product = productInQuantityQuestion(prompt.question);
+  if (product) return product;
+  if (history.slice(0, -1).some((item) => item.role === "user" && PRODUCT_RE.test(item.content))) return null;
+  const priorCards = history.slice(0, -1).filter((item) => item.role === "assistant")
+    .flatMap((item) => skuCodes(item.content));
+  return [...new Set(priorCards)].length === 1 ? priorCards[0] : null;
 }
 
 function guidedFlapDiscQuery(current, history) {
@@ -138,9 +210,9 @@ export function guidedCatalogQuery(query, history = []) {
 
 export function guidedRequestedQuantity(query, history = [], resolvedQuery = query) {
   const current = clean(query);
-  const explicit = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?)(?:\s|$)/iu.exec(current);
+  const explicit = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)(?:\s|$)/iu.exec(current);
   if (explicit) return Number(explicit[1]);
-  if (/^\d{1,6}$/u.test(current) && /(?:กี่(?:ชิ้น|ใบ|กล่อง|ม้วน)|จำนวน(?:เป็น)?(?:เท่าไร|กี่)|quantity|how many)/iu.test(String(history.at(-1)?.content ?? ""))) {
+  if (/^\d{1,6}$/u.test(current) && QUANTITY_QUESTION_RE.test(String(history.at(-1)?.content ?? ""))) {
     return Number(current);
   }
   if (PRODUCT_RE.test(clean(resolvedQuery)) && history.at(-1)?.role === "assistant") {
@@ -162,7 +234,7 @@ export function guidedRequestedQuantity(query, history = [], resolvedQuery = que
       }
       if (priorModel && resolvedModel && priorModel !== resolvedModel) break;
       if (priorBacking.length && resolvedBacking.length && !priorBacking.every((backing) => resolvedBacking.includes(backing))) break;
-      const quantity = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?)(?:\s|$)/iu.exec(prior);
+      const quantity = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)(?:\s|$)/iu.exec(prior);
       if (quantity) return Number(quantity[1]);
     }
   }
@@ -207,6 +279,42 @@ export function confirmedGuidedQuoteRequest(query, history = []) {
   return sku && quantity ? { sku, qty: Number(quantity) } : null;
 }
 
+const DIRECT_QUOTE_RE = /(?:ขอ|ต้องการ|อยากได้|ออก|ทำ|ทํา|จัดทำ|จัดทํา|ส่ง)\s*(?:ใบเสนอราคา|ใบราคา)|\b(?:issue|prepare|create|make|send|need|want|request)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:quotation|quote)\b/iu;
+
+/** Quantity may finish only the customer's immediately pending, exact-SKU quote request. */
+export function pendingQuoteQuantityRequest(query, history = []) {
+  const prompt = quantityPrompt(query, history);
+  if (!prompt || /\bQT-\d+\b|(?:สร้าง|ทำ|ส่ง)ใบเสนอราคา(?:เลขที่|แล้ว)/iu.test(prompt.question)) return null;
+  const quoteIndex = history.findLastIndex((item) => item.role === "user");
+  const quoteText = clean(history[quoteIndex]?.content);
+  if (quoteIndex < 0 || !DIRECT_QUOTE_RE.test(quoteText)
+    || /\bQT-\d+\b|ใบเสนอราคา(?:ฉบับ)?เดิม/iu.test(quoteText)) return null;
+  if (history.slice(quoteIndex + 1).some((item) => /\bQT-\d+\b|(?:สร้าง|ทำ|ส่ง)ใบเสนอราคา(?:เลขที่|แล้ว)/iu.test(item.content))) return null;
+  if (!/ใบเสนอราคาใหม่|new\s+(?:quotation|quote)/iu.test(quoteText)
+    && history.slice(0, quoteIndex).some((item) => item.role === "assistant"
+      && /\bQT-\d+\b|(?:สร้าง|ทำ|ส่ง)ใบเสนอราคา(?:เลขที่|แล้ว)/iu.test(item.content))) return null;
+
+  const questionSku = [...new Set(skuCodes(prompt.question))];
+  const questionProduct = productInQuantityQuestion(prompt.question);
+  const priorProduct = [...history.slice(0, quoteIndex)].reverse().find((item) =>
+    item.role === "user" && PRODUCT_IN_QUESTION_RE.test(item.content));
+  if (questionProduct && priorProduct && !sameProductReference(questionProduct, priorProduct.content)) return null;
+  const cards = history.slice(0, quoteIndex).filter((item) => item.role === "assistant")
+    .flatMap((item) => skuCodes(item.content).map((sku) => ({ sku, content: item.content })));
+  const matches = cards.filter((card) =>
+    (!questionProduct || sameProductReference(questionProduct, card.content))
+    && (!priorProduct || sameProductReference(priorProduct.content, card.content)));
+  const candidates = questionSku.length ? questionSku : [...new Set(matches.map((card) => card.sku))];
+  if (candidates.length !== 1) return null;
+  const sku = candidates[0];
+  if (cards.length && !matches.some((card) => card.sku === sku)) return null;
+  return {
+    sku, qty: prompt.qty,
+    productQuery: questionProduct ?? clean(priorProduct?.content),
+    customerProductQuery: clean(priorProduct?.content),
+  };
+}
+
 /** A model tool call is not consent to issue a document. Check the customer turn. */
 export function quoteCreationBlockReason(query, hasImages, history = []) {
   if (hasImages) return "image_or_document";
@@ -226,8 +334,9 @@ export function quoteCreationBlockReason(query, hasImages, history = []) {
     && !/ใบเสนอราคาใหม่/iu.test(text)) {
     return "existing_quote_followup";
   }
-  const directRequest = /(?:ขอ|ต้องการ|อยากได้|ออก|ทำ|ทํา|จัดทำ|จัดทํา|ส่ง)\s*(?:ใบเสนอราคา|ใบราคา)|\b(?:issue|prepare|create|make|send|need|want|request)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:quotation|quote)\b/iu.test(text);
+  const directRequest = DIRECT_QUOTE_RE.test(text);
   if (directRequest) return null;
+  if (pendingQuoteQuantityRequest(text, history)) return null;
   const shortConsent = /^(?:เอา|ได้|ตกลง|ทำเลย|ทําเลย|จัดเลย|โอเค|ครับ|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu.test(text);
   const last = history.at(-1);
   const quoteOffer = last?.role === "assistant"
