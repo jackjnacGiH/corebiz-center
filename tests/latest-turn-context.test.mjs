@@ -129,6 +129,48 @@ test("a short quote confirmation still sees the immediately preceding exact offe
   assert.deepEqual(route.history, [offer]);
 });
 
+test("quote choice replies retain only the adjacent product offer", () => {
+  const history = [
+    { role: "user", content: 'จานทราย XA945 4" #80' },
+    { role: "assistant", content: "พบจานทรายค่ะ" },
+    { role: "user", content: 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500' },
+    { role: "assistant", content: "พบ MIRKA GOLD (SKU 2020003043) จำนวน 200 ชิ้น ราคา 7 บาท/ชิ้น\nให้เอยทำใบเสนอราคาให้เลยไหมคะ" },
+  ];
+  for (const reply of ["ต้องการครับ", "ต้องการใบเสนอราคา", "ไม่ต้องการ", "ไม่ต้องการใบเสนอราคา"]) {
+    const route = routeLatestTurn(reply, history);
+    assert.equal(route.kind, "follow_up", reply);
+    assert.match(textOf(route.history), /SKU 2020003043/, reply);
+    assert.doesNotMatch(textOf(route.history), /XA945/, reply);
+  }
+  const numberedOffer = { role: "assistant", content: `${history.at(-1).content}\n1. ต้องการใบเสนอราคา\n2. ไม่ต้องการใบเสนอราคา` };
+  assert.equal(routeLatestTurn("ต้องการใบเสนอราคา", [numberedOffer]).kind, "follow_up");
+  assert.equal(routeLatestTurn("ไม่ต้องการใบเสนอราคา", [numberedOffer]).kind, "follow_up");
+  for (const choice of ["1", "1.", "2", "2."]) {
+    assert.equal(routeLatestTurn(choice, [numberedOffer]).kind, "follow_up", choice);
+  }
+});
+
+test("quote choice replies cannot revive an unrelated product offer", () => {
+  const history = [
+    { role: "user", content: 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500' },
+    { role: "assistant", content: "พบ MIRKA GOLD (SKU 2020003043) จำนวน 200 ชิ้น ให้เอยทำใบเสนอราคาให้เลยไหมคะ" },
+    { role: "user", content: "จัดส่งกี่วันครับ" },
+    { role: "assistant", content: "ทีมงานจะแจ้งกำหนดจัดส่งค่ะ" },
+  ];
+  for (const reply of ["ต้องการครับ", "ต้องการใบเสนอราคา", "ไม่ต้องการ", "ไม่ต้องการใบเสนอราคา"]) {
+    const route = routeLatestTurn(reply, history);
+    assert.equal(route.kind, "independent", reply);
+    assert.deepEqual(route.history, [], reply);
+  }
+  assert.equal(routeLatestTurn("มีใบเจียร 5 นิ้วไหมครับ", history).kind, "new_product");
+});
+
+test("a repeated quote request after a positive choice keeps the adjacent offer", () => {
+  const offer = { role: "assistant", content: "พบ MIRKA GOLD (SKU 2020003043) จำนวน 200 ชิ้น ให้เอยทำใบเสนอราคาให้เลยไหมคะ" };
+  const accepted = { role: "user", content: "ต้องการใบเสนอราคา" };
+  assert.deepEqual(routeLatestTurn("ทำใบเสนอราคาให้หน่อย", [offer, accepted]).history, [offer, accepted]);
+});
+
 test("a quote consent and a second direct request keep the exact product offer", () => {
   const product = { role: "user", content: "ใบขัดกระจก PVA SPONGY DISC 4นิ้ว #600" };
   const offer = { role: "assistant", content: "พบ ใบขัดกระจก PVA SPONGY DISC 4นิ้ว #600 (SKU 2020000917) ค่ะ จำนวน 100 ชิ้น ราคา 75 บาท/ชิ้น\nให้เอยทำใบเสนอราคาให้เลยไหมคะ" };

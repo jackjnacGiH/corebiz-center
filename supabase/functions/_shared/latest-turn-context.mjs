@@ -11,6 +11,8 @@ const QUANTITY_REPLY_RE = /^(?:(?:ต้องการ|เอา|สั่ง|�
 const QUANTITY_QUESTION_RE = /(?:จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|ต้องการปรับจำนวน|how many|what quantity)/iu;
 const INDEPENDENT_QUESTION_RE = /(?:ชำระ|ชําระ|จ่าย|โอน|มัดจำ|มัดจํา|payment|pay\b|ค่าขนส่ง|จัดส่ง|ส่งของ|เวลาทำการ|เปิดกี่โมง|ที่อยู่|แผนที่|ใบเสนอราคา(?:เดิม|เลขที่|ที่ส่ง|ที่ทำ|แล้ว)|\bQT-\d+)/iu;
 const SHORT_QUOTE_CONSENT_RE = /^(?:เอา|ได้|ตกลง|ทำ|ทํา|จัด|โอเค|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu;
+const POSITIVE_QUOTE_CHOICE_RE = /^ต้องการ(?:\s*ใบเสนอราคา)?(?:ครับ|ค่ะ|คะ)?[.!\s]*$/iu;
+const NEGATIVE_QUOTE_CHOICE_RE = /^ไม่ต้องการ(?:\s*ใบเสนอราคา)?(?:ครับ|ค่ะ|คะ)?[.!\s]*$/iu;
 const QUOTE_OFFER_RE = /(?:ใบเสนอราคา|quotation).{0,40}(?:ไหม|มั้ย|หรือเปล่า|หรือไม่|\?)/iu;
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
@@ -21,7 +23,7 @@ function catalogChoice(query, assistantText) {
     .map((line) => /^\s*\d{1,2}\.\s+(.+)$/u.exec(line)?.[1]?.trim())
     .filter(Boolean);
   if (choices.length === 0) return false;
-  if (/^\d{1,2}$/u.test(text)) return Number(text) <= choices.length;
+  if (/^\d{1,2}[.)]?$/u.test(text)) return Number.parseInt(text, 10) <= choices.length;
   if (choices.some((choice) => choice === text || choice.replace(/\s*\(SKU\s+[^)]+\)\s*$/iu, "") === text)) return true;
   return /^[A-Z][A-Z0-9 ._-]{2,30}$/iu.test(text)
     && choices.filter((choice) => choice.toUpperCase().includes(text.toUpperCase())).length === 1;
@@ -67,6 +69,8 @@ function isFollowUpTurn(query, precedingAssistant) {
   if (INDEPENDENT_QUESTION_RE.test(text) && !/(?:ทำ|ขอ|เอา)ใบเสนอราคา/iu.test(text)) return false;
   if (QUANTITY_REPLY_RE.test(text) && QUANTITY_QUESTION_RE.test(precedingAssistant)) return true;
   if (SHORT_QUOTE_CONSENT_RE.test(text) && QUOTE_OFFER_RE.test(precedingAssistant)) return true;
+  if ((POSITIVE_QUOTE_CHOICE_RE.test(text) || NEGATIVE_QUOTE_CHOICE_RE.test(text))
+    && QUOTE_OFFER_RE.test(precedingAssistant)) return true;
   return FACET_SWITCH_RE.test(text) || DEICTIC_FOLLOW_UP_RE.test(text)
     || DEPENDENT_PRODUCT_RE.test(text) || FOLLOW_UP_RE.test(text);
 }
@@ -108,7 +112,8 @@ export function routeLatestTurn(query, history = []) {
     // response may still use that one adjacent offer, never an older product.
     const adjacentOffer = lastAssistant && /(?:SKU\s*[:：]?\s*[A-Z0-9._/-]+|^\s*1\.\s+|ใบเสนอราคา.{0,30}(?:ไหม|มั้ย)|จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน))/imu.test(lastAssistant);
     const consentAfterOffer = turns.at(-1)?.role === "user"
-      && SHORT_QUOTE_CONSENT_RE.test(turns.at(-1).content)
+      && (SHORT_QUOTE_CONSENT_RE.test(turns.at(-1).content)
+        || POSITIVE_QUOTE_CHOICE_RE.test(turns.at(-1).content))
       && turns.at(-2)?.role === "assistant" && QUOTE_OFFER_RE.test(turns.at(-2).content);
     return adjacentOffer
       ? { kind: "follow_up", history: turns.slice(-1), topicQuery: null }
