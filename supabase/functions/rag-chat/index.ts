@@ -1908,7 +1908,7 @@ async function loadVerifiedChatHistory(
     return null;
   }
   const rows = (data ?? []) as Array<{ sender_type: string; content: string }>;
-  return rows.reverse()
+  const messages = rows.reverse()
     .filter((row) => row.sender_type === "customer" || row.sender_type === "bot" || row.sender_type === "agent")
     .map((row) => {
       const content = String(row.content ?? "")
@@ -1921,6 +1921,16 @@ async function loadVerifiedChatHistory(
     })
     .filter((row) => row.content)
     .slice(-MAX_HISTORY_ITEMS);
+  const bounded: Array<{ role: string; content: string }> = [];
+  let chars = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const remaining = MAX_HISTORY_TOTAL_CHARS - chars;
+    if (remaining <= 0) break;
+    const content = messages[index].content.slice(0, remaining);
+    bounded.unshift({ role: messages[index].role, content });
+    chars += content.length;
+  }
+  return bounded;
 }
 
 /** Best-effort, privacy-safe run telemetry. Raw prompts/responses and tool
