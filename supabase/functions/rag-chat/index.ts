@@ -69,6 +69,7 @@ import {
   pendingProductQuestion,
 } from "../_shared/product-turn-context.mjs";
 import { recoverEmptyProductAnswer } from "../_shared/empty-product-recovery.mjs";
+import { routeLatestTurn } from "../_shared/latest-turn-context.mjs";
 import {
   confirmedGuidedQuoteRequest,
   guidedExactProductAnswer,
@@ -425,6 +426,8 @@ const MAX_PRODUCT_MATCH_SCAN = 1_000;
 const PRODUCT_SCORE_SUGGESTIONS_ENABLED = Deno.env.get("PRODUCT_SCORE_SUGGESTIONS_ENABLED") !== "false";
 // Disable for an immediate return to the model-led product conversation.
 const PRODUCT_GUIDED_SELECTION_ENABLED = Deno.env.get("PRODUCT_GUIDED_SELECTION_ENABLED") !== "false";
+// Set false to restore the previous full-history routing during rollback.
+const CHAT_LATEST_TURN_ROUTING_ENABLED = Deno.env.get("CHAT_LATEST_TURN_ROUTING_ENABLED") !== "false";
 const MAX_PRODUCTS_IN_TOOL_RESULT = TOKEN_OPTIMIZATION_ENABLED ? 8 : 25;
 const MAX_PRODUCTS_DURING_SELECTION = TOKEN_OPTIMIZATION_ENABLED ? 8 : 12;
 
@@ -808,6 +811,15 @@ async function findProducts(admin: SupabaseClient, query: string) {
         missing_fields: ["grit"],
         clarification_question_th: `พบ ${modelOptions[0]} ค่ะ เลือกเบอร์ที่ต้องการได้เลย\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
         clarification_question_en: `I found ${modelOptions[0]}. Which grit would you like?\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+      };
+    }
+    if (selection?.selection_required && !/^\s*1\.\s+/mu.test(selection.clarification_question_th ?? "")
+      && catalogNames.length > 0) {
+      const examples = catalogNames.slice(0, 5);
+      selection = {
+        ...selection,
+        clarification_question_th: `ตัวอย่างสินค้าที่มีในระบบค่ะ เลือกรายการที่ตรงได้เลย หรือบอก${selection.clarification_question_th.replace(/^สินค้านี้มีหลายตัวเลือกค่ะ\s*/u, "").replace(/คะ\s*$/u, "")}เพิ่มเติมนะคะ\n${examples.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+        clarification_question_en: `Here are catalog examples. Choose one, or tell me the missing variant details:\n${examples.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
       };
     }
     const selectedMatches = directMatches.slice(
@@ -2218,7 +2230,11 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     return;
   }
 
-  const acceptedQuote = images.length === 0 ? confirmedGuidedQuoteRequest(query, history) : null;
+  const latestTurn = images.length > 0 || !CHAT_LATEST_TURN_ROUTING_ENABLED
+    ? { kind: "follow_up", history, topicQuery: null }
+    : routeLatestTurn(query, history);
+  const productHistory = latestTurn.history;
+  const acceptedQuote = images.length === 0 ? confirmedGuidedQuoteRequest(query, productHistory) : null;
   if (acceptedQuote) {
     const startedAt = Date.now();
     const args = { items: [acceptedQuote] };
@@ -2230,7 +2246,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     const response = !exactSkuVerified
       ? { ok: false, saved: false, reason: "exact_sku_recheck_failed" }
       : decision.execute
-      ? await requestQuote(admin, args, channel, conversationId, query, false, history)
+      ? await requestQuote(admin, args, channel, conversationId, query, false, productHistory)
       : decision.result;
     const quote = response && typeof response === "object" ? response as Record<string, unknown> : {};
     const answer = readOnly
@@ -2265,12 +2281,12 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   if (PRODUCT_GUIDED_SELECTION_ENABLED && query && images.length === 0) {
     const guidedStartedAt = Date.now();
     try {
-      const guided = await guidedProductDecision(query, history, lang, (catalogQuery) => findProducts(admin, catalogQuery));
+      const guided = await guidedProductDecision(query, productHistory, lang, (catalogQuery) => findProducts(admin, catalogQuery));
       guidedQuery = guided?.lookupQuery ?? null;
       const exactRows = Array.isArray(guided?.result?.products) ? guided.result.products : [];
       const exactProduct = !guided?.result?.selection_required && exactRows.length === 1
         ? exactRows[0] : null;
-      const quantity = guidedRequestedQuantity(query, history, guidedQuery ?? query);
+      const quantity = guidedRequestedQuantity(query, productHistory, guidedQuery ?? query);
       const isQuoteRequest = /ใบเสนอราคา|quotation|\bquote\b/iu.test(query);
       let guidedAnswer = guided?.answer ?? null;
       let leadResult: Record<string, unknown> | null = null;
@@ -2343,8 +2359,8 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const learningSettings = await getLearningSettings(admin);
   // Decide retrieval before loading the rest of the prompt context so the
   // embedding request can overlap independent database reads.
-  const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, history);
-  const requestToolDefinitions = selectToolDefinitions(ragRoutingQuery, history, images.length > 0);
+  const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, productHistory);
+  const requestToolDefinitions = selectToolDefinitions(ragRoutingQuery, productHistory, images.length > 0);
   const requestToolCount = requestToolDefinitions.length > 0
     ? ((requestToolDefinitions[0] as { functionDeclarations?: unknown[] }).functionDeclarations?.length ?? 0)
     : 0;
@@ -2524,9 +2540,10 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     persona,
     contextText,
     lang,
-    conversationMemory,
+    images.length > 0 ? conversationMemory : null,
     approvedGuidance,
-    trustedCustomerContext,
+    images.length > 0 ? trustedCustomerContext
+      : trustedCustomerContext && { ...trustedCustomerContext, history: [] },
     learningSettings.structured_memory_enabled,
     TOKEN_OPTIMIZATION_ENABLED && requestToolCount <= 1,
   );
@@ -2541,7 +2558,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }];
   for (const im of images) userParts.push({ inlineData: { mimeType: im.mimeType, data: im.data } });
   const contents: unknown[] = [
-    ...history.map((h) => ({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.content }] })),
+    ...productHistory.map((h) => ({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.content }] })),
     { role: "user", parts: userParts },
   ];
   const usage = zeroTokens();
@@ -2583,8 +2600,8 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const hasContextualProductQuery = contextualProductQuery !== query;
   console.info("chat token budget", {
     optimization_enabled: TOKEN_OPTIMIZATION_ENABLED,
-    history_items: history.length,
-    history_chars: history.reduce((total, item) => total + item.content.length, 0),
+    history_items: productHistory.length,
+    history_chars: productHistory.reduce((total, item) => total + item.content.length, 0),
     context_chars: contextText?.length ?? 0,
     tool_count: requestToolCount,
   });
@@ -2652,7 +2669,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         result = { ok: false, suppressed: true, reason: "product_selection_or_lookup_already_handled" };
       } else {
         send({ type: "tool_call", name: call.name, args: effectiveArgs });
-        const dispatched = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0, history);
+        const dispatched = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0, productHistory);
         result = dispatched.response;
         if (call.name === "get_exact_price") {
           const request = normalizeExactPriceRequest(effectiveArgs.sku, effectiveArgs.qty);
@@ -2759,7 +2776,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   // an otherwise valid customer message.
   if (!fullAnswer.trim() && images.length === 0 && allToolCalls.length === 0) {
     try {
-      const recovered = await recoverEmptyProductAnswer(guidedQuery ?? query, history, lang, (lookupQuery) => findProducts(admin, lookupQuery));
+      const recovered = await recoverEmptyProductAnswer(guidedQuery ?? query, productHistory, lang, (lookupQuery) => findProducts(admin, lookupQuery));
       if (recovered.answer) {
         appendAnswer(recovered.answer);
         const recoveredResult = recovered.result;
