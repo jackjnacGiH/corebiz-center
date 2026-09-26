@@ -13,6 +13,7 @@ const fragment = source.slice(start, end).replace(
 const { code } = await transform(`
   const MAX_HISTORY_ITEMS = 16;
   const MAX_HISTORY_ITEM_CHARS = 1_200;
+  const MAX_HISTORY_TOTAL_CHARS = 8_000;
   ${fragment}
 `, { loader: "ts", format: "esm" });
 const { loadVerifiedChatHistory } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
@@ -95,4 +96,17 @@ test("verified history returns null on a database error", async () => {
   } finally {
     console.warn = originalWarn;
   }
+});
+
+test("verified history keeps recent turns within the total character budget", async () => {
+  const rows = Array.from({ length: 16 }, (_, index) => row(
+    String(index + 1), index % 2 ? "bot" : "customer",
+    `${String(index).padStart(2, "0")}:` + "x".repeat(997),
+    `2026-09-26T05:07:${String(index).padStart(2, "0")}.000Z`,
+  ));
+  const history = await loadVerifiedChatHistory(historyAdmin(rows), conversation_id, requestStartedAt);
+  assert.ok(history);
+  assert.equal(history.reduce((total, item) => total + item.content.length, 0), 8_000);
+  assert.equal(history.at(-1)?.content, "15:" + "x".repeat(997));
+  assert.equal(history[0].content.slice(0, 3), "08:");
 });
