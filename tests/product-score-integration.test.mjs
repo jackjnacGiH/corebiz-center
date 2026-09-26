@@ -195,6 +195,51 @@ test("direct quotation requests and consent to the immediately preceding offer r
   assert.equal(quoteCreationBlockReason("ขอใบเสนอราคาใหม่แทน QT-01000127", false, []), null);
 });
 
+test("PVA quote consent and a repeated request reuse the exact offered SKU and quantity", async () => {
+  const offer = { role: "assistant", content: "พบ ใบขัดกระจก PVA SPONGY DISC 4นิ้ว #600 (SKU 2020000917) ค่ะ จำนวน 100 ชิ้น ราคา 75 บาท/ชิ้น\nให้เอยทำใบเสนอราคาให้เลยไหมคะ" };
+  const consent = { role: "user", content: "ทำค่ะ" };
+  const item = { sku: "2020000917", qty: 100 };
+  assert.deepEqual(confirmedGuidedQuoteRequest("ทำค่ะ", [offer]), item);
+  assert.deepEqual(confirmedGuidedQuoteRequest("ทำครับ", [offer]), item);
+  assert.equal(quoteCreationBlockReason("ทำค่ะ", false, [offer]), null);
+  assert.deepEqual(confirmedGuidedQuoteRequest("ทำใบเสนอราคาให้หน่อย", [offer, consent]), item);
+  assert.equal(quoteCreationBlockReason("ทำใบเสนอราคาให้หน่อย", false, [offer, consent]), null);
+
+  const completed = { role: "assistant", content: "เอยทำใบเสนอราคาเลขที่ QT-01000129 เรียบร้อยแล้วค่ะ" };
+  assert.deepEqual(confirmedGuidedQuoteRequest("ทำใบเสนอราคาให้หน่อย", [offer, consent, completed]),
+    { ...item, existingQuoteCode: "QT-01000129" });
+  assert.equal(quoteCreationBlockReason("ทำใบเสนอราคาให้หน่อย", false, [offer, consent, completed]), "existing_quote_followup");
+  const noDatabase = {
+    from() { throw new Error("a repeat must not read CRM or create a quote"); },
+    rpc() { throw new Error("a repeat must not call the quote RPC"); },
+  };
+  const result = await edge.requestQuote(noDatabase, { items: [item] }, "line",
+    "00000000-0000-4000-8000-000000000001", "ทำใบเสนอราคาให้หน่อย", false,
+    [offer, consent, completed], true);
+  assert.equal(result.reason, "existing_quote_followup");
+  assert.equal(result.quote_created, false);
+  assert.equal(quoteCreationBlockReason("ขอใบเสนอราคาใหม่", false, [offer, consent, completed]), null);
+  assert.equal(quoteCreationBlockReason("ขอใบเสนอราคา 200 ชิ้น", false, [offer, consent, completed]), null);
+  assert.deepEqual(confirmedGuidedQuoteRequest("ทำใบเสนอราคาให้หน่อย", [
+    offer, consent, completed, { role: "user", content: "ทำใบเสนอราคาให้หน่อย" },
+    { role: "assistant", content: "เอยเคยทำใบเสนอราคาเลขที่ QT-01000129 สำหรับรายการนี้แล้วค่ะ จึงไม่ออกใบซ้ำให้นะคะ" },
+  ]), { ...item, existingQuoteCode: "QT-01000129" });
+});
+
+test("quote continuation rejects another product, changed quantity and unrelated replies", () => {
+  const offer = { role: "assistant", content: "พบ ใบขัดกระจก PVA SPONGY DISC 4นิ้ว #600 (SKU 2020000917) ค่ะ จำนวน 100 ชิ้น\nให้เอยทำใบเสนอราคาให้เลยไหมคะ" };
+  const consent = { role: "user", content: "ทำค่ะ" };
+  assert.equal(confirmedGuidedQuoteRequest("ค่ะ", [offer]), null);
+  assert.equal(confirmedGuidedQuoteRequest("ครับ", [offer]), null);
+  assert.equal(quoteCreationBlockReason("ค่ะ", false, [offer]), "not_explicit_quote_request");
+  assert.equal(confirmedGuidedQuoteRequest("ทำใบเสนอราคา SKU 2020000918", [offer, consent]), null);
+  assert.equal(confirmedGuidedQuoteRequest("ทำใบเสนอราคา 200 ชิ้น", [offer, consent]), null);
+  assert.equal(confirmedGuidedQuoteRequest("ทำใบเสนอราคาใหม่", [offer, consent]), null);
+  assert.equal(confirmedGuidedQuoteRequest("ต้องจ่ายเงินก่อนไหม", [offer, consent]), null);
+  assert.equal(confirmedGuidedQuoteRequest("ทำใบเสนอราคาให้หน่อย", [offer,
+    { role: "user", content: "มีใบเจียร 5 นิ้วไหมครับ" }]), null);
+});
+
 test("a belt quantity completes the pending customer quote request without asking for the product again", async () => {
   const history = [
     { role: "user", content: "กระดาษทรายสายพาน 10x330 mm. สีฟ้า No.60 ขอราคา" },
