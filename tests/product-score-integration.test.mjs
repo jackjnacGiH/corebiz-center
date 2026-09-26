@@ -531,6 +531,28 @@ test("SA331 5-inch grit question lists real available grits and correct backing"
   assert.doesNotMatch(recovered.answer, /ใช้ขนาดเท่าไร/);
   assert.doesNotMatch(recovered.answer, /ยังยืนยันรุ่น SA331/);
 });
+test("SA331 5-inch catalog offer lists all nineteen grits and accepts the last number", async () => {
+  const query = 'กระดาษทรายกลมสักหลาด SA331 5"';
+  const lookup = value => edge.findProducts(fakeAdmin(), value);
+  const guided = await guidedProductDecision(query, [], "th", lookup);
+  assert.equal(guided.result.count, 19);
+  assert.equal(guided.result.match_scan_complete, true);
+  assert.equal(guided.result.selection_required, true);
+  assert.deepEqual(guided.result.missing_fields, ["grit"]);
+  assert.doesNotMatch(guided.answer, /ตัวอย่างสินค้า/);
+  assert.match(guided.answer, /พิมพ์หมายเลขหน้ารายการ/);
+  const options = guided.answer.split(/\r?\n/u).filter(line => /^\d{1,2}\. /u.test(line));
+  assert.equal(options.length, 19);
+  assert.deepEqual(options.map(line => Number(/#(\d+)$/u.exec(line)?.[1])),
+    [40, 60, 80, 100, 120, 150, 180, 220, 240, 280, 320, 400, 500, 600, 800, 1000, 1200, 1500, 2000]);
+  assert.ok(guided.answer.length <= 5_000);
+
+  const history = [{ role: "user", content: query }, { role: "assistant", content: guided.answer }];
+  assert.equal(routeLatestTurn("19", history).kind, "follow_up");
+  const chosen = await guidedProductDecision("19", history, "th", lookup);
+  assert.equal(chosen.result.selection_required, undefined);
+  assert.equal(chosen.result.products[0].sku, "2020000993");
+});
 test("adhesive disc question offers the two real model families before asking grit", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
   const guided = await guidedProductDecision("มีกระดาษทรายหลังกาาว จำหน่ายไหมครับ", [], "th", lookup);

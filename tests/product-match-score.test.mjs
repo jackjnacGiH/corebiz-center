@@ -92,5 +92,10 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   assert.deepEqual(models.items.map(item => item.action.label), ["1. Eco", "2. CS310X"]);
   const longName = "กระดาษทราย".repeat(12);
   assert.equal(extract(`1. ${longName}`).items[0].action.text, longName);
+  const allGrits = [40, 60, 80, 100, 120, 150, 180, 220, 240, 280, 320, 400, 500, 600, 800, 1000, 1200, 1500, 2000];
+  const fullList = allGrits.map((grit, index) => `${index + 1}. กระดาษทรายกลมสักหลาด SA331 5" #${grit}`).join("\n");
+  const fullListButtons = extract(fullList);
+  assert.equal(fullListButtons.items.length, 13);
+  assert.equal(fullListButtons.items[12].action.text, 'กระดาษทรายกลมสักหลาด SA331 5" #500');
   assert.equal(extract("ไม่มีตัวเลือก"), undefined);
 });
