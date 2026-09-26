@@ -545,6 +545,7 @@ const PRODUCT_FAMILY_RULES: ProductFamilyRule[] = [
   { key: "sanding_disc_velcro", labelTh: "กระดาษทรายกลมสักหลาด", pattern: /กระดาษทรายกลม\s*สักหลาด|velcro\s*(?:sanding\s*)?disc/i },
   { key: "sanding_disc_adhesive", labelTh: "กระดาษทรายกลมหลังกาว", pattern: /กระดาษทรายกลม\s*หลังกาว|adhesive\s*(?:sanding\s*)?disc/i },
   { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
+  { key: "nonwoven_roll", labelTh: "ม้วนใยขัดสังเคราะห์", pattern: /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|nonwoven\s*roll|scotch\s*brite\s*roll/i },
   // Catalog and customers use both ลูกขัด... and ล้อขัด... for this same product family.
   { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /(?:ล้อ|ลูก)\s*ขัด\s*ใย\s*สังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
   { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
@@ -574,6 +575,7 @@ type ProductTypeRule = { key: string; labelTh: string; pattern: RegExp };
 const PRODUCT_TYPE_RULES: ProductTypeRule[] = [
   { key: "sanding_belt", labelTh: "ผ้าทรายสายพาน", pattern: /ผ้าทราย\s*สายพาน|sanding\s*belt|abrasive\s*belt/i },
   { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
+  { key: "nonwoven_roll", labelTh: "ม้วนใยขัดสังเคราะห์", pattern: /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|nonwoven\s*roll|scotch\s*brite\s*roll/i },
   { key: "mounted_flap_wheel", labelTh: "ล้อทราย", pattern: /ล้อทราย(?:\s*มีแกน)?|mounted\s*flap\s*wheel/i },
   { key: "flap_disc", labelTh: "จานทราย", pattern: /จานทราย(?:\s*ซ้อน)?|flap\s*disc/i },
   { key: "sanding_disc", labelTh: "กระดาษทรายกลม", pattern: /กระดาษทราย\s*กลม|(?:velcro|adhesive)\s*(?:sanding\s*)?disc/i },
@@ -727,9 +729,32 @@ async function findProducts(admin: SupabaseClient, query: string) {
   const { data, error, count: rawMatchCount } = await qb;
   if (error) return { error: error.message };
 
-  const directMatches = ((data ?? []) as Record<string, unknown>[])
+  let directMatches = ((data ?? []) as Record<string, unknown>[])
     .map((p) => ({ p, match: evaluateProductMatch(q, p) }))
     .filter(({ p, match }) => match.safe && matchesExplicitProductVariant(q, p));
+  const requestedColor = /สี\s*(แดง|เขียว|น้ำเงิน|ดำ|ขาว|เหลือง|เทา|ชมพู|ส้ม)/iu.exec(q)?.[1] ?? "";
+  let colorVerified = false;
+  if (requestedColor && directMatches.length > 0 && directMatches.length <= 13) {
+    const skus = directMatches.map(({ p }) => String(p.sku ?? "")).filter(Boolean);
+    const { data: colorDetails, error: colorError } = await admin.from("products")
+      .select("sku, name_th, name_en, description_th, description_en, tags, feature_tags")
+      .eq("status", "active").in("sku", skus);
+    if (colorError) return { error: colorError.message };
+    const detailsBySku = new Map(((colorDetails ?? []) as Record<string, unknown>[])
+      .map((row) => [String(row.sku ?? ""), row]));
+    const colorPattern = new RegExp(`สี\\s*[:：]?\\s*${requestedColor}`, "iu");
+    const colorMatches = directMatches.filter(({ p }) => {
+      const detail = detailsBySku.get(String(p.sku ?? ""));
+      return [detail?.name_th, detail?.name_en, detail?.description_th, detail?.description_en,
+        ...(Array.isArray(detail?.tags) ? detail.tags : []),
+        ...(Array.isArray(detail?.feature_tags) ? detail.feature_tags : [])]
+        .some((value) => colorPattern.test(String(value ?? "")));
+    });
+    if (colorMatches.length > 0) {
+      directMatches = colorMatches;
+      colorVerified = true;
+    }
+  }
 
   if (directMatches.length > 0) {
     let selection = buildProductSelection(q, directMatches.map(({ p }) => p));
@@ -753,6 +778,14 @@ async function findProducts(admin: SupabaseClient, query: string) {
         available_values: { backing: flapBackings },
         clarification_question_th: `มีจานทราย${oneSize ? `ขนาด ${oneSize}` : ""}ในระบบค่ะ เลือกแบบที่ต้องการได้เลย\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
         clarification_question_en: `I found flap discs${oneSize ? ` in ${oneSize}` : ""}. Which backing would you like?\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+      };
+    } else if (requestedColor && !colorVerified && directMatches.length <= 13) {
+      const options = catalogNames.sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
+      selection = {
+        selection_required: true,
+        missing_fields: ["color_confirmation"],
+        clarification_question_th: `พบรายการที่สเปกใกล้เคียงค่ะ แต่ข้อมูลสินค้าในระบบไม่ได้ระบุสี${requestedColor} กรุณายืนยันว่ารายการนี้ตรงกับที่ต้องการไหมคะ\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
+        clarification_question_en: `I found this specification, but the catalog does not confirm the requested color. Please confirm the item:\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
       };
     } else if (extractModelCodes(q).length === 0 && modelOptions.length > 1 && modelOptions.length <= 13
       && (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN) {
@@ -800,9 +833,10 @@ async function findProducts(admin: SupabaseClient, query: string) {
       count: directMatches.length,
       match_scan_complete: (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN,
       ...(selection ?? {}),
-      products: selectedMatches.map(({ p, match }) =>
-        formatSafeProductForLLM(detailsBySku.get(String(p.sku ?? "")) ?? p, match)
-      ),
+      products: selectedMatches.map(({ p, match }) => ({
+        ...formatSafeProductForLLM(detailsBySku.get(String(p.sku ?? "")) ?? p, match),
+        ...(colorVerified ? { verified_color: requestedColor } : {}),
+      })),
     };
   }
 
