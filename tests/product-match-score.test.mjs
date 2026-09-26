@@ -97,5 +97,13 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   const fullListButtons = extract(fullList);
   assert.equal(fullListButtons.items.length, 13);
   assert.equal(fullListButtons.items[12].action.text, 'กระดาษทรายกลมสักหลาด SA331 5" #500');
+  const firstPage = `${allGrits.slice(0, 10).map((grit, index) => `${index + 1}. กระดาษทรายกลมสักหลาด SA331 5" #${grit}`).join("\n")}\n11. แสดงเพิ่มเติม`;
+  const firstPageButtons = extract(firstPage);
+  assert.equal(firstPageButtons.items.length, 11);
+  assert.equal(firstPageButtons.items[10].action.text, "แสดงเพิ่มเติม");
+  const secondPage = allGrits.slice(10).map((grit, index) => `${index + 1}. กระดาษทรายกลมสักหลาด SA331 5" #${grit}`).join("\n");
+  const secondPageButtons = extract(secondPage);
+  assert.equal(secondPageButtons.items.length, 9);
+  assert.equal(secondPageButtons.items[7].action.text, 'กระดาษทรายกลมสักหลาด SA331 5" #1500');
   assert.equal(extract("ไม่มีตัวเลือก"), undefined);
 });

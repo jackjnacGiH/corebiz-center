@@ -49,6 +49,24 @@ test("a numbered choice is resolved against the latest catalog offer", () => {
   assert.match(route.topicQuery ?? "", /หลังกาว/);
 });
 
+test("the eighteenth SA331 choice keeps its numbered catalog lines", () => {
+  const product = 'กระดาษทรายกลมสักหลาด SA331 5"';
+  const grits = [40, 60, 80, 100, 120, 150, 180, 220, 240, 280, 320, 400, 500, 600, 800, 1000, 1200, 1500, 2000];
+  const offer = `พบ ${product} ค่ะ เลือกเบอร์ที่ต้องการได้เลย\n${grits.map((grit, index) => `${index + 1}. ${product} #${grit}`).join("\n")}`;
+  const history = [
+    { role: "user", content: 'จานทราย XA945 4" #80' },
+    { role: "assistant", content: "พบจานทรายค่ะ" },
+    { role: "user", content: product },
+    { role: "assistant", content: offer },
+  ];
+
+  const route = routeLatestTurn("18", history);
+  assert.equal(route.kind, "follow_up");
+  assert.equal(route.history.at(-1)?.content, offer);
+  assert.match(route.history.at(-1)?.content ?? "", /^18\. .*#1500$/mu);
+  assert.doesNotMatch(textOf(route.history), /XA945/);
+});
+
 test("quantity reply keeps the latest exact SKU without carrying an old quantity", () => {
   const history = [
     { role: "user", content: 'จานทราย XA945 4" #80 จำนวน 100 ชิ้น' },
