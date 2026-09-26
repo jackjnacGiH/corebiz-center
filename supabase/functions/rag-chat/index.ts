@@ -804,18 +804,24 @@ async function findProducts(admin: SupabaseClient, query: string) {
         clarification_question_th: `มีสินค้าในระบบให้เลือกค่ะ เลือกรุ่นที่สนใจได้เลย\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
         clarification_question_en: `I found these catalog models. Which one would you like?\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
       };
-    } else if (modelOptions.length === 1 && selection?.missing_fields?.includes("grit") && catalogNames.length <= 13) {
+    } else if (modelOptions.length === 1 && selection?.missing_fields?.includes("grit")
+      && catalogNames.length <= 99 && (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN) {
       const options = catalogNames.sort((a, b) => {
         const aGrit = Number(/#\s*(\d+)/u.exec(a)?.[1] ?? 0);
         const bGrit = Number(/#\s*(\d+)/u.exec(b)?.[1] ?? 0);
         return aGrit - bGrit;
       });
-      selection = {
-        ...selection,
-        missing_fields: ["grit"],
-        clarification_question_th: `พบ ${modelOptions[0]} ค่ะ เลือกเบอร์ที่ต้องการได้เลย\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
-        clarification_question_en: `I found ${modelOptions[0]}. Which grit would you like?\n${options.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
-      };
+      const numberedOptions = options.map((name, i) => `${i + 1}. ${name}`).join("\n");
+      const questionTh = `พบ ${modelOptions[0]} ค่ะ เลือกเบอร์ที่ต้องการได้เลย${options.length > 13 ? " หากไม่เห็นปุ่ม พิมพ์หมายเลขหน้ารายการได้ค่ะ" : ""}\n${numberedOptions}`;
+      const questionEn = `I found ${modelOptions[0]}. Choose a grit${options.length > 13 ? " or type its list number" : ""}:\n${numberedOptions}`;
+      if (questionTh.length <= 5_000 && questionEn.length <= 5_000) {
+        selection = {
+          ...selection,
+          missing_fields: ["grit"],
+          clarification_question_th: questionTh,
+          clarification_question_en: questionEn,
+        };
+      }
     }
     if (selection?.selection_required && !/^\s*1\.\s+/mu.test(selection.clarification_question_th ?? "")
       && catalogNames.length > 0) {
