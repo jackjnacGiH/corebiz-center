@@ -111,11 +111,12 @@ test("a pending quote quantity is verified against the catalog before any quote 
   assert.ok(quoteStart >= 0 && guidedStart > quoteStart);
   const branch = source.slice(quoteStart, guidedStart);
   const pending = branch.indexOf("pendingQuoteQuantityRequest(query, productHistory)");
+  const reuse = branch.indexOf('if ("existingQuoteCode" in acceptedQuote)');
   const catalog = branch.indexOf("findProducts(admin, acceptedQuote.sku)");
   const productCheck = branch.indexOf("matchesExplicitProductVariant(normalizeQuoteProductReference(requestedProduct), verifiedRows[0])");
   const itemCheck = branch.indexOf("const exactSkuVerified =");
   const create = branch.indexOf("requestQuote(admin, args, channel, conversationId, query, false, productHistory, trustedQuoteHistory)");
-  assert.ok(pending >= 0 && pending < catalog && catalog < productCheck
+  assert.ok(pending >= 0 && pending < reuse && reuse < catalog && catalog < productCheck
     && productCheck < itemCheck && itemCheck < create);
   assert.match(branch, /verifiedRows\[0\]\.sku === acceptedQuote\.sku/);
   const load = source.indexOf("await loadVerifiedChatHistory(admin, conversationId, telemetry.startedAt)");

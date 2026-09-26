@@ -269,17 +269,40 @@ export function guidedExactProductAnswer(product, quantity = null, price = null,
     : `I found ${name} (SKU ${sku}).${stockText ? ` ${stockText}.` : ""} How many ${unit} would you like?${minimum > 1 ? ` (Minimum ${minimum} ${unit})` : ""}`;
 }
 
-/** A short "yes" authorizes only the immediately preceding exact quote offer. */
-export function confirmedGuidedQuoteRequest(query, history = []) {
-  if (!/^(?:เอา|ได้|ตกลง|ทำเลย|จัดเลย|โอเค|ครับ|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu.test(clean(query))) return null;
-  const last = history.at(-1);
-  if (last?.role !== "assistant" || !/ให้เอยทำใบเสนอราคาให้เลยไหมคะ|Would you like a quotation\?/iu.test(last.content)) return null;
-  const sku = /\(SKU\s+([A-Z0-9._/-]+)\)/iu.exec(last.content)?.[1];
-  const quantity = /(?:จำนวน|For)\s+(\d{1,6})\s+/iu.exec(last.content)?.[1];
-  return sku && quantity ? { sku, qty: Number(quantity) } : null;
-}
-
+const SHORT_QUOTE_CONSENT_RE = /^(?:เอา|ได้|ตกลง|ทำ|ทํา|จัด|โอเค|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu;
 const DIRECT_QUOTE_RE = /(?:ขอ|ต้องการ|อยากได้|ออก|ทำ|ทํา|จัดทำ|จัดทํา|ส่ง)\s*(?:ใบเสนอราคา|ใบราคา)|\b(?:issue|prepare|create|make|send|need|want|request)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:quotation|quote)\b/iu;
+const EXACT_QUOTE_OFFER_RE = /ให้เอยทำใบเสนอราคาให้เลยไหมคะ|Would you like a quotation\?/iu;
+const COMPLETED_QUOTE_RE = /(?:ทำ|ทํา|สร้าง|ออก|ใช้)ใบเสนอราคา(?:ฉบับ)?(?:เลขที่|หมายเลข)?\s*(QT-\d+)/iu;
+const bareQuoteRequest = (text) => DIRECT_QUOTE_RE.test(text)
+  && !/ใบเสนอราคาใหม่|\bnew\s+(?:quotation|quote)\b|\bQT-\d+\b/iu.test(text)
+  && !OTHER_PRODUCT_RE.test(text) && extractModelCodes(text).length === 0
+  && !/(?:\bSKU\s*[:：]?\s*[A-Z0-9._/-]+|\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|#\s*\d+|(?:เบอร์|ขนาด|ไซซ์|size|grit)\s*\d+)/iu.test(text);
+
+/** Resolve a confirmed exact offer, including a direct repeat after one short consent. */
+export function confirmedGuidedQuoteRequest(query, history = []) {
+  const text = clean(query);
+  const shortConsent = SHORT_QUOTE_CONSENT_RE.test(text);
+  const directRequest = bareQuoteRequest(text);
+  if (!shortConsent && !directRequest) return null;
+  const offerIndex = history.findLastIndex((item) => item.role === "assistant"
+    && EXACT_QUOTE_OFFER_RE.test(item.content));
+  if (offerIndex < 0 || shortConsent && offerIndex !== history.length - 1) return null;
+  const offer = history[offerIndex].content;
+  const skus = [...new Set(skuCodes(offer))];
+  const quantity = /(?:จำนวน|For)\s+(\d{1,6})\s+/iu.exec(offer)?.[1];
+  if (skus.length !== 1 || !quantity) return null;
+  let existingQuoteCode = null;
+  for (const item of history.slice(offerIndex + 1)) {
+    if (item.role === "user" && (SHORT_QUOTE_CONSENT_RE.test(clean(item.content))
+      || bareQuoteRequest(clean(item.content)))) continue;
+    const completed = item.role === "assistant" && COMPLETED_QUOTE_RE.exec(item.content);
+    if (!completed) return null;
+    existingQuoteCode = completed[1];
+  }
+  return existingQuoteCode
+    ? { sku: skus[0], qty: Number(quantity), existingQuoteCode }
+    : { sku: skus[0], qty: Number(quantity) };
+}
 
 /** Quantity may finish only the customer's immediately pending, exact-SKU quote request. */
 export function pendingQuoteQuantityRequest(query, history = []) {
@@ -335,9 +358,14 @@ export function quoteCreationBlockReason(query, hasImages, history = []) {
     return "existing_quote_followup";
   }
   const directRequest = DIRECT_QUOTE_RE.test(text);
+  const latestOfferIndex = history.findLastIndex((item) => item.role === "assistant"
+    && EXACT_QUOTE_OFFER_RE.test(item.content));
+  if (bareQuoteRequest(text)
+    && history.slice(latestOfferIndex + 1).some((item) => item.role === "assistant"
+      && COMPLETED_QUOTE_RE.test(item.content))) return "existing_quote_followup";
   if (directRequest) return null;
   if (pendingQuoteQuantityRequest(text, history)) return null;
-  const shortConsent = /^(?:เอา|ได้|ตกลง|ทำเลย|ทําเลย|จัดเลย|โอเค|ครับ|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu.test(text);
+  const shortConsent = SHORT_QUOTE_CONSENT_RE.test(text);
   const last = history.at(-1);
   const quoteOffer = last?.role === "assistant"
     && /(?:ใบเสนอราคา|quotation).{0,40}(?:ไหม|มั้ย|หรือเปล่า|หรือไม่|\?)/iu.test(last.content);

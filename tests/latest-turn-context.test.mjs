@@ -111,6 +111,28 @@ test("a short quote confirmation still sees the immediately preceding exact offe
   assert.deepEqual(route.history, [offer]);
 });
 
+test("a quote consent and a second direct request keep the exact product offer", () => {
+  const product = { role: "user", content: "ใบขัดกระจก PVA SPONGY DISC 4นิ้ว #600" };
+  const offer = { role: "assistant", content: "พบ ใบขัดกระจก PVA SPONGY DISC 4นิ้ว #600 (SKU 2020000917) ค่ะ จำนวน 100 ชิ้น ราคา 75 บาท/ชิ้น\nให้เอยทำใบเสนอราคาให้เลยไหมคะ" };
+  const consent = { role: "user", content: "ทำค่ะ" };
+  const normalizedOffer = { ...offer, content: offer.content.replace(/\s+/gu, " ") };
+  assert.equal(routeLatestTurn(consent.content, [product, offer]).kind, "follow_up");
+  const route = routeLatestTurn("ทำใบเสนอราคาให้หน่อย", [product, offer, consent]);
+  assert.equal(route.kind, "follow_up");
+  assert.deepEqual(route.history, [product, normalizedOffer, consent]);
+  assert.deepEqual(routeLatestTurn("ทำใบเสนอราคาให้หน่อย", [offer, consent]).history, [normalizedOffer, consent]);
+});
+
+test("a new product or payment question cannot inherit the old quote offer", () => {
+  const history = [
+    { role: "user", content: "ใบขัดกระจก PVA SPONGY DISC 4นิ้ว #600" },
+    { role: "assistant", content: "พบสินค้า (SKU 2020000917) จำนวน 100 ชิ้น ให้เอยทำใบเสนอราคาให้เลยไหมคะ" },
+    { role: "user", content: "ทำค่ะ" },
+  ];
+  assert.deepEqual(routeLatestTurn("มีใบเจียร 5 นิ้วไหมครับ", history).history, []);
+  assert.deepEqual(routeLatestTurn("ต้องจ่ายเงินก่อนไหมครับ", history).history, []);
+});
+
 test("an explicitly different model or product type starts a new topic despite dependent wording", () => {
   const old = [
     { role: "user", content: 'จานทราย XA945 4" #80' },

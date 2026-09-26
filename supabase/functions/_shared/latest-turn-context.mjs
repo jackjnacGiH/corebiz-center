@@ -10,6 +10,8 @@ const FOLLOW_UP_RE = /^(?:\d{1,2}(?:\s|$)|(?:จำนวน\s*)?\d{1,6}\s*(?:�
 const QUANTITY_REPLY_RE = /^(?:(?:ต้องการ|เอา|สั่ง|จำนวน)\s*)?\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:\s*(?:ครับ|ค่ะ|คะ))?$/iu;
 const QUANTITY_QUESTION_RE = /(?:จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|ต้องการปรับจำนวน|how many|what quantity)/iu;
 const INDEPENDENT_QUESTION_RE = /(?:ชำระ|ชําระ|จ่าย|โอน|มัดจำ|มัดจํา|payment|pay\b|ค่าขนส่ง|จัดส่ง|ส่งของ|เวลาทำการ|เปิดกี่โมง|ที่อยู่|แผนที่|ใบเสนอราคา(?:เดิม|เลขที่|ที่ส่ง|ที่ทำ|แล้ว)|\bQT-\d+)/iu;
+const SHORT_QUOTE_CONSENT_RE = /^(?:เอา|ได้|ตกลง|ทำ|ทํา|จัด|โอเค|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu;
+const QUOTE_OFFER_RE = /(?:ใบเสนอราคา|quotation).{0,40}(?:ไหม|มั้ย|หรือเปล่า|หรือไม่|\?)/iu;
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 
@@ -64,6 +66,7 @@ function isFollowUpTurn(query, precedingAssistant) {
   if (catalogChoice(text, precedingAssistant)) return true;
   if (INDEPENDENT_QUESTION_RE.test(text) && !/(?:ทำ|ขอ|เอา)ใบเสนอราคา/iu.test(text)) return false;
   if (QUANTITY_REPLY_RE.test(text) && QUANTITY_QUESTION_RE.test(precedingAssistant)) return true;
+  if (SHORT_QUOTE_CONSENT_RE.test(text) && QUOTE_OFFER_RE.test(precedingAssistant)) return true;
   return FACET_SWITCH_RE.test(text) || DEICTIC_FOLLOW_UP_RE.test(text)
     || DEPENDENT_PRODUCT_RE.test(text) || FOLLOW_UP_RE.test(text);
 }
@@ -97,8 +100,13 @@ export function routeLatestTurn(query, history = []) {
     // The upstream history window can start with the bot's last offer. A short
     // response may still use that one adjacent offer, never an older product.
     const adjacentOffer = lastAssistant && /(?:SKU\s*[:：]?\s*[A-Z0-9._/-]+|^\s*1\.\s+|ใบเสนอราคา.{0,30}(?:ไหม|มั้ย)|จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน))/imu.test(lastAssistant);
+    const consentAfterOffer = turns.at(-1)?.role === "user"
+      && SHORT_QUOTE_CONSENT_RE.test(turns.at(-1).content)
+      && turns.at(-2)?.role === "assistant" && QUOTE_OFFER_RE.test(turns.at(-2).content);
     return adjacentOffer
       ? { kind: "follow_up", history: turns.slice(-1), topicQuery: null }
+      : consentAfterOffer
+      ? { kind: "follow_up", history: turns.slice(-2), topicQuery: null }
       : { kind: "independent", history: [], topicQuery: null };
   }
   return { kind: "follow_up", history: turns.slice(topicStart), topicQuery };

@@ -2310,6 +2310,15 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       ?? (QUOTE_QUANTITY_CONTINUATION_ENABLED ? pendingQuoteQuantityRequest(query, productHistory) : null)
     : null;
   if (acceptedQuote) {
+    if ("existingQuoteCode" in acceptedQuote) {
+      const answer = `เอยเคยทำใบเสนอราคาเลขที่ ${acceptedQuote.existingQuoteCode} สำหรับรายการนี้แล้วค่ะ จึงไม่ออกใบซ้ำให้นะคะ`;
+      const firstTokenMs = Date.now() - telemetry.startedAt;
+      send({ type: "text", chunk: answer });
+      if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", answer, { model: "catalog:quote_reuse", channel });
+      send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "catalog:quote_reuse", tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
+      scheduleSimpleRun("catalog:quote_reuse", "ok", firstTokenMs, [], 0, 0);
+      return;
+    }
     const startedAt = Date.now();
     const args = { items: [{ sku: acceptedQuote.sku, qty: acceptedQuote.qty }] };
     const decision = readOnlyToolDecision("request_quote", readOnly);
