@@ -5,6 +5,7 @@ const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const PRODUCT_RE = /กระดาษทราย|ผ้าทราย|สายพาน(?:ขัด|ทราย)|จานทราย|จาานราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const FLAP_DISC_RE = /จานทราย|\bflap\s*disc\b/iu;
 const NONWOVEN_ROLL_RE = /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:nonwoven|scotch\s*brite)\s*roll\b/iu;
+const COMPETING_PRODUCT_FORM_RE = /ล้อ(?:ขัด|ทราย)|ลูกขัด|แผ่น(?:ใย|ขัด|สก๊อต)|ใบขัด|จานทราย|ผ้าทราย|กระดาษทราย|สายพาน/iu;
 const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|หินเจียร|แผ่น(?:ขัด|เจียร)|แปรง(?:ลวด|ขัด)|สายพาน(?:ขัด|ทราย)|สว่านลม|เครื่องมือ(?:ลม)?|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)/iu;
 const FOLLOW_UP_RE = /(?:^|\s)(?:#\s*\d+|(?:เบอร์|grit)\s*#?\s*\d+|(?:ขนาด|ไซซ์|size)\s*\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?))|มีรุ่นไหน|รุ่นไหน|แนะนำ|\bmi(?:r)?ka\b|^\d{1,6}$/iu;
@@ -76,13 +77,21 @@ export function sameProductReference(question, card) {
 }
 
 export function normalizeGuidedProductTerm(value) {
-  return clean(value)
+  const text = clean(value)
     .replace(/ม้วน\s*ใย\s*สังเคราะห์/gu, "ม้วนใยขัดสังเคราะห์")
     .replace(/สก๊อตไบรท์/gu, "สก๊อตไบร์ท")
     .replace(/หลังกา+ว/gu, "หลังกาว")
     .replace(/\bMIKA\b/giu, "MIRKA")
     .replace(/จาานราย/gu, "จานทราย")
     .replace(/จานทราย\s*ซ้อน/gu, "จานทราย");
+  if (COMPETING_PRODUCT_FORM_RE.test(text)) return text;
+  return text
+    .replace(/ใย(?:ขัดสังเคราะห์|ขัด|สังเคราะห์)\s*สก๊อตไบร์ท\s*(?:แบบ\s*)?ม้วน/gu,
+      "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท")
+    .replace(/ม้วน\s*ใย(?:ขัดสังเคราะห์|ขัด|สังเคราะห์)\s*สก๊อตไบร์ท/gu,
+      "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท")
+    .replace(/(?:สก๊อตไบร์ท\s*(?:แบบ\s*)?ม้วน|ม้วน\s*สก๊อตไบร์ท)/gu,
+      "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท");
 }
 
 const normalized = normalizeGuidedProductTerm;
@@ -163,7 +172,7 @@ export function guidedCatalogQuery(query, history = []) {
   const current = normalized(numberedChoice(clean(query), history));
   const flapDiscQuery = guidedFlapDiscQuery(current, history);
   if (flapDiscQuery) return flapDiscQuery;
-  if (NONWOVEN_ROLL_RE.test(current)) return current;
+  if (NONWOVEN_ROLL_RE.test(current)) return normalizeProductSearchQuery(current);
   const needsContext = !PRODUCT_RE.test(current) && FOLLOW_UP_RE.test(current)
     || /\bMIRKA\b/iu.test(current) && !/กระดาษทราย/iu.test(current);
   const context = needsContext
@@ -185,7 +194,7 @@ export function guidedCatalogQuery(query, history = []) {
         || isOtherProductTurn(normalized(item.content))));
     if (!lastProduct) return null;
     if (!OTHER_PRODUCT_RE.test(normalized(lastProduct.content)) && !extractModelCodes(lastProduct.content).length) return null;
-    let base = normalized(normalizeProductSearchQuery(lastProduct.content));
+    let base = normalizeProductSearchQuery(normalized(lastProduct.content));
     const facets = productMatchFacets(current);
     if (facets.size.length) base = base.replace(/\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)/giu, " ");
     if (facets.grit.length) base = base.replace(/#\s*\d{1,5}[A-Z]?|(?:เบอร์|grit)\s*#?\s*\d{1,5}[A-Z]?/giu, " ");
