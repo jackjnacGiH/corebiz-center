@@ -48,6 +48,19 @@ const nonwovenRoll = {
   inventory: [{ quantity: 18 }],
 };
 const nonwovenRollQuestion = 'ม้วนใยสังเคราะห์ สก๊อตไบรท์ สีแดง #400 Size 6"x10 M. ราคาเท่าไหร่';
+const nonwovenRollChoices = [
+  ...[320, 360].map((grit, index) => ({
+    sku: String(2020001667 + index), status: "active", brand: "MIRLON",
+    name_th: `ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 140mm.x10M. #${grit}`,
+  })),
+  ...[80, 180, 240, 320, 400, 600].map((grit, index) => ({
+    sku: ["2020002624", "2020002616", "2020002618", "2020002620", "2020002621", "2020002623"][index],
+    status: "active", brand: "jnac",
+    name_th: `ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M. #${grit}`,
+  })),
+  { sku: "wheel-distractor", status: "active", name_th: 'ล้อขัดใยสังเคราะห์ สก๊อตไบร์ท 4" #400' },
+  { sku: "sanding-distractor", status: "active", name_th: 'ผ้าทรายม้วน 6นิ้วx10M. #400' },
+];
 const pacoBelt = {
   sku: "2020000905", status: "active", brand: "PACO", unit: "ชิ้น", min_order_qty: 10,
   name_th: "ผ้าทรายสายพาน PACO รุ่น Y966 10x330mm. #60",
@@ -121,6 +134,44 @@ test("nonwoven roll price question finds its catalog SKU despite spelling and si
   const matches = [...(result.products ?? []), ...(result.clarification_candidates ?? [])];
   assert.deepEqual(matches.map((item) => item.sku), [nonwovenRoll.sku]);
   assert.doesNotMatch(result.query ?? "", /XA945/);
+});
+test("short Thai Scotch-Brite roll wording offers real catalog sizes before an exact grit", async () => {
+  const question = "มีใยขัดสก๊อตไบร์ท ม้วนไหมครับ";
+  const lookup = query => edge.findProducts(fakeAdmin(nonwovenRollChoices), query);
+  assert.equal(guidedCatalogQuery(question), "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท");
+  assert.equal((await lookup(question)).count, 8);
+  const first = await guidedProductDecision(question, [], "th", lookup);
+  assert.equal(first.result.count, 8);
+  assert.equal(first.result.selection_required, true);
+  assert.match(first.answer, /1\. ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M\./);
+  assert.match(first.answer, /2\. ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 140mm\.x10M\./);
+  assert.doesNotMatch(first.answer, /ล้อขัด|ผ้าทรายม้วน|ราคา\s*[\d,.]+\s*บาท/);
+
+  const history = [{ role: "user", content: question }, { role: "assistant", content: first.answer }];
+  const chosenSize = await guidedProductDecision("2", history, "th", lookup);
+  assert.equal(chosenSize.result.count, 2);
+  assert.match(chosenSize.answer, /1\. ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 140mm\.x10M\. #320/);
+  assert.match(chosenSize.answer, /2\. ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 140mm\.x10M\. #360/);
+  assert.doesNotMatch(chosenSize.answer, /6นิ้ว/);
+
+  const grit = await guidedProductDecision("เบอร์ 400", history, "th", lookup);
+  assert.equal(grit.lookupQuery, "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท #400");
+  assert.equal(grit.result.products[0].sku, "2020002621");
+  assert.equal(grit.answer, null);
+});
+test("roll alias needs the roll form and does not turn other abrasives into rolls", () => {
+  assert.equal(guidedCatalogQuery("ใยขัดสก๊อตไบรท์แบบม้วน"), "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท");
+  assert.equal(guidedCatalogQuery("มีม้วนใยขัดสก๊อตไบร์ทไหมครับ"), "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท");
+  assert.equal(guidedCatalogQuery("มีสก๊อตไบร์ทแบบม้วนไหมครับ"), "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท");
+  assert.equal(guidedCatalogQuery("มีใยขัดสก๊อตไบร์ทไหมครับ"), null);
+  for (const otherProduct of [
+    "มีล้อขัดใยสังเคราะห์ไหมครับ",
+    "มีล้อขัดใยสังเคราะห์ สก๊อตไบร์ท แบบม้วนไหมครับ",
+    "มีแผ่นใยขัดสก๊อตไบร์ทแบบม้วนไหมครับ",
+    "มีผ้าทรายม้วนไหมครับ",
+  ]) {
+    assert.notEqual(guidedCatalogQuery(otherProduct), "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท");
+  }
 });
 test("new nonwoven roll question ignores old XA945 context and verifies red in product details", async () => {
   const history = [
