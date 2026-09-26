@@ -2,14 +2,17 @@ import { extractModelCodes, productMatchFacets } from "./product-selection.mjs";
 import { pendingProductQuestion } from "./product-turn-context.mjs";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
-const PRODUCT_RE = /กระดาษทราย|จานทราย|จาานราย|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
+const PRODUCT_RE = /กระดาษทราย|จานทราย|จาานราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const FLAP_DISC_RE = /จานทราย|\bflap\s*disc\b/iu;
-const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
+const NONWOVEN_ROLL_RE = /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:nonwoven|scotch\s*brite)\s*roll\b/iu;
+const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)/iu;
 const FOLLOW_UP_RE = /(?:^|\s)(?:#\s*\d+|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|\d+\s*(?:ชิ้น|ใบ|กล่อง|pcs?))|มีรุ่นไหน|รุ่นไหน|แนะนำ|\bmi(?:r)?ka\b|^\d{1,6}$/iu;
 
 export function normalizeGuidedProductTerm(value) {
   return clean(value)
+    .replace(/ม้วน\s*ใย\s*สังเคราะห์/gu, "ม้วนใยขัดสังเคราะห์")
+    .replace(/สก๊อตไบรท์/gu, "สก๊อตไบร์ท")
     .replace(/หลังกา+ว/gu, "หลังกาว")
     .replace(/\bMIKA\b/giu, "MIRKA")
     .replace(/จาานราย/gu, "จานทราย")
@@ -31,7 +34,7 @@ function numberedChoice(query, history) {
 }
 
 function pendingExactQuantitySku(query, history) {
-  if (!/^(?:จำนวน\s*)?\d{1,6}(?:\s*(?:ชิ้น|ใบ|กล่อง|pcs?))?$/iu.test(query)) return null;
+  if (!/^(?:จำนวน\s*)?\d{1,6}(?:\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?))?$/iu.test(query)) return null;
   const last = history.at(-1);
   if (last?.role !== "assistant" || !/ต้องการกี่|ต้องการปรับจำนวน|how many|what quantity/iu.test(last.content)) return null;
   return /\(SKU\s+([A-Z0-9._/-]+)\)/iu.exec(last.content)?.[1] ?? null;
@@ -79,6 +82,7 @@ export function guidedCatalogQuery(query, history = []) {
   const current = normalized(numberedChoice(clean(query), history));
   const flapDiscQuery = guidedFlapDiscQuery(current, history);
   if (flapDiscQuery) return flapDiscQuery;
+  if (NONWOVEN_ROLL_RE.test(current)) return current;
   const needsContext = !PRODUCT_RE.test(current) && FOLLOW_UP_RE.test(current)
     || /\bMIRKA\b/iu.test(current) && !/กระดาษทราย/iu.test(current);
   const context = needsContext
@@ -108,9 +112,9 @@ export function guidedCatalogQuery(query, history = []) {
 
 export function guidedRequestedQuantity(query, history = [], resolvedQuery = query) {
   const current = clean(query);
-  const explicit = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|ใบ|กล่อง|pcs?)(?:\s|$)/iu.exec(current);
+  const explicit = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?)(?:\s|$)/iu.exec(current);
   if (explicit) return Number(explicit[1]);
-  if (/^\d{1,6}$/u.test(current) && /(?:กี่ชิ้น|จำนวน(?:เป็น)?(?:เท่าไร|กี่)|quantity|how many)/iu.test(String(history.at(-1)?.content ?? ""))) {
+  if (/^\d{1,6}$/u.test(current) && /(?:กี่(?:ชิ้น|ใบ|กล่อง|ม้วน)|จำนวน(?:เป็น)?(?:เท่าไร|กี่)|quantity|how many)/iu.test(String(history.at(-1)?.content ?? ""))) {
     return Number(current);
   }
   if (PRODUCT_RE.test(clean(resolvedQuery)) && history.at(-1)?.role === "assistant") {
@@ -123,9 +127,16 @@ export function guidedRequestedQuantity(query, history = [], resolvedQuery = que
       const prior = normalized(item.content);
       const priorModel = modelOf(prior);
       const priorBacking = productMatchFacets(prior).backing;
+      if (NONWOVEN_ROLL_RE.test(prior) !== NONWOVEN_ROLL_RE.test(resolvedQuery)) break;
+      if (NONWOVEN_ROLL_RE.test(resolvedQuery)) {
+        const priorFacets = productMatchFacets(prior);
+        const currentFacets = productMatchFacets(resolvedQuery);
+        if (["size", "grit"].some((field) => priorFacets[field].length && currentFacets[field].length
+          && !priorFacets[field].every((value) => currentFacets[field].includes(value)))) break;
+      }
       if (priorModel && resolvedModel && priorModel !== resolvedModel) break;
       if (priorBacking.length && resolvedBacking.length && !priorBacking.every((backing) => resolvedBacking.includes(backing))) break;
-      const quantity = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|ใบ|กล่อง|pcs?)(?:\s|$)/iu.exec(prior);
+      const quantity = /(?:^|\s)(\d{1,6})\s*(?:ชิ้น|ใบ|กล่อง|ม้วน|pcs?)(?:\s|$)/iu.exec(prior);
       if (quantity) return Number(quantity[1]);
     }
   }
@@ -134,6 +145,9 @@ export function guidedRequestedQuantity(query, history = [], resolvedQuery = que
 
 export function guidedExactProductAnswer(product, quantity = null, price = null, lang = "th") {
   const name = clean(lang === "th" ? product.name_th || product.name_en : product.name_en || product.name_th);
+  const verifiedColor = clean(product.verified_color);
+  const displayName = lang === "th" && verifiedColor && !name.includes(`สี${verifiedColor}`)
+    ? `${name} สี${verifiedColor}` : name;
   const sku = clean(product.sku);
   const unit = clean(product.unit) || (lang === "th" ? "ชิ้น" : "piece");
   const stock = Number(product.stock);
@@ -143,17 +157,17 @@ export function guidedExactProductAnswer(product, quantity = null, price = null,
   const minimum = Math.max(1, Number(product.min_order_qty ?? 1));
   if (quantity != null && quantity < minimum) {
     return lang === "th"
-      ? `พบ ${name} (SKU ${sku}) ค่ะ ขั้นต่ำ ${minimum} ${unit} ต้องการปรับจำนวนเป็นเท่าไรคะ`
+      ? `พบ ${displayName} (SKU ${sku}) ค่ะ ขั้นต่ำ ${minimum} ${unit} ต้องการปรับจำนวนเป็นเท่าไรคะ`
       : `I found ${name} (SKU ${sku}). The minimum is ${minimum} ${unit}. What quantity would you like?`;
   }
   if (quantity != null && price?.ok === true && price?.exact_match === true && price?.sku === sku) {
     return lang === "th"
-      ? `พบ ${name} (SKU ${sku}) ค่ะ จำนวน ${quantity} ${unit} ราคา ${price.unit_price} บาท/${unit}${stockText ? ` ${stockText}` : ""}\nให้เอยทำใบเสนอราคาให้เลยไหมคะ`
+      ? `พบ ${displayName} (SKU ${sku}) ค่ะ จำนวน ${quantity} ${unit} ราคา ${price.unit_price} บาท/${unit}${stockText ? ` ${stockText}` : ""}\nให้เอยทำใบเสนอราคาให้เลยไหมคะ`
       : `I found ${name} (SKU ${sku}). For ${quantity} ${unit}, the price is THB ${price.unit_price}/${unit}.${stockText ? ` ${stockText}.` : ""} Would you like a quotation?`;
   }
   if (quantity != null) return null;
   return lang === "th"
-    ? `พบ ${name} (SKU ${sku}) ค่ะ${stockText ? ` ${stockText}` : ""} ต้องการกี่${unit}คะ${minimum > 1 ? ` (ขั้นต่ำ ${minimum} ${unit})` : ""}`
+    ? `พบ ${displayName} (SKU ${sku}) ค่ะ${stockText ? ` ${stockText}` : ""} ต้องการกี่${unit}คะ${minimum > 1 ? ` (ขั้นต่ำ ${minimum} ${unit})` : ""}`
     : `I found ${name} (SKU ${sku}).${stockText ? ` ${stockText}.` : ""} How many ${unit} would you like?${minimum > 1 ? ` (Minimum ${minimum} ${unit})` : ""}`;
 }
 

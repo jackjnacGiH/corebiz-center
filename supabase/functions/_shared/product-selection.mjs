@@ -8,6 +8,7 @@ const DIMENSION_UNIT_SOURCE = '(?:"|นิ้ว|inch(?:es)?|in\\b|มม\\.?|mm
 const DIMENSION_UNIT_SEPARATOR_SOURCE = '\\s*(?:[-‐‑‒–—]\\s*)?';
 const SCALAR_DIMENSION_SOURCE = `\\b\\d+(?:\\.\\d+)?${DIMENSION_UNIT_SEPARATOR_SOURCE}${DIMENSION_UNIT_SOURCE}`;
 const DIMENSION_TUPLE_SOURCE = `\\b\\d+(?:\\.\\d+)?(?:\\s*[x×*]\\s*\\d+(?:\\.\\d+)?){1,3}${DIMENSION_UNIT_SEPARATOR_SOURCE}${DIMENSION_UNIT_SOURCE}`;
+const ROLL_DIMENSION_RE = /\b(\d+(?:\.\d+)?)\s*(?:"|นิ้ว|inch(?:es)?|in\b)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*(?:m\.?(?!m)|เมตร|meters?)(?=\s|$|[.,!?])/giu;
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -62,6 +63,7 @@ export function normalizeProductSearchQuery(value) {
  */
 export function productIdentitySearchText(value) {
   return String(value ?? "")
+    .replace(ROLL_DIMENSION_RE, " ")
     .replace(new RegExp(DIMENSION_TUPLE_SOURCE, "giu"), " ")
     .replace(new RegExp(SCALAR_DIMENSION_SOURCE, "giu"), " ")
     .replace(/(?:เบอร์|grit)\s*[:=]?\s*#?\s*P\s*\d{1,5}[A-Z]?/gi, " ")
@@ -71,6 +73,8 @@ export function productIdentitySearchText(value) {
     .replace(/(?:เบอร์|grit)\s*[:=]?\s*#?\s*\d{1,5}[A-Z]?/gi, " ")
     .replace(/(?:ไม่มีรู|ไม่เจาะรู|no\s*holes?|\b\d{1,3}\s*รู\b|\bholes?\s*[:=]?\s*\d{1,3}\b)/giu, " ")
     .replace(/(?:^|\s)(?:ขนาด|ไซซ์|size|เบอร์|grit)\s*[:=]?(?=\s|$)/giu, " ")
+    .replace(/สี\s*(?:แดง|เขียว|น้ำเงิน|ดำ|ขาว|เหลือง|เทา|ชมพู|ส้ม)/giu, " ")
+    .replace(/ราคา\s*(?:เท่าไหร่|เท่าไร|กี่บาท)?/giu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -86,8 +90,12 @@ function sourceText(product) {
 function extractSizes(value) {
   const text = String(value ?? "");
   const dimensions = [];
+  const withoutRollDimensions = text.replace(ROLL_DIMENSION_RE, (full, width, length) => {
+    dimensions.push(`${Number(width)}นิ้วx${Number(length)}เมตร`);
+    return " ".repeat(full.length);
+  });
   const tupleRe = new RegExp(`\\b(\\d+(?:\\.\\d+)?(?:\\s*[x×*]\\s*\\d+(?:\\.\\d+)?){1,3})${DIMENSION_UNIT_SEPARATOR_SOURCE}(${DIMENSION_UNIT_SOURCE})`, "giu");
-  const textWithoutTuples = text.replace(tupleRe, (full, tuple, rawUnit) => {
+  const textWithoutTuples = withoutRollDimensions.replace(tupleRe, (full, tuple, rawUnit) => {
     const values = String(tuple).split(/\s*[x×*]\s*/iu).map((part) => Number(part));
     if (values.length >= 2 && values.every((part) => Number.isFinite(part) && part > 0)) {
       const unit = /มม|mm/i.test(rawUnit) ? "มม." : "นิ้ว";

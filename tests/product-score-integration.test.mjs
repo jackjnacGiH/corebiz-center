@@ -38,6 +38,14 @@ const flapDiscCatalog = ["หลังอ่อน", "หลังแข็ง"]
           ? `จานทราย${backing} ${model} ${backing === "หลังอ่อน" ? "48P" : "72P"} 4" #${grit}`
           : `จานทราย${backing} ${model} 4" ${backing === "หลังอ่อน" ? (model === "XA911" ? "48P" : "46P") : "72P"} #${grit}`,
       }))));
+const nonwovenRoll = {
+  sku: "2020002621", status: "active", unit: "ม้วน", min_order_qty: 1,
+  name_th: "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M. #400",
+  name_en: "",
+  description_th: "#400 สี: แดง ขนาด 6 นิ้ว x 10 เมตร",
+  inventory: [{ quantity: 18 }],
+};
+const nonwovenRollQuestion = 'ม้วนใยสังเคราะห์ สก๊อตไบรท์ สีแดง #400 Size 6"x10 M. ราคาเท่าไหร่';
 const productFields = ["sku", "name_th", "name_en", "brand"];
 
 async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true) {
@@ -94,6 +102,51 @@ test("button selection resolves exact SKU, without remaining confirmation", asyn
   assert.equal(result.count, 1);
   assert.equal(result.products[0].sku, "2020000992");
   assert.equal(result.products[0].price_lookup_required, true);
+});
+test("nonwoven roll price question finds its catalog SKU despite spelling and size notation", async () => {
+  const result = await edge.findProducts(fakeAdmin([nonwovenRoll]), nonwovenRollQuestion);
+  const matches = [...(result.products ?? []), ...(result.clarification_candidates ?? [])];
+  assert.deepEqual(matches.map((item) => item.sku), [nonwovenRoll.sku]);
+  assert.doesNotMatch(result.query ?? "", /XA945/);
+});
+test("new nonwoven roll question ignores old XA945 context and verifies red in product details", async () => {
+  const history = [
+    { role: "user", content: 'จานทรายหลังอ่อน XA945 4" 46P #400 จำนวน 100 ชิ้น' },
+    { role: "assistant", content: 'พบจานทรายหลังอ่อน XA945 4" 46P #400 ค่ะ' },
+  ];
+  const guided = await guidedProductDecision(nonwovenRollQuestion, history, "th",
+    (query) => edge.findProducts(fakeAdmin([nonwovenRoll]), query));
+  assert.ok(guided, "this complete new product question must use catalog-first routing");
+  assert.match(guided.lookupQuery, /ม้วนใย/);
+  assert.doesNotMatch(guided.lookupQuery, /XA945/);
+  assert.equal(guidedRequestedQuantity(nonwovenRollQuestion, history, guided.lookupQuery), null);
+  assert.equal(guided.result.products?.[0]?.sku ?? guided.result.clarification_candidates?.[0]?.sku,
+    nonwovenRoll.sku);
+  assert.equal(guided.result.selection_required, undefined);
+  const answer = guidedExactProductAnswer(guided.result.products[0]);
+  assert.match(answer, /สีแดง/);
+  assert.match(answer, /ต้องการกี่/);
+  assert.doesNotMatch(answer, /XA945|ราคา\s*[\d,.]+\s*บาท/);
+  assert.equal(guided.escalate, undefined);
+});
+test("nonwoven roll does not treat an unverified color or different length as exact", async () => {
+  const color = await edge.findProducts(fakeAdmin([nonwovenRoll]),
+    nonwovenRollQuestion.replace("สีแดง", "สีเขียว"));
+  assert.equal(color.selection_required, true);
+  assert.match(color.clarification_question_th, /ไม่ได้ระบุสีเขียว/);
+  const length = await edge.findProducts(fakeAdmin([nonwovenRoll]),
+    nonwovenRollQuestion.replace('6"x10 M.', '6"x5 M.'));
+  assert.deepEqual(length.products, []);
+});
+test("confirmed nonwoven roll SKU asks for quantity before any numeric price", async () => {
+  const result = await edge.findProducts(fakeAdmin([nonwovenRoll]), nonwovenRoll.sku);
+  assert.equal(result.products?.[0]?.sku, nonwovenRoll.sku);
+  const answer = guidedExactProductAnswer(result.products[0]);
+  assert.match(answer, /ต้องการกี่ม้วน/);
+  assert.doesNotMatch(answer, /ราคา\s*[\d,.]+\s*บาท|ให้เอยทำใบเสนอราคา/);
+  const history = [{ role: "assistant", content: answer }];
+  assert.equal(guidedCatalogQuery("2 ม้วน", history), nonwovenRoll.sku);
+  assert.equal(guidedRequestedQuantity("2 ม้วน", history, nonwovenRoll.sku), 2);
 });
 test("payment and ordering follow-ups cannot create a second quote", async () => {
   const history = [{ role: "assistant", content: "เอยทำใบเสนอราคาเลขที่ QT-01000127 เรียบร้อยแล้วค่ะ" }];
