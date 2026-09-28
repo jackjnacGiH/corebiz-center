@@ -135,6 +135,54 @@ test("nonwoven roll price question finds its catalog SKU despite spelling and si
   assert.deepEqual(matches.map((item) => item.sku), [nonwovenRoll.sku]);
   assert.doesNotMatch(result.query ?? "", /XA945/);
 });
+
+test("quotation request retrieves exact roll facets but asks to confirm an unverified 7447 code", async () => {
+  const question = "ขอใบเสนอราคาค่ะ\nม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 7447 6นิ้วx10M. #320 = 4 ม้วน";
+  const lookup = (query) => edge.findProducts(fakeAdmin(nonwovenRollChoices), query);
+  assert.equal(guidedRequestedQuantity(question), 4);
+  const guided = await guidedProductDecision(question, [], "th", lookup);
+  assert.equal(guided.result.selection_required, true);
+  assert.equal(guided.result.unverified_code, "7447");
+  assert.deepEqual(guided.result.clarification_candidates.map((item) => item.sku), ["2020002620"]);
+  assert.deepEqual(guided.result.products, []);
+  assert.match(guided.answer, /ยังไม่ยืนยันรหัส 7447/);
+  assert.match(guided.answer, /1\. ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M\. #320/);
+  assert.doesNotMatch(guided.answer, /บาท|สต็อก|ส่งเรื่องให้ทีม/);
+
+  const history = [{ role: "user", content: question }, { role: "assistant", content: guided.answer }];
+  const confirmedName = 'ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M. #320';
+  const confirmed = await guidedProductDecision(confirmedName, history, "th", lookup);
+  assert.equal(confirmed.result.selection_required, undefined);
+  assert.equal(confirmed.result.products[0].sku, "2020002620");
+  assert.equal(guidedRequestedQuantity(confirmedName, history, confirmed.lookupQuery), 4);
+});
+
+test("an exact catalog code stays an exact lookup, while conflicting grit is not offered", async () => {
+  const titledCode = { ...nonwovenRollChoices.find((item) => item.sku === "2020002620"),
+    name_th: "ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 7447 6นิ้วx10M. #320" };
+  const exact = await edge.findProducts(fakeAdmin([titledCode]),
+    "ขอใบเสนอราคาค่ะ\nม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 7447 6นิ้วx10M. #320 = 4 ม้วน");
+  assert.equal(exact.products[0].sku, "2020002620");
+  assert.equal(exact.selection_required, undefined);
+
+  const skuSubstring = { ...nonwovenRollChoices.find((item) => item.sku === "2020002620"),
+    sku: "2020007447" };
+  const collision = await edge.findProducts(fakeAdmin([skuSubstring]),
+    "ขอใบเสนอราคาค่ะ\nม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 7447 6นิ้วx10M. #320 = 4 ม้วน");
+  assert.equal(collision.selection_required, true);
+  assert.deepEqual(collision.products, []);
+  assert.deepEqual(collision.clarification_candidates.map((item) => item.sku), ["2020007447"]);
+
+  const unverifiedColor = await edge.findProducts(fakeAdmin([skuSubstring]),
+    "ขอใบเสนอราคาค่ะ\nม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท สีแดง 7447 6นิ้วx10M. #320 = 4 ม้วน");
+  assert.deepEqual(unverifiedColor.clarification_candidates ?? [], []);
+  assert.deepEqual(unverifiedColor.products, []);
+
+  const wrongGrit = await edge.findProducts(fakeAdmin([nonwovenRollChoices.find((item) => item.sku === "2020002621")]),
+    "ขอใบเสนอราคาค่ะ\nม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 7447 6นิ้วx10M. #320 = 4 ม้วน");
+  assert.deepEqual(wrongGrit.clarification_candidates ?? [], []);
+  assert.deepEqual(wrongGrit.products, []);
+});
 test("short Thai Scotch-Brite roll wording offers real catalog sizes before an exact grit", async () => {
   const question = "มีใยขัดสก๊อตไบร์ท ม้วนไหมครับ";
   const lookup = query => edge.findProducts(fakeAdmin(nonwovenRollChoices), query);

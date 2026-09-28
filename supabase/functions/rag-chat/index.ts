@@ -742,6 +742,14 @@ async function findProducts(admin: SupabaseClient, query: string) {
   let directMatches = ((data ?? []) as Record<string, unknown>[])
     .map((p) => ({ p, match: evaluateProductMatch(q, p) }))
     .filter(({ p, match }) => match.safe && matchesExplicitProductVariant(q, p));
+  const standaloneCodes = [...new Set(identityQuery.match(/\b\d{4,6}\b/gu) ?? [])];
+  if (standaloneCodes.length > 0) {
+    // A partial SKU hit is not evidence that a bare code names this product.
+    directMatches = directMatches.filter(({ p }) => standaloneCodes.every((code) =>
+      String(p.sku ?? "").trim() === code
+      || [p.name_th, p.name_en].some((name) => new RegExp(`\\b${code}\\b`, "u")
+        .test(String(name ?? "")))));
+  }
   const requestedColor = /สี\s*(แดง|เขียว|น้ำเงิน|ดำ|ขาว|เหลือง|เทา|ชมพู|ส้ม)/iu.exec(q)?.[1] ?? "";
   let colorVerified = false;
   if (requestedColor && directMatches.length > 0 && directMatches.length <= 13) {
@@ -863,6 +871,50 @@ async function findProducts(admin: SupabaseClient, query: string) {
         ...(colorVerified ? { verified_color: requestedColor } : {}),
       })),
     };
+  }
+
+  // A standalone numeric code may be a customer-supplied model (for example
+  // 7447) that the catalog title does not confirm. Retrieve by the remaining
+  // exact product facets, but require the customer to confirm the difference.
+  // Color needs its separate detail verification above, so do not relax it here.
+  const requestedFacets = productMatchFacets(q);
+  if (standaloneCodes.length === 1 && requestedProductType && !requestedColor
+    && requestedFacets.size.length > 0 && requestedFacets.grit.length > 0) {
+    const code = standaloneCodes[0];
+    const relaxedQuery = q.replace(new RegExp(`\\b${code}\\b`, "u"), " ").replace(/\s+/gu, " ").trim();
+    const relaxedTokens = stripStopWords(productIdentitySearchText(relaxedQuery).split(/\s+/u)
+      .filter(Boolean).slice(0, 12)).slice(0, 8);
+    if (relaxedTokens.length > 0) {
+      let retry = admin.from("products")
+        .select(PRODUCT_MATCH_COLUMNS, { count: "exact" }).eq("status", "active");
+      for (const token of relaxedTokens) {
+        const pat = `%${escapeLike(token)}%`;
+        retry = retry.or(`sku.ilike.${pat},name_th.ilike.${pat},name_en.ilike.${pat},brand.ilike.${pat}`);
+      }
+      const { data: rows, error: retryError, count: retryCount } = await retry
+        .order("name_th", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
+      const candidates = ((rows ?? []) as Record<string, unknown>[])
+        .filter((product) => evaluateProductMatch(relaxedQuery, product).safe
+          && matchesExplicitProductVariant(relaxedQuery, product));
+      if (!retryError && candidates.length > 0 && candidates.length <= 10
+        && (retryCount ?? candidates.length) <= MAX_PRODUCT_MATCH_SCAN) {
+        const options = candidates.map((product, index) =>
+          `${index + 1}. ${String(product.name_th || product.name_en || "").trim()}`).join("\n");
+        return {
+          query: q, original_query: original !== q ? original : undefined,
+          tokens, requested_product_family: requestedFamily, requested_product_type: requestedProductType,
+          count: 0, products: [], selection_required: true, confirmation_required: true,
+          match_policy: "exact_facets_unverified_code_v1", unverified_code: code,
+          missing_fields: ["product_code_confirmation"],
+          clarification_question_th: `พบสินค้าที่ชนิด ขนาด และเบอร์ตรงกับที่แจ้งค่ะ แต่ข้อมูลสินค้าในระบบยังไม่ยืนยันรหัส ${code} กรุณาเลือกยืนยันรายการก่อนทำใบเสนอราคา\n${options}`,
+          clarification_question_en: `I found the requested product type, size and grit, but the catalog does not confirm code ${code}. Please confirm the item before a quotation:\n${options}`,
+          clarification_candidates: candidates.map((product) => ({
+            sku: product.sku, name_th: product.name_th, name_en: product.name_en,
+            confirmation_required: true, safe_alternative: true,
+          })),
+        };
+      }
+    }
   }
 
   if (PRODUCT_SCORE_SUGGESTIONS_ENABLED) {
