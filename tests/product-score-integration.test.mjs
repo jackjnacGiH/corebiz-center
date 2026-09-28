@@ -74,9 +74,9 @@ const grindingDiscCatalog = [
 ];
 const productFields = ["sku", "name_th", "name_en", "brand"];
 
-async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true) {
+async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true, discovery = true) {
   const bundle = await build({ stdin: {
-    contents: source + "\nexport { findProducts, productFamilyFor, productTypeFor, resolveResponseLanguage, requestQuote };",
+    contents: source + "\nexport { findProducts, productFamilyFor, productTypeFor, resolveResponseLanguage, requestQuote, loadVerifiedChatHistory };",
     resolveDir: fileURLToPath(new URL("../supabase/functions/rag-chat/", import.meta.url)), loader: "ts",
   }, bundle: true, write: false, format: "cjs", platform: "node", plugins: [{ name: "mock-remote-imports", setup(build) {
     build.onResolve({ filter: /^(https:|jsr:)/ }, args => ({ path: args.path, namespace: "remote" }));
@@ -84,7 +84,8 @@ async function loadEdge(source = readFileSync(sourceUrl, "utf8"), scoring = true
   } }] });
   const module = { exports: {} };
   new Function("module", "exports", "Deno", bundle.outputFiles[0].text)(module, module.exports, {
-    env: { get: (key) => key === "PRODUCT_SCORE_SUGGESTIONS_ENABLED" ? String(scoring) : undefined }, serve: () => {},
+    env: { get: (key) => key === "PRODUCT_SCORE_SUGGESTIONS_ENABLED" ? String(scoring)
+      : key === "PRODUCT_CATALOG_DISCOVERY_ENABLED" ? String(discovery) : undefined }, serve: () => {},
   });
   return module.exports;
 }
@@ -134,6 +135,98 @@ test("nonwoven roll price question finds its catalog SKU despite spelling and si
   const matches = [...(result.products ?? []), ...(result.clarification_candidates ?? [])];
   assert.deepEqual(matches.map((item) => item.sku), [nonwovenRoll.sku]);
   assert.doesNotMatch(result.query ?? "", /XA945/);
+});
+test("catalog discovery splits attached Thai words and offers sub-80 real adhesive items", async () => {
+  const result = await edge.findProducts(fakeAdmin(adhesiveCatalog), 'กระดาษทรายหลังกาว 5" #80');
+  assert.equal(result.match_policy, "catalog_keyword_confirmation_v1");
+  assert.equal(result.selection_required, true);
+  assert.deepEqual(result.products, []);
+  assert.ok(result.clarification_candidates.length >= 2);
+  assert.ok(result.clarification_candidates.every((item) => item.match_score < 80));
+  assert.match(result.clarification_question_th, /1\. กระดาษทรายกลมหลังกาว/);
+  assert.doesNotMatch(result.clarification_question_th, /สักหลาด|#800/);
+});
+test("catalog discovery never offers a conflicting size, grit, or backing", async () => {
+  const rows = [
+    { sku: "right", status: "active", name_th: 'กระดาษทรายกลมหลังกาว PS36 5" #80' },
+    { sku: "size", status: "active", name_th: 'กระดาษทรายกลมหลังกาว PS36 6" #80' },
+    { sku: "grit", status: "active", name_th: 'กระดาษทรายกลมหลังกาว PS36 5" #800' },
+    { sku: "backing", status: "active", name_th: 'กระดาษทรายกลมสักหลาด PS36 5" #80' },
+  ];
+  const result = await edge.findProducts(fakeAdmin(rows), 'กระดาษทรายหลังกาว 5" #80');
+  assert.deepEqual(result.clarification_candidates.map((item) => item.sku), ["right"]);
+});
+test("an extra customer word does not hide catalog candidates", async () => {
+  const result = await edge.findProducts(fakeAdmin(adhesiveCatalog),
+    'กระดาษทรายหลังกาว 5" #80 ใช้งาน');
+  assert.equal(result.selection_required, true);
+  assert.ok(result.clarification_candidates.length > 0);
+});
+test("catalog discovery has an independent rollback flag", async () => {
+  const legacy = await loadEdge(undefined, true, false);
+  const result = await legacy.findProducts(fakeAdmin(adhesiveCatalog), 'กระดาษทรายหลังกาว 5" #80');
+  assert.equal(result.clarification_candidates, undefined);
+});
+test("another model can be offered only with matching type, size and grit, with a disclosure", async () => {
+  const rows = [{ sku: "alternative", status: "active",
+    name_th: 'กระดาษทรายกลมหลังกาว PS36 5" #80' }];
+  const complete = await edge.findProducts(fakeAdmin(rows), 'กระดาษทรายหลังกาว SA331 5" #80');
+  assert.equal(complete.selection_required, true);
+  assert.deepEqual(complete.products, []);
+  assert.match(complete.clarification_question_th, /รุ่นที่แจ้ง SA331/);
+  const incomplete = await edge.findProducts(fakeAdmin(rows), 'กระดาษทรายหลังกาว SA331');
+  assert.equal(incomplete.clarification_candidates, undefined);
+});
+test("duplicate catalog names include a verified SKU choice that resolves after tap or number", async () => {
+  const name = 'กระดาษทรายกลมหลังกาว PS36 5" #80';
+  const rows = ["2020000001", "2020000002"].map((sku) => ({ sku, status: "active", name_th: name }));
+  const result = await edge.findProducts(fakeAdmin(rows), 'กระดาษทรายหลังกาว 5" #80');
+  assert.deepEqual(result.candidate_options, [`${name} (SKU 2020000001)`, `${name} (SKU 2020000002)`]);
+  const history = [{ role: "user", content: 'กระดาษทรายหลังกาว 5" #80' },
+    { role: "assistant", content: result.clarification_question_th }];
+  for (const [reply, sku] of [["1", "2020000001"], [result.candidate_options[1], "2020000002"]]) {
+    const selected = guidedCatalogQuery(reply, history);
+    assert.equal(selected, sku);
+    const exact = await edge.findProducts(fakeAdmin(rows), selected);
+    assert.equal(exact.products[0].sku, sku);
+  }
+  const guided = await guidedProductDecision('กระดาษทรายหลังกาว 5" #80', [], "th",
+    (lookup) => edge.findProducts(fakeAdmin(rows), lookup));
+  assert.equal(guided.result.selection_required, true);
+  assert.match(guided.answer, /1\. .*SKU 2020000001/);
+  assert.equal(guidedCatalogQuery("1", [{ role: "assistant", content: guided.answer }]), "2020000001");
+});
+test("catalog discovery pages at ten choices and a numeric reply selects the shown item", async () => {
+  const rows = Array.from({ length: 12 }, (_, i) => ({
+    sku: `candidate-${i + 1}`, status: "active",
+    name_th: `กระดาษทรายกลมหลังกาว AD${i + 10} 5" #80`,
+  }));
+  const query = 'กระดาษทรายหลังกาว 5" #80';
+  const result = await edge.findProducts(fakeAdmin(rows), query);
+  assert.equal(result.candidate_options.length, 12);
+  assert.match(result.clarification_question_th, /ตัวเลือกสินค้า หน้า 1\/2/);
+  assert.match(result.clarification_question_th, /11\. แสดงเพิ่มเติม/);
+  const history = [{ role: "user", content: query },
+    { role: "assistant", content: result.clarification_question_th }];
+  const next = await guidedProductDecision("11", history, "th", async () => result);
+  assert.match(next.answer, /ตัวเลือกสินค้า หน้า 2\/2/);
+  assert.match(next.answer, /1\. กระดาษทรายกลมหลังกาว/);
+  assert.doesNotMatch(next.answer, /11\. แสดงเพิ่มเติม/);
+  const selected = guidedCatalogQuery("2", [...history, { role: "user", content: "11" },
+    { role: "assistant", content: next.answer }]);
+  assert.equal(selected, result.candidate_options[11]);
+});
+test("verified history keeps the final show-more action on a long candidate page", async () => {
+  const longName = 'กระดาษทรายกลมหลังกาว รุ่นทดสอบชื่อยาวพิเศษ'.repeat(3);
+  const offer = `ตัวเลือกสินค้า หน้า 1/2\n${Array.from({ length: 10 }, (_, i) =>
+    `${i + 1}. ${longName} ${i}`).join("\n")}\n11. แสดงเพิ่มเติม`;
+  assert.ok(offer.length > 1_200 && offer.length < 4_500);
+  const admin = { from() { return { select() { return this; }, eq() { return this; },
+    lt() { return this; }, order() { return this; }, limit() { return Promise.resolve({
+      data: [{ sender_type: "bot", content: offer }], error: null,
+    }); } }; } };
+  const history = await edge.loadVerifiedChatHistory(admin, "conversation", Date.now());
+  assert.match(history[0].content, /11\. แสดงเพิ่มเติม$/);
 });
 
 test("quotation request retrieves exact roll facets but asks to confirm an unverified 7447 code", async () => {
@@ -553,31 +646,39 @@ test("grit 150 returns its own SKU, never the 1500 SKU", async () => {
   const result = await edge.findProducts(fakeAdmin(), 'กระดาษทราย DEERFOS SA331VC 5" #150');
   assert.deepEqual(result.clarification_candidates.map(p => p.sku), ["2020000980"]);
 });
-for (const query of ['กระดาษทราย DEERFOS SA331VC 5" #1500 หลังกาว', 'ล้อทราย DEERFOS SA331VC 5" #1500', 'กระดาษทราย MIRKA SA331VC 5" #1500']) {
+for (const query of ['กระดาษทราย DEERFOS SA331VC 5" #1500 หลังกาว', 'ล้อทราย DEERFOS SA331VC 5" #1500']) {
   test(`full search rejects conflicting specification: ${query}`, async () => {
     const result = await edge.findProducts(fakeAdmin(), query);
     assert.equal(result.count, 0);
     assert.equal(result.clarification_candidates, undefined);
   });
 }
+test("a different requested brand is disclosed as a choice, not resolved or priced", async () => {
+  const result = await edge.findProducts(fakeAdmin(), 'กระดาษทราย MIRKA SA331VC 5" #1500');
+  assert.equal(result.selection_required, true);
+  assert.deepEqual(result.products, []);
+  assert.deepEqual(result.clarification_candidates.map((item) => item.sku), ["2020000992"]);
+  assert.match(result.clarification_question_th, /แบรนด์ในตัวเลือกต่างจากที่แจ้ง \(ในระบบ: DEERFOS\)/);
+  assert.match(result.clarification_question_th, /รุ่นที่แจ้ง SA331VC/);
+});
 test("feature flag disables scored fallback for rollback", async () => {
   const legacy = await loadEdge(undefined, false);
   const result = await legacy.findProducts(fakeAdmin(), 'กระดาษทราย DEERFOS SA331VC 5" #1500');
   assert.equal(result.count, 0);
   assert.equal(result.clarification_candidates, undefined);
 });
-test("empty AI completion on incomplete SA331VC question asks only for missing catalog facets", async () => {
+test("empty AI completion on incomplete SA331VC question shows real catalog choices", async () => {
   const query = "มี กระดาษทรายกลมสักหลาด SA331VC 5 จำหน่ายหมครับ";
   const recovered = await recoverEmptyProductAnswer(query, [], "th", q => edge.findProducts(fakeAdmin(), q));
   assert.match(recovered.answer, /SA331VC/);
-  assert.match(recovered.answer, /เบอร์ความละเอียด/);
+  assert.match(recovered.answer, /1\. กระดาษทรายกลมสักหลาด SA331/);
   assert.equal(recovered.answer.includes("2020000992"), false);
   assert.equal(recovered.answer.includes("8.5"), false);
 });
 test("short follow-up after an unanswered product turn reuses only the adjacent customer query", async () => {
   const history = [{ role: "user", content: "มี กระดาษทรายกลมสักหลาด SA331VC 5 จำหน่ายหมครับ" }];
   const recovered = await recoverEmptyProductAnswer("มีไหนครับ", history, "th", q => edge.findProducts(fakeAdmin(), q));
-  assert.match(recovered.answer, /เบอร์ความละเอียด/);
+  assert.match(recovered.answer, /1\. กระดาษทรายกลมสักหลาด SA331/);
   assert.match(recovered.lookupQuery, /SA331/);
   const unrelated = await recoverEmptyProductAnswer("มีไหนครับ", [{ role: "assistant", content: history[0].content }], "th", q => edge.findProducts(fakeAdmin(), q));
   assert.equal(unrelated.answer, null);

@@ -78,6 +78,7 @@ import {
   guidedRequestedQuantity,
   normalizeGuidedProductTerm,
   normalizeQuoteProductReference,
+  pagedCatalogCandidateQuestion,
   pendingQuoteQuantityRequest,
   quoteCreationBlockReason,
   sameProductReference,
@@ -431,6 +432,8 @@ const PRODUCT_MATCH_COLUMNS = "sku, name_th, name_en, brand, status, feature_tag
 const MAX_PRODUCT_MATCH_SCAN = 1_000;
 // Set false for immediate rollback to exact catalog matching.
 const PRODUCT_SCORE_SUGGESTIONS_ENABLED = Deno.env.get("PRODUCT_SCORE_SUGGESTIONS_ENABLED") !== "false";
+// Roll back exploratory catalog choices without changing exact or scored matching.
+const PRODUCT_CATALOG_DISCOVERY_ENABLED = Deno.env.get("PRODUCT_CATALOG_DISCOVERY_ENABLED") !== "false";
 // Disable for an immediate return to the model-led product conversation.
 const PRODUCT_GUIDED_SELECTION_ENABLED = Deno.env.get("PRODUCT_GUIDED_SELECTION_ENABLED") !== "false";
 // Set false to restore the previous full-history routing during rollback.
@@ -552,8 +555,8 @@ const PRODUCT_FAMILY_RULES: ProductFamilyRule[] = [
   { key: "sanding_belt", labelTh: "ผ้าทรายสายพาน", pattern: /ผ้าทราย\s*สายพาน|sanding\s*belt|abrasive\s*belt/i },
   { key: "mounted_flap_wheel", labelTh: "ล้อทรายมีแกน", pattern: /ล้อทราย\s*มีแกน|mounted\s*flap\s*wheel/i },
   { key: "flap_disc", labelTh: "จานทรายซ้อน", pattern: /จานทราย\s*ซ้อน|flap\s*disc/i },
-  { key: "sanding_disc_velcro", labelTh: "กระดาษทรายกลมสักหลาด", pattern: /กระดาษทรายกลม\s*สักหลาด|velcro\s*(?:sanding\s*)?disc/i },
-  { key: "sanding_disc_adhesive", labelTh: "กระดาษทรายกลมหลังกาว", pattern: /กระดาษทรายกลม\s*หลังกาว|adhesive\s*(?:sanding\s*)?disc/i },
+  { key: "sanding_disc_velcro", labelTh: "กระดาษทรายกลมสักหลาด", pattern: /กระดาษทราย(?:กลม)?\s*สักหลาด|velcro\s*(?:sanding\s*)?disc/i },
+  { key: "sanding_disc_adhesive", labelTh: "กระดาษทรายกลมหลังกาว", pattern: /กระดาษทราย(?:กลม)?\s*หลังกาว|adhesive\s*(?:sanding\s*)?disc/i },
   { key: "sanding_roll", labelTh: "ผ้าทรายม้วน", pattern: /ผ้าทราย\s*ม้วน|abrasive\s*roll|sanding\s*roll/i },
   { key: "nonwoven_roll", labelTh: "ม้วนใยขัดสังเคราะห์", pattern: /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|nonwoven\s*roll|scotch\s*brite\s*roll/i },
   // Catalog and customers use both ลูกขัด... and ล้อขัด... for this same product family.
@@ -588,7 +591,7 @@ const PRODUCT_TYPE_RULES: ProductTypeRule[] = [
   { key: "nonwoven_roll", labelTh: "ม้วนใยขัดสังเคราะห์", pattern: /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|nonwoven\s*roll|scotch\s*brite\s*roll/i },
   { key: "mounted_flap_wheel", labelTh: "ล้อทราย", pattern: /ล้อทราย(?:\s*มีแกน)?|mounted\s*flap\s*wheel/i },
   { key: "flap_disc", labelTh: "จานทราย", pattern: /จานทราย(?:\s*ซ้อน)?|flap\s*disc/i },
-  { key: "sanding_disc", labelTh: "กระดาษทรายกลม", pattern: /กระดาษทราย\s*กลม|(?:velcro|adhesive)\s*(?:sanding\s*)?disc/i },
+  { key: "sanding_disc", labelTh: "กระดาษทรายกลม", pattern: /กระดาษทราย(?:\s*กลม|\s*หลังกาว|\s*สักหลาด)|(?:velcro|adhesive)\s*(?:sanding\s*)?disc/i },
   // Keep the same semantic anchor as PRODUCT_FAMILY_RULES; this is a hard gate.
   { key: "nonwoven_wheel", labelTh: "ล้อขัดใยสังเคราะห์", pattern: /(?:ล้อ|ลูก)\s*ขัด\s*ใย\s*สังเคราะห์|scotch\s*brite\s*wheel|nonwoven\s*wheel/i },
   { key: "hairline_wheel", labelTh: "ล้อขัดแฮร์ไลน์", pattern: /ล้อขัด.*แฮร์ไลน์|hairline\s*wheel/i },
@@ -843,6 +846,26 @@ async function findProducts(admin: SupabaseClient, query: string) {
         clarification_question_en: `Here are catalog examples. Choose one, or tell me the missing variant details:\n${examples.map((name, i) => `${i + 1}. ${name}`).join("\n")}`,
       };
     }
+    if (!selection && directMatches.length > 1) {
+      const names = directMatches.map(({ p }) => String(p.name_th || p.name_en || "").trim());
+      const counts = new Map<string, number>();
+      for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+      const options = directMatches.slice(0, 20).map(({ p }, index) =>
+        (counts.get(names[index]) ?? 0) > 1
+          ? `${names[index]} (SKU ${p.sku})` : names[index]);
+      const partial = directMatches.length > 20 || (rawMatchCount ?? 0) > MAX_PRODUCT_MATCH_SCAN;
+      const choice = {
+        candidate_intro_th: `พบสินค้าในระบบหลายรายการที่ตรงกับคำค้นค่ะ กรุณาเลือกรายการที่ต้องการ${partial ? " รายการนี้เป็นส่วนหนึ่งของผลค้นหา หากยังไม่ตรงแจ้งสเปกเพิ่มได้ค่ะ" : ""}`,
+        candidate_intro_en: "I found several catalog items. Please select the intended product.",
+        candidate_options: options,
+      };
+      selection = {
+        ...choice, selection_required: true, confirmation_required: true,
+        missing_fields: ["product_confirmation"],
+        clarification_question_th: pagedCatalogCandidateQuestion(choice, "th"),
+        clarification_question_en: pagedCatalogCandidateQuestion(choice, "en"),
+      };
+    }
     const selectedMatches = directMatches.slice(
       0,
       selection ? MAX_PRODUCTS_DURING_SELECTION : MAX_PRODUCTS_IN_TOOL_RESULT,
@@ -949,6 +972,161 @@ async function findProducts(admin: SupabaseClient, query: string) {
     if (scored) return { ...scored, original_query: original, synonym_rewrites: applied };
   }
 
+  // Discovery is a separate decision from the 80-point recommendation gate.
+  // Search meaningful words in any order, then offer catalog choices for the
+  // customer to confirm. A candidate is never an identified/priced product.
+  if (PRODUCT_CATALOG_DISCOVERY_ENABLED) {
+    const words = [...new Intl.Segmenter("th", { granularity: "word" }).segment(identityQuery)]
+      .filter((part) => part.isWordLike).map((part) => part.segment.trim())
+      .filter((part) => [...part].length >= 3 && !STOPWORDS.has(part.toLowerCase()));
+    const thaiWords = words.filter((word) => /[ก-๙]/u.test(word));
+    const terms = [...new Set((thaiWords.length ? thaiWords : words).slice(0, 6))];
+    if (terms.length > 0 && (requestedFamily || productTypeFor(q)
+      || normalizedProductName(q).replace(/\s+/gu, "").length >= 5)) {
+      let scan = admin.from("products")
+        .select(PRODUCT_MATCH_COLUMNS, { count: "exact" }).eq("status", "active");
+      for (const term of terms) {
+        const pat = `%${escapeLike(term)}%`;
+        scan = scan.or(`name_th.ilike.${pat},name_en.ilike.${pat}`);
+      }
+      const { data: wordRows, error: wordError, count: wordCount } = await scan
+        .order("name_th", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
+      const pool = new Map<string, Record<string, unknown>>();
+      if (!wordError) for (const product of (wordRows ?? []) as Record<string, unknown>[]) {
+        pool.set(String(product.sku ?? ""), product);
+      }
+      let scanComplete = !wordError && (wordCount ?? 0) <= MAX_PRODUCT_MATCH_SCAN;
+      // One conversational word can be absent from every catalog title. Try
+      // the known product form first, then any meaningful word if needed.
+      if (pool.size < 10) {
+        const anchor = productFamilyLabel(requestedFamily) ?? productTypeLabel(productTypeFor(q));
+        if (anchor) {
+          const pat = `%${escapeLike(anchor)}%`;
+          const { data: anchorRows, count: anchorCount, error: anchorError } = await admin.from("products")
+            .select(PRODUCT_MATCH_COLUMNS, { count: "exact" }).eq("status", "active")
+            .or(`name_th.ilike.${pat},name_en.ilike.${pat}`)
+            .order("name_th", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
+          scanComplete = scanComplete && !anchorError && (anchorCount ?? 0) <= MAX_PRODUCT_MATCH_SCAN;
+          if (!anchorError) for (const product of (anchorRows ?? []) as Record<string, unknown>[]) {
+            pool.set(String(product.sku ?? ""), product);
+          }
+        }
+      }
+      if (pool.size === 0 && terms.length > 1) {
+        const alternatives = terms.flatMap((term) => {
+          const pat = `%${escapeLike(term)}%`;
+          return [`name_th.ilike.${pat}`, `name_en.ilike.${pat}`];
+        }).join(",");
+        const { data: broadRows, count: broadCount, error: broadError } = await admin.from("products")
+          .select(PRODUCT_MATCH_COLUMNS, { count: "exact" }).eq("status", "active")
+          .or(alternatives).order("name_th", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
+        scanComplete = scanComplete && !broadError && (broadCount ?? 0) <= MAX_PRODUCT_MATCH_SCAN;
+        if (!broadError) for (const product of (broadRows ?? []) as Record<string, unknown>[]) {
+          pool.set(String(product.sku ?? ""), product);
+        }
+      }
+      // A misspelling can defeat the word scan; the existing trigram index
+      // supplies another bounded, read-only candidate source.
+      if (pool.size === 0) {
+        const { data: fuzzy } = await admin.rpc("search_products_fuzzy", {
+          p_query: identityQuery, p_limit: 80, p_threshold: 0.12,
+        });
+        scanComplete = false;
+        const fuzzySkus = (fuzzy ?? []).map((row: { sku: string }) => row.sku).filter(Boolean);
+        if (fuzzySkus.length > 0) {
+          const { data: fuzzyRows } = await admin.from("products").select(PRODUCT_MATCH_COLUMNS)
+            .eq("status", "active").in("sku", fuzzySkus);
+          for (const product of (fuzzyRows ?? []) as Record<string, unknown>[]) {
+            pool.set(String(product.sku ?? ""), product);
+          }
+        }
+      }
+      const requestedType = productTypeFor(q);
+      const canRelaxCode = standaloneCodes.length === 0 || Boolean(requestedType
+        && requestedFacets.size.length && requestedFacets.grit.length);
+      const ranked = canRelaxCode ? [...pool.values()].map((product) => {
+        const name = String(product.name_th || product.name_en || "");
+        const candidateFamily = productFamilyFor(name);
+        const candidateType = productTypeFor(name);
+        const match = scoreProductCandidate(q, product, {
+          requestedFamily, candidateFamily, requestedProductType: requestedType,
+          candidateProductType: candidateType,
+        });
+        return { product, name, match, nameScore: normalizedNameScore(q, name),
+          candidateFamily, candidateType };
+      }).filter(({ product, match, nameScore, candidateFamily, candidateType }) =>
+        matchesExplicitProductVariant(q, product)
+        && (!requestedFamily || candidateFamily === requestedFamily)
+        && (!requestedType || candidateType === requestedType)
+        && (requestedFamily || requestedType || nameScore >= 0.65)
+        && match.conflicts.every((conflict) => conflict === "brand" || conflict === "model")
+        && (!match.conflicts.some((conflict) => conflict === "brand" || conflict === "model")
+          || Boolean((requestedType || nameScore >= 0.65)
+            && requestedFacets.size.length && requestedFacets.grit.length))
+        && (!requestedColor || String(product.name_th || product.name_en || "")
+          .includes(`สี${requestedColor}`)))
+        .sort((a, b) => (b.match.score + b.nameScore * 20)
+          - (a.match.score + a.nameScore * 20)
+          || a.name.localeCompare(b.name, "th", { numeric: true })) : [];
+      if (ranked.length > 0) {
+        const groupByModel = requestedFacets.grit.length === 0;
+        const fullNameCounts = new Map<string, number>();
+        for (const { name } of ranked) fullNameCounts.set(name, (fullNameCounts.get(name) ?? 0) + 1);
+        const seen = new Set<string>();
+        const choices = ranked.filter(({ product, name }) => {
+          const key = (fullNameCounts.get(name) ?? 0) > 1 ? String(product.sku ?? "")
+            : groupByModel ? name.replace(/\s*#\s*\d{1,5}[A-Z]?\s*$/iu, "")
+            : String(product.sku ?? "");
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 20);
+        const baseNames = choices.map(({ name }) => groupByModel
+          ? name.replace(/\s*#\s*\d{1,5}[A-Z]?\s*$/iu, "").trim() : name.trim());
+        const names = choices.map(({ product }, index) => baseNames.filter((name) => name === baseNames[index]).length > 1
+          ? `${baseNames[index]} (SKU ${product.sku})` : baseNames[index]);
+        const requestedModels = extractModelCodes(q);
+        const differsModel = choices.some(({ match }) => match.conflicts.includes("model")
+          || match.model_relation === "suffix_unconfirmed");
+        const differsBrand = choices.some(({ match }) => match.conflicts.includes("brand"));
+        const offeredModels = [...new Set(choices.flatMap(({ name }) => extractModelCodes(name)))];
+        const offeredBrands = [...new Set(choices.map(({ product }) => String(product.brand ?? "").trim())
+          .filter(Boolean))];
+        const differencesTh = [
+          differsModel && requestedModels.length
+            ? `รุ่นที่แจ้ง ${requestedModels.join(", ")} ต่างจากรุ่นในระบบ${offeredModels.length ? ` (${offeredModels.slice(0, 4).join(", ")})` : ""}` : "",
+          differsBrand ? `แบรนด์ในตัวเลือกต่างจากที่แจ้ง${offeredBrands.length ? ` (ในระบบ: ${offeredBrands.slice(0, 4).join(", ")})` : ""}` : "",
+          standaloneCodes.length ? `รหัส ${standaloneCodes.join(", ")} ยังไม่ยืนยันจากชื่อสินค้า` : "",
+        ].filter(Boolean).join("; ");
+        const incomplete = !scanComplete || seen.size > 20;
+        const introTh = `พบสินค้าในระบบที่คำสำคัญและสเปกใกล้กับที่แจ้งค่ะ${differencesTh ? ` ${differencesTh}ค่ะ` : ""} กรุณาเลือกชื่อสินค้าที่ตรงกับความต้องการก่อนนะคะ${incomplete ? " รายการนี้เป็นส่วนหนึ่งของผลค้นหา หากยังไม่ตรงแจ้งสเปกเพิ่มได้ค่ะ" : ""}`;
+        const introEn = `I found catalog products with similar words and specifications.${differsModel || differsBrand || standaloneCodes.length ? " The requested model, brand or code may differ; please check the names." : ""} Please choose the intended product.`;
+        const result = {
+          query: q, original_query: original !== q ? original : undefined,
+          synonym_rewrites: applied.length ? applied : undefined,
+          requested_product_family: requestedFamily, requested_product_type: requestedProductType,
+          count: 0, products: [], selection_required: true, confirmation_required: true,
+          match_policy: "catalog_keyword_confirmation_v1",
+          match_scan_complete: !incomplete,
+          missing_fields: ["product_confirmation"],
+          candidate_intro_th: introTh, candidate_intro_en: introEn,
+          candidate_options: names,
+          clarification_candidates: choices.slice(0, 10).map(({ product, match }) => ({
+            sku: product.sku, name_th: product.name_th, name_en: product.name_en,
+            brand: product.brand, match_score: match.score,
+            differences: match.conflicts.filter((value) => value === "model" || value === "brand"),
+            confirmation_required: true,
+          })),
+        };
+        return {
+          ...result,
+          clarification_question_th: pagedCatalogCandidateQuestion(result, "th"),
+          clarification_question_en: pagedCatalogCandidateQuestion(result, "en"),
+        };
+      }
+    }
+  }
+
   // With scoring enabled, no older 70%-name fallback may bypass the 80% gate.
   if (!PRODUCT_SCORE_SUGGESTIONS_ENABLED) try {
     const { data: fuzzy } = await admin.rpc("search_products_fuzzy", {
@@ -981,7 +1159,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
     tokens,
     stripped: rawTokens.length !== tokens.length ? rawTokens.filter((t) => !tokens.includes(t)) : [],
     requested_product_family: requestedFamily, requested_product_type: requestedProductType, count: 0, products: [],
-    note: `ยังไม่มีตัวเลือกที่ผ่านเกณฑ์${PRODUCT_SCORE_SUGGESTIONS_ENABLED ? "คะแนนข้อมูลตรงกันอย่างน้อย 80% และไม่ขัดกับสเปกที่ระบุ" : "การจับคู่ชื่อเดิม"}${requestedProductType ? ` สำหรับ${requestedProductType}` : ""} — ห้ามเสนอสินค้าคนละชนิด. ให้ส่งเรื่องตรวจสอบจัดหา/สั่งผลิตแทน`,
+    note: `ยังไม่พบรายการในแค็ตตาล็อกที่ชนิดและสเปกไม่ขัดกับที่ระบุ${requestedProductType ? ` สำหรับ${requestedProductType}` : ""} — ให้ส่งเรื่องตรวจสอบจัดหา/สั่งผลิตแทน`,
   };
 }
 
@@ -1995,11 +2173,15 @@ async function loadVerifiedChatHistory(
   const messages = rows.reverse()
     .filter((row) => row.sender_type === "customer" || row.sender_type === "bot" || row.sender_type === "agent")
     .map((row) => {
-      const content = String(row.content ?? "")
+      const cleaned = String(row.content ?? "")
         .replace(/https?:\/\/[^\s]*\/center\/q\/\S+/giu, "")
         .replace(/📄[^\n]*\n?/gu, "")
         .replace(/ดูรายละเอียดและดาวน์โหลด[^\n]*\n?/gu, "")
-        .trim().slice(0, MAX_HISTORY_ITEM_CHARS);
+        .trim();
+      // Keep the full offered page so its final "show more" button and all
+      // numbered choices can be verified on the next customer turn.
+      const content = cleaned.slice(0,
+        /ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(cleaned) ? 4_500 : MAX_HISTORY_ITEM_CHARS);
       return { role: row.sender_type === "customer" ? "user" : "assistant",
         content: row.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content };
     })

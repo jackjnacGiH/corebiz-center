@@ -88,6 +88,9 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   const guided = extract('เลือกเบอร์ค่ะ\n1. กระดาษทรายกลมหลังกาว PS36 5" #60\n2. กระดาษทรายกลมหลังกาว PS36 5" #80');
   assert.deepEqual(guided.items.map(item => item.action.label), ["1. PS36 #60", "2. PS36 #80"]);
   assert.equal(guided.items[1].action.text, 'กระดาษทรายกลมหลังกาว PS36 5" #80');
+  const paged = extract('ตัวเลือกสินค้า หน้า 1/2\n1. กระดาษทรายกลมหลังกาว PS36 5" #80\n11. แสดงเพิ่มเติม');
+  assert.deepEqual(paged.items.map(item => item.action.text),
+    ['กระดาษทรายกลมหลังกาว PS36 5" #80', 'แสดงเพิ่มเติม']);
   const backings = extract('เลือกแบบค่ะ\n1. จานทรายหลังอ่อน 4 นิ้ว\n2. จานทรายหลังแข็ง 4 นิ้ว');
   assert.deepEqual(backings.items.map(item => item.action.label), ["1. หลังอ่อน", "2. หลังแข็ง"]);
   assert.equal(backings.items[0].action.text, "จานทรายหลังอ่อน 4 นิ้ว");
