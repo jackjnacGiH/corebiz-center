@@ -83,6 +83,8 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   assert.equal(buttons.items.length, 1);
   assert.equal(buttons.items[0].action.text, product.name_th);
   assert.match(buttons.items[0].action.label, /SA331 #1500/);
+  const unverifiedCode = extract('ข้อมูลสินค้าในระบบยังไม่ยืนยันรหัส 7447 กรุณาเลือกยืนยันรายการก่อนทำใบเสนอราคา\n1. ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M. #320');
+  assert.equal(unverifiedCode.items[0].action.text, 'ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M. #320');
   const guided = extract('เลือกเบอร์ค่ะ\n1. กระดาษทรายกลมหลังกาว PS36 5" #60\n2. กระดาษทรายกลมหลังกาว PS36 5" #80');
   assert.deepEqual(guided.items.map(item => item.action.label), ["1. PS36 #60", "2. PS36 #80"]);
   assert.equal(guided.items[1].action.text, 'กระดาษทรายกลมหลังกาว PS36 5" #80');

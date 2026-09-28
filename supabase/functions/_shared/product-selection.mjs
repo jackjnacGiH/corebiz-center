@@ -42,7 +42,12 @@ export function hasExactModelCodeMatch(query, candidate) {
 
 /** Remove buying/search intent even when Thai is typed without a space. */
 export function normalizeProductSearchQuery(value) {
-  let text = String(value ?? "").trim();
+  let text = String(value ?? "").trim()
+    // A quote request and its quantity describe the transaction, not the
+    // product identity. Keep them in the original customer turn for quoting.
+    .replace(/^(?:(?:ขอ|ต้องการ|อยากได้|ทำ|ทํา|ออก|ส่ง)\s*)?ใบเสนอราคา\s*(?:ค่ะ|คะ|ครับ)?\s*[:：-]?\s*/iu, "")
+    .replace(/\s*(?:=|จำนวน|qty|quantity)\s*\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:ครับ|ค่ะ|คะ)?\s*$/iu, "")
+    .trim();
   let previous = "";
   while (text && text !== previous) {
     previous = text;
