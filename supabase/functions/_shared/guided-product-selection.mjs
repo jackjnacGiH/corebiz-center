@@ -106,10 +106,32 @@ function nextCatalogPage(query, history) {
   const more = /^11\.\s+(?:แสดงเพิ่มเติม|Show more)\s*$/imu.exec(offer.content);
   if (!more || !/^(?:11|แสดงเพิ่มเติม|Show more)$/iu.test(text)) return null;
   const page = /(?:หน้า|page)\s*(\d+)\s*\/\s*(\d+)/iu.exec(offer.content);
+  if (/ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(offer.content)) {
+    const sourceIndex = history.findLastIndex((item) => item.role === "user"
+      && !/^(?:11|แสดงเพิ่มเติม|Show more)$/iu.test(clean(item.content)));
+    const source = history[sourceIndex];
+    const lookupQuery = source && guidedCatalogQuery(source.content, history.slice(0, sourceIndex));
+    return page && lookupQuery ? { lookupQuery, pageIndex: Number(page[1]), candidates: true } : null;
+  }
   const firstOption = /^1\.\s+(.+)$/mu.exec(offer.content)?.[1];
   const catalogQuery = /^(.+?)\s*#\s*\d{1,5}[A-Z]?\s*$/iu.exec(firstOption ?? "")?.[1]?.trim();
   return page && catalogQuery
     ? { lookupQuery: catalogQuery, pageIndex: Number(page[1]) } : null;
+}
+
+export function pagedCatalogCandidateQuestion(result, lang, pageIndex = 0) {
+  const options = result?.candidate_options;
+  if (!Array.isArray(options) || options.length === 0) return pendingProductQuestion(result, lang);
+  const totalPages = Math.ceil(options.length / CATALOG_PAGE_SIZE);
+  const currentPage = Math.min(Math.max(0, pageIndex), totalPages - 1);
+  const intro = lang === "th" ? result.candidate_intro_th : result.candidate_intro_en;
+  const marker = lang === "th"
+    ? `ตัวเลือกสินค้า หน้า ${currentPage + 1}/${totalPages}`
+    : `Catalog options page ${currentPage + 1}/${totalPages}`;
+  const choices = options.slice(currentPage * CATALOG_PAGE_SIZE, (currentPage + 1) * CATALOG_PAGE_SIZE)
+    .map((name, index) => `${index + 1}. ${name}`);
+  if (currentPage + 1 < totalPages) choices.push(`11. ${MORE_CHOICES[lang === "th" ? "th" : "en"]}`);
+  return [intro, marker, ...choices].filter(Boolean).join("\n");
 }
 
 function pagedGritQuestion(result, lang, pageIndex = 0) {
@@ -151,7 +173,9 @@ function numberedChoice(query, history) {
       const matches = options.filter((option) => option.toUpperCase().includes(term.toUpperCase()));
       return matches.length === 1 ? matches[0] : null;
     })();
-  return choice && (PRODUCT_RE.test(choice) || OTHER_PRODUCT_RE.test(choice)) ? choice : query;
+  const catalogChoice = /ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(last.content)
+    && choice && !/^(?:แสดงเพิ่มเติม|Show more)$/iu.test(choice);
+  return choice && (PRODUCT_RE.test(choice) || OTHER_PRODUCT_RE.test(choice) || catalogChoice) ? choice : query;
 }
 
 function pendingExactQuantitySku(query, history) {
@@ -206,7 +230,15 @@ function guidedFlapDiscQuery(current, history) {
 export function guidedCatalogQuery(query, history = []) {
   const quantitySku = pendingExactQuantitySku(clean(query), history);
   if (quantitySku) return quantitySku;
-  const current = normalized(numberedChoice(clean(query), history));
+  const offeredChoice = numberedChoice(clean(query), history);
+  const current = normalized(offeredChoice);
+  if (/ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(String(history.at(-1)?.content ?? ""))
+    && String(history.at(-1)?.content ?? "").split(/\r?\n/u)
+      .some((line) => /^\s*\d{1,2}\.\s+(.+)$/u.exec(line)?.[1]?.trim() === offeredChoice)) {
+    const offeredSku = /\(SKU\s+([A-Z0-9._/-]+)\)\s*$/iu.exec(offeredChoice)?.[1];
+    if (offeredSku) return offeredSku;
+    return normalizeProductSearchQuery(current);
+  }
   const skuMentions = [...current.matchAll(/\bSKU\s*[:：]?\s*([A-Z0-9._/-]{4,})\b/giu)]
     .map((match) => match[1]);
   const numericSkuMentions = [...current.matchAll(/\b20\d{8}\b/gu)]
@@ -492,7 +524,10 @@ export async function guidedProductDecision(query, history, lang, lookup) {
   if (!lookupQuery) return null;
   const result = await lookup(lookupQuery);
   if (result?.selection_required) {
-    return { answer: pagedGritQuestion(result, lang, nextPage?.pageIndex), lookupQuery, result };
+    const answer = result.candidate_options
+      ? pagedCatalogCandidateQuestion(result, lang, nextPage?.pageIndex)
+      : pagedGritQuestion(result, lang, nextPage?.pageIndex);
+    return { answer, lookupQuery, result };
   }
 
   // An unavailable grit is not proof that the product family is unavailable.
