@@ -31,15 +31,9 @@ export default function ShippingRateComparison({ rates, selected, parcelCount, b
   }).format(Number(value));
   const referenceCostText = (rate: ShippingRate) => {
     const reference = rate.reference_cost;
-    if (!reference?.available) return reference?.reason === "outside_pdf_conditions" ? c.costPdfOutside : c.costPdfUnavailable;
-    if (reference.base === null || reference.total === null || reference.total_with_conditional === null) return c.costPdfUnavailable;
-    const labels = { cod: c.costCod, pickup: c.costPickup, special_area: c.costSpecialArea };
-    const parts = [`${c.costBase} ${price(reference.base)}`, ...reference.extras.map((extra) =>
-      `${labels[extra.kind]} ${price(extra.amount)}${extra.conditional ? ` (${c.costIfApplicable})` : ""}`)];
-    const total = reference.total === reference.total_with_conditional
-      ? price(reference.total)
-      : `${price(reference.total)}–${price(reference.total_with_conditional)}`;
-    return `${c.costPdfLabel}: ${parts.join(" + ")} = ${total} ${c.baht}`;
+    return reference?.available && reference.total !== null
+      ? `${price(reference.total)} ${c.baht}`
+      : c.costUnavailableShort;
   };
   return (
     <section className="rounded-xl border p-3 space-y-3 sm:p-4" aria-label={c.compareRates}>

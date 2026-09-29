@@ -7,8 +7,8 @@ import {
 
 // Internal source: ราคาทุนขนส่ง API+Corporate_1 page 16Apr26.pdf
 // SHA-256: 95A1EC7C052246C6E9AFD11496FF7BFAC955C0A19A0DB515F4C15D012F973AF5
-// The PDF states special-area fees but contains no postcode list, so the
-// calculator exposes the surcharge as a conditional range instead of guessing.
+// The PDF states special-area fees but contains no postcode list. PromptSpeed's
+// check-price response determines whether each parcel receives that surcharge.
 
 export type ShippingCostExtraKind = "cod" | "pickup" | "special_area";
 export interface ShippingCostReference {
@@ -18,7 +18,7 @@ export interface ShippingCostReference {
   extras: { kind: ShippingCostExtraKind; amount: string; conditional: boolean }[];
   total: string | null;
   total_with_conditional: string | null;
-  reason: "not_in_pdf" | "outside_pdf_conditions" | null;
+  reason: "not_in_pdf" | "outside_pdf_conditions" | "area_unverified" | null;
 }
 
 type ZonePrices = readonly [number, number];
@@ -96,7 +96,11 @@ const unavailable = (reason: ShippingCostReference["reason"]): ShippingCostRefer
   total: null, total_with_conditional: null, reason,
 });
 
-export function calculateShippingCostReference(carrierCode: string, draft: ShippingDraft): ShippingCostReference {
+export function calculateShippingCostReference(
+  carrierCode: string,
+  draft: ShippingDraft,
+  specialAreaByParcel?: readonly (boolean | null)[],
+): ShippingCostReference {
   const normalizedCode = carrierCode.trim().toUpperCase();
   const service = SERVICES[normalizedCode];
   if (!service) return unavailable("not_in_pdf");
@@ -106,6 +110,10 @@ export function calculateShippingCostReference(carrierCode: string, draft: Shipp
   const metro = normalizedCode === "FLASH_EXPRESS_SPEED" ? originMetro && destinationMetro : destinationMetro;
   const parcelPrices = parcels.map((parcel) => service.parcelPrice(parcel, metro));
   if (!parcelPrices.every((value): value is number => value !== null)) return unavailable("outside_pdf_conditions");
+  if (
+    specialAreaByParcel?.length !== parcels.length ||
+    specialAreaByParcel.some((value) => value === null)
+  ) return unavailable("area_unverified");
 
   const baseMinor = parcelPrices.reduce((sum, value) => sum + value * 100, 0);
   const extras: ShippingCostReference["extras"] = [];
@@ -121,10 +129,12 @@ export function calculateShippingCostReference(carrierCode: string, draft: Shipp
     extras.push({ kind: "pickup", amount: money(pickupFee), conditional: false });
     totalMinor += pickupFee;
   }
-  const specialAreaMinor = service.specialAreaFee * parcels.length * 100;
-  extras.push({ kind: "special_area", amount: money(specialAreaMinor), conditional: true });
+  const specialAreaBoxes = specialAreaByParcel.filter(Boolean).length;
+  const specialAreaMinor = service.specialAreaFee * specialAreaBoxes * 100;
+  extras.push({ kind: "special_area", amount: money(specialAreaMinor), conditional: false });
+  totalMinor += specialAreaMinor;
   return {
     source: "pdf_2026_04", available: true, base: money(baseMinor), extras,
-    total: money(totalMinor), total_with_conditional: money(totalMinor + specialAreaMinor), reason: null,
+    total: money(totalMinor), total_with_conditional: money(totalMinor), reason: null,
   };
 }
