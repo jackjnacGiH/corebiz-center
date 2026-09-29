@@ -10,7 +10,7 @@
  * without a daily cron pass; the SQL function `recalc_chat_auto_tags`
  * persists them in DB whenever the admin edits the conversation.
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Check,
   Pencil,
@@ -58,6 +58,8 @@ interface Props {
   customerSnapshot?: CustomerSnapshot | null;
   onCustomerSnapshotChanged?: (customer: CustomerSnapshot | null) => void;
 }
+
+const MAX_NOTES_CACHE_ENTRIES = 50;
 
 const MEMORY_LABELS: Record<string, string> = {
   quotation_request: 'ขอใบเสนอราคา',
@@ -107,17 +109,38 @@ export default function ContactPanel({
   onCustomerSnapshotChanged,
 }: Props) {
   const [aliasEditing, setAliasEditing] = useState(false);
+  const [aliasEditingConversationId, setAliasEditingConversationId] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState(conversation.alias_name ?? '');
   const [customer, setCustomer] = useState<CustomerSnapshot | null>(customerSnapshot);
   const [packers, setPackers] = useState<StaffProfile[]>([]);
-  const [notes, setNotes] = useState<ChatContactNote[]>([]);
-  const [loadingNotes, setLoadingNotes] = useState(false);
+  const notesCacheRef = useRef(new Map<string, ChatContactNote[]>());
+  const [notesCache, setNotesCache] = useState(new Map<string, ChatContactNote[]>());
+  const notesRequestVersionsRef = useRef(new Map<string, number>());
+  const notesRequestSequenceRef = useRef(0);
+  const activeConversationIdRef = useRef(conversation.id);
+  useLayoutEffect(() => {
+    activeConversationIdRef.current = conversation.id;
+  }, [conversation.id]);
+  const [notesState, setNotesState] = useState<{
+    conversationId: string;
+    rows: ChatContactNote[];
+    loading: boolean;
+    error: boolean;
+  }>({ conversationId: conversation.id, rows: [], loading: true, error: false });
+  const cachedNotes = notesCache.get(conversation.id);
+  const notes = notesState.conversationId === conversation.id ? notesState.rows : cachedNotes ?? [];
+  const loadingNotes = notesState.conversationId === conversation.id
+    ? notesState.loading
+    : cachedNotes === undefined;
+  const notesError = notesState.conversationId === conversation.id && notesState.error;
   const [modalOpen, setModalOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<ChatContactNote | undefined>();
+  const [noteModalConversationId, setNoteModalConversationId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   // Manual customer linking (for chats that never self-registered)
   const [linking, setLinking] = useState(false);
+  const [linkingConversationId, setLinkingConversationId] = useState<string | null>(null);
   const [custQuery, setCustQuery] = useState('');
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [custSearching, setCustSearching] = useState(false);
@@ -132,8 +155,9 @@ export default function ContactPanel({
   const memoryRequestRef = useRef(0);
 
   // Debounced customer search while the link picker is open.
+  const linkingCurrent = linking && linkingConversationId === conversation.id;
   useEffect(() => {
-    if (!linking) return;
+    if (!linkingCurrent) return;
     const term = custQuery.trim();
     if (!term) { setCustResults([]); return; }
     let cancelled = false;
@@ -144,17 +168,20 @@ export default function ContactPanel({
       finally { if (!cancelled) setCustSearching(false); }
     }, 250);
     return () => { cancelled = true; clearTimeout(h); };
-  }, [custQuery, linking]);
+  }, [custQuery, linkingCurrent]);
 
   async function chooseCustomer(id: string | null) {
+    const conversationId = conversation.id;
     setLinkBusy(true);
     try {
-      await chatProfileApi.linkCustomer(conversation.id, id);
+      await chatProfileApi.linkCustomer(conversationId, id);
       if (id) {
         const snap = await chatProfileApi.getCustomerSnapshot(id).catch(() => null);
+        if (activeConversationIdRef.current !== conversationId) return;
         setCustomer(snap);
         onCustomerSnapshotChanged?.(snap);
       } else {
+        if (activeConversationIdRef.current !== conversationId) return;
         setCustomer(null);
         onCustomerSnapshotChanged?.(null);
       }
@@ -170,6 +197,17 @@ export default function ContactPanel({
   useEffect(() => {
     memoryRequestRef.current += 1;
     setAliasDraft(conversation.alias_name ?? '');
+    setAliasEditing(false);
+    setAliasEditingConversationId(null);
+    setModalOpen(false);
+    setEditingNote(undefined);
+    setNoteModalConversationId(null);
+    setDragId(null);
+    setDragOverId(null);
+    setLinking(false);
+    setLinkingConversationId(null);
+    setCustQuery('');
+    setCustResults([]);
     setMemoryOpen(false);
     setMemory(null);
     setMemoryNote('');
@@ -232,6 +270,11 @@ export default function ContactPanel({
   useEffect(() => {
     setCustomer(customerSnapshot);
   }, [customerSnapshot]);
+  const visibleCustomer = conversation.customer_id
+    ? customerSnapshot?.id === conversation.customer_id
+      ? customerSnapshot
+      : customer?.id === conversation.customer_id ? customer : null
+    : null;
 
   // Load packer staff list (once)
   useEffect(() => {
@@ -245,16 +288,58 @@ export default function ContactPanel({
     };
   }, []);
 
-  // Load notes + realtime subscribe per conversation
-  const reloadNotes = useCallback(async () => {
-    setLoadingNotes(true);
-    try {
-      const rows = await chatNotesApi.list(conversation.id);
-      setNotes(rows);
-    } finally {
-      setLoadingNotes(false);
+  // Keep recently viewed notes in this panel instance. A revisit renders its
+  // cached notes immediately while the current conversation refreshes.
+  const rememberNotes = useCallback((conversationId: string, rows: ChatContactNote[]) => {
+    const cache = notesCacheRef.current;
+    cache.delete(conversationId);
+    cache.set(conversationId, rows);
+    while (cache.size > MAX_NOTES_CACHE_ENTRIES) {
+      const oldest = cache.keys().next().value;
+      if (oldest) {
+        cache.delete(oldest);
+        notesRequestVersionsRef.current.delete(oldest);
+      }
     }
-  }, [conversation.id]);
+    setNotesCache(new Map(cache));
+  }, []);
+
+  // Load notes + realtime subscribe per conversation. Older requests may still
+  // finish after a room switch, but can only update their own cache entry.
+  const reloadNotes = useCallback(async () => {
+    const conversationId = conversation.id;
+    const requestVersion = ++notesRequestSequenceRef.current;
+    notesRequestVersionsRef.current.set(conversationId, requestVersion);
+    const cached = notesCacheRef.current.get(conversationId);
+    if (activeConversationIdRef.current === conversationId) {
+      setNotesState((current) => ({
+        conversationId,
+        rows: current.conversationId === conversationId ? current.rows : cached ?? [],
+        loading: cached === undefined,
+        error: false,
+      }));
+    }
+    try {
+      const rows = await chatNotesApi.list(conversationId);
+      if (notesRequestVersionsRef.current.get(conversationId) !== requestVersion) return;
+      rememberNotes(conversationId, rows);
+      if (activeConversationIdRef.current === conversationId) {
+        setNotesState({ conversationId, rows, loading: false, error: false });
+      }
+    } catch {
+      if (
+        notesRequestVersionsRef.current.get(conversationId) === requestVersion
+        && activeConversationIdRef.current === conversationId
+      ) {
+        setNotesState({
+          conversationId,
+          rows: notesCacheRef.current.get(conversationId) ?? [],
+          loading: false,
+          error: true,
+        });
+      }
+    }
+  }, [conversation.id, rememberNotes]);
 
   useEffect(() => {
     void reloadNotes();
@@ -280,8 +365,8 @@ export default function ContactPanel({
   }, [conversation.id, reloadNotes]);
 
   const autoTags = useMemo(
-    () => computeAutoTags(conversation, customer),
-    [conversation, customer],
+    () => computeAutoTags(conversation, visibleCustomer),
+    [conversation, visibleCustomer],
   );
 
   const lastDays = daysSince(
@@ -348,6 +433,7 @@ export default function ContactPanel({
       'id' | 'conversation_id' | 'created_at' | 'updated_at' | 'created_by' | 'sort_order'
     >,
   ) => {
+    if (noteModalConversationId !== conversation.id) return;
     try {
       if (editingNote) {
         await chatNotesApi.update(editingNote.id, payload);
@@ -361,6 +447,7 @@ export default function ContactPanel({
   };
 
   const handleDeleteNote = async (n: ChatContactNote) => {
+    if (n.conversation_id !== conversation.id) return;
     try {
       await chatNotesApi.delete(n.id);
       void reloadNotes();
@@ -370,6 +457,7 @@ export default function ContactPanel({
   };
 
   const handleTogglePin = async (n: ChatContactNote) => {
+    if (n.conversation_id !== conversation.id) return;
     try {
       await chatNotesApi.update(n.id, { is_pinned: !n.is_pinned });
       void reloadNotes();
@@ -405,7 +493,10 @@ export default function ContactPanel({
     const reordered = [...notes];
     const [moved] = reordered.splice(oldIdx, 1);
     reordered.splice(newIdx, 0, moved);
-    setNotes(reordered);
+    rememberNotes(conversation.id, reordered);
+    setNotesState((current) => current.conversationId === conversation.id
+      ? { ...current, rows: reordered }
+      : current);
     chatNotesApi.reorder(reordered.map((n) => n.id)).catch(() => void reloadNotes());
   };
 
@@ -437,7 +528,7 @@ export default function ContactPanel({
           </div>
 
           {/* Editable nickname (alias_name) — separate row below the original name */}
-          {aliasEditing ? (
+          {aliasEditing && aliasEditingConversationId === conversation.id ? (
             <div className="flex gap-1 w-full max-w-[220px] mt-1">
               <input
                 autoFocus
@@ -471,6 +562,7 @@ export default function ContactPanel({
               onClick={() => {
                 setAliasDraft(conversation.alias_name ?? '');
                 setAliasEditing(true);
+                setAliasEditingConversationId(conversation.id);
               }}
               className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-md text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100"
               title="แก้ไขชื่อเล่น"
@@ -484,6 +576,7 @@ export default function ContactPanel({
               onClick={() => {
                 setAliasDraft('');
                 setAliasEditing(true);
+                setAliasEditingConversationId(conversation.id);
               }}
               className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-md text-[10px] text-neutral-500 border border-dashed border-neutral-300 hover:bg-neutral-50"
             >
@@ -503,18 +596,18 @@ export default function ContactPanel({
           <div className="text-[10px] uppercase font-bold text-neutral-500 mb-2 tracking-wide flex items-center gap-1">
             <Link2 size={11} /> ลูกค้าในระบบ
           </div>
-          {customer ? (
+          {visibleCustomer ? (
             <>
-              <div className="text-sm font-semibold text-neutral-900 leading-snug">{customer.name}</div>
-              <div className="text-[10px] text-neutral-400 mb-2 uppercase">Tier: {customer.tier}</div>
+              <div className="text-sm font-semibold text-neutral-900 leading-snug">{visibleCustomer.name}</div>
+              <div className="text-[10px] text-neutral-400 mb-2 uppercase">Tier: {visibleCustomer.tier}</div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <div className="text-[10px] text-neutral-500 flex items-center gap-1"><ShoppingBag size={10} /> ออเดอร์</div>
-                  <div className="text-base font-bold text-neutral-900">{customer.total_orders}</div>
+                  <div className="text-base font-bold text-neutral-900">{visibleCustomer.total_orders}</div>
                 </div>
                 <div>
                   <div className="text-[10px] text-neutral-500 flex items-center gap-1">💰 ยอดซื้อ</div>
-                  <div className="text-base font-bold text-emerald-600">฿{Number(customer.total_spent).toLocaleString()}</div>
+                  <div className="text-base font-bold text-emerald-600">฿{Number(visibleCustomer.total_spent).toLocaleString()}</div>
                 </div>
                 {lastDays !== null && (
                   <div className="col-span-2 pt-2 border-t border-neutral-200">
@@ -524,23 +617,27 @@ export default function ContactPanel({
                 )}
               </div>
               <div className="mt-2 flex gap-3">
-                <button type="button" onClick={() => setLinking((v) => !v)} disabled={linkBusy} className="text-[11px] text-indigo-600 hover:underline disabled:opacity-50">เปลี่ยนลูกค้า</button>
+                <button type="button" onClick={() => { setLinking((v) => !v); setLinkingConversationId(conversation.id); }} disabled={linkBusy} className="text-[11px] text-indigo-600 hover:underline disabled:opacity-50">เปลี่ยนลูกค้า</button>
                 <button type="button" onClick={() => void chooseCustomer(null)} disabled={linkBusy} className="text-[11px] text-neutral-400 hover:text-red-600 disabled:opacity-50">ยกเลิกการผูก</button>
               </div>
             </>
+          ) : conversation.customer_id ? (
+            <div className="text-[11px] text-neutral-500 py-2 flex items-center gap-1.5">
+              <Loader2 size={12} className="animate-spin" /> กำลังโหลดข้อมูลลูกค้าที่ผูกไว้...
+            </div>
           ) : (
             <>
               <p className="text-[11px] text-neutral-500 mb-2 leading-relaxed">
                 ยังไม่ได้ผูกกับลูกค้าในระบบ — ผูกเพื่อให้ใบเสนอราคาเติมชื่อ/ที่อยู่ลูกค้าอัตโนมัติ
               </p>
-              <button type="button" onClick={() => setLinking((v) => !v)} disabled={linkBusy}
+              <button type="button" onClick={() => { setLinking((v) => !v); setLinkingConversationId(conversation.id); }} disabled={linkBusy}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
                 {linkBusy ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={12} />} ผูกลูกค้า
               </button>
             </>
           )}
 
-          {linking && (
+          {linkingCurrent && (
             <div className="mt-2.5">
               <input autoFocus value={custQuery} onChange={(e) => setCustQuery(e.target.value)}
                 placeholder="ค้นหาชื่อ / รหัส / เบอร์ / เลขผู้เสียภาษี..."
@@ -774,6 +871,7 @@ export default function ContactPanel({
               variant="outline"
               onClick={() => {
                 setEditingNote(undefined);
+                setNoteModalConversationId(conversation.id);
                 setModalOpen(true);
               }}
               className="gap-1 text-[10px] text-indigo-700 border-indigo-200 hover:bg-indigo-50"
@@ -788,7 +886,12 @@ export default function ContactPanel({
               กำลังโหลด...
             </div>
           )}
-          {!loadingNotes && notes.length === 0 && (
+          {notesError && (
+            <div className="text-xs text-red-600 text-center py-2">
+              โหลดโน้ตไม่สำเร็จ <button type="button" className="underline" onClick={() => void reloadNotes()}>ลองใหม่</button>
+            </div>
+          )}
+          {!loadingNotes && !notesError && notes.length === 0 && (
             <div className="text-xs text-neutral-400 text-center py-4 border border-dashed border-neutral-200 rounded-lg bg-neutral-50/30">
               ยังไม่มีโน้ต — กด "เพิ่ม" เพื่อสร้างโน้ตแรก
             </div>
@@ -807,6 +910,7 @@ export default function ContactPanel({
               onDragEnd={handleDragEnd}
               onEdit={() => {
                 setEditingNote(n);
+                setNoteModalConversationId(conversation.id);
                 setModalOpen(true);
               }}
               onDelete={() => void handleDeleteNote(n)}
@@ -817,8 +921,8 @@ export default function ContactPanel({
       </div>
 
       <NoteModal
-        open={modalOpen}
-        initial={editingNote}
+        open={modalOpen && noteModalConversationId === conversation.id}
+        initial={noteModalConversationId === conversation.id ? editingNote : undefined}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmitNote}
       />

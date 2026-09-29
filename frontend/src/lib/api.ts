@@ -2862,7 +2862,7 @@ export const chatInboxApi = {
     status?: ChatStatus | null;
     search?: string;
     limit?: number;
-  } = {}): Promise<ChatConversation[]> {
+  } = {}, onBaseRows?: (rows: ChatConversation[]) => void): Promise<ChatConversation[]> {
     const term = opts.search?.trim() ?? '';
     // chat_contact_notes + this RPC aren't in the generated DB types — query untyped.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2899,6 +2899,10 @@ export const chatInboxApi = {
     const { data, error } = await q;
     if (error) throw error;
     let convos = (data ?? []) as ChatConversation[];
+
+    // The inbox and selected contact can render from this first response.
+    // Company names are useful enrichment, but must not block opening a chat.
+    onBaseRows?.(convos);
 
     // Attach the contact's company name (from the tax_invoice note) so the
     // inbox list can show it next to the LINE/web display name.

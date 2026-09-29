@@ -460,9 +460,15 @@ export default function Chat() {
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
-    const [quoteCustomerPreview, setQuoteCustomerPreview] = useState<CustomerSnapshot | null>(null);
+    const [customerSnapshots, setCustomerSnapshots] = useState<Record<string, {
+        customer: CustomerSnapshot | null;
+        fetchedAt: number;
+    }>>({});
     const [showQuoteCustomerPreview, setShowQuoteCustomerPreview] = useState(false);
     const [readThroughByConversation, setReadThroughByConversation] = useState<Record<string, string | null>>({});
+    const quoteCustomerId = selectedConversation?.customer_id ?? null;
+    const cachedQuoteCustomer = quoteCustomerId ? customerSnapshots[quoteCustomerId] : undefined;
+    const quoteCustomerPreview = cachedQuoteCustomer?.customer ?? null;
 
     // Read conversation ID from URL parameters and clear parameter to clean up URL
     useEffect(() => {
@@ -515,17 +521,27 @@ export default function Chat() {
 
     useEffect(() => {
         setShowQuoteCustomerPreview(false);
-        if (!selectedConversation?.customer_id) {
-            setQuoteCustomerPreview(null);
-            return;
-        }
-        setQuoteCustomerPreview(null);
+    }, [quoteCustomerId]);
+
+    useEffect(() => {
+        if (!quoteCustomerId) return;
+        if (cachedQuoteCustomer && Date.now() - cachedQuoteCustomer.fetchedAt < 60_000) return;
         let cancelled = false;
-        void chatProfileApi.getCustomerSnapshot(selectedConversation.customer_id)
-            .then((customer) => { if (!cancelled) setQuoteCustomerPreview(customer); })
-            .catch(() => { if (!cancelled) setQuoteCustomerPreview(null); });
+        void chatProfileApi.getCustomerSnapshot(quoteCustomerId)
+            .then((customer) => {
+                if (cancelled) return;
+                setCustomerSnapshots((current) => {
+                    const next = { ...current };
+                    delete next[quoteCustomerId];
+                    next[quoteCustomerId] = { customer, fetchedAt: Date.now() };
+                    const oldest = Object.keys(next)[0];
+                    if (Object.keys(next).length > 40 && oldest) delete next[oldest];
+                    return next;
+                });
+            })
+            .catch(() => { /* keep any cached snapshot when the refresh fails */ });
         return () => { cancelled = true; };
-    }, [selectedConversation?.customer_id]);
+    }, [quoteCustomerId, cachedQuoteCustomer]);
     const [loadingMsgs, setLoadingMsgs] = useState(false);
     const [loadingOlderMsgs, setLoadingOlderMsgs] = useState(false);
     const [hasOlderMessages, setHasOlderMessages] = useState(false);
@@ -610,18 +626,31 @@ export default function Chat() {
                 const requestVersion = refresh.version;
                 const filters = { ...conversationFiltersRef.current };
                 try {
-                    const rows = await chatInboxApi.listConversations(filters);
                     const cacheId = conversationCacheId(filters);
-                    const latestFilters = conversationFiltersRef.current;
-                    const isCurrent = requestVersion === refresh.version
-                        && filters.channel === latestFilters.channel
-                        && filters.status === latestFilters.status
-                        && filters.search === latestFilters.search;
-                    if (isCurrent) {
+                    const publishRows = (rows: ChatConversation[], complete: boolean) => {
+                        const latestFilters = conversationFiltersRef.current;
+                        if (
+                            requestVersion !== refresh.version
+                            || filters.channel !== latestFilters.channel
+                            || filters.status !== latestFilters.status
+                            || filters.search !== latestFilters.search
+                        ) return;
                         conversationNetworkCacheKeyRef.current = cacheId;
-                        setConversations(rows);
+                        if (complete) {
+                            // A Realtime update may land while company names load.
+                            // Add only the enrichment, preserving newer room state.
+                            const companies = new Map(rows.map((row) => [row.id, row.company ?? null]));
+                            setConversations((current) => current.map((row) => {
+                                if (!companies.has(row.id)) return row;
+                                const company = companies.get(row.id) ?? null;
+                                return row.company === company ? row : { ...row, company };
+                            }));
+                        } else {
+                            setConversations(rows);
+                        }
                         setListErr(null);
-                        if (chatCacheUserId) {
+                        setLoadingList(false);
+                        if (complete && chatCacheUserId) {
                             void writePersistentChatCache(
                                 chatCacheUserId,
                                 'conversation-list',
@@ -630,7 +659,12 @@ export default function Chat() {
                                 MAX_PERSISTENT_CONVERSATION_LISTS,
                             );
                         }
-                    }
+                    };
+                    const rows = await chatInboxApi.listConversations(
+                        filters,
+                        (baseRows) => publishRows(baseRows, false),
+                    );
+                    publishRows(rows, true);
                 } catch (e) {
                     if (requestVersion === refresh.version) {
                         setListErr((e as Error).message);
@@ -1822,7 +1856,16 @@ export default function Chat() {
                         <ContactPanel
                             conversation={selectedConv}
                             customerSnapshot={quoteCustomerPreview}
-                            onCustomerSnapshotChanged={setQuoteCustomerPreview}
+                            onCustomerSnapshotChanged={(customer) => {
+                                const customerId = customer?.id ?? selectedConv.customer_id;
+                                if (!customerId) return;
+                                setCustomerSnapshots((current) => {
+                                    const next = { ...current };
+                                    delete next[customerId];
+                                    next[customerId] = { customer, fetchedAt: Date.now() };
+                                    return next;
+                                });
+                            }}
                             onConversationChanged={() => void loadConvs()}
                         />
                     </div>
