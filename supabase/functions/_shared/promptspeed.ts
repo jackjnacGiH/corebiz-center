@@ -305,6 +305,57 @@ export async function requestProvider(
 export const providerRows = (response: ProviderResponse): unknown[] =>
   response.ok && Array.isArray(response.data.data) ? response.data.data : [];
 
+const providerShipmentStatuses = new Set([
+  "waiting",
+  "on_delivery",
+  "delivered",
+  "on_return",
+  "returned",
+  "claimed",
+  "closed",
+  "canceled",
+]);
+
+function providerMoney(value: unknown): number | null {
+  const raw = typeof value === "number" ? String(value) : text(value, 50);
+  if (!/^\d+(?:\.\d{1,4})?$/.test(raw)) return null;
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount >= 0 && amount <= 9_999_999_999.99
+    ? Math.round(amount * 100) / 100
+    : null;
+}
+
+// PromptSpeed list responses in production can omit the UTC offset even though
+// provider timestamps are documented in Thailand time. Normalize that bounded
+// database-style format before shipment transition checks.
+export function providerTimestamp(value: unknown): string | null {
+  const raw = text(value, 100);
+  if (!raw) return null;
+  const source = /^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?$/.test(raw)
+    ? `${raw.replace(" ", "T")}+07:00`
+    : raw;
+  const timestamp = Date.parse(source);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+export function providerShipmentSnapshot(value: unknown): {
+  status: string | null;
+  updatedAt: string | null;
+  charge: number | null;
+} {
+  const row = record(value);
+  const status = text(row.status, 40).toLowerCase();
+  return {
+    status: providerShipmentStatuses.has(status) ? status : null,
+    updatedAt: providerTimestamp(row.update_date ?? row.updated),
+    // actual_price is the carrier-confirmed list value. Estimate fields are
+    // deliberately excluded because they are not final carrier charges.
+    charge: providerMoney(row.actual_price),
+  };
+}
+
+export const providerCharge = providerMoney;
+
 export function providerCreateResult(response: ProviderResponse): {
   trackingNumber: string;
   charge: string | null;

@@ -582,10 +582,13 @@ test('actual list card stays compact until expanded and preserves shipment actio
   assert.equal(workingPoll.props.children.at(-1), 'actionWorking');
   assert.match(workingPoll.props.className, /bg-blue-100/);
 
-  const pricedTree = renderCard({ ...tracked, order_shipping_fee: 45.5 }, { expanded: false });
-  assert.match(JSON.stringify(pricedTree), /45\.50/, 'The compact row displays the persisted order shipping fee');
-  assert.match(JSON.stringify(renderCard(tracked)), /shippingFeeUnavailable/, 'Missing shipping fees use an explicit fallback');
-  assert.match(JSON.stringify(renderCard({ ...tracked, order_shipping_fee: 0 })), /shippingFeeUnavailable/, 'An ambiguous default zero is not presented as a confirmed carrier price');
+  const pricedTree = renderCard({ ...tracked, provider_charge: 35.5 }, { expanded: false });
+  assert.match(JSON.stringify(pricedTree), /35\.50/, 'The compact row displays the confirmed provider charge');
+  assert.match(JSON.stringify(pricedTree), /providerShippingCharge/);
+  assert.match(JSON.stringify(renderCard(tracked)), /shippingFeeUnavailable/, 'Missing provider charges use an explicit fallback');
+  assert.match(JSON.stringify(renderCard({ ...tracked, provider_charge: 0 })), /0\.00/, 'A confirmed zero provider charge remains visible');
+  const orderLinked = renderCard({ ...tracked, order_id: 'order-1', order_shipping_fee: 45.5 }, { expanded: true });
+  assert.match(JSON.stringify(orderLinked), /45\.50/, 'The expanded order-linked row keeps the customer-billed shipping fee separate');
 
   const disconnected = buttons(renderCard(tracked, { expanded: true, readReady: false }));
   assert.equal(disconnected.find(button => button.props['aria-label'] === `jnacPrint ${tracked.reference_no}`).props.disabled, false);
