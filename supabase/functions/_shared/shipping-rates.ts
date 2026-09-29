@@ -1,4 +1,5 @@
 import { quoteIssues, quotePayload, shippingParcels, type ShippingDraft, type ShippingParcel } from "./shipping-domain.ts";
+import { calculateShippingCostReference, type ShippingCostReference } from "./shipping-cost-reference.ts";
 import {
   providerReadError,
   providerRows,
@@ -22,6 +23,7 @@ export interface ShippingRate {
   quoted_parcels: number;
   cheapest: boolean;
   parcels: { number: number; total: string | null }[];
+  reference_cost?: ShippingCostReference;
 }
 const record = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -132,5 +134,9 @@ export async function compareShippingRates(
   }));
   const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (rejected) throw rejected.reason;
-  return { rates: aggregateShippingRates(uniqueCarriers, responses), parcel_count: parcels.length, quoted_at: new Date().toISOString() };
+  const rates = aggregateShippingRates(uniqueCarriers, responses).map((rate) => ({
+    ...rate,
+    reference_cost: calculateShippingCostReference(rate.carrier_code, draft),
+  }));
+  return { rates, parcel_count: parcels.length, quoted_at: new Date().toISOString() };
 }
