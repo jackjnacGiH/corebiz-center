@@ -2862,7 +2862,8 @@ export const chatInboxApi = {
     status?: ChatStatus | null;
     search?: string;
     limit?: number;
-  } = {}, onBaseRows?: (rows: ChatConversation[]) => void): Promise<ChatConversation[]> {
+  } = {}, onBaseRows?: (rows: ChatConversation[]) => void,
+  onNotesLoaded?: (notes: Map<string, ChatContactNote[]>) => void): Promise<ChatConversation[]> {
     const term = opts.search?.trim() ?? '';
     // chat_contact_notes + this RPC aren't in the generated DB types — query untyped.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2904,19 +2905,24 @@ export const chatInboxApi = {
     // Company names are useful enrichment, but must not block opening a chat.
     onBaseRows?.(convos);
 
-    // Attach the contact's company name (from the tax_invoice note) so the
-    // inbox list can show it next to the LINE/web display name.
+    // Reuse the company-name enrichment request to warm notes for the contact
+    // panel. The inbox already renders from onBaseRows before this query.
     if (convos.length) {
-      const { data: taxNotes } = await db
+      const { data: contactNotes, error: notesError } = await db
         .from('chat_contact_notes')
-        .select('conversation_id, address')
-        .eq('note_type', 'tax_invoice')
-        .in('conversation_id', convos.map((c) => c.id));
+        .select('*')
+        .in('conversation_id', convos.map((c) => c.id))
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: false });
       const byConv = new Map<string, string>();
-      for (const n of (taxNotes ?? []) as Array<{ conversation_id: string; address: { company?: string } | null }>) {
-        const co = (n.address?.company ?? '').trim();
+      const notesByConv = new Map<string, ChatContactNote[]>(convos.map((c) => [c.id, []]));
+      for (const n of (contactNotes ?? []) as ChatContactNote[]) {
+        notesByConv.get(n.conversation_id)?.push(n);
+        if (n.note_type !== 'tax_invoice') continue;
+        const co = typeof n.address?.company === 'string' ? n.address.company.trim() : '';
         if (co && !byConv.has(n.conversation_id)) byConv.set(n.conversation_id, co);
       }
+      if (!notesError) onNotesLoaded?.(notesByConv);
       if (byConv.size) convos = convos.map((c) => ({ ...c, company: byConv.get(c.id) ?? null }));
     }
     return convos;

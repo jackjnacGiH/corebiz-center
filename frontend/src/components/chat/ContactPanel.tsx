@@ -55,6 +55,7 @@ import ChatAvatar from './ChatAvatar';
 interface Props {
   conversation: ChatConversation;
   onConversationChanged?: () => void;
+  prefetchedNotes?: ChatContactNote[];
   customerSnapshot?: CustomerSnapshot | null;
   onCustomerSnapshotChanged?: (customer: CustomerSnapshot | null) => void;
 }
@@ -105,6 +106,7 @@ function memoryFactLabel(value: string): string {
 export default function ContactPanel({
   conversation,
   onConversationChanged,
+  prefetchedNotes,
   customerSnapshot = null,
   onCustomerSnapshotChanged,
 }: Props) {
@@ -127,10 +129,12 @@ export default function ContactPanel({
     loading: boolean;
     error: boolean;
   }>({ conversationId: conversation.id, rows: [], loading: true, error: false });
-  const cachedNotes = notesCache.get(conversation.id);
-  const notes = notesState.conversationId === conversation.id ? notesState.rows : cachedNotes ?? [];
+  const cachedNotes = notesCache.get(conversation.id) ?? prefetchedNotes;
+  const currentNotesReady = notesState.conversationId === conversation.id
+    && ((!notesState.loading && !notesState.error) || notesState.rows.length > 0);
+  const notes = currentNotesReady ? notesState.rows : cachedNotes ?? [];
   const loadingNotes = notesState.conversationId === conversation.id
-    ? notesState.loading
+    ? notesState.loading && cachedNotes === undefined
     : cachedNotes === undefined;
   const notesError = notesState.conversationId === conversation.id && notesState.error;
   const [modalOpen, setModalOpen] = useState(false);

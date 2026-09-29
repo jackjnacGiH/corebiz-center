@@ -57,6 +57,7 @@ import {
     chatProfileApi,
     type ChatChannel,
     type ChatConversation,
+    type ChatContactNote,
     type ChatMessage,
     type ChatMessagePage,
     type ChatStatus,
@@ -460,6 +461,9 @@ export default function Chat() {
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
+    const [prefetchedNotesByConversation, setPrefetchedNotesByConversation] = useState(
+        new Map<string, ChatContactNote[]>(),
+    );
     const [customerSnapshots, setCustomerSnapshots] = useState<Record<string, {
         customer: CustomerSnapshot | null;
         fetchedAt: number;
@@ -663,6 +667,16 @@ export default function Chat() {
                     const rows = await chatInboxApi.listConversations(
                         filters,
                         (baseRows) => publishRows(baseRows, false),
+                        (notes) => {
+                            const latestFilters = conversationFiltersRef.current;
+                            if (
+                                requestVersion !== refresh.version
+                                || filters.channel !== latestFilters.channel
+                                || filters.status !== latestFilters.status
+                                || filters.search !== latestFilters.search
+                            ) return;
+                            setPrefetchedNotesByConversation(notes);
+                        },
                     );
                     publishRows(rows, true);
                 } catch (e) {
@@ -1855,6 +1869,7 @@ export default function Chat() {
                     <div className="hidden lg:flex flex-shrink-0">
                         <ContactPanel
                             conversation={selectedConv}
+                            prefetchedNotes={prefetchedNotesByConversation.get(selectedConv.id)}
                             customerSnapshot={quoteCustomerPreview}
                             onCustomerSnapshotChanged={(customer) => {
                                 const customerId = customer?.id ?? selectedConv.customer_id;
