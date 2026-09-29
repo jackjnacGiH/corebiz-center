@@ -42,6 +42,18 @@ function logoUrl(v: unknown): string | null {
     return u.protocol === "https:" && !u.username && !u.password ? u.toString() : null;
   } catch { return null; }
 }
+function providerSpecialArea(row: Record<string, unknown>): boolean | null {
+  const components = [row.remote_price, row.tourism_price, row.island_price].map(rateUnits);
+  return components.every((value): value is number => value !== null)
+    ? components.some((value) => value > 0)
+    : null;
+}
+function specialAreaSignals(carrierCode: string, responses: unknown[][]): (boolean | null)[] {
+  return responses.map((response) => {
+    const matches = response.map(record).filter((row) => row.carrier_code === carrierCode);
+    return matches.length === 1 ? providerSpecialArea(matches[0]) : null;
+  });
+}
 
 export function aggregateShippingRates(carriers: ShippingCarrier[], responses: unknown[][]): ShippingRate[] {
   const rows = carriers.map((carrier) => {
@@ -136,7 +148,11 @@ export async function compareShippingRates(
   if (rejected) throw rejected.reason;
   const rates = aggregateShippingRates(uniqueCarriers, responses).map((rate) => ({
     ...rate,
-    reference_cost: calculateShippingCostReference(rate.carrier_code, draft),
+    reference_cost: calculateShippingCostReference(
+      rate.carrier_code,
+      draft,
+      specialAreaSignals(rate.carrier_code, responses),
+    ),
   }));
   return { rates, parcel_count: parcels.length, quoted_at: new Date().toISOString() };
 }

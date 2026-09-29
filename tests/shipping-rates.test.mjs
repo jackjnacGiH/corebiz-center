@@ -55,6 +55,23 @@ test("compare discovers account carriers and reuses identical-box quotes without
   assert.equal(result.rates[1].logo, null);
   assert.equal(result.parcel_count, 3);
 });
+test("compare uses PromptSpeed area components to produce one calculated PDF cost", async () => {
+  const oneBox = draft();
+  oneBox.parcel_total = 1;
+  oneBox.parcels = [{ box_width: 39, box_height: 18, box_length: 39, box_weight: 580 }];
+  oneBox.origin.state = "สมุทรปราการ";
+  oneBox.destination.state = "ชลบุรี";
+  const result = await compareShippingRates({}, oneBox, undefined, async (_config, operation) =>
+    operation === "carriers"
+      ? response(200, { data: [{ code: "EMS_SPEED", description: "Thailand Post EMS" }] })
+      : response(200, { data: [{
+        ...rate("EMS_SPEED", "33.0000"),
+        remote_price: "20.0000", tourism_price: "0.0000", island_price: "0.0000",
+      }] }));
+  assert.equal(result.rates[0].total, "33.0000", "the live API price stays unchanged");
+  assert.equal(result.rates[0].reference_cost.total, "41.00", "the PDF total includes the API-confirmed special-area fee");
+  assert.equal(result.rates[0].reference_cost.total_with_conditional, "41.00");
+});
 test("failed provider requests do not return misleading partial comparisons", async () => {
   await assert.rejects(compareShippingRates({}, draft(), undefined, async (_c, operation) =>
     operation === "carriers" ? response(200, { data: [{ code: "A" }] }) : response(503, {})), /provider_unreachable/);
