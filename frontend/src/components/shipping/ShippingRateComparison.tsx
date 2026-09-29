@@ -29,6 +29,18 @@ export default function ShippingRateComparison({ rates, selected, parcelCount, b
   const price = (value: string) => new Intl.NumberFormat(language === "th" ? "th-TH" : "en-GB", {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(Number(value));
+  const referenceCostText = (rate: ShippingRate) => {
+    const reference = rate.reference_cost;
+    if (!reference?.available) return reference?.reason === "outside_pdf_conditions" ? c.costPdfOutside : c.costPdfUnavailable;
+    if (reference.base === null || reference.total === null || reference.total_with_conditional === null) return c.costPdfUnavailable;
+    const labels = { cod: c.costCod, pickup: c.costPickup, special_area: c.costSpecialArea };
+    const parts = [`${c.costBase} ${price(reference.base)}`, ...reference.extras.map((extra) =>
+      `${labels[extra.kind]} ${price(extra.amount)}${extra.conditional ? ` (${c.costIfApplicable})` : ""}`)];
+    const total = reference.total === reference.total_with_conditional
+      ? price(reference.total)
+      : `${price(reference.total)}–${price(reference.total_with_conditional)}`;
+    return `${c.costPdfLabel}: ${parts.join(" + ")} = ${total} ${c.baht}`;
+  };
   return (
     <section className="rounded-xl border p-3 space-y-3 sm:p-4" aria-label={c.compareRates}>
       <div className="section-heading flex-wrap justify-between gap-3">
@@ -76,6 +88,9 @@ export default function ShippingRateComparison({ rates, selected, parcelCount, b
                     {rate.available && rate.total !== null && <span className="shrink-0 whitespace-nowrap text-sm font-bold tabular-nums">
                       {price(rate.total)} <span className="text-xs font-normal">{c.baht}</span>
                     </span>}
+                  </span>
+                  <span data-testid="shipping-pdf-reference-cost" className="mt-0.5 block text-right text-[10px] font-medium leading-4 text-red-600">
+                    ({referenceCostText(rate)})
                   </span>
                   <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
                     {rate.available && rate.total !== null
