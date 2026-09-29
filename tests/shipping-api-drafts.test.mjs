@@ -113,11 +113,13 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
       if (name.endsWith('/promptspeed.ts')) return {
         assertProviderReady: provider === null ? noProvider : () => {},
         ProviderRejectedError: promptSpeed.ProviderRejectedError,
+        providerCharge: promptSpeed.providerCharge,
         providerCreateResult: promptSpeed.providerCreateResult,
         providerDefinitiveRejection: promptSpeed.providerDefinitiveRejection,
         providerRejectionIssue: promptSpeed.providerRejectionIssue,
         providerPrintLink: promptSpeed.providerPrintLink,
         providerRows: promptSpeed.providerRows,
+        providerShipmentSnapshot: promptSpeed.providerShipmentSnapshot,
         reconcileCreatedShipment: reconcile,
         requestProvider: providerRequest,
         testProviderConnection: connectionTest,
@@ -381,7 +383,7 @@ test('submit accepts blank optional emails and sends the documented address keys
         assert.equal(body.destination.email, '');
         return {
           status: 201, ok: true,
-          data: { data: { tracking_number: 'TH1234567890' } },
+          data: { data: { tracking_number: 'TH1234567890', charge: '35.5000' } },
           requestId: 'request-optional-email', code: '201', message: 'success',
         };
       },
@@ -392,7 +394,44 @@ test('submit accepts blank optional emails and sends the documented address keys
   assert.equal(result.status, 200, JSON.stringify(result.body));
   assert.equal(result.body.shipment.status, 'waiting');
   assert.equal(result.body.shipment.tracking_number, 'TH1234567890');
+  assert.equal(result.body.shipment.provider_charge, 35.5);
+  assert.ok(result.body.shipment.provider_charge_checked_at);
   assert.equal(createCalls, 1);
+});
+
+test('refresh status accepts PromptSpeed Thailand time and stores the actual carrier charge', async () => {
+  const row = submittableShipment(1);
+  row.status = 'waiting';
+  row.tracking_number = 'TH1234567890';
+  row.provider_updated_at = null;
+  row.provider_charge = null;
+  const h = api({
+    rows: [row],
+    provider: {
+      request: async (_config, operation, _body, query) => {
+        assert.equal(operation, 'list');
+        assert.equal(query.search, row.tracking_number);
+        return {
+          status: 200, ok: true,
+          data: { data: [{
+            tracking_number: row.tracking_number,
+            carrier_code: row.draft.carrier_code,
+            status: 'delivered',
+            update_date: '2026-09-29 18:30:45',
+            actual_price: '41.5000',
+          }] },
+          requestId: 'request-list', code: '200', message: 'success',
+        };
+      },
+    },
+  });
+
+  const result = await h.call('refresh_status', { id: id(1), version: 7 });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.shipment.status, 'delivered');
+  assert.equal(result.body.shipment.provider_updated_at, '2026-09-29T11:30:45.000Z');
+  assert.equal(result.body.shipment.provider_charge, 41.5);
+  assert.ok(result.body.shipment.provider_charge_checked_at);
 });
 
 test('submit blocks formatted phone numbers before making a provider request', async () => {

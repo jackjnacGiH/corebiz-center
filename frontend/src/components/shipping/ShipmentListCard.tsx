@@ -105,6 +105,16 @@ export default function ShipmentListCard({
         maximumFractionDigits: 2,
       }).format(s.order_shipping_fee as number)
     : null;
+  const hasProviderCharge =
+    typeof s.provider_charge === "number" &&
+    Number.isFinite(s.provider_charge) &&
+    s.provider_charge >= 0;
+  const providerCharge = hasProviderCharge
+    ? new Intl.NumberFormat(language === "th" ? "th-TH" : "en-GB", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(s.provider_charge as number)
+    : null;
   const actionButtonClass =
     "transition-transform duration-150 active:scale-95 active:ring-2 active:ring-blue-300";
   const actionClass = (action?: ShipmentListAction) =>
@@ -190,15 +200,15 @@ export default function ShipmentListCard({
 
         <span className="col-start-2 row-start-3 min-w-0 max-w-44 xl:col-auto xl:row-auto xl:max-w-none">
           <span className="block text-xs font-semibold text-slate-500">
-            {c.orderShippingFee}
+            {c.providerShippingCharge}
           </span>
           <span
             className={`mt-0.5 block text-sm font-semibold tabular-nums ${
-              orderShippingFee ? "text-emerald-700" : "text-slate-500"
+              providerCharge ? "text-emerald-700" : "text-slate-500"
             }`}
           >
-            {orderShippingFee
-              ? `${orderShippingFee} ${c.baht}`
+            {providerCharge
+              ? `${providerCharge} ${c.baht}`
               : c.shippingFeeUnavailable}
           </span>
           <span className="mt-1 hidden text-xs text-slate-500 xl:block">
@@ -341,10 +351,17 @@ export default function ShipmentListCard({
                   : c.noCod}
               </p>
               <p>
-                {c.orderShippingFee}: {orderShippingFee
-                  ? `${orderShippingFee} ${c.baht}`
+                {c.providerShippingCharge}: {providerCharge
+                  ? `${providerCharge} ${c.baht}`
                   : c.shippingFeeUnavailable}
               </p>
+              {s.order_id && (
+                <p>
+                  {c.orderShippingFee}: {orderShippingFee
+                    ? `${orderShippingFee} ${c.baht}`
+                    : c.shippingFeeUnavailable}
+                </p>
+              )}
             </section>
           </div>
 

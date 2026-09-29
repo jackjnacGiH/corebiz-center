@@ -21,11 +21,13 @@ import {
 import {
   assertProviderReady,
   ProviderRejectedError,
+  providerCharge,
   providerCreateResult,
   providerDefinitiveRejection,
   providerRejectionIssue,
   providerPrintLink,
   providerRows,
+  providerShipmentSnapshot,
   reconcileCreatedShipment,
   requestProvider,
   testProviderConnection,
@@ -802,6 +804,7 @@ Deno.serve(async (req) => {
       if (attemptErr) throw new Error("outcome_unknown");
       let outcome = "outcome_unknown",
         tracking: string | null = null,
+        carrierCharge: number | null = null,
         http: number | null = null,
         requestId: string | null = null,
         providerIssue: ReturnType<typeof providerRejectionIssue> | null = null,
@@ -814,6 +817,7 @@ Deno.serve(async (req) => {
         const created = providerCreateResult(r);
         if (created) {
           tracking = created.trackingNumber;
+          carrierCharge = providerCharge(created.charge);
           outcome = "waiting";
         } else if (providerDefinitiveRejection(r)) {
           definitiveRejection = true;
@@ -865,6 +869,12 @@ Deno.serve(async (req) => {
         .update({
           status: definitiveRejection ? "draft" : outcome,
           tracking_number: tracking,
+          ...(carrierCharge === null
+            ? {}
+            : {
+                provider_charge: carrierCharge,
+                provider_charge_checked_at: new Date().toISOString(),
+              }),
           version: shipment.version + 2,
           updated_by: userId,
           updated_at: new Date().toISOString(),
@@ -913,20 +923,33 @@ Deno.serve(async (req) => {
             x.carrier_code === shipment.draft.carrier_code,
         );
       if (!found) return fail("provider_response_invalid", 502);
-      const time = String(found.update_date ?? "");
-      if (
-        !/[Zz]|[+-]\d\d:\d\d$/.test(time) ||
-        !acceptStatus(
-          shipment.status,
-          String(found.status),
-          row.provider_updated_at,
-          time,
-        )
-      )
-        return reply({ shipment, unchanged: true });
+      const snapshot = providerShipmentSnapshot(found);
+      if (!snapshot.status) return fail("provider_response_invalid", 502);
+      const statusAccepted = !!snapshot.updatedAt && acceptStatus(
+        shipment.status,
+        snapshot.status,
+        row.provider_updated_at,
+        snapshot.updatedAt,
+      );
+      const currentCharge = typeof shipment.provider_charge === "number"
+        ? shipment.provider_charge
+        : null;
+      const chargeChanged = snapshot.charge !== null &&
+        snapshot.charge !== currentCharge;
+      if (!statusAccepted && !chargeChanged)
+        return reply({ shipment: shipmentWithContactFields(shipment), unchanged: true });
+      const patch: Record<string, unknown> = {};
+      if (statusAccepted) {
+        patch.status = snapshot.status;
+        patch.provider_updated_at = snapshot.updatedAt;
+      }
+      if (chargeChanged) {
+        patch.provider_charge = snapshot.charge;
+        patch.provider_charge_checked_at = new Date().toISOString();
+      }
       return reply({
         shipment: await mutate(
-          { status: found.status, provider_updated_at: time },
+          patch,
           [shipment.status],
         ),
       });

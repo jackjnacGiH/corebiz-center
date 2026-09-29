@@ -10,6 +10,8 @@ import {
   providerReadFailure,
   providerRejectionIssue,
   providerRows,
+  providerShipmentSnapshot,
+  providerTimestamp,
   reconcileCreatedShipment,
   requestProvider,
   signQuery,
@@ -99,6 +101,32 @@ test("V3 envelopes accept all 2xx statuses and expose only bounded parsed fields
   const canceled = parseProviderResponse(200,
     '{"data":{"status":"ok"},"timestamp":"2024-09-19 03:43:27","request_id":"request-cancel"}');
   assert.equal(providerCancelAccepted(canceled), true);
+});
+
+test("shipment snapshots normalize PromptSpeed Thailand timestamps and confirmed charges", () => {
+  assert.equal(
+    providerTimestamp("2026-09-29 18:30:45"),
+    "2026-09-29T11:30:45.000Z",
+  );
+  assert.equal(
+    providerTimestamp("2026-09-29T11:30:45Z"),
+    "2026-09-29T11:30:45.000Z",
+  );
+  assert.deepEqual(providerShipmentSnapshot({
+    status: "delivered",
+    update_date: "2026-09-29 18:30:45",
+    actual_price: "41.5000",
+    estimate_price: "99.00",
+  }), {
+    status: "delivered",
+    updatedAt: "2026-09-29T11:30:45.000Z",
+    charge: 41.5,
+  });
+  assert.deepEqual(providerShipmentSnapshot({
+    status: "unknown-provider-state",
+    update_date: "not-a-date",
+    estimate_price: "35.00",
+  }), { status: null, updatedAt: null, charge: null });
 });
 
 test("validation envelopes, invalid successful bodies and unsafe print URLs fail closed", () => {
