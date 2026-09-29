@@ -1090,10 +1090,10 @@ export default function Chat() {
             : conversations
     ), [conversations, readThroughByConversation, status]);
 
-    // Warm only the first few likely rooms while the browser is idle. The
-    // network remains authoritative when a room is opened.
+    // Warm only before a room is selected; foreground messages, profile and
+    // notes must not compete with speculative requests for other rooms.
     useEffect(() => {
-        if (!CHAT_PERSISTENT_CACHE_ENABLED || !chatCacheUserId || visibleConversations.length === 0) return;
+        if (!CHAT_PERSISTENT_CACHE_ENABLED || !chatCacheUserId || selectedId || visibleConversations.length === 0) return;
         const controller = new AbortController();
         const candidates = visibleConversations
             .filter((conversation) => conversation.id !== selectedId)
