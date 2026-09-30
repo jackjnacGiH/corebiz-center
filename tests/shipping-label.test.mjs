@@ -26,6 +26,7 @@ function render(shipment) {
         useState: (value) => [value, () => {}],
       };
       if (name === "jsbarcode") return () => {};
+      if (name === "react-qr-code") return { default: (props) => ({ type: "tracking-qr", props }) };
       if (name === "@/lib/shipping-carriers") return {
         shippingCarrierBrand: () => ({ name: "Flash Express", shortName: "FLASH", accent: "#f6a800", logoUrl: "" }),
       };
@@ -70,7 +71,6 @@ test("each label shows its own width-length-height and packed weight in kilogram
   const shipment = {
     reference_no: "SHP-TEST",
     tracking_number: "TH123456789",
-    provider_sort_code: "a62",
     order_code: "SO-TEST",
     draft: {
       ...domain.emptyDraft(),
@@ -92,13 +92,12 @@ test("each label shows its own width-length-height and packed weight in kilogram
   assert.match(textOf(articles[0]), /0\.58 Kg\./);
   assert.match(textOf(articles[1]), /30 × 40 × 25 ซม\./);
   assert.match(textOf(articles[1]), /1\.55 Kg\./);
-  const sortCodes = nodes(articles[0]).filter((node) => node.props?.["data-testid"] === "shipping-label-sort-code");
-  assert.equal(sortCodes.length, 1);
-  assert.match(textOf(sortCodes[0]), /A62/);
+  const trackingQr = nodes(articles[0]).find((node) => node.props?.["data-testid"] === "shipping-label-tracking-qr");
+  assert.equal(nodes(trackingQr).find((node) => node.type === "tracking-qr")?.props?.value, "TH123456789");
   assert.ok(nodes(articles[0]).some((node) => node.props?.["data-testid"] === "shipping-label-parcel-metrics"));
 });
 
-test("missing or invalid provider sorting codes render a neutral placeholder", () => {
+test("a label without carrier tracking renders a neutral QR placeholder", () => {
   const address = {
     fullname: "ผู้ติดต่อ",
     company: "บริษัททดสอบ",
@@ -112,8 +111,7 @@ test("missing or invalid provider sorting codes render a neutral placeholder", (
   };
   const shipment = {
     reference_no: "SHP-TEST",
-    tracking_number: "TH123456789",
-    provider_sort_code: "<unsafe>",
+    tracking_number: null,
     order_code: "SO-TEST",
     draft: {
       ...domain.emptyDraft(),
@@ -125,6 +123,7 @@ test("missing or invalid provider sorting codes render a neutral placeholder", (
   };
 
   const article = nodes(render(shipment)).find((node) => node.type === "article");
-  const sortCode = nodes(article).find((node) => node.props?.["data-testid"] === "shipping-label-sort-code");
-  assert.equal(textOf(sortCode).trim(), "—");
+  const trackingQr = nodes(article).find((node) => node.props?.["data-testid"] === "shipping-label-tracking-qr");
+  assert.equal(textOf(trackingQr).trim(), "—");
+  assert.equal(nodes(trackingQr).some((node) => node.type === "tracking-qr"), false);
 });

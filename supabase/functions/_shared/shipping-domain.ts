@@ -173,8 +173,6 @@ export interface Shipment {
   draft: ShippingDraft;
   status: ShippingStatus;
   tracking_number: string | null;
-  /** Carrier-supplied sorting code only; never derive it from the postcode. */
-  provider_sort_code?: string | null;
   provider_updated_at?: string | null;
   provider_charge?: number | null;
   provider_charge_checked_at?: string | null;
