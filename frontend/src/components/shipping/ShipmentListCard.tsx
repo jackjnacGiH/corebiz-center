@@ -26,7 +26,23 @@ import {
   summarizeShippingItems,
   type Shipment,
   type ShippingAddress,
+  type ShippingStatus,
 } from "../../../../supabase/functions/_shared/shipping-domain";
+
+const statusBadgeClass: Record<ShippingStatus, string> = {
+  draft: "border-slate-300 bg-slate-100 text-slate-800",
+  submitting: "border-sky-300 bg-sky-100 text-sky-800",
+  outcome_unknown: "border-yellow-300 bg-yellow-100 text-yellow-900",
+  waiting: "border-violet-300 bg-violet-100 text-violet-800",
+  on_delivery: "border-orange-300 bg-orange-100 text-orange-800",
+  delivered: "border-emerald-300 bg-emerald-100 text-emerald-800",
+  on_return: "border-rose-300 bg-rose-100 text-rose-800",
+  returned: "border-cyan-300 bg-cyan-100 text-cyan-800",
+  claimed: "border-fuchsia-300 bg-fuchsia-100 text-fuchsia-800",
+  closed: "border-red-300 bg-red-100 text-red-800",
+  canceled: "border-stone-400 bg-stone-200 text-stone-900",
+  archived: "border-amber-300 bg-amber-100 text-amber-900",
+};
 
 const addressLine = (address: ShippingAddress) =>
   [address.address, address.county, address.city, address.state, address.postcode]
@@ -219,7 +235,10 @@ export default function ShipmentListCard({
         </span>
 
         <span className="col-start-2 row-start-1 flex items-center justify-end gap-3 justify-self-end xl:col-auto xl:row-auto">
-          <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-800">
+          <span
+            data-testid="shipment-status"
+            className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusBadgeClass[s.status]}`}
+          >
             {c.statuses[s.status]}
           </span>
           <ChevronDown

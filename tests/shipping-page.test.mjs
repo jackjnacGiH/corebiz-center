@@ -245,6 +245,38 @@ test('list actions copy tracking, open a carrier label, and refresh a row withou
   h.unmount();
 });
 
+test('check all statuses refreshes only shipments never checked before', async () => {
+  const pendingA = shipment('unchecked-a', {
+    status: 'waiting', tracking_number: 'TRACK-A', version: 3,
+    draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
+  });
+  const pendingB = shipment('unchecked-b', {
+    status: 'waiting', tracking_number: 'TRACK-B', version: 5,
+    draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
+  });
+  const checked = shipment('checked', {
+    status: 'waiting', tracking_number: 'TRACK-C', provider_updated_at: '2026-09-29T10:00:00Z',
+    draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
+  });
+  const noTracking = shipment('no-tracking');
+  const h = await readyList([pendingA, pendingB, checked, noTracking]);
+
+  h.button('checkAllStatuses').props.onClick();
+  await settle();
+  const actions = h.requests.filter(request => request.action === 'action');
+  assert.deepEqual(actions.map(request => request.args[1].id), ['unchecked-a', 'unchecked-b']);
+  assert.ok(actions.every(request => request.args[0] === 'refresh_status'));
+
+  actions[0].resolve({ shipment: { ...pendingA, status: 'delivered', provider_updated_at: '2026-09-30T01:00:00Z', version: 4 } });
+  actions[1].resolve({ shipment: { ...pendingB, status: 'on_delivery', provider_updated_at: '2026-09-30T01:01:00Z', version: 6 } });
+  await settle(); h.render();
+  assert.equal(h.card('unchecked-a').props.shipment.status, 'delivered');
+  assert.equal(h.card('unchecked-b').props.shipment.status, 'on_delivery');
+  assert.equal(h.card('checked').props.shipment.version, 3, 'A previously checked shipment is not requested again');
+  assert.equal(h.find(node => node.props.role === 'status').props.children, 'allStatusesChecked: 2/2');
+  h.unmount();
+});
+
 test('a list J NAC label preview waits for its lazy module then prints without provider or shipment mutations', async () => {
   const row = shipment('draft-label', {
     draft: { ...domain.emptyDraft(), parcel_total: 2 },
@@ -589,6 +621,19 @@ test('actual list card stays compact until expanded and preserves shipment actio
   assert.match(JSON.stringify(renderCard({ ...tracked, provider_charge: 0 })), /0\.00/, 'A confirmed zero provider charge remains visible');
   const orderLinked = renderCard({ ...tracked, order_id: 'order-1', order_shipping_fee: 45.5 }, { expanded: true });
   assert.match(JSON.stringify(orderLinked), /45\.50/, 'The expanded order-linked row keeps the customer-billed shipping fee separate');
+
+  const statusColors = {
+    draft: 'bg-slate-100', submitting: 'bg-sky-100', outcome_unknown: 'bg-yellow-100',
+    waiting: 'bg-violet-100', on_delivery: 'bg-orange-100', delivered: 'bg-emerald-100',
+    on_return: 'bg-rose-100', returned: 'bg-cyan-100', claimed: 'bg-fuchsia-100',
+    closed: 'bg-red-100', canceled: 'bg-stone-200', archived: 'bg-amber-100',
+  };
+  for (const [status, color] of Object.entries(statusColors)) {
+    const statusTree = renderCard({ ...tracked, status });
+    const badge = nodes(statusTree).find(node => node.props?.['data-testid'] === 'shipment-status');
+    assert.match(badge.props.className, new RegExp(color), `${status} has its own requested status color`);
+  }
+  assert.equal(new Set(Object.values(statusColors)).size, Object.keys(statusColors).length, 'No two statuses reuse the same background color');
 
   const disconnected = buttons(renderCard(tracked, { expanded: true, readReady: false }));
   assert.equal(disconnected.find(button => button.props['aria-label'] === `jnacPrint ${tracked.reference_no}`).props.disabled, false);

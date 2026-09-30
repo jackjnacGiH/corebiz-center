@@ -133,6 +133,7 @@ export default function Shipping() {
   const [labelShipment, setLabelShipment] = useState<Shipment | null>(null);
   const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
+  const [bulkStatusBusy, setBulkStatusBusy] = useState(false);
   const [listRevision, setListRevision] = useState(0);
   const [listAction, setListAction] = useState<{
     shipmentId: string;
@@ -532,6 +533,70 @@ export default function Shipping() {
       setListAction(null);
     }
   }
+  async function refreshUncheckedStatuses() {
+    if (busy || listActionInFlight.current || !bootstrap?.readReady) return;
+    listActionInFlight.current = true;
+    setBulkStatusBusy(true);
+    try {
+      await run(async () => {
+        const firstPage = page === 0 && !search
+          ? { shipments: rows, count }
+          : await shippingApi.list(0, "");
+        const pageCount = Math.ceil(firstPage.count / 25);
+        const remainingPages = pageCount > 1
+          ? await Promise.all(
+              Array.from({ length: pageCount - 1 }, (_, index) =>
+                shippingApi.list(index + 1, "")
+              ),
+            )
+          : [];
+        const candidates = [
+          ...firstPage.shipments,
+          ...remainingPages.flatMap((result) => result.shipments),
+        ];
+        const targets = [...new Map(candidates.map((row) => [row.id, row])).values()]
+          .filter((row) =>
+            !!row.tracking_number &&
+            !!row.draft.carrier_code &&
+            !row.provider_updated_at
+          );
+        if (!targets.length) {
+          setNotice(c.allStatusesAlreadyChecked);
+          return;
+        }
+
+        const refreshed: Shipment[] = [];
+        let failed = 0;
+        for (let index = 0; index < targets.length; index += 3) {
+          const results = await Promise.allSettled(
+            targets.slice(index, index + 3).map((target) =>
+              shippingApi.action("refresh_status", target)
+            ),
+          );
+          for (const result of results) {
+            if (result.status === "fulfilled") refreshed.push(result.value.shipment);
+            else failed += 1;
+          }
+        }
+        const refreshedById = new Map(refreshed.map((row) => [row.id, row]));
+        setRows((current) => current.map((row) => {
+          const next = refreshedById.get(row.id);
+          return next
+            ? {
+                ...row,
+                ...next,
+                recipient_company: next.recipient_company ?? row.recipient_company,
+              }
+            : row;
+        }));
+        setNotice(`${c.allStatusesChecked}: ${refreshed.length}/${targets.length}`);
+        if (failed) setError(`${c.allStatusesPartial}: ${failed}`);
+      });
+    } finally {
+      listActionInFlight.current = false;
+      if (mounted.current) setBulkStatusBusy(false);
+    }
+  }
   function openListCarrierLabel(target: Shipment) {
     if (busy || listActionInFlight.current) return;
     // Reserve the tab during the user's click so popup blockers do not reject
@@ -918,6 +983,20 @@ export default function Shipping() {
           )}
           {view === "list" && (
             <section className="space-y-3" aria-busy={listLoading}>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy || listLoading || !bootstrap.readReady}
+                  onClick={() => void refreshUncheckedStatuses()}
+                >
+                  <RefreshCw
+                    size={16}
+                    className={bulkStatusBusy ? "animate-spin" : undefined}
+                  />
+                  {bulkStatusBusy ? c.checkingAllStatuses : c.checkAllStatuses}
+                </Button>
+              </div>
               <Input
                 aria-label={c.search}
                 placeholder={c.search}
