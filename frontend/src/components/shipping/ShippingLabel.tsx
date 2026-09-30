@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import JsBarcode from "jsbarcode";
+import QRCode from "react-qr-code";
 import type { Shipment, ShippingAddress } from "@/lib/shipping-api";
 import { shippingCarrierBrand } from "@/lib/shipping-carriers";
 import lineAddQrUrl from "@/assets/line-add-jnac.jpg";
@@ -21,11 +22,6 @@ function formatDimension(value: number) {
   return Number.isFinite(value) && value > 0
     ? value.toLocaleString("th-TH", { maximumFractionDigits: 2 })
     : "—";
-}
-
-function providerSortCode(shipment: Shipment) {
-  const value = shipment.provider_sort_code?.trim().toUpperCase() ?? "";
-  return /^[A-Z0-9-]{1,12}$/.test(value) ? value : "—";
 }
 
 function ContactBlock({
@@ -168,7 +164,6 @@ function ShippingLabelPage({
     : "—";
   const handlingNote =
     shipment.draft.handling_note || "กรุณาอย่าโยน • ระวังของแตก";
-  const sortCode = providerSortCode(shipment);
   const handlingSize =
     handlingNote.length > 60
       ? "text-[7px] leading-[9px]"
@@ -245,13 +240,26 @@ function ShippingLabelPage({
           embedded
         />
         <aside
-          data-testid="shipping-label-sort-code"
-          aria-label="รหัสคัดแยกขนส่ง"
-          className="flex min-h-0 items-center justify-center border-l-2 border-black bg-black px-[1mm] text-center text-white"
+          data-testid="shipping-label-tracking-qr"
+          aria-label="QR Tracking ขนส่ง"
+          className="flex min-h-0 flex-col items-center justify-center border-l-2 border-black bg-white px-[1.5mm] py-[1mm] text-center"
         >
-          <p className={`${sortCode.length > 6 ? "text-[20px]" : "text-[27px]"} font-black leading-none`}>
-            {sortCode}
-          </p>
+          {shipment.tracking_number ? (
+            <>
+              <QRCode
+                value={shipment.tracking_number}
+                level="M"
+                size={96}
+                title={`Tracking ${shipment.tracking_number}`}
+                className="h-[22mm] w-[22mm]"
+              />
+              <p className="mt-[0.5mm] text-[6px] font-black leading-[7px]">
+                TRACKING
+              </p>
+            </>
+          ) : (
+            <p className="text-[27px] font-black leading-none">—</p>
+          )}
         </aside>
       </section>
       <ContactBlock title="ผู้ส่ง (FROM)" address={shipment.draft.origin} />
