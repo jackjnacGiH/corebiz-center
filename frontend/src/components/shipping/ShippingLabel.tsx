@@ -23,6 +23,11 @@ function formatDimension(value: number) {
     : "—";
 }
 
+function providerSortCode(shipment: Shipment) {
+  const value = shipment.provider_sort_code?.trim().toUpperCase() ?? "";
+  return /^[A-Z0-9-]{1,12}$/.test(value) ? value : "—";
+}
+
 function ContactBlock({
   title,
   address,
@@ -163,6 +168,7 @@ function ShippingLabelPage({
     : "—";
   const handlingNote =
     shipment.draft.handling_note || "กรุณาอย่าโยน • ระวังของแตก";
+  const sortCode = providerSortCode(shipment);
   const handlingSize =
     handlingNote.length > 60
       ? "text-[7px] leading-[9px]"
@@ -238,20 +244,14 @@ function ShippingLabelPage({
           receiver
           embedded
         />
-        <aside className="grid min-h-0 grid-rows-[8mm_minmax(0,1fr)] border-l-2 border-black">
-          <div className="flex items-center justify-center bg-black text-white">
-            <p className="text-[23px] font-black leading-none">
-              {parcelNumber}/{parcelTotal}
-            </p>
-          </div>
-          <div className="flex min-h-0 flex-col items-center justify-center">
-            <img
-              src={lineAddQrUrl}
-              alt="QR เพิ่มเพื่อน LINE @jnac"
-              className="h-[17mm] w-[17mm] object-contain"
-            />
-            <p className="text-[6px] font-black leading-none">LINE @jnac</p>
-          </div>
+        <aside
+          data-testid="shipping-label-sort-code"
+          aria-label="รหัสคัดแยกขนส่ง"
+          className="flex min-h-0 items-center justify-center border-l-2 border-black bg-black px-[1mm] text-center text-white"
+        >
+          <p className={`${sortCode.length > 6 ? "text-[20px]" : "text-[27px]"} font-black leading-none`}>
+            {sortCode}
+          </p>
         </aside>
       </section>
       <ContactBlock title="ผู้ส่ง (FROM)" address={shipment.draft.origin} />
@@ -275,29 +275,46 @@ function ShippingLabelPage({
         </div>
       </section>
 
-      <section aria-label="อ้างอิงและสินค้า" className="min-h-0 px-[3mm] py-[1mm]">
-        <p className="break-words text-[8px] leading-[11px]">
-          <strong>อ้างอิง:</strong>{" "}
-          {shipment.order_code || shipment.reference_no}
-        </p>
-        <p className="mt-[0.25mm] text-[8px] font-bold leading-[11px]">{parcelTotal > 1 ? "รายการสินค้ารวมทั้งชุด:" : "สินค้าในกล่อง:"}</p>
-        <ul className={`mt-[0.25mm] font-semibold ${shipment.draft.products.length > 5 ? "text-[7px] leading-[9px]" : "text-[8px] leading-[11px]"}`}>
-          {itemSummary.visible.map((item, index) => (
-            <li key={index} className="flex min-w-0 justify-between gap-[2mm]">
-              <span className="truncate">
-                {item.code ? `${item.code} · ` : ""}
-                {item.name || "—"}
-              </span>
-              <span className="shrink-0">×{item.qty}</span>
-            </li>
-          ))}
-          {itemSummary.remainingItems > 0 && (
-            <li className="flex justify-between gap-[1mm] border-t border-black pt-px font-black">
-              <span>รายการอื่น ๆ ({itemSummary.remainingItems} รายการ)</span>
-              <span className="shrink-0">รวม {itemSummary.remainingQuantity} ชิ้น</span>
-            </li>
-          )}
-        </ul>
+      <section aria-label="อ้างอิงและสินค้า" className="grid min-h-0 grid-cols-[minmax(0,1fr)_24mm]">
+        <div className="min-h-0 px-[3mm] py-[1mm]">
+          <p className="break-words text-[8px] leading-[11px]">
+            <strong>อ้างอิง:</strong>{" "}
+            {shipment.order_code || shipment.reference_no}
+          </p>
+          <p className="mt-[0.25mm] text-[8px] font-bold leading-[11px]">{parcelTotal > 1 ? "รายการสินค้ารวมทั้งชุด:" : "สินค้าในกล่อง:"}</p>
+          <ul className={`mt-[0.25mm] font-semibold ${shipment.draft.products.length > 5 ? "text-[7px] leading-[9px]" : "text-[8px] leading-[11px]"}`}>
+            {itemSummary.visible.map((item, index) => (
+              <li key={index} className="flex min-w-0 justify-between gap-[2mm]">
+                <span className="truncate">
+                  {item.code ? `${item.code} · ` : ""}
+                  {item.name || "—"}
+                </span>
+                <span className="shrink-0">×{item.qty}</span>
+              </li>
+            ))}
+            {itemSummary.remainingItems > 0 && (
+              <li className="flex justify-between gap-[1mm] border-t border-black pt-px font-black">
+                <span>รายการอื่น ๆ ({itemSummary.remainingItems} รายการ)</span>
+                <span className="shrink-0">รวม {itemSummary.remainingQuantity} ชิ้น</span>
+              </li>
+            )}
+          </ul>
+        </div>
+        <aside className="grid min-h-0 grid-rows-[7mm_minmax(0,1fr)] border-l-2 border-black">
+          <div className="flex items-center justify-center bg-black text-white">
+            <p className="text-[19px] font-black leading-none">
+              {parcelNumber}/{parcelTotal}
+            </p>
+          </div>
+          <div className="flex min-h-0 flex-col items-center justify-center py-[0.5mm]">
+            <img
+              src={lineAddQrUrl}
+              alt="QR เพิ่มเพื่อน LINE @jnac"
+              className="h-[13mm] w-[13mm] object-contain"
+            />
+            <p className="text-[5.5px] font-black leading-none">LINE @jnac</p>
+          </div>
+        </aside>
       </section>
 
       <footer

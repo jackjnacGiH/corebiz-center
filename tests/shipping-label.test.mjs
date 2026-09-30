@@ -70,6 +70,7 @@ test("each label shows its own width-length-height and packed weight in kilogram
   const shipment = {
     reference_no: "SHP-TEST",
     tracking_number: "TH123456789",
+    provider_sort_code: "a62",
     order_code: "SO-TEST",
     draft: {
       ...domain.emptyDraft(),
@@ -91,5 +92,39 @@ test("each label shows its own width-length-height and packed weight in kilogram
   assert.match(textOf(articles[0]), /0\.58 Kg\./);
   assert.match(textOf(articles[1]), /30 × 40 × 25 ซม\./);
   assert.match(textOf(articles[1]), /1\.55 Kg\./);
+  const sortCodes = nodes(articles[0]).filter((node) => node.props?.["data-testid"] === "shipping-label-sort-code");
+  assert.equal(sortCodes.length, 1);
+  assert.match(textOf(sortCodes[0]), /A62/);
   assert.ok(nodes(articles[0]).some((node) => node.props?.["data-testid"] === "shipping-label-parcel-metrics"));
+});
+
+test("missing or invalid provider sorting codes render a neutral placeholder", () => {
+  const address = {
+    fullname: "ผู้ติดต่อ",
+    company: "บริษัททดสอบ",
+    address: "1 ถนนทดสอบ",
+    county: "บางนา",
+    city: "บางนา",
+    state: "กรุงเทพมหานคร",
+    postcode: "10260",
+    email: "",
+    telephone1: "0800161700",
+  };
+  const shipment = {
+    reference_no: "SHP-TEST",
+    tracking_number: "TH123456789",
+    provider_sort_code: "<unsafe>",
+    order_code: "SO-TEST",
+    draft: {
+      ...domain.emptyDraft(),
+      origin: address,
+      destination: address,
+      carrier_code: "FLASH",
+      products: [{ name: "สินค้า", code: "SKU-1", qty: 1, price: "0.00", weight: 0 }],
+    },
+  };
+
+  const article = nodes(render(shipment)).find((node) => node.type === "article");
+  const sortCode = nodes(article).find((node) => node.props?.["data-testid"] === "shipping-label-sort-code");
+  assert.equal(textOf(sortCode).trim(), "—");
 });
