@@ -8,6 +8,15 @@ import {
   shouldAnswerCommentPublicly,
 } from '../supabase/functions/_shared/facebook-channel.mjs';
 
+const exactPriceSummary = (unitPrice = 8.5, quantity = 100) => JSON.stringify({
+  ok: true, exact_match: true, sku: '2020000992', product_name: 'SA331', unit: 'ชิ้น',
+  quantity, unit_price: unitPrice, line_total: Math.round(unitPrice * quantity * 100) / 100,
+  currency: 'THB',
+});
+const exactPriceCall = (resultSummary = exactPriceSummary()) => ({
+  name: 'get_exact_price', args: { sku: '2020000992', qty: 100 }, result_summary: resultSummary,
+});
+
 test('accepts only target Page customer messages and newly added comments', () => {
   const payload = { object: 'page', entry: [
     { id: 'target', messaging: [
@@ -46,7 +55,7 @@ test('public comments keep billing and customer-specific questions in Inbox', ()
   assert.equal(hasPublicEvidence({ tool_calls: [{ name: 'find_products', result_meta: { disposition: 'resolved' } }] }, 'ราคา 8.50 บาท'), false);
   assert.equal(hasPublicEvidence({ tool_calls: [
     { name: 'find_products', result_meta: { disposition: 'resolved' } },
-    { name: 'get_exact_price', result_summary: '{"ok":true,"exact_match":true,"sku":"2020000992"}' },
+    exactPriceCall(),
   ] }, 'ราคา 8.50 บาท'), true);
 });
 
@@ -65,10 +74,26 @@ test('public evidence cannot use an unrelated source to substantiate product or 
   assert.equal(hasPublicEvidence(catalog, '8.50/piece'), false);
   const pricedCatalog = { tool_calls: [
     ...catalog.tool_calls,
-    { name: 'get_exact_price', result_summary: '{"ok":true,"exact_match":true,"sku":"2020000992"}' },
+    exactPriceCall(),
   ] };
   assert.equal(hasPublicEvidence(pricedCatalog, 'ราคา 8.50 ต่อชิ้น'), true);
   assert.equal(hasPublicEvidence(pricedCatalog, '8.50 per piece'), true);
+});
+
+test('public price claims must match complete exact-price facts', () => {
+  const catalog = { name: 'find_products', result_meta: { disposition: 'resolved' } };
+  const verified = { tool_calls: [catalog, exactPriceCall()] };
+  assert.equal(hasPublicEvidence(verified, 'ราคา 8.50 บาท/ชิ้น รวม 850.00 บาท'), true);
+  assert.equal(hasPublicEvidence(verified, 'THB 8.50 per piece for 100 pieces (THB 850 total)'), true);
+  assert.equal(hasPublicEvidence(verified, 'ราคา 9.50 บาท/ชิ้น'), false);
+  assert.equal(hasPublicEvidence(verified, 'ราคา 8.50 ต่อชิ้น ยอดรวม 999 บาท'), false);
+  assert.equal(hasPublicEvidence(verified, 'THB 900 total'), false);
+  assert.equal(hasPublicEvidence(verified, '$8.50 per piece'), false);
+
+  const incompleteSummary = exactPriceSummary().slice(0, -10);
+  assert.equal(hasPublicEvidence({ tool_calls: [catalog, exactPriceCall(incompleteSummary)] }, 'ราคา 8.50 บาท'), false);
+  assert.equal(hasPublicEvidence({ tool_calls: [catalog, exactPriceCall('{"ok":true,"exact_match":true}')] }, 'ราคา 8.50 บาท'), false);
+  assert.equal(hasPublicEvidence({ tool_calls: [catalog, { ...exactPriceCall(), args: { sku: 'WRONG', qty: 100 } }] }, 'ราคา 8.50 บาท'), false);
 });
 
 test('Messenger choices carry exact product in payload despite short button titles', () => {

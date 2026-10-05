@@ -1,4 +1,5 @@
 // Pure helpers shared by the Facebook webhook and its Node tests.
+import { isSuccessfulExactPriceResult } from "./price-answer-guard.mjs";
 export function pageEvents(payload, expectedPageId) {
   if (payload?.object !== "page" || !Array.isArray(payload.entry)) return [];
   const events = [];
@@ -57,16 +58,41 @@ export function cleanPublicCommentAnswer(answer) {
   return text.slice(0, 1_800);
 }
 
+function claimedPriceAmounts(text) {
+  const amount = String.raw`\d[\d,]*(?:\.\d+)?`;
+  const patterns = [
+    new RegExp(String.raw`(?:฿|\bTHB\b)\s*(${amount})`, "giu"),
+    new RegExp(String.raw`(${amount})\s*(?:บาท|\bTHB\b|฿|ต่อ(?:ชิ้น|แพ็ก|กล่อง|ชุด)|\/\s*(?:ชิ้น|แพ็ก|กล่อง|ชุด|pc|piece|unit)|per\s+(?:piece|pc|unit))`, "giu"),
+    new RegExp(String.raw`(?:ราคา|ชิ้นละ|ยอดรวม|รวมเป็นเงิน|\b(?:unit\s+price|price|cost|total)\b)[^\d\n]{0,20}(${amount})`, "giu"),
+  ];
+  return patterns.flatMap((pattern) => [...text.matchAll(pattern)]
+    .map((match) => Number(match[1].replaceAll(",", ""))));
+}
+
+function verifiedPriceCall(call) {
+  let price;
+  try { price = JSON.parse(String(call?.result_summary ?? "")); } catch { return null; }
+  if (!isSuccessfulExactPriceResult(price)) return null;
+  if (String(call?.args?.sku ?? "").trim().toUpperCase() !== String(price.sku).trim().toUpperCase()
+    || Number(call?.args?.qty) !== Number(price.quantity)) return null;
+  return price;
+}
+
 export function hasPublicEvidence(result, answer = "") {
   const calls = Array.isArray(result?.tool_calls) ? result.tool_calls : [];
   const catalogVerified = calls.some((call) =>
     ["find_products", "get_product_detail"].includes(String(call?.name))
     && ["resolved", "needs_selection"].includes(String(call?.result_meta?.disposition)));
   const text = String(answer);
-  const claimsPrice = /(?:\bTHB\b|฿|\d[\d,.]*\s*บาท|(?:ราคา|ชิ้นละ|price|cost)[^\d\n]{0,20}\d[\d,.]*|\d[\d,.]*\s*(?:ต่อ(?:ชิ้น|แพ็ก|กล่อง|ชุด)|\/\s*(?:ชิ้น|แพ็ก|กล่อง|ชุด|pc|piece|unit)|per\s+(?:piece|pc|unit)))/iu.test(text);
+  const claimsPrice = /(?:\b(?:THB|USD|EUR|GBP)\b|[฿$€£]|\d[\d,.]*\s*บาท|(?:ราคา|ชิ้นละ|price|cost)[^\d\n]{0,20}\d[\d,.]*|\d[\d,.]*\s*(?:ต่อ(?:ชิ้น|แพ็ก|กล่อง|ชุด)|\/\s*(?:ชิ้น|แพ็ก|กล่อง|ชุด|pc|piece|unit)|per\s+(?:piece|pc|unit)))/iu.test(text);
   if (claimsPrice) {
-    return catalogVerified && calls.some((call) => call?.name === "get_exact_price"
-      && /"ok":true,"exact_match":true/u.test(String(call?.result_summary ?? "")));
+    if (!catalogVerified || /(?:\b(?:USD|EUR|GBP)\b|[$€£])/iu.test(text)) return false;
+    const priceCalls = calls.filter((call) => call?.name === "get_exact_price");
+    const prices = priceCalls.map(verifiedPriceCall);
+    const claimed = claimedPriceAmounts(text);
+    return prices.length > 0 && prices.every(Boolean) && claimed.length > 0
+      && claimed.every((amount) => prices.some((price) =>
+        Math.abs(amount - price.unit_price) < 0.005 || Math.abs(amount - price.line_total) < 0.005));
   }
   const claimsProductFact = /(?:\bSKU\b|สต็อก|พร้อมส่ง|สินค้าสั่งผลิต|กระดาษทราย|จานทราย|ใบตัด|ใบเจียร|แผ่นขัด|แปรงลวด|ลูกขัด|เครื่องมือ|\b(?:abrasive|sandpaper|grinding\s+disc|cutting\s+disc|in\s+stock|made\s+to\s+order)\b|\b[A-Z][A-Z0-9-]*\d[A-Z0-9-]*\b|#\s*\d{2,5}|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม\.?|cm|ซม\.?))/iu.test(text);
   return catalogVerified || (!claimsProductFact && Array.isArray(result?.sources) && result.sources.length > 0);
