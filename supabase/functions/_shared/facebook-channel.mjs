@@ -62,12 +62,13 @@ export function hasPublicEvidence(result, answer = "") {
   const catalogVerified = calls.some((call) =>
     ["find_products", "get_product_detail"].includes(String(call?.name))
     && ["resolved", "needs_selection"].includes(String(call?.result_meta?.disposition)));
-  const claimsPrice = /(?:\bTHB\b|฿|\d[\d,.]*\s*บาท)/iu.test(String(answer));
+  const text = String(answer);
+  const claimsPrice = /(?:\bTHB\b|฿|\d[\d,.]*\s*บาท|(?:ราคา|ชิ้นละ|price|cost)[^\d\n]{0,20}\d[\d,.]*|\d[\d,.]*\s*(?:ต่อ(?:ชิ้น|แพ็ก|กล่อง|ชุด)|\/\s*(?:ชิ้น|แพ็ก|กล่อง|ชุด|pc|piece|unit)|per\s+(?:piece|pc|unit)))/iu.test(text);
   if (claimsPrice) {
     return catalogVerified && calls.some((call) => call?.name === "get_exact_price"
       && /"ok":true,"exact_match":true/u.test(String(call?.result_summary ?? "")));
   }
-  const claimsProductFact = /(?:\bSKU\b|สต็อก|พร้อมส่ง|สินค้าสั่งผลิต)/iu.test(String(answer));
+  const claimsProductFact = /(?:\bSKU\b|สต็อก|พร้อมส่ง|สินค้าสั่งผลิต|กระดาษทราย|จานทราย|ใบตัด|ใบเจียร|แผ่นขัด|แปรงลวด|ลูกขัด|เครื่องมือ|\b(?:abrasive|sandpaper|grinding\s+disc|cutting\s+disc|in\s+stock|made\s+to\s+order)\b|\b[A-Z][A-Z0-9-]*\d[A-Z0-9-]*\b|#\s*\d{2,5}|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม\.?|cm|ซม\.?))/iu.test(text);
   return catalogVerified || (!claimsProductFact && Array.isArray(result?.sources) && result.sources.length > 0);
 }
 

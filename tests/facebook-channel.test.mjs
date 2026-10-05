@@ -50,6 +50,27 @@ test('public comments keep billing and customer-specific questions in Inbox', ()
   ] }, 'ราคา 8.50 บาท'), true);
 });
 
+test('public evidence cannot use an unrelated source to substantiate product or unit-price claims', () => {
+  const unrelatedKnowledge = { sources: [{ title: 'shipping guide', content_preview: 'วิธีจัดส่งสินค้า' }] };
+  assert.equal(hasPublicEvidence(unrelatedKnowledge, 'SA331 มีขนาด 5 นิ้ว'), false);
+  assert.equal(hasPublicEvidence(unrelatedKnowledge, 'กระดาษทรายเบอร์ #80 พร้อมส่ง'), false);
+  assert.equal(hasPublicEvidence(unrelatedKnowledge, 'The SA331 abrasive disc is 5 inches'), false);
+  assert.equal(hasPublicEvidence(unrelatedKnowledge, 'ราคา 8.50 ต่อชิ้น'), false);
+  assert.equal(hasPublicEvidence(unrelatedKnowledge, '8.50 per piece'), false);
+  assert.equal(hasPublicEvidence(unrelatedKnowledge, 'เปิดทำการวันจันทร์ถึงศุกร์'), true);
+
+  const catalog = { tool_calls: [{ name: 'find_products', result_meta: { disposition: 'resolved' } }] };
+  assert.equal(hasPublicEvidence(catalog, 'ราคา 8.50 ต่อชิ้น'), false);
+  assert.equal(hasPublicEvidence(catalog, 'ชิ้นละ 8.50'), false);
+  assert.equal(hasPublicEvidence(catalog, '8.50/piece'), false);
+  const pricedCatalog = { tool_calls: [
+    ...catalog.tool_calls,
+    { name: 'get_exact_price', result_summary: '{"ok":true,"exact_match":true,"sku":"2020000992"}' },
+  ] };
+  assert.equal(hasPublicEvidence(pricedCatalog, 'ราคา 8.50 ต่อชิ้น'), true);
+  assert.equal(hasPublicEvidence(pricedCatalog, '8.50 per piece'), true);
+});
+
 test('Messenger choices carry exact product in payload despite short button titles', () => {
   const replies = messengerQuickReplies('เลือกเบอร์ค่ะ\n1. กระดาษทรายกลมสักหลาด SA331 5" #1500\n2. กระดาษทรายกลมสักหลาด SA331 5" #2000');
   assert.equal(replies.length, 2);
