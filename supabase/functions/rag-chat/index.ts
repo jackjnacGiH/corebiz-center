@@ -135,7 +135,7 @@ const KEYWORD_CACHE_TTL_MS = 60_000;
 const BOT_FLAG_CACHE_TTL_MS = 30_000;
 const LEARNING_SETTINGS_CACHE_TTL_MS = 30_000;
 const MAX_LEARNING_GUIDANCE = 3;
-const ALLOWED_CHANNELS = new Set(["default", "line", "web"]);
+const ALLOWED_CHANNELS = new Set(["default", "line", "web", "messenger"]);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -256,7 +256,7 @@ function resolveResponseLanguage(
       && (detectLanguage(message.content) === "th" || /[A-Za-z]{2,}/.test(withoutModel(message.content))),
   )?.content;
   if (priorCustomerText) return detectLanguage(priorCustomerText);
-  return channel === "line" ? "th" : "en";
+  return channel === "line" || channel === "messenger" ? "th" : "en";
 }
 
 

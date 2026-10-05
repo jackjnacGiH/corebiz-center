@@ -4,15 +4,15 @@
  * One unified inbox for every channel the company supports:
  *   - livechat (web AI chat at /widget on jnac.co.th)
  *   - line     (LINE OA via line-webhook + line-push Edge Functions)
- *   - messenger, instagram, whatsapp, email (Phase 3+ — same tables,
- *     just need their webhooks)
+ *   - messenger (Facebook Page Inbox)
+ *   - instagram, whatsapp, email (same tables; integrations added per platform)
  *
  * Two-pane layout: conversation list on the left, selected conversation
  * thread on the right with a reply box. Filters by channel + status +
  * search. Realtime updates via Supabase channels so new customer
  * messages light up instantly. When admin replies to a non-livechat
  * conversation, chatInboxApi.sendMessage forwards the message to the
- * relevant channel's send API (line-push for LINE).
+ * relevant channel's send API (line-push or messenger-push).
  */
 import {
     useCallback,
@@ -1232,6 +1232,11 @@ export default function Chat() {
     }
 
     const applySentMessage = useCallback((message: ChatMessage) => {
+        if (message.metadata?.messenger_push_failed) {
+            setMsgErr('ส่ง Facebook ไม่สำเร็จหรือยังยืนยันการส่งไม่ได้ ข้อความถูกบันทึกไว้ในแชตแล้ว กรุณาตรวจสอบก่อนส่งซ้ำ');
+        } else {
+            setMsgErr(null);
+        }
         const updateConversation = (conversation: ChatConversation): ChatConversation => ({
             ...conversation,
             last_message_at: message.created_at,
@@ -2065,7 +2070,9 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
     const isBot = msg.sender_type === 'bot';
     const isSystem = msg.sender_type === 'system';
     const replyTo = (msg.metadata as { reply_to?: { sender_type: string; sender_name?: string | null; preview: string } } | null)?.reply_to;
-    const pushFailed = !!(msg.metadata as { line_push_failed?: boolean } | null)?.line_push_failed;
+    const linePushFailed = !!(msg.metadata as { line_push_failed?: boolean } | null)?.line_push_failed;
+    const messengerPushFailed = !!(msg.metadata as { messenger_push_failed?: boolean } | null)?.messenger_push_failed;
+    const facebookBotFailed = isCustomer && msg.metadata?.facebook_bot_status === 'failed';
 
     if (isSystem) {
         return (
@@ -2160,9 +2167,19 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
                         </button>
                     )}
                 </div>
-                {pushFailed && !isCustomer && (
+                {linePushFailed && !isCustomer && (
                     <div className={`mt-0.5 px-1 text-[10px] text-rose-500 flex items-center gap-1 ${isCustomer ? '' : 'justify-end'}`}>
                         <AlertCircle size={11} /> ส่งไม่ถึงลูกค้า (LINE) — โควต้าอาจเต็ม
+                    </div>
+                )}
+                {messengerPushFailed && !isCustomer && (
+                    <div className={`mt-0.5 px-1 text-[10px] text-rose-500 flex items-center gap-1 ${isCustomer ? '' : 'justify-end'}`}>
+                        <AlertCircle size={11} /> ส่ง Facebook ไม่สำเร็จหรือยังยืนยันไม่ได้ กรุณาตรวจสอบก่อนส่งซ้ำ
+                    </div>
+                )}
+                {facebookBotFailed && (
+                    <div className="mt-0.5 px-1 text-[10px] text-rose-500 flex items-center gap-1">
+                        <AlertCircle size={11} /> บอต Facebook ตอบไม่สำเร็จ — กรุณาให้เจ้าหน้าที่ตอบลูกค้า
                     </div>
                 )}
             </div>

@@ -1228,12 +1228,13 @@ const PERSONA_CHANNELS: Array<{ key: PersonaChannel; label: string; icon: string
     { key: 'default', label: 'ค่าเริ่มต้น (Default)', icon: '⭐' },
     { key: 'line', label: 'LINE OA', icon: '💬' },
     { key: 'web', label: 'เว็บไซต์ (jnac.co.th)', icon: '🌐' },
+    { key: 'messenger', label: 'Facebook Page', icon: '📘' },
 ];
 
 function AiPersonaCard() {
     const [activeChannel, setActiveChannel] = useState<PersonaChannel>('default');
     const [personas, setPersonas] = useState<Record<PersonaChannel, AiPersona | null>>({
-        default: null, line: null, web: null,
+        default: null, line: null, web: null, messenger: null,
     });
     const [displayName, setDisplayName] = useState('');
     const [prompt, setPrompt] = useState('');
@@ -1247,9 +1248,9 @@ function AiPersonaCard() {
         setErr(null);
         try {
             const all = await aiPersonaApi.list();
-            const map: Record<PersonaChannel, AiPersona | null> = { default: null, line: null, web: null };
+            const map: Record<PersonaChannel, AiPersona | null> = { default: null, line: null, web: null, messenger: null };
             for (const p of all) {
-                if (p.channel === 'default' || p.channel === 'line' || p.channel === 'web') {
+                if (p.channel === 'default' || p.channel === 'line' || p.channel === 'web' || p.channel === 'messenger') {
                     map[p.channel] = p;
                 }
             }
