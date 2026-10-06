@@ -1,5 +1,5 @@
 /**
- * storefront-quote v2 — public (anon) endpoint that turns a storefront cart
+ * storefront-quote v3 — public (anon) endpoint that turns a storefront cart
  * into a Quote (draft) in Order Management, so the existing quote → approve →
  * sales-order flow handles it. Prices are recomputed server-side from the DB
  * (never trust the client). Customer contact is stored in the quote notes.
@@ -9,6 +9,9 @@
  * from the portal but staff see it under the right company), and a VERIFIED
  * member's tier discount (tier_benefits.discount_percent) is applied
  * automatically. Anonymous shoppers behave exactly as before.
+ *
+ * v3: every successful storefront quotation receives the standard server-side
+ * shipping line and recalculated totals before its code is returned.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -168,6 +171,19 @@ Deno.serve(async (req: Request) => {
     .from("quote_items")
     .insert(rows.map((r) => ({ ...r, quote_id: (quote as { id: string }).id })));
   if (iErr) return json({ ok: false, error: iErr.message }, 500);
+
+  // Storefront quotations use the same server-owned shipping rule as bot
+  // quotations. The database function is idempotent, appends SHIPPING and
+  // recalculates subtotal/VAT/total without trusting a fee from the browser.
+  const quoteId = (quote as { id: string }).id;
+  const { error: shippingErr } = await admin
+    .rpc("apply_quote_shipping", { p_quote_id: quoteId });
+  if (shippingErr) {
+    // Do not leave a draft that violates the storefront invariant. quote_items
+    // cascade with the quote, so a customer retry creates one complete draft.
+    await admin.from("quotes").delete().eq("id", quoteId);
+    return json({ ok: false, error: "ไม่สามารถเพิ่มค่าขนส่งในใบเสนอราคา กรุณาลองใหม่" }, 500);
+  }
 
   return json({ ok: true, code: (quote as { code: string }).code });
 });
