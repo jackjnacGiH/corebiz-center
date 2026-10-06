@@ -15,6 +15,12 @@ const AUTH_BOOTSTRAP_TIMEOUT_MS = 8_000;
 const PROFILE_LOAD_TIMEOUT_MS = [6_000, 8_000] as const;
 const PROFILE_ERROR_RETRY_DELAY_MS = 30_000;
 
+function isTransientProfileError(error: unknown) {
+  const name = typeof error === 'object' && error && 'name' in error ? String(error.name) : '';
+  const message = typeof error === 'object' && error && 'message' in error ? String(error.message) : '';
+  return name === 'TypeError' || message === 'Profile request timed out' || /Profile request failed \((502|503|504)\)/.test(message);
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string, onTimeout: () => void): Promise<T> {
   let timer: number | undefined;
   try {
@@ -83,7 +89,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         break;
       } catch (error) {
         if (version !== profileLoadVersion.current) return;
-        if (attempt === 0 && error instanceof Error && error.message === 'Profile request timed out') continue;
+        // Supabase can briefly return a gateway/service error while a resumed
+        // project is warming up. Reuse the existing second attempt instead of
+        // making the user press Retry for a transient outage.
+        if (attempt < PROFILE_LOAD_TIMEOUT_MS.length - 1 && isTransientProfileError(error)) continue;
         // A genuine failure still denies access until a profile is verified.
         issue = 'unavailable';
         console.error('[auth] Unable to load profile', error);

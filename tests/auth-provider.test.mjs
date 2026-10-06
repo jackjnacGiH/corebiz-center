@@ -7,12 +7,13 @@ import { clearListCache, hasCache, swrList } from '../frontend/src/lib/cache.ts'
 
 const source = readFileSync(new URL('../frontend/src/lib/AuthProvider.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const session = (id, token = 'first') => ({ user: { id }, access_token: token });
 const profile = (id, changes = {}) => ({ id, role: 'staff', is_active: true, ...changes });
 const settle = async () => {
-  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  for (let index = 0; index < 5; index += 1) await Promise.resolve();
 };
 
 // Run the actual provider with deterministic hooks, auth notifications and a
@@ -71,6 +72,7 @@ function mount(initialSession, options = {}) {
   const exports = {};
   runInNewContext(compiled, {
     exports,
+    AbortController,
     require: name => {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx: (_type, props) => props };
@@ -192,11 +194,31 @@ test('profile timeout releases loading as unavailable while preserving the sessi
   assert.equal(h.value.loading, true);
   h.runTimers(10_000);
   await settle();
+  assert.equal(h.requests.length, 2);
+  h.runTimers(10_000);
+  await settle();
   assert.equal(h.value.profile, null);
   assert.equal(h.value.profileIssue, 'unavailable');
   assert.equal(h.value.session.user.id, 'slow-profile');
   assert.equal(h.value.loading, false);
   assert.equal(h.diagnostics.includes('[auth] Unable to load profile'), true);
+  h.unmount();
+});
+
+test('transient Supabase service failure retries before denying access', async () => {
+  const h = mount(session('recovering-profile'));
+  await settle();
+  h.runTimers();
+  assert.equal(h.requests.length, 1);
+  h.requests[0].reject(new Error('Profile request failed (503)'));
+  await settle();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.value.loading, true);
+  h.requests[1].resolve(profile('recovering-profile', { role: 'owner' }));
+  await settle();
+  assert.equal(h.value.profile.role, 'owner');
+  assert.equal(h.value.profileIssue, null);
+  assert.equal(h.value.loading, false);
   h.unmount();
 });
 
@@ -213,13 +235,19 @@ test('empty or failed stored-session initialization exits loading without any pr
   h.unmount();
 });
 
-test('every sign-in and token refresh revalidates current permissions even for the same user', async () => {
+test('token refresh and user update revalidate permissions while a repeated sign-in reuses the verified profile', async () => {
   const h = mount(session('a'));
   await settle();
   h.runTimers();
   h.requests[0].resolve(profile('a', { role: 'owner' }));
   await settle();
-  for (const [index, event] of ['TOKEN_REFRESHED', 'SIGNED_IN', 'USER_UPDATED'].entries()) {
+
+  h.emit('SIGNED_IN', session('a', 'same-user'));
+  assert.equal(h.value.loading, false);
+  assert.equal(h.value.profile.role, 'owner');
+  assert.equal(h.requests.length, 1);
+
+  for (const [index, event] of ['TOKEN_REFRESHED', 'USER_UPDATED'].entries()) {
     h.emit(event, session('a', `token-${index}`));
     assert.equal(h.value.loading, true);
     assert.equal(h.value.profile, null);
@@ -301,7 +329,7 @@ test('missing and rejected profile reads remain distinct and fail closed without
   assert.equal(h.value.loading, false);
   assert.equal(h.value.profile, null);
   assert.equal(h.value.profileIssue, 'missing');
-  h.emit('SIGNED_IN', session('a'));
+  h.emit('TOKEN_REFRESHED', session('a', 'refreshed'));
   h.runTimers();
   h.requests[1].reject(new Error('test network failure'));
   await settle();
