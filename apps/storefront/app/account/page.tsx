@@ -19,6 +19,7 @@ import {
 import ThaiAddressInput from "@/components/ThaiAddressInput";
 import QuoteDoc, { type OrgInfo, type QuoteDocItem } from "@/components/account/QuoteDoc";
 import { printElement } from "@/lib/print";
+import { quoteItemsShippingLast } from "@/lib/quote-items";
 
 const BRAND = "#1696F4";
 
@@ -343,7 +344,7 @@ function QuoteDocModal({
       .rpc("my_quote_items", { p_quote_id: quote.id })
       .then(({ data }) => {
         if (!live) return;
-        setItems(((data ?? []) as DocItem[]).map((it) => ({
+        setItems(quoteItemsShippingLast((data ?? []) as DocItem[]).map((it) => ({
           name: it.product_name, sku: it.sku, qty: it.quantity,
           unit: Number(it.unit_price), total: Number(it.total),
         })));
