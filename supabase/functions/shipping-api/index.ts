@@ -35,7 +35,7 @@ import {
   type ProviderConnectionResult,
 } from "../_shared/promptspeed.ts";
 import { compareShippingRates } from "../_shared/shipping-rates.ts";
-import { flashDeliveredSnapshot } from "../_shared/flash-tracking.ts";
+import { parseFlashDatabaseSnapshot } from "../_shared/flash-tracking.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -930,7 +930,11 @@ Deno.serve(async (req) => {
         shipment.draft.carrier_code.startsWith("FLASH") &&
         ["waiting", "on_delivery"].includes(shipment.status)
       ) {
-        const direct = await flashDeliveredSnapshot(shipment.tracking_number);
+        const { data: flashData, error: flashError } = await db.rpc(
+          "shipping_flash_delivered_snapshot",
+          { p_tracking: shipment.tracking_number },
+        );
+        const direct = flashError ? null : parseFlashDatabaseSnapshot(flashData);
         if (direct) snapshot = { ...snapshot, ...direct };
       }
       const statusAccepted = !!snapshot.updatedAt && acceptStatus(
