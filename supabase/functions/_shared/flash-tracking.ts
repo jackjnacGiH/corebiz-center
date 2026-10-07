@@ -2,7 +2,8 @@
 // adapter deliberately narrow: it only confirms the terminal delivered state
 // when PromptSpeed still reports an active shipment.
 const FLASH_TRACKING_URL = "https://www.flashexpress.co.th/webApi/tools/tracking";
-const FLASH_DELIVERED_STATE = 3;
+const FLASH_DELIVERED_STATE = 5;
+const FLASH_DELIVERED_ACTION = "DELIVERY_CONFIRM";
 const MAX_RESPONSE_BYTES = 1_000_000;
 const REQUEST_TIMEOUT_MS = 5_000;
 
@@ -20,7 +21,6 @@ export interface FlashDeliveredSnapshot {
 export function parseFlashDeliveredSnapshot(
   payload: unknown,
   expectedTracking: string,
-  checkedAt: string,
 ): FlashDeliveredSnapshot | null {
   const root = record(payload);
   if (Number(root.code) !== 1) return null;
@@ -37,7 +37,21 @@ export function parseFlashDeliveredSnapshot(
     });
   if (!shipment || Number(shipment.state) !== FLASH_DELIVERED_STATE)
     return null;
-  const timestamp = Date.parse(checkedAt);
+  const deliveredRoute = Array.isArray(shipment.routes)
+    ? shipment.routes.map(record).find((route) =>
+      String(route.route_action ?? "").trim().toUpperCase() ===
+          FLASH_DELIVERED_ACTION &&
+        Number(route.state) === FLASH_DELIVERED_STATE
+    )
+    : undefined;
+  if (!deliveredRoute) return null;
+  const rawUpdatedAt = String(deliveredRoute.routed_at ?? "").trim();
+  const normalizedUpdatedAt = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(
+      rawUpdatedAt,
+    )
+    ? `${rawUpdatedAt.replace(" ", "T")}+07:00`
+    : rawUpdatedAt;
+  const timestamp = Date.parse(normalizedUpdatedAt);
   if (!Number.isFinite(timestamp)) return null;
   return { status: "delivered", updatedAt: new Date(timestamp).toISOString() };
 }
@@ -69,11 +83,7 @@ export async function flashDeliveredSnapshot(
     } catch {
       return null;
     }
-    return parseFlashDeliveredSnapshot(
-      payload,
-      trackingNumber,
-      new Date().toISOString(),
-    );
+    return parseFlashDeliveredSnapshot(payload, trackingNumber);
   } catch {
     return null;
   } finally {
