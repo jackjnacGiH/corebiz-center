@@ -5,7 +5,7 @@ const FLASH_TRACKING_URL = "https://www.flashexpress.co.th/webApi/tools/tracking
 const FLASH_DELIVERED_STATE = 5;
 const FLASH_DELIVERED_ACTION = "DELIVERY_CONFIRM";
 const MAX_RESPONSE_BYTES = 1_000_000;
-const REQUEST_TIMEOUT_MS = 5_000;
+const REQUEST_TIMEOUT_MS = 12_000;
 
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
