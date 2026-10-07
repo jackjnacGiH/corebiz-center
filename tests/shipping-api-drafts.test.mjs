@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as domain from '../supabase/functions/_shared/shipping-domain.ts';
 import * as promptSpeed from '../supabase/functions/_shared/promptspeed.ts';
+import { parseFlashDatabaseSnapshot } from '../supabase/functions/_shared/flash-tracking.ts';
 
 const actor = '00000000-0000-4000-8000-000000000999';
 const gatewayToken = `e30.${Buffer.from(JSON.stringify({
@@ -108,6 +109,14 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
       if (name.startsWith('npm:@supabase/')) return { createClient: () => ({
         auth: { getUser: async () => { authCalls += 1; return { data: { user: { id: actor } }, error: null }; } },
         from: table => new Query(table),
+        rpc: async (name, args) => {
+          assert.equal(name, 'shipping_flash_delivered_snapshot');
+          const snapshot = await (provider?.flashTracking ?? (async () => null))(args.p_tracking);
+          return {
+            data: snapshot ? [{ delivered: true, updated_at: snapshot.updatedAt }] : [],
+            error: null,
+          };
+        },
       }) };
       if (name.endsWith('/shipping-domain.ts')) return domain;
       if (name.endsWith('/promptspeed.ts')) return {
@@ -126,7 +135,7 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
       };
       if (name.endsWith('/shipping-rates.ts')) return { compareShippingRates: noProvider };
       if (name.endsWith('/flash-tracking.ts')) return {
-        flashDeliveredSnapshot: provider?.flashTracking ?? (async () => null),
+        parseFlashDatabaseSnapshot,
       };
       throw new Error(`Unexpected import: ${name}`);
     },
