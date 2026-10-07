@@ -437,7 +437,7 @@ test('refresh status accepts PromptSpeed Thailand time and stores the actual car
   assert.ok(result.body.shipment.provider_charge_checked_at);
 });
 
-test('refresh status confirms Flash delivery when PromptSpeed still reports an active shipment', async () => {
+test('refresh status confirms Flash delivery while the local shipment is still active', async () => {
   const row = submittableShipment(1);
   row.draft.carrier_code = 'FLASH_EXPRESS_SPEED';
   row.status = 'on_delivery';
@@ -454,7 +454,7 @@ test('refresh status confirms Flash delivery when PromptSpeed still reports an a
           data: { data: [{
             tracking_number: row.tracking_number,
             carrier_code: row.draft.carrier_code,
-            status: 'on_delivery',
+            status: 'closed',
             update_date: '2026-10-05 08:29:32',
             actual_price: '63.0000',
           }] },

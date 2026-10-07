@@ -928,8 +928,7 @@ Deno.serve(async (req) => {
       if (!snapshot.status) return fail("provider_response_invalid", 502);
       if (
         shipment.draft.carrier_code.startsWith("FLASH") &&
-        ["waiting", "on_delivery"].includes(shipment.status) &&
-        ["waiting", "on_delivery"].includes(snapshot.status)
+        ["waiting", "on_delivery"].includes(shipment.status)
       ) {
         const direct = await flashDeliveredSnapshot(shipment.tracking_number);
         if (direct) snapshot = { ...snapshot, ...direct };
