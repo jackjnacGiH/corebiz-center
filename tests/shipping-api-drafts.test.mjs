@@ -125,6 +125,9 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
         testProviderConnection: connectionTest,
       };
       if (name.endsWith('/shipping-rates.ts')) return { compareShippingRates: noProvider };
+      if (name.endsWith('/flash-tracking.ts')) return {
+        flashDeliveredSnapshot: provider?.flashTracking ?? (async () => null),
+      };
       throw new Error(`Unexpected import: ${name}`);
     },
   });
@@ -432,6 +435,46 @@ test('refresh status accepts PromptSpeed Thailand time and stores the actual car
   assert.equal(result.body.shipment.provider_updated_at, '2026-09-29T11:30:45.000Z');
   assert.equal(result.body.shipment.provider_charge, 41.5);
   assert.ok(result.body.shipment.provider_charge_checked_at);
+});
+
+test('refresh status confirms Flash delivery when PromptSpeed still reports an active shipment', async () => {
+  const row = submittableShipment(1);
+  row.draft.carrier_code = 'FLASH_EXPRESS_SPEED';
+  row.status = 'on_delivery';
+  row.tracking_number = 'TH210697UBBJ9B';
+  row.provider_updated_at = '2026-10-05T01:29:32.000Z';
+  let flashCalls = 0;
+  const h = api({
+    rows: [row],
+    provider: {
+      request: async (_config, operation) => {
+        assert.equal(operation, 'list');
+        return {
+          status: 200, ok: true,
+          data: { data: [{
+            tracking_number: row.tracking_number,
+            carrier_code: row.draft.carrier_code,
+            status: 'on_delivery',
+            update_date: '2026-10-05 08:29:32',
+            actual_price: '63.0000',
+          }] },
+          requestId: 'request-list-stale', code: '200', message: 'success',
+        };
+      },
+      flashTracking: async trackingNumber => {
+        flashCalls += 1;
+        assert.equal(trackingNumber, row.tracking_number);
+        return { status: 'delivered', updatedAt: '2026-10-07T06:30:26.000Z' };
+      },
+    },
+  });
+
+  const result = await h.call('refresh_status', { id: id(1), version: 7 });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.shipment.status, 'delivered');
+  assert.equal(result.body.shipment.provider_updated_at, '2026-10-07T06:30:26.000Z');
+  assert.equal(result.body.shipment.provider_charge, 63);
+  assert.equal(flashCalls, 1);
 });
 
 test('submit blocks formatted phone numbers before making a provider request', async () => {

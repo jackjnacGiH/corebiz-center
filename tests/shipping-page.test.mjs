@@ -245,7 +245,7 @@ test('list actions copy tracking, open a carrier label, and refresh a row withou
   h.unmount();
 });
 
-test('check all statuses refreshes only shipments never checked before', async () => {
+test('check all statuses refreshes unfinished shipments and skips terminal ones', async () => {
   const pendingA = shipment('unchecked-a', {
     status: 'waiting', tracking_number: 'TRACK-A', version: 3,
     draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
@@ -254,26 +254,32 @@ test('check all statuses refreshes only shipments never checked before', async (
     status: 'waiting', tracking_number: 'TRACK-B', version: 5,
     draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
   });
-  const checked = shipment('checked', {
-    status: 'waiting', tracking_number: 'TRACK-C', provider_updated_at: '2026-09-29T10:00:00Z',
+  const checkedActive = shipment('checked-active', {
+    status: 'on_delivery', tracking_number: 'TRACK-C', provider_updated_at: '2026-09-29T10:00:00Z',
+    draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
+  });
+  const delivered = shipment('delivered', {
+    status: 'delivered', tracking_number: 'TRACK-D', provider_updated_at: '2026-09-29T11:00:00Z',
     draft: { ...domain.emptyDraft(), carrier_code: 'FLASH_EXPRESS_SPEED' },
   });
   const noTracking = shipment('no-tracking');
-  const h = await readyList([pendingA, pendingB, checked, noTracking]);
+  const h = await readyList([pendingA, pendingB, checkedActive, delivered, noTracking]);
 
   h.button('checkAllStatuses').props.onClick();
   await settle();
   const actions = h.requests.filter(request => request.action === 'action');
-  assert.deepEqual(actions.map(request => request.args[1].id), ['unchecked-a', 'unchecked-b']);
+  assert.deepEqual(actions.map(request => request.args[1].id), ['unchecked-a', 'unchecked-b', 'checked-active']);
   assert.ok(actions.every(request => request.args[0] === 'refresh_status'));
 
   actions[0].resolve({ shipment: { ...pendingA, status: 'delivered', provider_updated_at: '2026-09-30T01:00:00Z', version: 4 } });
   actions[1].resolve({ shipment: { ...pendingB, status: 'on_delivery', provider_updated_at: '2026-09-30T01:01:00Z', version: 6 } });
+  actions[2].resolve({ shipment: { ...checkedActive, status: 'delivered', provider_updated_at: '2026-09-30T01:02:00Z', version: 4 } });
   await settle(); h.render();
   assert.equal(h.card('unchecked-a').props.shipment.status, 'delivered');
   assert.equal(h.card('unchecked-b').props.shipment.status, 'on_delivery');
-  assert.equal(h.card('checked').props.shipment.version, 3, 'A previously checked shipment is not requested again');
-  assert.equal(h.find(node => node.props.role === 'status').props.children, 'allStatusesChecked: 2/2');
+  assert.equal(h.card('checked-active').props.shipment.status, 'delivered');
+  assert.equal(h.card('delivered').props.shipment.version, 3, 'A terminal shipment is not requested again');
+  assert.equal(h.find(node => node.props.role === 'status').props.children, 'allStatusesChecked: 3/3');
   h.unmount();
 });
 

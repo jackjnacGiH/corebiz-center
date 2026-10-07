@@ -84,6 +84,11 @@ async function copyText(value: string) {
 }
 const isShippingAccessError = (reason: unknown) =>
   reason instanceof Error && ["forbidden", "unauthorized"].includes(reason.message);
+const BULK_REFRESHABLE_STATUSES = new Set<Shipment["status"]>([
+  "waiting",
+  "on_delivery",
+  "on_return",
+]);
 
 export default function Shipping() {
   const { t, language } = useLanguage(),
@@ -558,7 +563,7 @@ export default function Shipping() {
           .filter((row) =>
             !!row.tracking_number &&
             !!row.draft.carrier_code &&
-            !row.provider_updated_at
+            BULK_REFRESHABLE_STATUSES.has(row.status)
           );
         if (!targets.length) {
           setNotice(c.allStatusesAlreadyChecked);
