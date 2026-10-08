@@ -17,12 +17,15 @@
  * }
  */
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 const CHUNK_MAX_TOKENS = 500;
 const CHUNK_OVERLAP_TOKENS = 50;
+
+import { requireStaff, embeddingInputError, knowledgeInputError } from '../_shared/staff-auth.mjs';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -112,10 +115,15 @@ Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: CORS });
 
   try {
+    const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const auth = await requireStaff(admin, req);
+    if (auth.error) return new Response(JSON.stringify({ error: auth.error }), { status: auth.status, headers: { ...CORS, 'Content-Type': 'application/json' } });
     const authHeader = req.headers.get('Authorization') ?? '';
     const jwt = authHeader.replace(/^Bearer\s+/i, '');
 
     const body = await req.json() as ReqBody;
+    const bodyError = knowledgeInputError(body);
+    if (bodyError) return new Response(JSON.stringify({ error: bodyError }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
     if (!body.title?.trim() || !body.content?.trim()) {
       return new Response(JSON.stringify({ error: 'title and content are required' }), {
         status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
@@ -136,21 +144,10 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    const inputError = embeddingInputError(chunks);
+    if (inputError || body.content.length > 200000 || source_path.length > 512) return new Response(JSON.stringify({ error: inputError ?? 'content_too_large' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
     const embeddings = await embedTexts(chunks, jwt);
-
-    const delRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/knowledge_chunks?source_path=eq.${encodeURIComponent(source_path)}`,
-      {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        },
-      },
-    );
-    if (!delRes.ok && delRes.status !== 404) {
-      throw new Error(`delete failed: ${delRes.status}: ${await delRes.text()}`);
-    }
+    if (embeddings.length !== chunks.length || embeddings.some(e => e.length !== 1536 || e.some(n => !Number.isFinite(n)))) throw new Error('invalid_embeddings');
 
     const rows = await Promise.all(chunks.map(async (c, i) => ({
       source_path,
@@ -168,25 +165,15 @@ Deno.serve(async (req: Request) => {
       visibility: body.visibility ?? 'public',
     })));
 
-    const insRes = await fetch(`${SUPABASE_URL}/rest/v1/knowledge_chunks`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=representation',
-      },
-      body: JSON.stringify(rows),
-    });
-    if (!insRes.ok) throw new Error(`insert failed: ${insRes.status}: ${await insRes.text()}`);
-    const inserted = await insRes.json();
+    const { data: inserted, error: replaceError } = await admin.rpc('replace_knowledge_atomic', { p_source_path: source_path, p_rows: rows, p_actor_id: auth.actor.id });
+    if (replaceError) throw replaceError;
 
     return new Response(
       JSON.stringify({
         source_path,
         category,
         chunks_count: chunks.length,
-        ids: (inserted as Array<{ id: string }>).map(r => r.id),
+        ids: ((inserted ?? []) as Array<{ id: string }>).map(r => r.id),
       }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } },
     );

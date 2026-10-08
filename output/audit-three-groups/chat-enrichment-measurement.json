@@ -1,0 +1,28 @@
+{
+  "fixture": {
+    "rooms": 100,
+    "notesPerRoom": 4,
+    "synthetic": true
+  },
+  "baseline": {
+    "bulkNotePayloadBytes": 2000511,
+    "selectedNotePayloadBytes": 19992,
+    "combinedBytes": 2020503,
+    "enrichmentRequests": 1,
+    "selectedNoteRequestsCold": 1,
+    "fixtureSerializeMs50Runs": 86.048
+  },
+  "improved": {
+    "companyPayloadBytes": 5281,
+    "selectedNotePayloadBytes": 19992,
+    "combinedBytes": 25273,
+    "enrichmentRequests": 1,
+    "selectedNoteRequestsCold": 1,
+    "selectedNoteRequestsWarmRender": 0,
+    "backgroundRevalidationRequestsPerVisit": 1,
+    "fixtureSerializeMs50Runs": 0.867
+  },
+  "reductionPercent": 98.75,
+  "measuredAt": "2026-10-08",
+  "limit": "Payload projection comparison only; no production network latency or room-switch p50/p95 claim. Selected notes render from existing per-room cache on revisit and revalidate in background."
+}

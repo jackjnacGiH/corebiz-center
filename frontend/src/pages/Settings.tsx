@@ -2017,7 +2017,7 @@ function LineChannelRow({
                     )}
                 </div>
                 <div className="text-[11px] text-neutral-500 font-mono">
-                    Token: {channel.channel_access_token.slice(0, 8)}••••{channel.channel_access_token.slice(-4)}
+                    Token: {channel.token_configured ? 'ตั้งค่าแล้ว (ไม่แสดงค่า)' : 'ยังไม่ได้ตั้งค่า'}
                 </div>
                 {channel.notes && (
                     <div className="text-xs text-neutral-600 mt-1">{channel.notes}</div>
@@ -2081,7 +2081,7 @@ function LineChannelForm({
     }
 
     async function handleSave() {
-        if (!name.trim() || !accessToken.trim() || !secret.trim()) {
+        if (!name.trim() || (!isEdit && (!accessToken.trim() || !secret.trim()))) {
             setErr('กรุณากรอกชื่อ + Channel Access Token + Channel Secret');
             return;
         }
@@ -2092,8 +2092,8 @@ function LineChannelForm({
                 await lineChannelsApi.update(channel.id, {
                     name: name.trim(),
                     channel_id: channelId.trim() || null,
-                    channel_access_token: accessToken.trim(),
-                    channel_secret: secret.trim(),
+                    ...(accessToken.trim() ? { channel_access_token: accessToken.trim() } : {}),
+                    ...(secret.trim() ? { channel_secret: secret.trim() } : {}),
                     notes: notes.trim() || null,
                 });
             } else {
@@ -2154,7 +2154,7 @@ function LineChannelForm({
                     type={showSecrets ? 'text' : 'password'}
                     value={accessToken}
                     onChange={(e) => setAccessToken(e.target.value)}
-                    placeholder="เริ่มต้นด้วย Bearer token ยาว ๆ"
+                    placeholder={isEdit ? "เว้นว่างเพื่อใช้ Token เดิม" : "เริ่มต้นด้วย Bearer token ยาว ๆ"}
                     className="h-8 text-sm font-mono"
                 />
             </div>
@@ -2164,7 +2164,7 @@ function LineChannelForm({
                     type={showSecrets ? 'text' : 'password'}
                     value={secret}
                     onChange={(e) => setSecret(e.target.value)}
-                    placeholder="32 ตัวอักษร hex"
+                    placeholder={isEdit ? "เว้นว่างเพื่อใช้ Secret เดิม" : "32 ตัวอักษร hex"}
                     className="h-8 text-sm font-mono"
                 />
             </div>

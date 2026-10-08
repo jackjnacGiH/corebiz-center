@@ -50,11 +50,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const profileUnavailableAt = useRef(0);
   const profileRequest = useRef<AbortController | null>(null);
 
-  const loadProfile = useCallback(async (s: Session | null, version = ++profileLoadVersion.current) => {
+  const loadProfile = useCallback(async (s: Session | null, version = ++profileLoadVersion.current, background = false) => {
     // An auth event can supersede a deferred query before it even starts.
     if (version !== profileLoadVersion.current) return;
     profileLoadingFor.current = s?.user.id ?? null;
-    setLoading(true);
+    if (!background) setLoading(true);
 
     if (!s) {
       if (version === profileLoadVersion.current) {
@@ -161,6 +161,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // the same verified profile avoids blanking the whole app and repeating
       // a query on every focus; a real token refresh still revalidates it.
       const sameUser = !!s && activeSession.current?.user.id === s.user.id;
+      // Retain the verified screen and drafts while checking the new token.
+      // Missing/inactive/unavailable results below still revoke access.
+      if (sameUser && event === 'TOKEN_REFRESHED' && profileResolvedFor.current === s.user.id) {
+        activeSession.current = s;
+        setSession(s);
+        const version = ++versions.current;
+        profileRequest.current?.abort();
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => { void loadProfile(s, version, true); }, 0);
+        return;
+      }
       if (sameUser && event !== 'USER_UPDATED' && (
         profileLoadingFor.current === s.user.id ||
         ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') &&

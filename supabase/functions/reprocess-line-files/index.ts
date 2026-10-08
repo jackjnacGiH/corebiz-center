@@ -10,6 +10,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { uploadPrivateChatAttachment } from "../_shared/chat-attachment-storage.mjs";
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
@@ -42,7 +43,7 @@ Deno.serve(async (req: Request) => {
 
   const todo = (rows ?? []).filter((r: Record<string, unknown>) => {
     const meta = (r.metadata ?? {}) as Record<string, unknown>;
-    return !meta.file_url && r.external_msg_id;
+    return !meta.file_url && !(meta.file_bucket && meta.file_path) && r.external_msg_id;
   });
 
   const results: Array<{ id: string; ok: boolean; reason?: string }> = [];
@@ -62,16 +63,15 @@ Deno.serve(async (req: Request) => {
 
       const safe = (fileName.replace(/[^\w.\-]+/g, "_") || "file").slice(-80);
       const path = `${String(r.conversation_id)}/${Date.now()}-${safe}`;
-      const up = await admin.storage.from("chat-attachments").upload(path, bytes, { contentType: mimeType, upsert: false });
-      if (up.error) { results.push({ id, ok: false, reason: up.error.message }); continue; }
-      const { data: pub } = admin.storage.from("chat-attachments").getPublicUrl(path);
-      const url = pub?.publicUrl;
+      const stored = await uploadPrivateChatAttachment(admin, { path, body: bytes, contentType: mimeType });
+      const url = stored.url;
       if (!url) { results.push({ id, ok: false, reason: "no_url" }); continue; }
 
-      await admin.from("chat_messages").update({
+      const { error: updateError } = await admin.from("chat_messages").update({
         content: `📎 ${fileName}`,
-        metadata: { ...meta, file_url: url, file_size: meta.file_size ?? bytes.length, mime_type: mimeType },
+        metadata: { ...meta, file_url: null, file_bucket: stored.bucket, file_path: stored.path, file_size: meta.file_size ?? bytes.length, mime_type: mimeType },
       }).eq("id", id);
+      if (updateError) throw updateError;
       results.push({ id, ok: true });
     } catch (e) {
       results.push({ id, ok: false, reason: (e as Error).message });

@@ -1,0 +1,40 @@
+{
+  "observedAt": "2026-10-08",
+  "project": "owoedccmuqnzdtxvywgt",
+  "autovacuum": "on",
+  "pg_net_ttl": "6 hours",
+  "net_response": {
+    "bytes": 1499136,
+    "n_dead_tup": 0,
+    "n_live_tup": 0,
+    "reloptions": null,
+    "last_autovacuum": null,
+    "autovacuum_count": 0,
+    "last_autoanalyze": null,
+    "autoanalyze_count": 0
+  },
+  "db_stats_reset": null,
+  "extensions_in_public": [
+    {
+      "name": "vector",
+      "relocatable": true
+    },
+    {
+      "name": "pg_trgm",
+      "relocatable": true
+    }
+  ],
+  "github": {
+    "mainProtected": false,
+    "production": {
+      "name": "Production",
+      "rules": [],
+      "deploymentBranchPolicy": null
+    },
+    "ciSecretNames": [
+      "VERCEL_ORG_ID",
+      "VERCEL_PROJECT_ID",
+      "VERCEL_TOKEN"
+    ]
+  }
+}

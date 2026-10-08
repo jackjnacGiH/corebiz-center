@@ -1,0 +1,106 @@
+{
+  "verified_at": "2026-10-08",
+  "project": "owoedccmuqnzdtxvywgt",
+  "policies": [
+    {
+      "schemaname": "public",
+      "tablename": "agent_links",
+      "policyname": "agent_links_self_read",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(agent_id IN ( SELECT agents.id\n   FROM agents\n  WHERE (agents.user_id = auth.uid())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "agents",
+      "policyname": "agents_self_read",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(user_id = auth.uid())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "commissions",
+      "policyname": "commissions_self_read",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(agent_id IN ( SELECT agents.id\n   FROM agents\n  WHERE (agents.user_id = auth.uid())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "notifications",
+      "policyname": "Staff can mark notifications read",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(is_staff() AND ((recipient_id IS NULL) OR (recipient_id = auth.uid())))",
+      "with_check": "(is_staff() AND ((recipient_id IS NULL) OR (recipient_id = auth.uid())))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "notifications",
+      "policyname": "Staff can view their notifications",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "(is_staff() AND ((recipient_id IS NULL) OR (recipient_id = auth.uid())))",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "profiles",
+      "policyname": "profiles_self_read",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((id = auth.uid()) OR is_staff())",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "profiles",
+      "policyname": "profiles_self_update",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "UPDATE",
+      "qual": "(id = auth.uid())",
+      "with_check": "((id = auth.uid()) AND (role = ( SELECT profiles_1.role\n   FROM profiles profiles_1\n  WHERE (profiles_1.id = auth.uid()))))"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "shipping_permissions",
+      "policyname": "shipping_permissions_read",
+      "permissive": "PERMISSIVE",
+      "roles": "{authenticated}",
+      "cmd": "SELECT",
+      "qual": "((user_id = auth.uid()) OR shipping_private.can_manage())",
+      "with_check": null
+    }
+  ],
+  "helpers": [
+    {
+      "schema": "public",
+      "name": "can_delete",
+      "provolatile": "s",
+      "definition": "CREATE OR REPLACE FUNCTION public.can_delete()\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\n  select exists(select 1 from public.profiles p\n    where p.id = auth.uid() and p.is_active\n      and p.role in ('owner','admin')); $function$\n"
+    },
+    {
+      "schema": "public",
+      "name": "is_staff",
+      "provolatile": "s",
+      "definition": "CREATE OR REPLACE FUNCTION public.is_staff()\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\n  select exists (\n    select 1\n    from public.profiles p\n    where p.id = auth.uid()\n      and p.is_active = true\n      and p.role in ('owner','admin','staff')\n  );\n$function$\n"
+    },
+    {
+      "schema": "shipping_private",
+      "name": "can_manage",
+      "provolatile": "s",
+      "definition": "CREATE OR REPLACE FUNCTION shipping_private.can_manage()\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO ''\nAS $function$\n  select auth.uid() is not null and exists(select 1 from public.profiles where id=auth.uid() and is_active and role in ('owner','admin'));\n$function$\n"
+    }
+  ]
+}

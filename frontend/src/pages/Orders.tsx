@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Eye, ShoppingCart, RefreshCw, FileText, CheckCircle2 } from 'lucide-react';
 import {
     ordersApi,
-    quoteRecordApi,
+    salesDocumentsApi,
     type OrderWithCustomer,
     type QuoteListItem,
+    type SalesDocumentCursor,
+    type SalesDocumentPage,
 } from '../lib/api';
 import { useLanguage } from '../i18n';
 import { useRealtimeRefresh, useRealtimeTable } from '../lib/useRealtimeTable';
-import { swrList, hasCache } from '../lib/cache';
+import { swrList, hasCache, invalidateListPrefix } from '../lib/cache';
 import OrderDetailModal from '../components/OrderDetailModal';
 import QuoteDetailModal from '../components/QuoteDetailModal';
 import PageHeader from '../components/PageHeader';
@@ -104,45 +106,62 @@ export default function Orders() {
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [search, setSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | OrderStatus>('all');
     const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
     const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
+    const [nextCursor, setNextCursor] = useState<SalesDocumentCursor | null>(null);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [statusCounts, setStatusCounts] = useState<Record<string, number>>({ all: 0 });
+    const pageGeneration = useRef(0);
+    const moreInFlight = useRef(false);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 200);
+        return () => window.clearTimeout(timer);
+    }, [search]);
 
     // force=true skips the cache (Reload / realtime / after a write). Plain
     // navigation serves the cached lists instantly + revalidates in background.
     const loadVersion = useRef<symbol | null>(null);
-    async function load(force = false) {
+    const load = useCallback(async (force = false) => {
         const version = Symbol();
         loadVersion.current = version;
         const isCurrent = () => version === loadVersion.current;
-        const refreshed = { orders: false, quotes: false };
-        if (!force && !hasCache('orders')) setLoading(true);
+        const key = `sales-documents:${JSON.stringify([debouncedSearch, statusFilter])}`;
+        let refreshed = false;
+        if (force) invalidateListPrefix('sales-documents');
+        setLoading(!hasCache(key));
+        setLoadingMore(false);
+        moreInFlight.current = false;
+        const applyPage = (page: SalesDocumentPage) => {
+            if (!isCurrent()) return;
+            pageGeneration.current += 1;
+            setOrders(page.items.filter(item => item.kind === 'order').map(item => item.document as OrderWithCustomer));
+            setQuotes(page.items.filter(item => item.kind === 'quote').map(item => item.document as QuoteListItem));
+            setNextCursor(page.next_cursor);
+            setStatusCounts(page.counts);
+        };
         setErr(null);
         try {
-            // Pull both in parallel — both are small tables relative to UI
-            // page size; we filter / paginate client-side.
-            const [o, q] = await Promise.all([
-                swrList('orders', () => ordersApi.list(), { force, onFresh: d => {
-                    if (isCurrent()) { refreshed.orders = true; setOrders(d); }
-                } }),
-                swrList('quotes', () => quoteRecordApi.list().catch(() => []), { force, onFresh: d => {
-                    if (isCurrent()) { refreshed.quotes = true; setQuotes(d); }
-                } }),
-            ]);
+            const page = await swrList(key, () => salesDocumentsApi.listPage({ search: debouncedSearch, status: statusFilter }), {
+                force,
+                onFresh: fresh => { refreshed = true; applyPage(fresh); },
+                onBackgroundError: error => { if (isCurrent()) setErr((error as Error).message); },
+            });
             if (!isCurrent()) return;
-            if (!refreshed.orders) setOrders(o);
-            if (!refreshed.quotes) setQuotes(q);
+            if (!refreshed) applyPage(page);
         } catch (e) {
             if (isCurrent()) setErr((e as Error).message);
         } finally {
             if (isCurrent()) setLoading(false);
         }
-    }
+    }, [debouncedSearch, statusFilter]);
 
     useEffect(() => {
         void load();
         return () => { loadVersion.current = null; };
-    }, []);
+    }, [load]);
     const refreshRealtime = useRealtimeRefresh(() => load(true));
     useRealtimeTable('orders', refreshRealtime);
     useRealtimeTable('quotes', refreshRealtime);
@@ -188,7 +207,7 @@ export default function Orders() {
             }));
 
         return [...orderRows, ...quoteRows].sort((a, b) =>
-            b.createdAt.localeCompare(a.createdAt),
+            b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id) || b.kind.localeCompare(a.kind),
         );
     }, [orders, quotes]);
 
@@ -204,11 +223,27 @@ export default function Orders() {
         });
     }, [rows, search, statusFilter]);
 
-    const statusCounts = useMemo(() => {
-        const counts: Record<string, number> = { all: rows.length };
-        for (const r of rows) counts[r.tabBucket] = (counts[r.tabBucket] ?? 0) + 1;
-        return counts;
-    }, [rows]);
+    async function loadMore() {
+        if (!nextCursor || moreInFlight.current) return;
+        moreInFlight.current = true;
+        const version = loadVersion.current;
+        const generation = pageGeneration.current;
+        setLoadingMore(true);
+        try {
+            const page = await salesDocumentsApi.listPage({ search: debouncedSearch, status: statusFilter, cursor: nextCursor });
+            if (version !== loadVersion.current || generation !== pageGeneration.current) return;
+            const newOrders = page.items.filter(item => item.kind === 'order').map(item => item.document as OrderWithCustomer);
+            const newQuotes = page.items.filter(item => item.kind === 'quote').map(item => item.document as QuoteListItem);
+            setOrders(old => [...new Map([...old, ...newOrders].map(item => [item.id, item])).values()]);
+            setQuotes(old => [...new Map([...old, ...newQuotes].map(item => [item.id, item])).values()]);
+            setNextCursor(page.next_cursor);
+            setStatusCounts(page.counts);
+        } catch (error) {
+            if (version === loadVersion.current) setErr((error as Error).message);
+        } finally {
+            if (version === loadVersion.current) { moreInFlight.current = false; setLoadingMore(false); }
+        }
+    }
 
     async function handleStatusChange(orderId: string, newStatus: OrderStatus) {
         try {
@@ -426,7 +461,7 @@ export default function Orders() {
                                                     >
                                                         <Eye size={13} /> ดู
                                                     </Button>
-                                                    {(r.quoteStatus === 'draft' || r.quoteStatus === 'sent') && (
+                                                    {['draft', 'sent', 'accepted'].includes(r.quoteStatus) && (
                                                         <Button
                                                             size="sm"
                                                             onClick={() => setDetailQuoteId(r.id)}
@@ -455,6 +490,13 @@ export default function Orders() {
                     </Table>
                 </CardContent>
             </Card>
+
+            <div className="flex items-center justify-between gap-3 text-sm text-neutral-500">
+                <span>{t.orders.loadedRecords} {rows.length.toLocaleString()} / {(statusCounts[statusFilter] ?? 0).toLocaleString()}</span>
+                {nextCursor && <Button variant="outline" disabled={loading || loadingMore} onClick={() => void loadMore()}>
+                    {loadingMore ? t.common.loading : t.orders.loadMore}
+                </Button>}
+            </div>
 
             <OrderDetailModal
                 isOpen={detailOrderId !== null}

@@ -2,16 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 // Install into an isolated runtime; never change the application's dependency tree.
-const require = createRequire(
-  join(
-    process.env.SHIPPING_TEST_RUNTIME ||
-      join(tmpdir(), "corebiz-shipping-test-runtime"),
-    "package.json",
-  ),
-);
+const require = createRequire(import.meta.url);
 const { PGlite } = require("@electric-sql/pglite");
 test("shipping migration enforces role boundaries, audit and single-winner claims without touching orders", async () => {
   const db = new PGlite();

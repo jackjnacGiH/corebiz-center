@@ -149,6 +149,38 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
   } };
 }
 
+test('uncertain shipment reconciliation only reads provider and uses a versioned update', async () => {
+  const row = submittableShipment(1);
+  row.status = 'outcome_unknown';
+  let creates = 0;
+  let lookups = 0;
+  const h = api({ rows: [row], provider: {
+    request: async () => { creates += 1; throw new Error('must not create'); },
+    reconcile: async (_config, query) => {
+      lookups += 1;
+      assert.equal(query.externalId, row.id);
+      assert.equal(query.referenceNo, row.reference_no);
+      return { trackingNumber: 'RECOVERED-1', status: 'waiting' };
+    },
+  } });
+  assert.equal((await h.call('reconcile', { id: row.id, version: 6 })).status, 409);
+  assert.equal(lookups, 0);
+  const result = await h.call('reconcile', { id: row.id, version: 7 });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.shipment.tracking_number, 'RECOVERED-1');
+  assert.equal(result.body.shipment.version, 8);
+  assert.equal(creates, 0);
+  assert.equal(lookups, 1);
+  assert.equal((await h.call('reconcile', { id: row.id, version: 8 })).status, 409);
+  const staff = api({ rows: [row], role: 'staff', grant: true, provider: {} });
+  assert.equal((await staff.call('reconcile', { id: row.id, version: 7 })).status, 403);
+  const missing = api({ rows: [row], provider: { reconcile: async () => null } });
+  const unresolved = await missing.call('reconcile', { id: row.id, version: 7 });
+  assert.equal(unresolved.body.reconciled, false);
+  assert.equal(unresolved.body.shipment.status, 'outcome_unknown');
+  assert.equal(missing.queries.some(query => query.patch), false);
+});
+
 test('active shipment list filters archived rows before exact count and pagination', async () => {
   const rows = Array.from({ length: 60 }, (_, i) => shipment(i + 1, (i + 1) % 3 === 0 ? 'archived' : i === 0 ? 'waiting' : 'draft'));
   const h = api({ rows });

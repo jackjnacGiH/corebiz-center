@@ -32,6 +32,7 @@ import { cn } from '@/lib/utils';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
 import PrintMenu from './PrintMenu';
 import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
+import { useAsyncScope } from '../lib/useAsyncScope';
 
 interface Props {
     isOpen: boolean;
@@ -172,7 +173,9 @@ function CustomerPicker({
 }
 
 export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }: Props) {
-    const [quote, setQuote] = useState<QuoteListItem | null>(null);
+    const [loadedQuote, setQuote] = useState<QuoteListItem | null>(null);
+    const quote = isOpen && loadedQuote?.id === quoteId ? loadedQuote : null;
+    const requestScope = useAsyncScope(isOpen ? quoteId : null);
     const [items, setItems] = useState<QuoteItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState<string | null>(null);
@@ -192,12 +195,16 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
     }, [isOpen]);
 
     async function enterEdit() {
+        if (!quote) return;
+        const isCurrent = requestScope.capture();
         setErr(null);
         try {
             if (products.length === 0) setProducts(await productsApi.list());
+            if (!isCurrent()) return;
             const custId = quote?.customer?.id;
             if (custId) {
                 const b = await tierApi.customerBenefit(custId).catch(() => null);
+                if (!isCurrent()) return;
                 setMemberPct(b ? Number(b.discount_percent) || 0 : 0);
                 setMemberLabel(b?.tier_label ?? '');
             } else {
@@ -205,36 +212,48 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
             }
             setEditing(true);
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         }
     }
 
     async function saveItems(lines: EditLine[], discount: number) {
         if (!quote) return;
+        const isCurrent = requestScope.capture();
         setSavingItems(true);
         setErr(null);
         try {
+            const version = (quote as QuoteListItem & { version?: number }).version;
+            if (version === undefined) throw new Error('กรุณาโหลดใบเสนอราคาใหม่ก่อนบันทึก');
             await quoteRecordApi.updateItems(quote.id, lines.map((l) => ({
+                id: l.id, variant_id: l.variant_id,
                 product_id: l.product_id ?? undefined, sku: l.sku, product_name: l.product_name,
-                quantity: l.quantity, unit_price: l.unit_price, unit: l.unit ?? null, discount: 0,
-            })), discount);
+                quantity: l.quantity, unit_price: l.unit_price, unit: l.unit ?? null, discount: l.discount,
+            })), discount, version);
+            onChange?.();
+            if (!isCurrent()) return;
             const fresh = await quoteRecordApi.getWithItems(quote.id);
+            if (!isCurrent()) return;
             setQuote(fresh.quote);
             setItems(fresh.items);
             setEditing(false);
-            onChange?.();
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         } finally {
-            setSavingItems(false);
+            if (isCurrent()) setSavingItems(false);
         }
     }
 
     useEffect(() => {
+        const isCurrent = requestScope.capture();
+        setQuote(null);
+        setItems([]);
+        setEditing(false);
+        setApproving(false);
+        setRejecting(false);
+        setSavingItems(false);
+        setApprovedCode(null);
         if (!isOpen || !quoteId) {
-            setQuote(null);
-            setItems([]);
-            setApprovedCode(null);
+            setLoading(false);
             return;
         }
         setLoading(true);
@@ -242,12 +261,13 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
         quoteRecordApi
             .getWithItems(quoteId)
             .then(({ quote, items }) => {
+                if (!isCurrent()) return;
                 setQuote(quote);
                 setItems(items);
             })
-            .catch((e) => setErr((e as Error).message))
-            .finally(() => setLoading(false));
-    }, [isOpen, quoteId]);
+            .catch((e) => { if (isCurrent()) setErr((e as Error).message); })
+            .finally(() => { if (isCurrent()) setLoading(false); });
+    }, [isOpen, quoteId, requestScope]);
 
     // No second confirm dialog — opening this modal + reading the line items
     // + clicking the big green/red action button is already the deliberate
@@ -255,51 +275,60 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
     // redundant extra click.
     async function handleApprove() {
         if (!quote) return;
+        const isCurrent = requestScope.capture();
         setApproving(true);
         setErr(null);
         try {
             const order = await quoteRecordApi.approveAsOrder(quote.id);
-            setApprovedCode(order.code);
             onChange?.();
+            if (!isCurrent()) return;
+            setApprovedCode(order.code);
             // Refresh the modal so the new status renders
             const fresh = await quoteRecordApi.getWithItems(quote.id);
+            if (!isCurrent()) return;
             setQuote(fresh.quote);
             setItems(fresh.items);
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         } finally {
-            setApproving(false);
+            if (isCurrent()) setApproving(false);
         }
     }
 
     async function handleReject() {
         if (!quote) return;
+        const isCurrent = requestScope.capture();
         setRejecting(true);
         setErr(null);
         try {
             await quoteRecordApi.updateStatus(quote.id, 'rejected');
             onChange?.();
+            if (!isCurrent()) return;
             const fresh = await quoteRecordApi.getWithItems(quote.id);
+            if (!isCurrent()) return;
             setQuote(fresh.quote);
             setItems(fresh.items);
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         } finally {
-            setRejecting(false);
+            if (isCurrent()) setRejecting(false);
         }
     }
 
     async function pickCustomer(customerId: string | null) {
         if (!quote) return;
+        const isCurrent = requestScope.capture();
         setErr(null);
         try {
             await quoteRecordApi.setCustomer(quote.id, customerId);
+            onChange?.();
+            if (!isCurrent()) return;
             const fresh = await quoteRecordApi.getWithItems(quote.id);
+            if (!isCurrent()) return;
             setQuote(fresh.quote);
             setItems(fresh.items);
-            onChange?.();
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         }
     }
 
@@ -367,11 +396,12 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
                     {quote && editing && (
                         <EditableQuoteItems
                             initial={items.map((it) => ({
+                                id: it.id, variant_id: (it as QuoteItem & { variant_id?: string | null }).variant_id,
                                 product_id: it.product_id, sku: it.sku, product_name: it.product_name,
-                                quantity: it.quantity, unit_price: Number(it.unit_price), discount: 0,
+                                quantity: it.quantity, unit_price: Number(it.unit_price), discount: Number(it.discount ?? 0),
                                 unit: (it as { unit?: string | null }).unit ?? null,
                             }))}
-                            initialDiscount={Number(quote.discount) || items.reduce((s, it) => s + Number((it as { discount?: number }).discount ?? 0), 0)}
+                            initialDiscount={Number(quote.discount) || 0}
                             memberPct={memberPct}
                             memberLabel={memberLabel}
                             products={products}
@@ -384,6 +414,7 @@ export default function QuoteDetailModal({ isOpen, quoteId, onClose, onChange }:
 
                     {quote && !editing && isActionable && (
                         <CustomerPicker
+                            key={quote?.id ?? 'empty'}
                             current={quote.customer ? { id: quote.customer.id, name: quote.customer.name } : null}
                             onPick={pickCustomer}
                             disabled={approving || rejecting}

@@ -36,7 +36,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     const frame = requestAnimationFrame(() => {
       try {
         const raw = localStorage.getItem(KEY);
-        if (raw) setItems(JSON.parse(raw));
+        if (raw) setItems((JSON.parse(raw) as CartItem[]).map(item => ({ ...item, qty: Math.max(item.moq || 1, Math.floor(item.qty) || 1) })));
       } catch {
         /* ignore */
       }
@@ -70,7 +70,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const setQty = useCallback((sku: string, qty: number) => {
     setItems((prev) =>
-      prev.map((x) => (x.sku === sku ? { ...x, qty: Math.max(1, Math.floor(qty) || 1) } : x)),
+      prev.map((x) => (x.sku === sku ? { ...x, qty: Math.max(x.moq || 1, Math.floor(qty) || 1) } : x)),
     );
   }, []);
 

@@ -57,12 +57,13 @@ Deno.serve(async (req: Request) => {
   if (rawItems.length === 0) return json({ ok: false, error: "ตะกร้าว่างเปล่า" }, 400);
   if (rawItems.length > MAX_ITEMS) return json({ ok: false, error: "รายการสินค้ามากเกินไป" }, 400);
 
-  // Collapse duplicate SKUs + clamp quantities.
+  // Collapse duplicate SKUs, rejecting invalid quantities instead of inventing them.
   const wanted = new Map<string, number>();
   for (const it of rawItems) {
     const sku = String(it?.sku ?? "").trim();
     if (!sku) continue;
-    const q = Math.max(1, Math.floor(Number(it?.qty) || 1));
+    const q = Number(it?.qty);
+    if (!Number.isSafeInteger(q) || q < 1 || q > 1000000) return json({ ok: false, error: "จำนวนสินค้าไม่ถูกต้อง" }, 400);
     wanted.set(sku, (wanted.get(sku) ?? 0) + q);
   }
   const skus = [...wanted.keys()];
@@ -80,6 +81,7 @@ Deno.serve(async (req: Request) => {
   // customer only (back office records it under the right company; the portal
   // keeps it hidden until Owner/Admin approve).
   let customerId: string | null = null;
+  let actorId: string | null = null;
   let tierLabel: string | null = null;
   let discountPct = 0;
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
@@ -87,6 +89,7 @@ Deno.serve(async (req: Request) => {
     const { data: u } = await admin.auth.getUser(token).catch(() => ({ data: null }));
     const uid = u?.user?.id;
     if (uid) {
+      actorId = uid;
       const { data: cc } = await admin
         .from("customer_contacts")
         .select("customer_id, verified")
@@ -119,16 +122,19 @@ Deno.serve(async (req: Request) => {
 
   const { data: products, error: pErr } = await admin
     .from("products")
-    .select("id, sku, name_th, unit, price, discount_value, discount_type")
+    .select("id, sku, name_th, unit, price, discount_value, discount_type, min_order_qty")
     .in("sku", skus)
     .eq("status", "active");
   if (pErr) return json({ ok: false, error: pErr.message }, 500);
 
+  if ((products ?? []).length !== skus.length) return json({ ok: false, error: "มีสินค้าที่ไม่พบหรือปิดการขาย กรุณาตรวจตะกร้าอีกครั้ง" }, 400);
   const rows: Array<Record<string, unknown>> = [];
   let subtotal = 0;
   for (const p of (products ?? []) as Array<Record<string, unknown>>) {
     const qty = wanted.get(String(p.sku)) ?? 0;
     if (qty <= 0) continue;
+    const minimum = Math.max(1, Number(p.min_order_qty) || 1);
+    if (qty < minimum) return json({ ok: false, error: `${p.name_th} ต้องสั่งขั้นต่ำ ${minimum} ${p.unit ?? "ชิ้น"}`, sku: p.sku, minimum_quantity: minimum }, 422);
     const unitPrice = effectivePrice(p.price, p.discount_value, p.discount_type);
     const lineTotal = r2(unitPrice * qty);
     subtotal += lineTotal;
@@ -143,9 +149,6 @@ Deno.serve(async (req: Request) => {
   // Verified member → tier discount applied up-front (staff still confirm the
   // final price before sending, as the storefront tells the customer).
   const discount = discountPct > 0 ? r2((subtotal * discountPct) / 100) : 0;
-  const net = r2(subtotal - discount);
-  const vat = r2(net * VAT_RATE);
-  const total = r2(net + vat);
 
   const notes =
     "📥 คำขอใบเสนอราคาจากหน้าร้านออนไลน์ (www.jnac.online)\n" +
@@ -158,32 +161,18 @@ Deno.serve(async (req: Request) => {
       : "") +
     (contact.note ? `\nหมายเหตุ: ${String(contact.note).trim().slice(0, 500)}` : "");
 
-  const validUntil = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  // Header, items, shipping and totals commit together. A failed insert or
+  // shipping calculation leaves no orphan draft to duplicate on retry.
+  const { data: quote, error: quoteError } = await admin.rpc("create_storefront_quote_atomic", {
+    p_customer_id: customerId,
+    p_items: rows,
+    p_discount: discount,
+    p_vat_rate: VAT_RATE,
+    p_valid_days: 30,
+    p_notes: notes,
+    p_created_by: actorId,
+  });
+  if (quoteError || !quote?.code) return json({ ok: false, error: "บันทึกใบเสนอราคาไม่สำเร็จ กรุณาลองใหม่" }, 500);
+  return json({ ok: true, code: quote.code });
 
-  const { data: quote, error: qErr } = await admin
-    .from("quotes")
-    .insert({ customer_id: customerId, status: "draft", subtotal, discount, vat, total, valid_until: validUntil, notes })
-    .select("id, code")
-    .single();
-  if (qErr) return json({ ok: false, error: qErr.message }, 500);
-
-  const { error: iErr } = await admin
-    .from("quote_items")
-    .insert(rows.map((r) => ({ ...r, quote_id: (quote as { id: string }).id })));
-  if (iErr) return json({ ok: false, error: iErr.message }, 500);
-
-  // Storefront quotations use the same server-owned shipping rule as bot
-  // quotations. The database function is idempotent, appends SHIPPING and
-  // recalculates subtotal/VAT/total without trusting a fee from the browser.
-  const quoteId = (quote as { id: string }).id;
-  const { error: shippingErr } = await admin
-    .rpc("apply_quote_shipping", { p_quote_id: quoteId });
-  if (shippingErr) {
-    // Do not leave a draft that violates the storefront invariant. quote_items
-    // cascade with the quote, so a customer retry creates one complete draft.
-    await admin.from("quotes").delete().eq("id", quoteId);
-    return json({ ok: false, error: "ไม่สามารถเพิ่มค่าขนส่งในใบเสนอราคา กรุณาลองใหม่" }, 500);
-  }
-
-  return json({ ok: true, code: (quote as { code: string }).code });
 });

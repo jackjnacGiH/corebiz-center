@@ -3,6 +3,8 @@ import { Plus, X, Search, Loader2, Save, Trash2, Truck, PencilLine } from 'lucid
 import { getEffectivePrice, type ProductWithInventory } from '../lib/api';
 
 export interface EditLine {
+  id?: string;
+  variant_id?: string | null;
   product_id?: string | null;
   sku: string;
   product_name: string;
@@ -17,9 +19,8 @@ export interface EditLine {
  * Editable line-item table for a quote / sales order: change qty + unit price,
  * remove a line, or add a product (searchable).
  *
- * The discount is a SINGLE bill-foot field (not per line) so each row shows its
- * full price and the discount is clearly visible at the bottom. Two ways to set
- * it:
+ * Preserve each existing line discount and edit the separate bill-foot discount.
+ * Two ways to set the bill-foot discount:
  *   1. Tick "ใช้ส่วนลดสมาชิกระดับ …" → the tier discount % is applied and
  *      auto-recomputed whenever the items / quantities change.
  *   2. Untick it → type the discount yourself, choosing % or บาท.
@@ -47,12 +48,13 @@ export default function EditableQuoteItems({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [q, setQ] = useState('');
 
-  const subtotal = lines.reduce((a, l) => a + l.unit_price * l.quantity, 0);
+  const lineDiscount = lines.reduce((a, l) => a + Math.min(l.unit_price * l.quantity, Math.max(0, l.discount || 0)), 0);
+  const subtotal = lines.reduce((a, l) => a + l.unit_price * l.quantity, 0) - lineDiscount;
 
   // Does the incoming discount look like the member-tier discount? If so we
   // default the checkbox on, so editing items keeps the % in sync.
   const initialSubtotal = useMemo(
-    () => initial.reduce((a, l) => a + l.unit_price * l.quantity, 0),
+    () => initial.reduce((a, l) => a + Math.max(0, l.unit_price * l.quantity - (l.discount || 0)), 0),
     [initial],
   );
   const looksLikeMember =
@@ -85,7 +87,11 @@ export default function EditableQuoteItems({
   }, [products, q]);
 
   function patch(i: number, p: Partial<EditLine>) {
-    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...p } : l)));
+    setLines((ls) => ls.map((l, idx) => {
+      if (idx !== i) return l;
+      const next = { ...l, ...p };
+      return { ...next, discount: Math.min(next.unit_price * next.quantity, Math.max(0, next.discount || 0)) };
+    }));
   }
   function remove(i: number) {
     setLines((ls) => ls.filter((_, idx) => idx !== i));
@@ -169,7 +175,10 @@ export default function EditableQuoteItems({
                 <td className="px-2 py-1.5">
                   <input type="number" min={0} step={0.01} value={l.unit_price} onChange={(e) => patch(i, { unit_price: Math.max(0, Number(e.target.value) || 0) })} className="w-full text-right rounded border border-neutral-200 px-1.5 py-1 outline-none focus:border-indigo-400 tabular-nums" />
                 </td>
-                <td className="px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">{format(l.unit_price * l.quantity)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">
+                  {format(l.unit_price * l.quantity - l.discount)}
+                  {l.discount > 0 && <div className="text-[10px] font-normal text-rose-600">ส่วนลดรายการ {format(l.discount)}</div>}
+                </td>
                 <td className="px-1 py-1.5 text-center">
                   <button type="button" onClick={() => remove(i)} className="text-neutral-300 hover:text-red-600"><Trash2 size={14} /></button>
                 </td>
@@ -224,6 +233,7 @@ export default function EditableQuoteItems({
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div className="text-[12px] text-neutral-600 space-y-1.5">
           <div>ยอดรวมสินค้า: <b className="tabular-nums text-neutral-800">{format(subtotal)}</b></div>
+          {lineDiscount > 0 && <div>ส่วนลดรายการที่รวมแล้ว: <b className="tabular-nums text-rose-600">{format(lineDiscount)}</b></div>}
 
           {/* Member-tier discount toggle */}
           {memberPct > 0 && (

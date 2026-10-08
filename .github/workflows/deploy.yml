@@ -1,27 +1,53 @@
-name: Deploy to Vercel
+name: Verify CoreBiz release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corebiz-${{ github.ref }}
+  cancel-in-progress: false
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
   workflow_dispatch:
 
 jobs:
-  deploy-corebiz:
-    name: Deploy CoreBiz Center
+  verify-corebiz:
+    name: Test, lint and build
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Behaviour and isolated database tests
+        run: npm test
+
+      - name: Type-check changed Edge Functions
+        run: |
+          npx --yes deno@2.9.6 check --no-config --node-modules-dir=none --no-lock --quiet \
+            supabase/functions/add-knowledge/index.ts supabase/functions/replace-knowledge/index.ts \
+            supabase/functions/openai-embed/index.ts supabase/functions/line-push/index.ts \
+            supabase/functions/admin-users/index.ts supabase/functions/line-webhook/index.ts \
+            supabase/functions/rag-chat/index.ts supabase/functions/rag-search/index.ts \
+            supabase/functions/reprocess-line-files/index.ts supabase/functions/facebook-webhook/index.ts \
+            supabase/functions/messenger-push/index.ts supabase/functions/shipping-api/index.ts \
+            supabase/functions/storefront-quote/index.ts
 
       - name: Lint and build active services
         run: |
@@ -30,9 +56,23 @@ jobs:
           npm run build:corebiz
           npm run build:storefront
 
-      - name: Deploy CoreBiz project to Vercel
+  deploy-corebiz:
+    name: Deploy verified main
+    needs: verify-corebiz
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Deploy tested commit
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_COREBIZ_PROJECT_ID || secrets.VERCEL_PROJECT_ID }}
-        run: npx --yes vercel@56.2.0 --prod --yes --token "$VERCEL_TOKEN"
+        run: npx --yes vercel@56.2.0 --prod --yes

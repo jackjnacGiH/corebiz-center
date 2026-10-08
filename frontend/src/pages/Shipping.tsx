@@ -1117,6 +1117,18 @@ export default function Shipping() {
                     className="bg-amber-50 text-amber-900 p-3 rounded-lg"
                   >
                     {c.unknown}
+                    {shipment.status === "outcome_unknown" && ["owner", "admin"].includes(profile?.role ?? "") && (
+                      <Button type="button" variant="outline" className="mt-2 block" disabled={busy}
+                        onClick={() => void run(async () => {
+                          const result = await shippingApi.action("reconcile", shipment);
+                          editResult(result.shipment);
+                          setNotice(result.shipment.tracking_number
+                            ? (language === "th" ? "พบรายการขนส่งเดิมและอัปเดตเลขติดตามแล้ว" : "Original shipment recovered")
+                            : (language === "th" ? "ยังไม่พบรายการตรงกัน กรุณาตรวจสอบกับผู้ให้บริการก่อนส่งใหม่" : "No exact match. Check with the provider before creating another shipment."));
+                        })}>
+                        {language === "th" ? "ตรวจสอบรายการเดิมกับผู้ให้บริการ" : "Find original shipment"}
+                      </Button>
+                    )}
                   </p>
                 )}
               {!shipment && (

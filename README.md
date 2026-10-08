@@ -16,11 +16,13 @@ The production domain is `https://www.jnac.online`. The old `corebiz.online` dom
 Run from the repository root:
 
 ```bash
-npm install
+npm ci
 npm run dev:storefront
 npm run dev:corebiz
 npm run lint
 npm run build
+npm test
+npm run check
 ```
 
 ## Architecture boundaries
@@ -41,7 +43,9 @@ The repository deploys to the Vercel project `corebiz-center` using Vercel Servi
 - `shop`: `apps/storefront` at `/`
 - `corebiz`: `frontend` at `/center`
 
-Vercel project settings must use the repository root and the Services framework. GitHub Actions deploys `main` through `.github/workflows/deploy.yml` after lint and build pass.
+Vercel project settings use the repository root and the Services framework. GitHub Actions deploys the exact `main` commit through `.github/workflows/deploy.yml` after isolated behaviour/database tests, type checks for the audited Edge Functions, lint and both builds pass. The production environment should require review and restrict deployment to `main`.
+
+`vercel.json` disables automatic Git deployment for `main` to prevent a second release before the checks. Feature-branch previews remain automatic. PGlite is a pinned development dependency; `npm test` needs no production database or external test runtime and blocks accidental live network calls.
 
 Required GitHub repository secrets:
 

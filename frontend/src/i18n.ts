@@ -174,6 +174,8 @@ export const translations = {
       confirmDelete: 'Confirm delete this product?',
     },
     orders: {
+      loadMore: 'Load more',
+      loadedRecords: 'Loaded',
       title: 'Order Management',
       subtitle: 'Track and update order status',
       searchPlaceholder: 'Search orders...',
@@ -513,6 +515,8 @@ export const translations = {
       confirmDelete: 'ยืนยันการลบสินค้านี้?',
     },
     orders: {
+      loadMore: 'โหลดเพิ่มเติม',
+      loadedRecords: 'โหลดแล้ว',
       title: 'จัดการคำสั่งซื้อ',
       subtitle: 'ติดตามและอัพเดตสถานะออเดอร์',
       searchPlaceholder: 'ค้นหาออเดอร์...',

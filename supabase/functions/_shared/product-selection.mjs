@@ -46,7 +46,14 @@ export function normalizeProductSearchQuery(value) {
     // A quote request and its quantity describe the transaction, not the
     // product identity. Keep them in the original customer turn for quoting.
     .replace(/^(?:(?:ขอ|ต้องการ|อยากได้|ทำ|ทํา|ออก|ส่ง)\s*)?ใบเสนอราคา\s*(?:ค่ะ|คะ|ครับ)?\s*[:：-]?\s*/iu, "")
-    .replace(/\s*(?:=|จำนวน|qty|quantity)\s*\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:ครับ|ค่ะ|คะ)?\s*$/iu, "")
+    .replace(/\s*(?:=|จำนวน|qty|quantity)\s*\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:ครับ|ค่ะ|คะ)?\s*$/iu, (assignment, offset, whole) => {
+      // A named product facet is identity, even when it uses '='. Only a
+      // trailing order quantity may be removed from the catalog query.
+      const preceding = whole.slice(0, offset).trimEnd();
+      return /^\s*=/.test(assignment)
+        && /(?:เบอร์|grit|ขนาด|size|diameter|width|length|holes?|รู)\s*$/iu.test(preceding)
+        ? assignment : "";
+    })
     .trim();
   let previous = "";
   while (text && text !== previous) {
@@ -194,6 +201,7 @@ export function buildProductSelection(query, products) {
   if (!Array.isArray(products) || products.length < 2) return null;
 
   const missing = [];
+  /** @type {Record<string, string[]>} */
   const availableValues = {};
   for (const field of FIELD_DEFINITIONS) {
     const values = naturalSort(unique(products.flatMap((product) => field.extract(sourceText(product)))));

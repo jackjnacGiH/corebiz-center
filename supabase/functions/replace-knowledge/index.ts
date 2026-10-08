@@ -15,6 +15,8 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 
 const OPENAI_EMBED_MODEL = "text-embedding-3-small";
 
+import { requireStaff, embeddingInputError, knowledgeInputError } from '../_shared/staff-auth.mjs';
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -43,7 +45,12 @@ Deno.serve(async (req: Request) => {
   });
 
   try {
+    if (req.method !== "POST") return jsonError("method_not_allowed", 405);
+    const auth = await requireStaff(admin, req);
+    if (auth.error) return jsonError(auth.error, auth.status);
     const body: ReqBody = await req.json();
+    const bodyError = knowledgeInputError(body, true);
+    if (bodyError) return jsonError(bodyError, 400);
     const source_path = (body.source_path ?? "").trim();
     const title       = (body.title ?? "").trim();
     const content     = (body.content ?? "").trim();
@@ -64,31 +71,32 @@ Deno.serve(async (req: Request) => {
     // Preserve original source_type (constrained to ingestion mechanism).
     let source_type = "manual";
     {
-      const { data: existing } = await admin
+      const { data: existing, error: existingError } = await admin
         .from("knowledge_chunks")
         .select("source_type")
         .eq("source_path", source_path)
         .limit(1)
         .maybeSingle();
+      if (existingError) throw existingError;
       if (existing?.source_type) source_type = existing.source_type as string;
     }
-
-    const { error: delErr } = await admin
-      .from("knowledge_chunks")
-      .delete()
-      .eq("source_path", source_path);
-    if (delErr) throw delErr;
 
     const sections = chunkByH2(content);
     if (sections.length === 0) {
       return jsonError("ไม่มีเนื้อหาหลังแยก chunks", 400);
     }
 
+    const inputError = embeddingInputError(sections.map(s => s.body));
+    if (inputError || content.length > 200000 || source_path.length > 512) return jsonError(inputError ?? "content_too_large", 400);
+    const { data: withinBudget, error: budgetError } = await admin.rpc("consume_embedding_budget_internal", { p_actor_id: auth.actor.id, p_characters: sections.reduce((n,s) => n+s.body.length,0) });
+    if (budgetError) return jsonError("embedding_budget_unavailable",503);
+    if (!withinBudget) return jsonError("embedding_rate_limited",429);
     const embeddings = await embedBatchOpenAI(
       openaiKey,
       sections.map((s) => s.body),
     );
 
+    if (embeddings.length !== sections.length || embeddings.some(e => e.length !== 1536 || e.some(n => !Number.isFinite(n)))) throw new Error("invalid_embeddings");
     const now = new Date().toISOString();
     const rows = sections.map((s, i) => ({
       source_path,
@@ -111,7 +119,7 @@ Deno.serve(async (req: Request) => {
       updated_at: now,
     }));
 
-    const { error: insErr } = await admin.from("knowledge_chunks").insert(rows);
+    const { error: insErr } = await admin.rpc("replace_knowledge_atomic", { p_source_path: source_path, p_rows: rows, p_actor_id: auth.actor.id });
     if (insErr) throw insErr;
 
     return new Response(
@@ -173,10 +181,11 @@ async function embedBatchOpenAI(apiKey: string, inputs: string[]): Promise<numbe
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ input: inputs, model: OPENAI_EMBED_MODEL }),
+    signal: AbortSignal.timeout(30000),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(`OpenAI embed ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
-  return ((data?.data ?? []) as Array<{ embedding: number[] }>).map((d) => d.embedding);
+  return ((data?.data ?? []) as Array<{ embedding: number[]; index: number }>).sort((a,b) => a.index-b.index).map((d) => d.embedding);
 }
 
 function estimateTokens(text: string): number {

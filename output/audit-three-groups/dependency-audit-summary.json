@@ -1,0 +1,73 @@
+{
+  "observedAt": "2026-10-08",
+  "nextVersion": "16.4.0",
+  "runtime": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "allDependencies": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 5,
+    "critical": 0,
+    "total": 5
+  },
+  "remaining": [
+    {
+      "package": "@next/eslint-plugin-next",
+      "severity": "high",
+      "direct": false,
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "14.2.35",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "braces",
+      "severity": "high",
+      "direct": false,
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "14.2.35",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "eslint-config-next",
+      "severity": "high",
+      "direct": true,
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "14.2.35",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "fast-glob",
+      "severity": "high",
+      "direct": false,
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "14.2.35",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "micromatch",
+      "severity": "high",
+      "direct": false,
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "14.2.35",
+        "isSemVerMajor": true
+      }
+    }
+  ],
+  "note": "Runtime audit is clear at this snapshot; dev-only ESLint glob chain remains unresolved upstream. No forced downgrade or major override."
+}

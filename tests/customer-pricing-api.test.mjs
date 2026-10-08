@@ -6,6 +6,7 @@ const api = readFileSync(new URL('../frontend/src/lib/customer-pricing-api.ts', 
 const cache = readFileSync(new URL('../frontend/src/lib/cache.ts', import.meta.url), 'utf8');
 
 function between(source, startMarker, endMarker) {
+  source = source.replace(/\r\n/g, '\n');
   const start = source.indexOf(startMarker);
   assert.notEqual(start, -1, `missing start marker: ${startMarker}`);
   const end = source.indexOf(endMarker, start + startMarker.length);

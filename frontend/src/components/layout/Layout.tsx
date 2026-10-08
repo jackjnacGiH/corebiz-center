@@ -1,6 +1,6 @@
 import React from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import MobileSidebarDrawerHost from './MobileSidebarDrawerHost';
 import { useSidebar } from '@/hooks/useSidebar';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
@@ -8,7 +8,6 @@ import BackToTop from '../BackToTop';
 import { cn } from '@/lib/utils';
 import { prefetchList, CK } from '../../lib/cache';
 import { productsApi, customersApi, categoriesApi, warehousesApi } from '../../lib/api';
-import { shippingApi } from '../../lib/shipping-api';
 import { useAuth } from '../../lib/AuthProvider';
 import type { TopBarPageContent } from './TopBar';
 
@@ -44,15 +43,28 @@ const Layout: React.FC = () => {
             shippingPrefetchScope.current === shippingCacheScope ||
             location.pathname.startsWith('/shipping')
         ) return;
-        const t = setTimeout(() => {
+        let disposed = false;
+        let started = false;
+        let completed = false;
+        const t = setTimeout(async () => {
+            started = true;
             shippingPrefetchScope.current = shippingCacheScope;
-            void shippingApi.initial(0, '', { cacheScope: shippingCacheScope }).catch(() => {
-                if (shippingPrefetchScope.current === shippingCacheScope) {
+            try {
+                const { shippingApi } = await import('../../lib/shipping-api');
+                if (disposed) return;
+                await shippingApi.initial(0, '', { cacheScope: shippingCacheScope });
+                completed = true;
+            } catch {
+                if (!disposed && shippingPrefetchScope.current === shippingCacheScope) {
                     shippingPrefetchScope.current = '';
                 }
-            });
+            }
         }, 150);
-        return () => clearTimeout(t);
+        return () => {
+            disposed = true;
+            clearTimeout(t);
+            if (started && !completed && shippingPrefetchScope.current === shippingCacheScope) shippingPrefetchScope.current = '';
+        };
     }, [location.pathname, shippingCacheScope]);
 
     // Warm the heavy lists after the Shipping request has had a head start.
@@ -74,18 +86,8 @@ const Layout: React.FC = () => {
             {/* Desktop sidebar — hidden on mobile, swapped for Sheet drawer */}
             {!isMobile && <Sidebar isCollapsed={collapsed} />}
 
-            {/* Mobile drawer — radix-ui Sheet */}
-            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-                <SheetContent
-                    side="left"
-                    className="p-0 w-[85vw] max-w-[320px] sm:w-[280px] sm:max-w-[280px]"
-                    showCloseButton={false}
-                >
-                    {/* Visually-hidden title for screen readers (radix requires it) */}
-                    <SheetTitle className="sr-only">Navigation</SheetTitle>
-                    <Sidebar isMobile onItemClick={closeMobile} />
-                </SheetContent>
-            </Sheet>
+            {/* Desktop never downloads the mobile-only dialog. */}
+            {isMobile && <MobileSidebarDrawerHost open={mobileOpen} onOpenChange={setMobileOpen} onItemClick={closeMobile} />}
 
             <main className="main-content">
                 <TopBar

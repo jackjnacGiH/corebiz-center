@@ -417,7 +417,7 @@ test("new memory path leaves exact-price and quote guards intact", () => {
   assert.match(ragSource, /admin\.rpc\("resolve_bot_quote_prices"/);
   assert.match(ragSource, /const exactPriceEligibleSkus = new Set<string>\(\)/);
   assert.match(ragSource, /guardNumericSellingPriceAnswer\(\{/);
-  assert.match(ragSource, /call\.name === "request_quote" && isTrustedQuoteResult\(result\)/);
+  assert.match(ragSource, /call\.name === "request_quote"[\s\S]{0,120}isTrustedQuoteResult\(result\)/);
   assert.match(ragSource, /result = dispatched\.response/);
   assert.doesNotMatch(helperSource, /resolve_bot_quote_prices|create_or_reuse_bot_quote/);
 });

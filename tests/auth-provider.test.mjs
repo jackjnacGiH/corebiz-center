@@ -249,8 +249,8 @@ test('token refresh and user update revalidate permissions while a repeated sign
 
   for (const [index, event] of ['TOKEN_REFRESHED', 'USER_UPDATED'].entries()) {
     h.emit(event, session('a', `token-${index}`));
-    assert.equal(h.value.loading, true);
-    assert.equal(h.value.profile, null);
+    assert.equal(h.value.loading, event !== 'TOKEN_REFRESHED');
+    assert.equal(h.value.profile?.role ?? null, event === 'TOKEN_REFRESHED' ? 'owner' : null);
     h.runTimers();
     assert.equal(h.requests.length, index + 2);
     h.requests[index + 1].resolve(profile('a', { role: 'viewer', is_active: false }));
@@ -260,6 +260,26 @@ test('token refresh and user update revalidate permissions while a repeated sign
     assert.equal(h.value.loading, false);
   }
   h.unmount();
+});
+
+test('background token verification keeps the screen mounted, then fails closed on unavailable or missing profile', async () => {
+  for (const result of ['missing', 'unavailable']) {
+    const h = mount(session('a'));
+    await settle(); h.runTimers();
+    h.requests[0].resolve(profile('a')); await settle();
+    h.emit('TOKEN_REFRESHED', session('a', 'fresh'));
+    assert.equal(h.value.loading, false);
+    assert.equal(h.value.profile.id, 'a');
+    h.runTimers();
+    assert.equal(h.value.loading, false);
+    if (result === 'missing') h.requests[1].resolve(null);
+    else h.requests[1].reject(new Error('Profile request failed (403)'));
+    await settle();
+    assert.equal(h.value.profile, null);
+    assert.equal(h.value.profileIssue, result);
+    assert.equal(h.value.loading, false);
+    h.unmount();
+  }
 });
 
 test('a switched account invalidates an in-flight profile before its deferred query starts', async () => {
