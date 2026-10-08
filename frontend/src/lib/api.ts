@@ -2774,8 +2774,7 @@ export const apiSecretsApi = {
 // =========================================================================
 // Omni-Channel Chat Inbox
 // Reads from chat_conversations + chat_messages (any channel: livechat,
-// line, messenger, email, whatsapp, instagram). For Phase 1 only livechat
-// is populated; webhook handlers for LINE/FB land in Phase 2-3.
+// line, messenger, email, whatsapp, instagram).
 // =========================================================================
 export type ChatChannel = 'line' | 'messenger' | 'instagram' | 'whatsapp' | 'livechat' | 'email';
 export type ChatStatus = 'open' | 'assigned' | 'resolved' | 'archived';
@@ -2958,13 +2957,9 @@ export const chatInboxApi = {
     return { messages: rows, hasMore };
   },
 
-  /** Admin sends a reply. Inserts the chat_messages row (the database trigger
-   *  updates the conversation summary/unread count), then — if the channel is
-   *  external platform (line / messenger / email) — also forwards the
-   *  message via the platform's send API through the matching Edge
-   *  Function (line-push for now; messenger-push etc. in future). The
-   *  external push is best-effort: if it fails we still return the
-   *  DB row so the admin sees their message saved. */
+  /** Admin sends a reply. Saves it in Omni-Chat, then forwards external
+   *  channel replies through the matching Edge Function. A failed delivery
+   *  remains visible in the thread with a channel-specific failure flag. */
   async sendMessage(input: {
     conversationId: string;
     content: string;
@@ -2988,11 +2983,13 @@ export const chatInboxApi = {
     const senderId = userData.user?.id ?? null;
 
     // Look up conversation channel up-front so we know if external push is needed
-    const { data: conv } = await supabase
+    const { data: conv, error: convError } = await supabase
       .from('chat_conversations')
       .select('channel, external_id')
       .eq('id', input.conversationId)
       .maybeSingle();
+    if (convError) throw convError;
+    if (!conv) throw new Error('ไม่พบช่องแชตที่ต้องการส่งข้อความ');
 
     const metadata = input.replyTo
       ? {
@@ -3051,7 +3048,28 @@ export const chatInboxApi = {
         }
       })();
     }
-    // TODO Phase 3: messenger-push, email-push
+    if (conv.channel === 'messenger') {
+      const message = data as ChatMessage;
+      const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
+      const content = input.content.replace(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g, '$1');
+      const text = pushName && (input.contentType ?? 'text') === 'text'
+        ? `${pushName}: ${content}`
+        : content;
+      try {
+        const { error: pushErr } = await supabase.functions.invoke('messenger-push', {
+          body: { conversation_id: input.conversationId, text },
+        });
+        if (pushErr) throw pushErr;
+      } catch (pushErr) {
+        console.warn('[chatInboxApi] messenger-push failed:', pushErr);
+        const failedMetadata = { ...metadata, messenger_push_failed: true };
+        const { error: updateError } = await supabase.from('chat_messages')
+          .update({ metadata: failedMetadata })
+          .eq('id', message.id);
+        if (updateError) console.warn('[chatInboxApi] messenger delivery flag failed:', updateError);
+        return { ...message, metadata: failedMetadata };
+      }
+    }
 
     return data as ChatMessage;
   },
@@ -3070,11 +3088,13 @@ export const chatInboxApi = {
     const { data: userData } = await supabase.auth.getUser();
     const senderId = userData.user?.id ?? null;
 
-    const { data: conv } = await supabase
+    const { data: conv, error: convError } = await supabase
       .from('chat_conversations')
       .select('channel, external_id')
       .eq('id', input.conversationId)
       .maybeSingle();
+    if (convError) throw convError;
+    if (!conv) throw new Error('ไม่พบช่องแชตที่ต้องการส่งไฟล์');
 
     const { data, error } = await supabase
       .from('chat_messages')
@@ -3119,6 +3139,29 @@ export const chatInboxApi = {
             .eq('id', msgId);
         }
       })();
+    }
+
+    if (conv.channel === 'messenger') {
+      const message = data as ChatMessage;
+      const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
+      const text = `${pushName ? `${pushName}: ` : ''}📎 ${input.fileName}\n${input.fileUrl}`;
+      try {
+        const { error: pushErr } = await supabase.functions.invoke('messenger-push', {
+          body: { conversation_id: input.conversationId, text },
+        });
+        if (pushErr) throw pushErr;
+      } catch (pushErr) {
+        console.warn('[chatInboxApi] file messenger-push failed:', pushErr);
+        const failedMetadata = {
+          ...(message.metadata ?? {}),
+          messenger_push_failed: true,
+        };
+        const { error: updateError } = await supabase.from('chat_messages')
+          .update({ metadata: failedMetadata })
+          .eq('id', message.id);
+        if (updateError) console.warn('[chatInboxApi] file messenger delivery flag failed:', updateError);
+        return { ...message, metadata: failedMetadata };
+      }
     }
 
     return data as ChatMessage;
@@ -3387,7 +3430,7 @@ export const lineChannelsApi = {
 // AI Personas — per-channel editable system prompts (Settings → AI Persona)
 // ────────────────────────────────────────────────────────────────────────────
 
-export type PersonaChannel = 'default' | 'line' | 'web';
+export type PersonaChannel = 'default' | 'line' | 'web' | 'messenger';
 
 export interface AiPersona {
   id: string;
@@ -3507,6 +3550,13 @@ ${_AOEI_BASE}${_PRODUCT_ALTERNATIVE_GUARD}`,
   web: {
     display_name: 'เอย — Web Widget (jnac.co.th)',
     prompt: `คุณคือ "เอย" — พนักงานของ J NAC Thailand ที่ตอบลูกค้าบนเว็บไซต์ jnac.co.th
+หัวหน้าของคุณคือ "คุณเชอร์รี่" (มนุษย์)
+
+${_AOEI_BASE}${_PRODUCT_ALTERNATIVE_GUARD}`,
+  },
+  messenger: {
+    display_name: 'เอย — Facebook Page',
+    prompt: `คุณคือ "เอย" — พนักงานของ J NAC Thailand ที่ตอบลูกค้าทาง Facebook Page
 หัวหน้าของคุณคือ "คุณเชอร์รี่" (มนุษย์)
 
 ${_AOEI_BASE}${_PRODUCT_ALTERNATIVE_GUARD}`,
