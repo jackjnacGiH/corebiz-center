@@ -83,6 +83,8 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { runDurableChatDelivery } from "../_shared/chat-delivery.mjs";
+import { uploadPrivateChatAttachment } from "../_shared/chat-attachment-storage.mjs";
 
 const TOKEN_OPTIMIZATION_ENABLED = Deno.env.get("CHAT_TOKEN_OPTIMIZATION_ENABLED") !== "false";
 const CHAT_HISTORY_FETCH_LIMIT = 24;
@@ -262,29 +264,13 @@ async function saveMessage(admin: SupabaseClient, conversationId: string, sender
     // index makes this safe; callers stop before invoking RAG on the retry.
     if (externalMsgId && error.code === "23505") {
       console.info("duplicate LINE message ignored", { conversationId, externalMsgId });
-      return false;
+      return senderType === "customer";
     }
-    console.warn("saveMessage err:", error.message);
-    return false;
+    throw error;
   }
   // The consolidated chat_message_inserted trigger owns conversation preview,
   // timestamp, unread count, status, and last-customer-message maintenance.
   return true;
-}
-
-async function hasProcessedIncomingMessage(admin: SupabaseClient, conversationId: string, externalMsgId?: string): Promise<boolean> {
-  if (!externalMsgId) return false;
-  const { data, error } = await admin.from("chat_messages")
-    .select("id")
-    .eq("conversation_id", conversationId)
-    .eq("external_msg_id", externalMsgId)
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    console.warn("incoming message duplicate check failed:", error.message);
-    return false;
-  }
-  return Boolean(data);
 }
 
 async function getLineUserProfile(accessToken: string, userId: string): Promise<{ displayName?: string; pictureUrl?: string } | null> {
@@ -325,10 +311,7 @@ async function uploadImageToStorage(admin: SupabaseClient, conversationId: strin
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const path = `${conversationId}/${Date.now()}-line.${ext}`;
-    const { error } = await admin.storage.from("chat-attachments").upload(path, bytes, { contentType: mimeType, upsert: false });
-    if (error) { console.warn("storage upload failed:", error.message); return null; }
-    const { data } = admin.storage.from("chat-attachments").getPublicUrl(path);
-    return data?.publicUrl ?? null;
+    return (await uploadPrivateChatAttachment(admin, { path, body: bytes, contentType: mimeType })).url;
   } catch (e) {
     console.warn("uploadImageToStorage error:", (e as Error).message);
     return null;
@@ -685,6 +668,7 @@ async function replyToLine(accessToken: string, replyToken: string, texts: strin
   });
   if (!res.ok) {
     console.error("LINE reply failed:", res.status, await res.text().catch(() => ""));
+    if (res.status >= 500) throw new Error("line_send_outcome_unknown");
     return false;
   }
   return true;
@@ -858,11 +842,11 @@ async function shouldBotReply(admin: SupabaseClient, conversationId: string, for
     ]);
     // Null means a lookup failed. Never let an unavailable control-plane query
     // turn the bot on; cached successful values expire after 30 seconds.
-    if (globalOn === null || channelOn === null || conversationOn === null) return false;
+    if (globalOn === null || channelOn === null || conversationOn === null) throw new Error("bot_controls_unavailable");
     return globalOn && channelOn && conversationOn;
   } catch (e) {
     console.warn("shouldBotReply check failed, defaulting to paused:", (e as Error).message);
-    return false;
+    throw e;
   }
 }
 
@@ -896,17 +880,34 @@ Deno.serve(async (req: Request) => {
   let payload: { events?: LineEvent[] } = {};
   try { payload = JSON.parse(rawBody); } catch { /* empty */ }
 
+  let retryRequired = false;
   for (const ev of payload.events ?? []) {
-    try { await handleEvent(admin, channel, ev, supabaseUrl, serviceKey); }
-    catch (e) { console.error("handleEvent error:", (e as Error).message); }
+    if (ev.type !== "message" || !ev.message?.id) continue;
+    try {
+      await runDurableChatDelivery(admin, {
+        channel: "line", eventKey: ev.message.id,
+        process: (delivery: any) => handleEvent(admin, channel, ev, supabaseUrl, serviceKey, delivery),
+        replay: async (delivery: any, row: any) => {
+          delivery.conversationId = row.conversation_id;
+          if (!row.conversation_id || !await shouldBotReply(admin, row.conversation_id, true)) {
+            await delivery.update("ignored"); return;
+          }
+          await delivery.send(row.reply_text, row.reply_metadata,
+            (text: string) => ev.replyToken ? replyToLine(channel.channel_access_token, ev.replyToken, text) : Promise.resolve(false));
+        },
+      });
+    } catch (e) {
+      retryRequired = true;
+      console.error("LINE delivery remains retryable", { messageId: ev.message.id, code: (e as Error).message });
+    }
   }
 
   return new Response(JSON.stringify({ ok: true }), {
-    status: 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    status: retryRequired ? 503 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
 });
 
-async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: LineEvent, supabaseUrl: string, serviceKey: string) {
+async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: LineEvent, supabaseUrl: string, serviceKey: string, delivery: any) {
   const processingStartedAt = Date.now();
   const eventStartedAt = typeof ev.timestamp === "number"
       && Number.isFinite(ev.timestamp)
@@ -914,7 +915,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       && ev.timestamp <= processingStartedAt + 60_000
     ? ev.timestamp
     : processingStartedAt;
-  const requestId = crypto.randomUUID();
+  const requestId = delivery.requestId;
   const phaseTimings: SafeTimings = {};
   if (ev.type !== "message") return;
   const userId = ev.source?.userId;
@@ -923,24 +924,14 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   const conversationStartedAt = Date.now();
   const conversationId = await upsertLineConversation(admin, userId, channel.channel_access_token);
   phaseTimings.conversation_ms = Date.now() - conversationStartedAt;
-  if (!conversationId) return;
+  if (!conversationId) throw new Error("conversation_upsert_failed");
+  delivery.conversationId = conversationId;
   const routingVariant = routingVariantForConversation(conversationId);
 
   const msg = ev.message;
   if (!msg) return;
 
-  // Media downloads/storage are expensive, so reject sequential image/file
-  // retries before fetching bytes. Text/location/sticker events go straight to
-  // the unique external_msg_id insert, avoiding this extra read on the hot path.
-  if (msg.type === "image" || msg.type === "file") {
-    const dedupeStartedAt = Date.now();
-    const duplicate = await hasProcessedIncomingMessage(admin, conversationId, msg.id);
-    phaseTimings.media_dedupe_ms = Date.now() - dedupeStartedAt;
-    if (duplicate) {
-      console.info("duplicate LINE media webhook ignored before download", { conversationId, messageId: msg.id });
-      return;
-    }
-  }
+  // The durable claim rejects completed duplicates before media download.
 
   // v11: IMAGE — store it so the admin sees it in Omni-Chat, and let the bot (vision) understand it.
   if (msg.type === "image") {
@@ -971,6 +962,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       phaseTimings.history_ms = Date.now() - historyStartedAt;
       phaseTimings.before_rag_ms = Date.now() - processingStartedAt;
       const ragStartedAt = Date.now();
+      await delivery.update("processing", { metadata: { work_started: true } });
       const rag = await callRagChat(
         supabaseUrl, serviceKey, "", priorHistory, conversationId,
         requestId, routingVariant, [img],
@@ -995,7 +987,10 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
         console.log("LINE bot reply cancelled by final bot flag check", { requestId, conversationId });
       } else if (ev.replyToken) {
         const replyStartedAt = Date.now();
-        delivered = await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
+        delivered = await delivery.send(replyText, {
+          channel_id: channel.id, channel_name: channel.name, from_image: true,
+          quote_link: Boolean(linkMsg), quote_code: quoteCode,
+        }, (text: string) => replyToLine(channel.channel_access_token, ev.replyToken!, text));
         const replyAttemptMs = Date.now() - replyStartedAt;
         phaseTimings.line_reply_attempt_ms = replyAttemptMs;
         phaseTimings.line_reply_ok = delivered ? 1 : 0;
@@ -1003,16 +998,10 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       } else {
         phaseTimings.line_reply_ok = 0;
         console.warn("LINE message event has no reply token", { requestId });
+        await delivery.update("reply_pending", { text: replyText, metadata: { from_image: true, quote_code: quoteCode } });
+        throw new Error("line_reply_token_missing");
       }
       replyCompletedAt = Date.now();
-      if (delivered) {
-        const botSaveStartedAt = Date.now();
-        await saveMessage(admin, conversationId, "bot", replyText, undefined, {
-          channel_id: channel.id, channel_name: channel.name, from_image: true,
-          quote_link: Boolean(linkMsg), quote_code: quoteCode,
-        });
-        phaseTimings.bot_save_ms = Date.now() - botSaveStartedAt;
-      }
     }
     if (ragCalled) {
       runInBackground("LINE telemetry", updateLineTelemetry(admin, {
@@ -1091,6 +1080,7 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   phaseTimings.history_ms = Date.now() - historyStartedAt;
   phaseTimings.before_rag_ms = Date.now() - processingStartedAt;
   const ragStartedAt = Date.now();
+  await delivery.update("processing", { metadata: { work_started: true } });
   const rag = await callRagChat(
     supabaseUrl, serviceKey, msg.text, priorHistory, conversationId,
     requestId, routingVariant,
@@ -1118,7 +1108,10 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       console.log("LINE bot reply cancelled by final bot flag check", { requestId, conversationId });
     } else if (ev.replyToken) {
       const replyStartedAt = Date.now();
-      delivered = await replyToLine(channel.channel_access_token, ev.replyToken, replyText);
+      delivered = await delivery.send(replyText, {
+        channel_id: channel.id, channel_name: channel.name,
+        quote_link: Boolean(linkMsg), quote_code: rag.quoteCode,
+      }, (text: string) => replyToLine(channel.channel_access_token, ev.replyToken!, text));
       const replyAttemptMs = Date.now() - replyStartedAt;
       phaseTimings.line_reply_attempt_ms = replyAttemptMs;
       phaseTimings.line_reply_ok = delivered ? 1 : 0;
@@ -1126,17 +1119,11 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     } else {
       phaseTimings.line_reply_ok = 0;
       console.warn("LINE message event has no reply token", { requestId });
+      await delivery.update("reply_pending", { text: replyText, metadata: { quote_code: rag.quoteCode } });
+      throw new Error("line_reply_token_missing");
     }
     replyCompletedAt = Date.now();
 
-    if (delivered) {
-      const botSaveStartedAt = Date.now();
-      await saveMessage(admin, conversationId, "bot", replyText, undefined, {
-        channel_id: channel.id, channel_name: channel.name,
-        quote_link: Boolean(linkMsg), quote_code: rag.quoteCode,
-      });
-      phaseTimings.bot_save_ms = Date.now() - botSaveStartedAt;
-    }
   }
   runInBackground("LINE telemetry", updateLineTelemetry(admin, {
     requestId,

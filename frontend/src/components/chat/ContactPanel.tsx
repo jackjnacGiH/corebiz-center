@@ -51,6 +51,9 @@ import PackerSelect from './PackerSelect';
 import NoteCard from './NoteCard';
 import NoteModal from './NoteModal';
 import ChatAvatar from './ChatAvatar';
+import { useAsyncScope } from '../../lib/useAsyncScope';
+import { listChatDeliveryRecovery, resolveChatDeliveryRecovery, type ChatDeliveryRecovery } from '../../lib/chat-delivery-recovery';
+import { useAuth } from '../../lib/AuthProvider';
 
 interface Props {
   conversation: ChatConversation;
@@ -110,6 +113,8 @@ export default function ContactPanel({
   customerSnapshot = null,
   onCustomerSnapshotChanged,
 }: Props) {
+  const { profile } = useAuth();
+  const canResolveRecovery = profile?.is_active === true && ['owner', 'admin', 'staff'].includes(profile.role);
   const [aliasEditing, setAliasEditing] = useState(false);
   const [aliasEditingConversationId, setAliasEditingConversationId] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState(conversation.alias_name ?? '');
@@ -150,6 +155,15 @@ export default function ContactPanel({
   const [custSearching, setCustSearching] = useState(false);
   const [linkBusy, setLinkBusy] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryConversationId, setMemoryConversationId] = useState(conversation.id);
+  const memoryScope = useAsyncScope(conversation.id);
+  const [deliveryRecovery, setDeliveryRecovery] = useState<{ conversationId: string; rows: ChatDeliveryRecovery[] } | null>(null);
+  const pendingDeliveries = deliveryRecovery?.conversationId === conversation.id ? deliveryRecovery.rows : [];
+  const recoveryResolvingRef = useRef(new Set<string>());
+  const [recoveryResolvingRooms, setRecoveryResolvingRooms] = useState(new Set<string>());
+  const [recoveryActionError, setRecoveryActionError] = useState<{ conversationId: string; message: string } | null>(null);
+  const currentRecoveryError = recoveryActionError?.conversationId === conversation.id ? recoveryActionError.message : null;
+  const showMemory = memoryOpen && memoryConversationId === conversation.id;
   const [memory, setMemory] = useState<BotConversationMemoryView | null>(null);
   const [memoryNote, setMemoryNote] = useState('');
   const [memoryLocked, setMemoryLocked] = useState(false);
@@ -157,6 +171,45 @@ export default function ContactPanel({
   const [memorySaving, setMemorySaving] = useState(false);
   const [memoryError, setMemoryError] = useState<string | null>(null);
   const memoryRequestRef = useRef(0);
+
+  useEffect(() => {
+    const conversationId = conversation.id;
+    const isCurrent = memoryScope.capture();
+    void listChatDeliveryRecovery(conversationId).then((rows) => {
+      if (isCurrent()) setDeliveryRecovery({ conversationId, rows });
+    }).catch(() => { /* Recovery status must never block the contact profile. */ });
+  }, [conversation.id, memoryScope]);
+
+  async function closeRecovery(delivery: ChatDeliveryRecovery) {
+    const conversationId = conversation.id;
+    if (!canResolveRecovery || recoveryResolvingRef.current.has(conversationId)) return;
+    const isCurrent = memoryScope.capture();
+    recoveryResolvingRef.current.add(conversationId);
+    setRecoveryResolvingRooms(new Set(recoveryResolvingRef.current));
+    setRecoveryActionError(null);
+    try {
+      await resolveChatDeliveryRecovery(conversationId, delivery);
+      if (!isCurrent()) return;
+      setDeliveryRecovery((current) => current?.conversationId === conversationId
+        ? { ...current, rows: current.rows.filter((row) => row.event_key !== delivery.event_key) }
+        : current);
+      const rows = await listChatDeliveryRecovery(conversationId);
+      if (isCurrent()) setDeliveryRecovery({ conversationId, rows });
+    } catch (error) {
+      if (!isCurrent()) return;
+      const message = (error as { message?: string })?.message ?? '';
+      setRecoveryActionError({ conversationId, message: /conflict|changed|stale/i.test(message)
+        ? 'รายการนี้เปลี่ยนแปลงแล้ว กรุณาตรวจข้อมูลล่าสุดก่อนปิดรายการอีกครั้ง'
+        : /forbidden|permission|42501/i.test(message)
+          ? 'ไม่มีสิทธิ์ปิดรายการตรวจสอบนี้'
+          : 'ปิดรายการหรือตรวจข้อมูลล่าสุดไม่สำเร็จ กรุณาลองใหม่' });
+      const rows = await listChatDeliveryRecovery(conversationId).catch(() => null);
+      if (isCurrent() && rows) setDeliveryRecovery({ conversationId, rows });
+    } finally {
+      recoveryResolvingRef.current.delete(conversationId);
+      setRecoveryResolvingRooms(new Set(recoveryResolvingRef.current));
+    }
+  }
 
   // Debounced customer search while the link picker is open.
   const linkingCurrent = linking && linkingConversationId === conversation.id;
@@ -213,38 +266,44 @@ export default function ContactPanel({
     setCustQuery('');
     setCustResults([]);
     setMemoryOpen(false);
+    setMemoryConversationId(conversation.id);
     setMemory(null);
     setMemoryNote('');
     setMemoryLocked(false);
+    setMemoryLoading(false);
+    setMemorySaving(false);
     setMemoryError(null);
   }, [conversation.id, conversation.alias_name]);
 
   const loadMemory = useCallback(async () => {
+    const isCurrent = memoryScope.capture();
     const requestId = ++memoryRequestRef.current;
     const conversationId = conversation.id;
     setMemoryLoading(true);
     setMemoryError(null);
     try {
       const next = await botMemoryApi.getConversationMemory(conversationId);
-      if (memoryRequestRef.current !== requestId) return;
+      if (!isCurrent() || memoryRequestRef.current !== requestId) return;
       setMemory(next);
       setMemoryNote(next?.staff_note ?? '');
       setMemoryLocked(next?.staff_locked === true);
     } catch {
-      if (memoryRequestRef.current !== requestId) return;
+      if (!isCurrent() || memoryRequestRef.current !== requestId) return;
       setMemoryError('โหลดความจำของบอทไม่สำเร็จ กรุณาลองใหม่');
     } finally {
-      if (memoryRequestRef.current === requestId) setMemoryLoading(false);
+      if (isCurrent() && memoryRequestRef.current === requestId) setMemoryLoading(false);
     }
-  }, [conversation.id]);
+  }, [conversation.id, memoryScope]);
 
   async function toggleMemory() {
-    const nextOpen = !memoryOpen;
+    const nextOpen = !showMemory;
     setMemoryOpen(nextOpen);
+    setMemoryConversationId(conversation.id);
     if (nextOpen && !memory && !memoryLoading) await loadMemory();
   }
 
   async function saveMemoryNote() {
+    const isCurrent = memoryScope.capture();
     const requestId = ++memoryRequestRef.current;
     const conversationId = conversation.id;
     setMemorySaving(true);
@@ -254,18 +313,18 @@ export default function ContactPanel({
         staff_note: memoryNote,
         staff_locked: memoryLocked,
       });
-      if (memoryRequestRef.current !== requestId) return;
+      if (!isCurrent() || memoryRequestRef.current !== requestId) return;
       setMemory(saved);
       setMemoryNote(saved.staff_note);
       setMemoryLocked(saved.staff_locked);
     } catch (e) {
-      if (memoryRequestRef.current !== requestId) return;
+      if (!isCurrent() || memoryRequestRef.current !== requestId) return;
       const code = e instanceof Error ? e.message : '';
       setMemoryError(code === 'unsafe_memory_note'
         ? 'โน้ตความจำห้ามใส่ราคา สต็อก ข้อมูลการชำระเงิน หรือข้อมูลส่วนบุคคล'
         : 'บันทึกความจำไม่สำเร็จ กรุณาลองใหม่');
     } finally {
-      if (memoryRequestRef.current === requestId) setMemorySaving(false);
+      if (isCurrent() && memoryRequestRef.current === requestId) setMemorySaving(false);
     }
   }
 
@@ -497,11 +556,24 @@ export default function ContactPanel({
     const reordered = [...notes];
     const [moved] = reordered.splice(oldIdx, 1);
     reordered.splice(newIdx, 0, moved);
-    rememberNotes(conversation.id, reordered);
-    setNotesState((current) => current.conversationId === conversation.id
+    const conversationId = conversation.id;
+    const previous = notes;
+    const version = ++notesRequestSequenceRef.current;
+    notesRequestVersionsRef.current.set(conversationId, version);
+    rememberNotes(conversationId, reordered);
+    setNotesState((current) => current.conversationId === conversationId
       ? { ...current, rows: reordered }
       : current);
-    chatNotesApi.reorder(reordered.map((n) => n.id)).catch(() => void reloadNotes());
+    chatNotesApi.reorder(reordered.map((n) => n.id)).catch((error: unknown) => {
+      if (notesRequestVersionsRef.current.get(conversationId) !== version) return;
+      rememberNotes(conversationId, previous);
+      if (activeConversationIdRef.current === conversationId) {
+        setNotesState({ conversationId, rows: previous, loading: false, error: false });
+        alert((error as Error).message);
+      }
+      // Partial DB success is possible: reload its actual order after rollback.
+      void reloadNotes();
+    });
   };
 
   const handleDragEnd = () => {
@@ -744,6 +816,26 @@ export default function ContactPanel({
         <Separator />
 
         {/* Bot memory loads only when expanded so chat switching stays fast. */}
+        {(pendingDeliveries.length > 0 || currentRecoveryError) && (
+          <div role="alert" className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            {pendingDeliveries.length > 0 && <div className="font-semibold">พบคำตอบที่ยังยืนยันการส่งไม่ได้ {pendingDeliveries.length} รายการ</div>}
+            <p className="mt-1">ตรวจประวัติฝั่งลูกค้าก่อนตอบซ้ำ เพื่อป้องกันข้อความหรือใบเสนอราคาซ้ำ</p>
+            {pendingDeliveries.map((delivery) => (
+              <details key={delivery.event_key} className="mt-2">
+                <summary className="cursor-pointer">{delivery.state === 'delivery_unknown' ? 'รอตรวจการส่ง' : 'รอตรวจการประมวลผล'} · {new Date(delivery.updated_at).toLocaleString('th-TH')}</summary>
+                {delivery.reply_text && <p className="mt-1 whitespace-pre-wrap break-words">{delivery.reply_text}</p>}
+                {canResolveRecovery && <div className="mt-2">
+                  <p className="mb-1 text-[10px]">ปิดเมื่อเจ้าหน้าที่ตรวจและจัดการแล้ว การปิดรายการไม่ยืนยันว่าลูกค้าได้รับข้อความ</p>
+                  <Button size="xs" variant="outline" disabled={recoveryResolvingRooms.has(conversation.id)} onClick={() => void closeRecovery(delivery)}>
+                    {recoveryResolvingRooms.has(conversation.id) && <Loader2 size={10} className="mr-1 animate-spin" />}
+                    ปิดรายการตรวจสอบ
+                  </Button>
+                </div>}
+              </details>
+            ))}
+            {currentRecoveryError && <p className="mt-2 text-red-700">{currentRecoveryError}</p>}
+          </div>
+        )}
         <div>
           <button
             type="button"
@@ -753,10 +845,10 @@ export default function ContactPanel({
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-violet-800">
               <Brain size={13} /> ความจำของบอทในห้องนี้
             </span>
-            <span className="text-[10px] text-violet-600">{memoryOpen ? 'ซ่อน' : 'เปิดดู'}</span>
+            <span className="text-[10px] text-violet-600">{showMemory ? 'ซ่อน' : 'เปิดดู'}</span>
           </button>
 
-          {memoryOpen && (
+          {showMemory && (
             <div className="mt-2 space-y-3 rounded-md border border-violet-100 bg-white p-3">
               {memoryLoading ? (
                 <div className="py-2 text-center text-xs text-neutral-400">

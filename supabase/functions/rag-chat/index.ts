@@ -47,6 +47,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { uploadPrivateChatAttachment } from "../_shared/chat-attachment-storage.mjs";
 import {
   buildProductSelection,
   extractModelCodes,
@@ -135,7 +136,7 @@ const KEYWORD_CACHE_TTL_MS = 60_000;
 const BOT_FLAG_CACHE_TTL_MS = 30_000;
 const LEARNING_SETTINGS_CACHE_TTL_MS = 30_000;
 const MAX_LEARNING_GUIDANCE = 3;
-const ALLOWED_CHANNELS = new Set(["default", "line", "web"]);
+const ALLOWED_CHANNELS = new Set(["default", "line", "web", "messenger"]);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -157,6 +158,17 @@ const convBotCache = new Map<string, { enabled: boolean; expires: number }>();
 let learningSettingsCache: { value: LearningSettings; expires: number } | null = null;
 
 type Lang = "th" | "en";
+type ProductSelectionResult = {
+  selection_required: boolean;
+  missing_fields: string[];
+  available_values?: Record<string, string[]>;
+  confirmation_required?: boolean;
+  candidate_options?: string[];
+  candidate_intro_th?: string;
+  candidate_intro_en?: string;
+  clarification_question_th: string;
+  clarification_question_en: string;
+};
 type ImagePart = { mimeType: string; data: string };
 type LearningSettings = {
   enabled: boolean;
@@ -256,7 +268,7 @@ function resolveResponseLanguage(
       && (detectLanguage(message.content) === "th" || /[A-Za-z]{2,}/.test(withoutModel(message.content))),
   )?.content;
   if (priorCustomerText) return detectLanguage(priorCustomerText);
-  return channel === "line" ? "th" : "en";
+  return channel === "line" || channel === "messenger" ? "th" : "en";
 }
 
 
@@ -451,10 +463,7 @@ async function uploadImageToStorage(admin: SupabaseClient, conversationId: strin
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const path = `${conversationId}/${Date.now()}-web.${ext}`;
-    const { error } = await admin.storage.from("chat-attachments").upload(path, bytes, { contentType: mimeType, upsert: false });
-    if (error) { console.warn("storage upload failed:", error.message); return null; }
-    const { data } = admin.storage.from("chat-attachments").getPublicUrl(path);
-    return data?.publicUrl ?? null;
+    return (await uploadPrivateChatAttachment(admin, { path, body: bytes, contentType: mimeType })).url;
   } catch (e) {
     console.warn("uploadImageToStorage error:", (e as Error).message);
     return null;
@@ -778,7 +787,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
   }
 
   if (directMatches.length > 0) {
-    let selection = buildProductSelection(q, directMatches.map(({ p }) => p));
+    let selection: ProductSelectionResult | null = buildProductSelection(q, directMatches.map(({ p }) => p));
     const catalogNames = [...new Set(directMatches.map(({ p }) => String(p.name_th || p.name_en || "").trim()).filter(Boolean))];
     const requestedGrit = productMatchFacets(q).grit.length > 0;
     const modelOptions = [...new Set(catalogNames.map((name) =>
@@ -2650,7 +2659,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   if (PRODUCT_GUIDED_SELECTION_ENABLED && query && images.length === 0) {
     const guidedStartedAt = Date.now();
     try {
-      const guided = await guidedProductDecision(query, productHistory, lang, (catalogQuery) => findProducts(admin, catalogQuery));
+      const guided = await guidedProductDecision(query, productHistory, lang, (catalogQuery: string) => findProducts(admin, catalogQuery));
       guidedQuery = guided?.lookupQuery ?? null;
       const exactRows = Array.isArray(guided?.result?.products) ? guided.result.products : [];
       const exactProduct = !guided?.result?.selection_required && exactRows.length === 1
@@ -3164,7 +3173,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   // an otherwise valid customer message.
   if (!fullAnswer.trim() && images.length === 0 && allToolCalls.length === 0) {
     try {
-      const recovered = await recoverEmptyProductAnswer(guidedQuery ?? query, productHistory, lang, (lookupQuery) => findProducts(admin, lookupQuery));
+      const recovered = await recoverEmptyProductAnswer(guidedQuery ?? query, productHistory, lang, (lookupQuery: string) => findProducts(admin, lookupQuery));
       if (recovered.answer) {
         appendAnswer(recovered.answer);
         const recoveredResult = recovered.result;
@@ -3187,7 +3196,9 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     console.warn("empty model output recovered with retry request", { request_id: telemetry.requestId });
   }
   fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);
-  const exactPriceResults = [...exactPriceOutcomes.values()].filter((result) => result !== null);
+  // Every non-null outcome has passed the exact-price guard, whose first
+  // prerequisite is an object. Make that existing invariant explicit to TS.
+  const exactPriceResults = [...exactPriceOutcomes.values()].filter((result): result is Record<string, unknown> => result !== null && typeof result === 'object');
   const guardedPriceAnswer = guardNumericSellingPriceAnswer({
     query,
     answer: fullAnswer,
@@ -3217,7 +3228,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const matchingPrices = exactPriceResults.filter((result) => verifiedExactProduct
     && String(result.sku).toUpperCase() === String(verifiedExactProduct.sku).toUpperCase()
     && Number(result.quantity) === replyQuantity);
-  const exactReplyPrice = matchingPrices.length === 1 ? matchingPrices[0] as Record<string, unknown> : null;
+  const exactReplyPrice = matchingPrices.length === 1 ? matchingPrices[0] : null;
   if (guardedPriceAnswer.reason === "verified_exact_price_reply"
     && exactPriceEligibleSkus.size === 1 && verifiedExactProduct && exactReplyPrice
     && (!directQuoteRequest || requestedQuantity == null)) {

@@ -9,6 +9,7 @@
  * security-definer RPCs from migration 0049 (safe columns, own rows only).
  */
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   supabaseBrowser,
   getPortalProfile,
@@ -82,7 +83,9 @@ function formatAddress(a: unknown): string {
 }
 
 export default function AccountPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [hasSession, setHasSession] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [profile, setProfile] = useState<PortalProfile | null>(null);
@@ -96,6 +99,10 @@ export default function AccountPage() {
     let mounted = true;
     (async () => {
       setLoading(true);
+      setLoadError(null);
+      setProfile(null);
+      setOrders([]);
+      setQuotes([]);
       const sb = supabaseBrowser();
       const { data: sess } = await sb.auth.getSession();
       if (!mounted) return;
@@ -112,20 +119,43 @@ export default function AccountPage() {
       if (p) {
         const [o, q] = await Promise.all([sb.rpc("my_orders"), sb.rpc("my_quotes")]);
         if (!mounted) return;
+        if (o.error || q.error) throw new Error("portal_documents_unavailable");
         setOrders(((o.data ?? []) as DocRow[]));
         setQuotes(((q.data ?? []) as DocRow[]));
       }
       setLoading(false);
-    })();
+    })().catch(() => {
+      if (!mounted) return;
+      setLoadError("โหลดข้อมูลบัญชีไม่สำเร็จ กรุณาลองใหม่");
+      setLoading(false);
+    });
     return () => { mounted = false; };
   }, [reloadKey]);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  useEffect(() => {
+    let identity: string | null | undefined;
+    const { data } = supabaseBrowser().auth.onAuthStateChange((event, session) => {
+      const nextIdentity = session?.user.id ?? null;
+      if (identity !== undefined && identity !== nextIdentity) { setDocQuote(null); setEditingProfile(false); }
+      identity = nextIdentity;
+      if (["SIGNED_IN","SIGNED_OUT","USER_UPDATED"].includes(event)) setReloadKey(key => key + 1);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
 
   async function signOut() {
     await supabaseBrowser().auth.signOut();
-    window.location.href = "/";
+    router.replace("/");
   }
+
+  if (loadError) return (
+    <main className="max-w-5xl mx-auto px-4 py-10">
+      <p role="alert" className="text-red-700">{loadError}</p>
+      <button type="button" onClick={refresh} className="mt-4 rounded border px-4 py-2">ลองใหม่</button>
+    </main>
+  );
 
   return (
     <main id="main-content" className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10">

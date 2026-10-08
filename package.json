@@ -16,6 +16,11 @@
     "lint:storefront": "npm run lint -w corebiz-storefront",
     "eval:omnichat": "node scripts/omnichat-rag-eval.mjs",
     "build": "npm run build:corebiz && npm run build:storefront",
-    "lint": "npm run lint:corebiz && npm run lint:storefront"
+    "lint": "npm run lint:corebiz && npm run lint:storefront",
+    "test": "node scripts/run-tests.mjs",
+    "check": "npm run test && npm run lint && npm run build"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8"
   }
 }

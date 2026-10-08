@@ -58,7 +58,7 @@ export async function uploadProductImage(file: File, productKey: string): Promis
     const { error: uploadErr } = await supabase.storage
         .from(BUCKET)
         .upload(path, file, {
-            cacheControl: '31536000', // 1 year
+            cacheControl: '31536000', // 1 year for public product images
             upsert: false,
             contentType: file.type,
         });
@@ -83,10 +83,10 @@ export async function uploadOrgLogo(file: File): Promise<string> {
     return data.publicUrl;
 }
 
-const CHAT_BUCKET = 'chat-attachments';
+const CHAT_BUCKET = 'chat-private-attachments';
 
 /**
- * Upload one chat attachment image and return its public URL.
+ * Upload one chat attachment image and return its signed delivery URL.
  *
  * Used by the Omni-Chat composer for both device uploads and clipboard
  * paste / screen-crop (Ctrl+V of a screenshot). Files are namespaced by
@@ -107,18 +107,19 @@ export async function uploadChatImage(file: File, conversationId: string): Promi
     const { error: uploadErr } = await supabase.storage
         .from(CHAT_BUCKET)
         .upload(path, file, {
-            cacheControl: '31536000', // 1 year
+            cacheControl: '0', // signed access, no public cache
             upsert: false,
             contentType: file.type,
         });
 
     if (uploadErr) throw uploadErr;
 
-    const { data } = supabase.storage.from(CHAT_BUCKET).getPublicUrl(path);
-    return data.publicUrl;
+    const { data, error: signError } = await supabase.storage.from(CHAT_BUCKET).createSignedUrl(path, 7 * 86400);
+    if (signError || !data?.signedUrl) throw signError ?? new Error('ไม่สามารถเตรียมลิงก์ไฟล์แนบได้');
+    return data.signedUrl;
 }
 
-const MAX_CHAT_FILE_SIZE = 20 * 1024 * 1024; // 20 MB (chat-attachments bucket limit)
+const MAX_CHAT_FILE_SIZE = 20 * 1024 * 1024; // 20 MB private bucket limit
 
 export interface UploadedChatFile { url: string; name: string; size: number; type: string; }
 
@@ -131,7 +132,7 @@ export function validateChatFile(file: File): void {
 
 /**
  * Upload a document (PDF/docs/etc.) the admin attaches in Omni-Chat to the
- * public chat-attachments bucket. Keeps the original filename for display; the
+ * private chat-private-attachments bucket. Keeps the original filename for display; the
  * storage path is ASCII-sanitised + timestamped. The returned URL is shown as a
  * file card in Omni-Chat and (for LINE) sent to the customer as a link, since
  * the LINE Messaging API can't push file messages.
@@ -143,10 +144,11 @@ export async function uploadChatFile(file: File, conversationId: string): Promis
     const path = `${conversationId}/${stamp}-${safe}`;
     const { error: uploadErr } = await supabase.storage
         .from(CHAT_BUCKET)
-        .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: file.type || 'application/octet-stream' });
+        .upload(path, file, { cacheControl: '0', upsert: false, contentType: file.type || 'application/octet-stream' });
     if (uploadErr) throw uploadErr;
-    const { data } = supabase.storage.from(CHAT_BUCKET).getPublicUrl(path);
-    return { url: data.publicUrl, name: file.name, size: file.size, type: file.type || 'application/octet-stream' };
+    const { data, error: signError } = await supabase.storage.from(CHAT_BUCKET).createSignedUrl(path, 7 * 86400);
+    if (signError || !data?.signedUrl) throw signError ?? new Error('ไม่สามารถเตรียมลิงก์ไฟล์แนบได้');
+    return { url: data.signedUrl, name: file.name, size: file.size, type: file.type || 'application/octet-stream' };
 }
 
 /**

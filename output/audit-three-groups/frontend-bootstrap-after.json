@@ -1,0 +1,15 @@
+{
+  "label": "after",
+  "lockfileSha256": "91edae88455b9d60288488a582f2b8cdb19404a187941c5b9b1ce809228cbcb0",
+  "entry": "index-hBZgaXmH.js",
+  "files": [
+    {
+      "name": "index-hBZgaXmH.js",
+      "bytes": 770773,
+      "gzipBytes": 227941
+    }
+  ],
+  "totalBytes": 770773,
+  "totalGzipBytes": 227941,
+  "limit": "Boot entry and its static JS dependency graph; excludes lazy route/dialog imports and measures bytes rather than network latency."
+}

@@ -12,6 +12,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+import { requireStaff } from '../_shared/staff-auth.mjs';
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -60,6 +62,9 @@ Deno.serve(async (req: Request) => {
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
+  const auth = await requireStaff(admin, req, ["owner","admin","staff"]);
+  if (auth.error) return new Response(JSON.stringify({ ok: false, error: auth.error }), { status: auth.status, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+
   let body: { conversation_id?: string; text?: string; quote_token?: string } = {};
   try { body = await req.json(); } catch {
     return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
@@ -82,7 +87,9 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const { data: conv, error: convErr } = await admin.from("chat_conversations")
+  // Enforce the same room access as the caller's RLS, rather than a service-role lookup.
+  const callerDb = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, { global: { headers: { Authorization: req.headers.get("Authorization")! } }, auth: { persistSession: false } });
+  const { data: conv, error: convErr } = await callerDb.from("chat_conversations")
     .select("channel, external_id").eq("id", conversationId).maybeSingle();
   if (convErr || !conv) {
     return new Response(JSON.stringify({ ok: false, error: "conversation_not_found" }), {
@@ -131,6 +138,8 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  const { error: auditError } = await admin.from("audit_logs").insert({ actor_id: auth.actor.id, action: "chat.line.push", target_type: "conversation", target_id: conversationId, detail: { sent: messages.length } });
+  if (auditError) console.error("line_push_audit_failed", { conversationId, code: auditError.code });
   return new Response(JSON.stringify({ ok: true, sent: messages.length }), {
     status: 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });

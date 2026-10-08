@@ -1,0 +1,15 @@
+{
+  "label": "before",
+  "lockfileSha256": "91edae88455b9d60288488a582f2b8cdb19404a187941c5b9b1ce809228cbcb0",
+  "entry": "index-B_WSl-zV.js",
+  "files": [
+    {
+      "name": "index-B_WSl-zV.js",
+      "bytes": 778192,
+      "gzipBytes": 228986
+    }
+  ],
+  "totalBytes": 778192,
+  "totalGzipBytes": 228986,
+  "limit": "Boot entry and its static JS dependency graph; excludes lazy route/dialog imports and measures bytes rather than network latency."
+}

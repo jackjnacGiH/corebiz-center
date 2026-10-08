@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { deferred, elements, mountComponent, settle, text } from './helpers/component-harness.mjs';
 
 const apiSource = readFileSync(new URL("../frontend/src/lib/api.ts", import.meta.url), "utf8");
 const memoryApiSource = readFileSync(new URL("../frontend/src/lib/bot-memory-api.ts", import.meta.url), "utf8");
@@ -29,10 +30,20 @@ test("conversation memory is loaded only after staff expands the panel", () => {
   );
 });
 
-test("a slow memory request cannot leak the previous room into the active room", () => {
-  assert.match(panelSource, /const memoryRequestRef = useRef\(0\)/);
-  assert.match(panelSource, /memoryRequestRef\.current \+= 1/);
-  assert.match(panelSource, /if \(memoryRequestRef\.current !== requestId\) return/);
+test("a slow memory request cannot leak the previous room into the active room", async () => {
+  const lateA = deferred();
+  const conversation = id => ({ id, display_name: id, channel: 'line', customer_id: null, tags: [], auto_tags: [], metadata: {} });
+  const h = mountComponent('frontend/src/components/chat/ContactPanel.tsx', { conversation: conversation('A') }, {
+    '../../lib/api': { profilesApi: { listStaff: async () => [] }, chatNotesApi: { list: async () => [] } },
+    '../../lib/supabase': { supabase: { channel() { return { on() { return this; }, subscribe() { return this; } }; }, removeChannel() {} } },
+    '../../lib/chat-delivery-recovery': { listChatDeliveryRecovery: async () => [] },
+    '../../lib/bot-memory-api': { botMemoryApi: { getConversationMemory: id => id === 'A' ? lateA.promise : Promise.resolve({ summary: 'B memory', products: [], staff_note: '', staff_locked: false }) } },
+  });
+  const open = () => elements(h.tree, node => node.type === 'button' && text(node).includes('ความจำของบอทในห้องนี้'))[0].props.onClick();
+  open(); h.render({ conversation: conversation('B') }); h.render(); open(); await settle(); h.render();
+  lateA.resolve({ summary: 'A must stay hidden', products: [], staff_note: '', staff_locked: false }); await settle(); h.render();
+  assert.match(text(h.tree), /B memory/); assert.doesNotMatch(text(h.tree), /A must stay hidden/);
+  h.unmount();
 });
 
 test("browser memory access stays behind the staff Edge Function", () => {

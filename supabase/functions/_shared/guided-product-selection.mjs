@@ -333,6 +333,13 @@ export function guidedRequestedQuantity(query, history = [], resolvedQuery = que
   return null;
 }
 
+/**
+ * @param {Record<string, unknown>} product
+ * @param {number | null} [quantity]
+ * @param {Record<string, unknown> | null} [price]
+ * @param {string} [lang]
+ * @returns {string}
+ */
 export function guidedExactProductAnswer(product, quantity = null, price = null, lang = "th") {
   const name = clean(lang === "th" ? product.name_th || product.name_en : product.name_en || product.name_th);
   const verifiedColor = clean(product.verified_color);

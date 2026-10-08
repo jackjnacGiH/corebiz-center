@@ -1,0 +1,13 @@
+{
+  "source": "tests/storefront-structured-search.test.mjs",
+  "observedAt": "2026-10-08",
+  "beforeRecall": 1,
+  "afterRecall": 12,
+  "queries": 12,
+  "beforeRows": 2511,
+  "afterRows": 1,
+  "beforeBytes": 688272,
+  "afterBytes": 319,
+  "warmMedianMs": 115.97,
+  "scope": "Synthetic local PGlite fixture; network bytes projection and recall, not production speed or a before/after SQL timing comparison."
+}

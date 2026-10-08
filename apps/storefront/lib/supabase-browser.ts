@@ -18,6 +18,14 @@ export function supabaseBrowser(): SupabaseClient {
     client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
     });
+    client.auth.onAuthStateChange((event, session) => {
+      const nextIdentity = session?.user.id ?? null;
+      if (nextIdentity !== profileIdentity || event === "USER_UPDATED") {
+        profileIdentity = nextIdentity;
+        profilePromise = null;
+        profileGeneration += 1;
+      }
+    });
   }
   return client;
 }
@@ -107,23 +115,36 @@ export async function registerMyCustomer(input: RegisterInput): Promise<string> 
   return data as string;
 }
 
-// One in-flight/shared lookup per page load — TierPrice on product pages and
-// the nav button both need it; don't hit the RPC repeatedly.
+// Cache is scoped to the current auth identity, including cross-tab events.
 let profilePromise: Promise<PortalProfile | null> | null = null;
+let profileIdentity: string | null = null;
+let profileGeneration = 0;
 
-export function getPortalProfile(force = false): Promise<PortalProfile | null> {
+export async function getPortalProfile(force = false): Promise<PortalProfile | null> {
+  const sb = supabaseBrowser();
+  const { data: sess, error: sessionError } = await sb.auth.getSession();
+  if (sessionError) throw new Error("profile_session_unavailable");
+  const identity = sess.session?.user.id ?? null;
+  if (identity !== profileIdentity) {
+    profileIdentity = identity;
+    profilePromise = null;
+    profileGeneration += 1;
+  }
+  if (!identity) return null;
   if (!profilePromise || force) {
-    profilePromise = (async () => {
-      const sb = supabaseBrowser();
-      const { data: sess } = await sb.auth.getSession();
-      if (!sess.session) return null;
-      // Idempotent: links this auth user to the CRM customer by e-mail once.
-      await sb.rpc("link_my_customer_by_email").then(() => undefined, () => undefined);
+    const generation = ++profileGeneration;
+    const pending = (async () => {
+      const { error: linkError } = await sb.rpc("link_my_customer_by_email");
+      if (linkError) throw new Error("profile_link_unavailable");
       const { data, error } = await sb.rpc("my_customer_profile");
-      if (error) return null;
+      if (error) throw new Error("profile_unavailable");
+      // A request started by user A must never render after a switch to B.
+      if (generation !== profileGeneration || profileIdentity !== identity) return null;
       const row = Array.isArray(data) ? data[0] : data;
       return (row as PortalProfile | undefined) ?? null;
     })();
+    profilePromise = pending;
+    pending.catch(() => { if (profilePromise === pending) profilePromise = null; });
   }
   return profilePromise;
 }

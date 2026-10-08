@@ -227,7 +227,7 @@ export const shippingApi = {
       version: s.version,
       draft,
     })),
-  action: (action: "archive" | "submit" | "refresh_status", s: Shipment) =>
+  action: (action: "archive" | "submit" | "refresh_status" | "reconcile", s: Shipment) =>
     mutate(() => invoke<{ shipment: Shipment }>(action, { id: s.id, version: s.version })),
   print: (s: Shipment) => invoke<{ link: string }>("print", { id: s.id }),
   quote: (s: Shipment) =>

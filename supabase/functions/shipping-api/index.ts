@@ -760,6 +760,29 @@ Deno.serve(async (req) => {
       const result = await compareShippingRates(config, d, [d.carrier_code]);
       return reply({ ...result, rates: result.rates.filter((rate) => rate.available) });
     }
+    if (action === "reconcile") {
+      // This action only looks up the original reference. It never creates a
+      // shipment or retries a potentially charged provider mutation.
+      if (!manager) return fail("forbidden", 403);
+      if (shipment.status !== "outcome_unknown" || shipment.tracking_number)
+        return fail("conflict", 409);
+      if (!Number.isInteger(b.version) || b.version !== shipment.version)
+        return fail("conflict", 409);
+      assertProviderReady(config, false);
+      const recovered = await reconcileCreatedShipment(config, {
+        externalId: shipment.id,
+        referenceNo: shipment.reference_no,
+        carrierCode: shipment.draft.carrier_code,
+      });
+      if (!recovered) return reply({ shipment, reconciled: false });
+      const recoveredStatus = ["waiting", "on_delivery", "delivered", "on_return", "returned", "claimed", "closed", "canceled"]
+        .includes(recovered.status ?? "") ? recovered.status! : "waiting";
+      const recoveredShipment = await mutate({
+        status: recoveredStatus,
+        tracking_number: recovered.trackingNumber,
+      }, ["outcome_unknown"]);
+      return reply({ shipment: recoveredShipment, reconciled: true });
+    }
     if (action === "submit") {
       assertProviderReady(config, true);
       if (!settings.merchant_code || settings.billing_mode === "unconfirmed")
@@ -937,9 +960,11 @@ Deno.serve(async (req) => {
         const direct = flashError ? null : parseFlashDatabaseSnapshot(flashData);
         if (direct) snapshot = { ...snapshot, ...direct };
       }
+      const resolvedProviderStatus = snapshot.status;
+      if (!resolvedProviderStatus) return fail("provider_response_invalid", 502);
       const statusAccepted = !!snapshot.updatedAt && acceptStatus(
         shipment.status,
-        snapshot.status,
+        resolvedProviderStatus,
         row.provider_updated_at,
         snapshot.updatedAt,
       );

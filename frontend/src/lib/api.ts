@@ -6,8 +6,11 @@
  * to a plain Error if non-null.
  */
 import { supabase } from './supabase';
+import { conversationCursorFilter, inboxSearchPattern } from './chat-inbox-pagination';
+import { privateChatFileLocation, queueChatOutboundDelivery } from './chat-outbound';
 import type { AppRole } from './supabase';
 import type {
+  Json,
   Product, ProductInsert, ProductUpdate,
   ProductGroup, ProductGroupInsert, ProductGroupUpdate,
   Category, Warehouse,
@@ -1323,29 +1326,30 @@ export const customerBranchesApi = {
 // Orders
 // =========================================================================
 export interface OrderWithCustomer extends Order {
+  /** Optimistic concurrency version, supplied by the sales transaction migration. */
+  version: number;
   customer: Pick<Customer, 'id' | 'name' | 'code' | 'tier'> | null;
   item_count?: number;
 }
 
+/** RPC types are maintained locally until deployed DB types are regenerated. */
+async function callSalesRpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
+  const db = supabase as unknown as {
+    rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+  };
+  const { data, error } = await db.rpc(name, args);
+  if (error) {
+    if (error.message.includes('document_version_conflict')) throw new Error('เอกสารมีการแก้ไขแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนบันทึก');
+    if (error.message.includes('stock_legacy_review_required')) throw new Error('ออเดอร์เดิมต้องให้ Owner/Admin ตรวจยอดตัดสต็อกก่อนแก้จำนวนหรือยกเลิก');
+    throw error;
+  }
+  return data as T;
+}
+
 export const ordersApi = {
-  async list(): Promise<OrderWithCustomer[]> {
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`
-        *,
-        customer:customers(id,name,code,tier),
-        items:order_items(count)
-      `)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    const rows = (data ?? []) as unknown as Array<Order & {
-      customer: OrderWithCustomer['customer'];
-      items: Array<{ count: number }> | null;
-    }>;
-    return rows.map(o => ({
-      ...o,
-      item_count: Array.isArray(o.items) && o.items[0] ? o.items[0].count : 0,
-    }));
+  async list(options: SalesDocumentQuery = {}): Promise<OrderWithCustomer[]> {
+    const page = await salesDocumentsApi.listPage({ ...options, kind: 'order' });
+    return page.items.map(item => item.document as OrderWithCustomer);
   },
 
   async getById(id: string): Promise<{ order: OrderWithCustomer; items: OrderItem[] }> {
@@ -1367,25 +1371,12 @@ export const ordersApi = {
   },
 
   /** Replace an order's line items + bill-foot discount, recompute totals (keeps shipping_fee). */
-  async updateItems(orderId: string, items: QuoteDraftItem[], discount = 0, shippingFee = 0): Promise<void> {
-    const subtotal = items.reduce((a, it) => a + it.unit_price * it.quantity - (it.discount ?? 0), 0);
-    const disc = Math.max(0, Math.round((discount || 0) * 100) / 100);
-    const net = subtotal - disc;
-    const vat = Math.round(net * 0.07 * 100) / 100;
-    const total = net + vat + (Number(shippingFee) || 0);
-    const { error: delErr } = await supabase.from('order_items').delete().eq('order_id', orderId);
-    if (delErr) throw delErr;
-    if (items.length > 0) {
-      const rows = items.map((it) => ({
-        order_id: orderId, product_id: it.product_id ?? null, variant_id: null, sku: it.sku, product_name: it.product_name,
-        quantity: it.quantity, unit_price: it.unit_price, unit: it.unit ?? null, discount: it.discount ?? 0,
-        total: it.unit_price * it.quantity - (it.discount ?? 0),
-      }));
-      const { error: insErr } = await supabase.from('order_items').insert(rows as never);
-      if (insErr) throw insErr;
-    }
-    const { error: upErr } = await supabase.from('orders').update({ subtotal, discount: disc, vat, total } as never).eq('id', orderId);
-    if (upErr) throw upErr;
+  async updateItems(orderId: string, items: QuoteDraftItem[], discount = 0, shippingFee = 0, expectedVersion?: number): Promise<void> {
+    if (!Number.isSafeInteger(expectedVersion)) throw new Error('กรุณาโหลดเอกสารล่าสุดก่อนบันทึก');
+    await callSalesRpc<number>('replace_sales_document_items', {
+      p_kind: 'order', p_id: orderId, p_items: items, p_discount: discount,
+      p_shipping_fee: shippingFee, p_expected_version: expectedVersion,
+    });
   },
 
   async updateStatus(id: string, status: Order['status']): Promise<Order> {
@@ -1415,7 +1406,10 @@ export const ordersApi = {
 // Quotes (ใบเสนอราคา)
 // =========================================================================
 export interface QuoteDraftItem {
+  /** Existing line identity preserves server-owned pricing provenance on edits. */
+  id?: string;
   product_id?: string | null;
+  variant_id?: string | null;
   sku: string;
   product_name: string;
   quantity: number;
@@ -1438,53 +1432,12 @@ export const quotesApi = {
     valid_days?: number;     // 30 default
     notes?: string;
   }): Promise<{ id: string; code: string }> {
-    const vat_rate = input.vat_rate ?? 0.07;
-    const valid_days = input.valid_days ?? 30;
-
-    // Line items stay at full price; the discount is a single bill-foot line.
-    const subtotal = input.items.reduce((acc, it) =>
-      acc + (it.unit_price * it.quantity) - (it.discount ?? 0), 0);
-    const discount = Math.max(0, Math.round((input.discount ?? 0) * 100) / 100);
-    const net = subtotal - discount;
-    const vat = Math.round(net * vat_rate * 100) / 100;
-    const total = net + vat;
-
-    // code is generated DB-side by a sequence default (QT-<8-digit running no.),
-    // guaranteed unique — don't set it here.
-    const valid_until = new Date(Date.now() + valid_days * 86400000).toISOString().slice(0, 10);
-
-    const { data: quote, error: qErr } = await supabase
-      .from('quotes')
-      .insert({
-        customer_id: input.customer_id ?? null,
-        status: 'draft',
-        subtotal,
-        discount,
-        vat,
-        total,
-        valid_until,
-        notes: input.notes ?? null,
-      })
-      .select('id, code')
-      .single();
-    if (qErr) throw qErr;
-
-    const rows = input.items.map(it => ({
-      quote_id: quote.id,
-      product_id: it.product_id,
-      sku: it.sku,
-      product_name: it.product_name,
-      quantity: it.quantity,
-      unit_price: it.unit_price,
-      unit: it.unit ?? null,
-      discount: it.discount ?? 0,
-      total: it.unit_price * it.quantity - (it.discount ?? 0),
-    }));
-
-    const { error: iErr } = await supabase.from('quote_items').insert(rows as never);
-    if (iErr) throw iErr;
-
-    return quote;
+    // Header, lines and totals either all commit or all roll back.
+    return callSalesRpc<{ id: string; code: string }>('create_sales_quote', {
+      p_customer_id: input.customer_id ?? null, p_items: input.items,
+      p_discount: input.discount ?? 0, p_vat_rate: input.vat_rate ?? 0.07,
+      p_valid_days: input.valid_days ?? 30, p_notes: input.notes ?? null,
+    });
   },
 };
 
@@ -1789,6 +1742,7 @@ export const kpiApi = {
 // Quotes — list, getById (for PDF)
 // =========================================================================
 export interface QuoteListItem {
+  version: number;
   id: string;
   code: string;
   status: string;
@@ -1805,7 +1759,7 @@ export interface QuoteListItem {
 
 export interface QuoteItem {
   id: string;
-  product_id: string;
+  product_id: string | null;
   variant_id: string | null;
   sku: string;
   product_name: string;
@@ -1817,23 +1771,15 @@ export interface QuoteItem {
 }
 
 export const quoteRecordApi = {
-  async list(): Promise<QuoteListItem[]> {
-    const { data, error } = await supabase
-      .from('quotes')
-      .select(`
-        id,code,status,subtotal,discount,vat,total,valid_until,notes,created_at,
-        converted_to_order_id,
-        customer:customers(id,name,tax_id,billing_address)
-      `)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return (data ?? []) as unknown as QuoteListItem[];
+  async list(options: SalesDocumentQuery = {}): Promise<QuoteListItem[]> {
+    const page = await salesDocumentsApi.listPage({ ...options, kind: 'quote' });
+    return page.items.map(item => item.document as QuoteListItem);
   },
 
   async getWithItems(id: string): Promise<{ quote: QuoteListItem; items: QuoteItem[] }> {
     const [{ data: quote, error: qErr }, { data: items, error: iErr }] = await Promise.all([
       supabase.from('quotes')
-        .select(`id,code,status,subtotal,discount,vat,total,valid_until,notes,created_at,
+        .select(`id,code,status,subtotal,discount,vat,total,valid_until,notes,created_at,version,
           converted_to_order_id,
           customer:customers(id,name,tax_id,billing_address)`)
         .eq('id', id).single(),
@@ -1873,25 +1819,12 @@ export const quoteRecordApi = {
   },
 
   /** Replace a quote's line items + bill-foot discount, recompute totals. */
-  async updateItems(quoteId: string, items: QuoteDraftItem[], discount = 0): Promise<void> {
-    const subtotal = items.reduce((a, it) => a + it.unit_price * it.quantity - (it.discount ?? 0), 0);
-    const disc = Math.max(0, Math.round((discount || 0) * 100) / 100);
-    const net = subtotal - disc;
-    const vat = Math.round(net * 0.07 * 100) / 100;
-    const total = net + vat;
-    const { error: delErr } = await supabase.from('quote_items').delete().eq('quote_id', quoteId);
-    if (delErr) throw delErr;
-    if (items.length > 0) {
-      const rows = items.map((it) => ({
-        quote_id: quoteId, product_id: it.product_id ?? null, sku: it.sku, product_name: it.product_name,
-        quantity: it.quantity, unit_price: it.unit_price, unit: it.unit ?? null, discount: it.discount ?? 0,
-        total: it.unit_price * it.quantity - (it.discount ?? 0),
-      }));
-      const { error: insErr } = await supabase.from('quote_items').insert(rows as never);
-      if (insErr) throw insErr;
-    }
-    const { error: upErr } = await supabase.from('quotes').update({ subtotal, discount: disc, vat, total } as never).eq('id', quoteId);
-    if (upErr) throw upErr;
+  async updateItems(quoteId: string, items: QuoteDraftItem[], discount = 0, expectedVersion?: number): Promise<void> {
+    if (!Number.isSafeInteger(expectedVersion)) throw new Error('กรุณาโหลดเอกสารล่าสุดก่อนบันทึก');
+    await callSalesRpc<number>('replace_sales_document_items', {
+      p_kind: 'quote', p_id: quoteId, p_items: items, p_discount: discount,
+      p_shipping_fee: 0, p_expected_version: expectedVersion,
+    });
   },
 
   /** Permanently remove a quote (cascades to quote_items). */
@@ -1908,99 +1841,39 @@ export const quoteRecordApi = {
    * `converted_to_order_id` points at the new order. Returns the new order's
    * id + code.
    *
-   * Done client-side as a sequence of supabase calls (no RPC) — three writes,
-   * each fast. If the order insert succeeds but the link-back update fails,
-   * we don't roll back the order; the operator can re-run approve and the
-   * idempotency check (already-accepted? has converted_to_order_id?) keeps
-   * it safe.
+   * The RPC locks the quote and commits the order, lines, stock ledger and
+   * quote link together. Repeating the same request returns the linked order.
    */
   async approveAsOrder(quoteId: string): Promise<{ id: string; code: string }> {
-    // 1. Idempotency: if already accepted + linked, return the existing order.
-    const { data: existing, error: exErr } = await supabase
-      .from('quotes')
-      .select('id, code, status, converted_to_order_id, customer_id, subtotal, discount, vat, total, notes')
-      .eq('id', quoteId)
-      .single();
-    if (exErr) throw exErr;
-    if (existing.status === 'accepted' && existing.converted_to_order_id) {
-      const { data: alreadyOrder } = await supabase
-        .from('orders')
-        .select('id, code')
-        .eq('id', existing.converted_to_order_id)
-        .maybeSingle();
-      if (alreadyOrder) return alreadyOrder as { id: string; code: string };
-    }
+    return callSalesRpc<{ id: string; code: string }>('approve_quote_as_order', { p_quote_id: quoteId });
+  },
+};
 
-    // 2. Load the quote's items (we need them to mirror as order_items).
-    const { data: qItems, error: qiErr } = await supabase
-      .from('quote_items')
-      .select('product_id,variant_id,sku,product_name,quantity,unit_price,unit,discount,total')
-      .eq('quote_id', quoteId);
-    if (qiErr) throw qiErr;
-    if (!qItems || qItems.length === 0) {
-      throw new Error('ใบเสนอราคานี้ไม่มีรายการสินค้า ไม่สามารถสร้างคำสั่งซื้อได้');
-    }
-
-    // 3. Create the order.
-    //   - Code: same running number as the quote, with the QT- prefix swapped
-    //     for SO- (Sales Order) — e.g. QT-01000003 → SO-01000003. Quote codes
-    //     are unique + each quote converts once (idempotency above), so SO-
-    //     codes can't collide.
-    //   - `status: 'processing'`  — approving a quote means "start preparing",
-    //     which maps to the "กำลังเตรียม" tab (the quote was already รอดำเนินการ).
-    //   - `payment_status: 'unpaid'` — the orders_payment_status_check
-    //     constraint only accepts ['unpaid','partial','paid','refunded'].
-    const code = existing.code?.startsWith('QT-')
-      ? 'SO-' + existing.code.slice(3)
-      : 'SO-' + (existing.code ?? quoteId.slice(0, 8));
-    const { data: order, error: oErr } = await supabase
-      .from('orders')
-      .insert({
-        code,
-        customer_id: existing.customer_id ?? null,
-        status: 'processing',
-        payment_status: 'unpaid',
-        subtotal: existing.subtotal,
-        discount: existing.discount,
-        vat: existing.vat,
-        total: existing.total,
-        notes: existing.notes,
-      } as never)
-      .select('id, code')
-      .single();
-    if (oErr) throw oErr;
-
-    // 4. Mirror items into order_items.
-    const itemsForOrder = (qItems as Array<{
-      product_id: string; variant_id: string | null; sku: string;
-      product_name: string; quantity: number; unit_price: number;
-      unit: string | null; discount: number; total: number;
-    }>).map((it) => ({
-      order_id: order.id,
-      product_id: it.product_id,
-      variant_id: it.variant_id,
-      sku: it.sku,
-      product_name: it.product_name,
-      quantity: it.quantity,
-      unit_price: it.unit_price,
-      unit: it.unit ?? null,
-      discount: it.discount,
-      total: it.total,
-    }));
-    const { error: oiErr } = await supabase.from('order_items').insert(itemsForOrder as never);
-    if (oiErr) throw oiErr;
-
-    // 5. Flip the quote and link it to the order.
-    const { error: linkErr } = await supabase
-      .from('quotes')
-      .update({
-        status: 'accepted',
-        converted_to_order_id: order.id,
-      } as never)
-      .eq('id', quoteId);
-    if (linkErr) throw linkErr;
-
-    return order as { id: string; code: string };
+export interface SalesDocumentCursor {
+  created_at: string;
+  id: string;
+  kind: 'order' | 'quote';
+}
+export interface SalesDocumentQuery {
+  limit?: number;
+  search?: string;
+  status?: string;
+  kind?: 'order' | 'quote';
+  cursor?: SalesDocumentCursor | null;
+}
+export interface SalesDocumentPage {
+  items: Array<{ kind: 'order' | 'quote'; document: OrderWithCustomer | QuoteListItem }>;
+  counts: Record<string, number>;
+  next_cursor: SalesDocumentCursor | null;
+}
+export const salesDocumentsApi = {
+  async listPage(options: SalesDocumentQuery = {}): Promise<SalesDocumentPage> {
+    return callSalesRpc<SalesDocumentPage>('list_sales_documents', {
+      p_limit: options.limit ?? 100, p_search: options.search?.trim() ?? '',
+      p_status: options.status ?? 'all', p_kind: options.kind ?? null,
+      p_cursor_created_at: options.cursor?.created_at ?? null,
+      p_cursor_id: options.cursor?.id ?? null, p_cursor_kind: options.cursor?.kind ?? null,
+    });
   },
 };
 
@@ -2832,6 +2705,9 @@ export interface ChatMessageCursor {
   id: string;
 }
 
+export interface ChatConversationCursor { lastMessageAt: string | null; createdAt: string; id: string }
+export interface ChatConversationPage { conversations: ChatConversation[]; hasMore: boolean; cursor: ChatConversationCursor | null }
+
 export interface ChatMessagePage {
   messages: ChatMessage[];
   hasMore: boolean;
@@ -2862,9 +2738,10 @@ export const chatInboxApi = {
     status?: ChatStatus | null;
     search?: string;
     limit?: number;
-  } = {}, onBaseRows?: (rows: ChatConversation[]) => void,
-  onNotesLoaded?: (notes: Map<string, ChatContactNote[]>) => void): Promise<ChatConversation[]> {
+    after?: ChatConversationCursor | null;
+  } = {}, onBaseRows?: (page: ChatConversationPage) => void): Promise<ChatConversationPage> {
     const term = opts.search?.trim() ?? '';
+    const limit = Math.max(1, Math.min(opts.limit ?? 100, 200));
     // chat_contact_notes + this RPC aren't in the generated DB types — query untyped.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any;
@@ -2884,48 +2761,61 @@ export const chatInboxApi = {
       .select('*')
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
-      .limit(opts.limit ?? 100);
+      .order('id', { ascending: false })
+      .limit(limit + 1);
     if (opts.channel) q = q.eq('channel', opts.channel);
     if (opts.status) q = q.eq('status', opts.status);
+    const filters: string[] = [];
     if (term) {
-      const pat = `%${term.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+      const pat = inboxSearchPattern(term);
       const ors = [
         `display_name.ilike.${pat}`,
         `alias_name.ilike.${pat}`,
         `last_message_preview.ilike.${pat}`,
       ];
       if (noteIds.length) ors.push(`id.in.(${noteIds.join(',')})`);
-      q = q.or(ors.join(','));
+      filters.push(`or(${ors.join(',')})`);
     }
+    if (opts.after) filters.push(`or(${conversationCursorFilter(opts.after)})`);
+    if (filters.length) q = q.or(filters.length === 1 ? filters[0].slice(3, -1) : `and(${filters.join(',')})`);
     const { data, error } = await q;
     if (error) throw error;
-    let convos = (data ?? []) as ChatConversation[];
+    let convos = ((data ?? []) as ChatConversation[]).slice(0, limit);
+    const last = convos.at(-1);
+    const page = {
+      conversations: convos,
+      hasMore: (data?.length ?? 0) > limit,
+      cursor: last ? { lastMessageAt: last.last_message_at, createdAt: last.created_at, id: last.id } : null,
+    };
 
     // The inbox and selected contact can render from this first response.
     // Company names are useful enrichment, but must not block opening a chat.
-    onBaseRows?.(convos);
+    onBaseRows?.(page);
 
-    // Reuse the company-name enrichment request to warm notes for the contact
-    // panel. The inbox already renders from onBaseRows before this query.
+    // Only company text is needed for the list. Full notes belong to the open
+    // contact, whose existing cache provides immediate warm room switches.
     if (convos.length) {
-      const { data: contactNotes, error: notesError } = await db
-        .from('chat_contact_notes')
-        .select('*')
-        .in('conversation_id', convos.map((c) => c.id))
-        .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: false });
       const byConv = new Map<string, string>();
-      const notesByConv = new Map<string, ChatContactNote[]>(convos.map((c) => [c.id, []]));
-      for (const n of (contactNotes ?? []) as ChatContactNote[]) {
-        notesByConv.get(n.conversation_id)?.push(n);
-        if (n.note_type !== 'tax_invoice') continue;
-        const co = typeof n.address?.company === 'string' ? n.address.company.trim() : '';
-        if (co && !byConv.has(n.conversation_id)) byConv.set(n.conversation_id, co);
+      for (let from = 0; ; from += 1000) {
+        const { data: contactNotes, error: summaryError } = await db
+          .from('chat_contact_notes')
+          .select('conversation_id,company:address->>company')
+          .eq('note_type', 'tax_invoice')
+          .in('conversation_id', convos.map((c) => c.id))
+          .order('sort_order', { ascending: true })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, from + 999);
+        if (summaryError) break; // Base inbox stays usable if enrichment fails.
+        for (const n of (contactNotes ?? []) as Array<{ conversation_id: string; company: string | null }>) {
+          const co = n.company?.trim() ?? '';
+          if (co && !byConv.has(n.conversation_id)) byConv.set(n.conversation_id, co);
+        }
+        if ((contactNotes?.length ?? 0) < 1000) break;
       }
-      if (!notesError) onNotesLoaded?.(notesByConv);
       if (byConv.size) convos = convos.map((c) => ({ ...c, company: byConv.get(c.id) ?? null }));
     }
-    return convos;
+    return { ...page, conversations: convos };
   },
 
   /** One cursor-paginated message page, returned oldest-first for rendering.
@@ -2962,9 +2852,8 @@ export const chatInboxApi = {
    *  updates the conversation summary/unread count), then — if the channel is
    *  external platform (line / messenger / email) — also forwards the
    *  message via the platform's send API through the matching Edge
-   *  Function (line-push for now; messenger-push etc. in future). The
-   *  external push is best-effort: if it fails we still return the
-   *  DB row so the admin sees their message saved. */
+   *  Function. The saved row starts pending, then a provider receipt updates
+   *  its visible delivery state. Unsupported channels reject before insert. */
   async sendMessage(input: {
     conversationId: string;
     content: string;
@@ -2984,17 +2873,23 @@ export const chatInboxApi = {
       quoteToken?: string | null;
     } | null;
   }): Promise<ChatMessage> {
-    const { data: userData } = await supabase.auth.getUser();
+    const { data: userData, error: authError } = await supabase.auth.getUser();
+    if (authError) throw authError;
     const senderId = userData.user?.id ?? null;
+    if (!senderId) throw new Error('กรุณาเข้าสู่ระบบก่อนส่งข้อความ');
 
     // Look up conversation channel up-front so we know if external push is needed
-    const { data: conv } = await supabase
+    const { data: conv, error: conversationError } = await supabase
       .from('chat_conversations')
       .select('channel, external_id')
       .eq('id', input.conversationId)
       .maybeSingle();
+    if (conversationError) throw conversationError;
+    if (!conv) throw new Error('ไม่พบห้องแชตที่ต้องการส่ง');
+    if (!['livechat', 'line', 'messenger'].includes(conv.channel)) throw new Error('ช่องทางนี้ยังส่งข้อความถึงลูกค้าไม่ได้');
+    if (conv.channel !== 'livechat' && !conv.external_id) throw new Error('ห้องแชตนี้ยังไม่มีผู้รับในช่องทางภายนอก');
 
-    const metadata = input.replyTo
+    const metadata: Record<string, Json | undefined> = input.replyTo
       ? {
           reply_to: {
             id: input.replyTo.id,
@@ -3004,6 +2899,7 @@ export const chatInboxApi = {
           },
         }
       : {};
+    metadata.outbound_delivery = conv.channel === 'livechat' ? 'delivered' : 'pending';
 
     const { data, error } = await supabase
       .from('chat_messages')
@@ -3020,10 +2916,7 @@ export const chatInboxApi = {
       .single();
     if (error) throw error;
 
-    // Forward to LINE in the BACKGROUND — don't block the composer on LINE's
-    // response (an over-quota push can take several seconds, which made sending
-    // feel frozen). On failure, flag the message so the admin can see it didn't
-    // reach the customer (e.g. when the LINE OA monthly push quota is used up).
+    // Keep external delivery in the background and expose its receipt in chat.
     if (conv?.channel === 'line' && conv.external_id) {
       const msgId = (data as ChatMessage).id;
       // Sign outgoing text with the admin's name so the customer knows who is
@@ -3033,25 +2926,11 @@ export const chatInboxApi = {
       const pushText = pushName && (input.contentType ?? 'text') === 'text'
         ? `${pushName}: ${input.content}`
         : input.content;
-      void (async () => {
-        try {
-          const { error: pushErr } = await supabase.functions.invoke('line-push', {
-            body: {
-              conversation_id: input.conversationId,
-              text: pushText,
-              quote_token: input.replyTo?.quoteToken ?? undefined,
-            },
-          });
-          if (pushErr) throw pushErr;
-        } catch (pushErr) {
-          console.warn('[chatInboxApi] line-push failed:', pushErr);
-          await supabase.from('chat_messages')
-            .update({ metadata: { ...metadata, line_push_failed: true } })
-            .eq('id', msgId);
-        }
-      })();
+      queueChatOutboundDelivery({ messageId: msgId, channel: 'line', metadata,
+        body: { conversation_id: input.conversationId, text: pushText, quote_token: input.replyTo?.quoteToken ?? undefined } });
+    } else if (conv.channel === 'messenger') {
+      queueChatOutboundDelivery({ messageId: (data as ChatMessage).id, channel: 'messenger', metadata, body: { message_id: (data as ChatMessage).id } });
     }
-    // TODO Phase 3: messenger-push, email-push
 
     return data as ChatMessage;
   },
@@ -3067,14 +2946,27 @@ export const chatInboxApi = {
     mimeType?: string | null;
     senderName?: string;
   }): Promise<ChatMessage> {
-    const { data: userData } = await supabase.auth.getUser();
+    const { data: userData, error: authError } = await supabase.auth.getUser();
+    if (authError) throw authError;
     const senderId = userData.user?.id ?? null;
+    if (!senderId) throw new Error('กรุณาเข้าสู่ระบบก่อนส่งข้อความ');
 
-    const { data: conv } = await supabase
+    const { data: conv, error: conversationError } = await supabase
       .from('chat_conversations')
       .select('channel, external_id')
       .eq('id', input.conversationId)
       .maybeSingle();
+    if (conversationError) throw conversationError;
+    if (!conv) throw new Error('ไม่พบห้องแชตที่ต้องการส่ง');
+    if (!['livechat', 'line', 'messenger'].includes(conv.channel)) throw new Error('ช่องทางนี้ยังส่งข้อความถึงลูกค้าไม่ได้');
+    if (conv.channel !== 'livechat' && !conv.external_id) throw new Error('ห้องแชตนี้ยังไม่มีผู้รับในช่องทางภายนอก');
+
+    const fileMeta = {
+      file_url: input.fileUrl, file_name: input.fileName,
+      file_size: input.fileSize ?? null, mime_type: input.mimeType ?? null,
+      ...privateChatFileLocation(input.fileUrl),
+      outbound_delivery: conv.channel === 'livechat' ? 'delivered' : 'pending',
+    };
 
     const { data, error } = await supabase
       .from('chat_messages')
@@ -3085,12 +2977,7 @@ export const chatInboxApi = {
         sender_name: input.senderName ?? userData.user?.email ?? 'Staff',
         content: `📎 ${input.fileName}`,
         content_type: 'file',
-        metadata: {
-          file_url: input.fileUrl,
-          file_name: input.fileName,
-          file_size: input.fileSize ?? null,
-          mime_type: input.mimeType ?? null,
-        },
+        metadata: fileMeta,
       })
       .select('*')
       .single();
@@ -3100,25 +2987,11 @@ export const chatInboxApi = {
     // Background (non-blocking) + flag on failure, same as sendMessage.
     if (conv?.channel === 'line' && conv.external_id) {
       const msgId = (data as ChatMessage).id;
-      const fileMeta = {
-        file_url: input.fileUrl, file_name: input.fileName,
-        file_size: input.fileSize ?? null, mime_type: input.mimeType ?? null,
-      };
       const pushName = input.senderName && !input.senderName.includes('@') ? input.senderName : null;
       const text = `${pushName ? `${pushName}: ` : ''}📎 ${input.fileName}\n${input.fileUrl}`;
-      void (async () => {
-        try {
-          const { error: pushErr } = await supabase.functions.invoke('line-push', {
-            body: { conversation_id: input.conversationId, text },
-          });
-          if (pushErr) throw pushErr;
-        } catch (pushErr) {
-          console.warn('[chatInboxApi] file line-push failed:', pushErr);
-          await supabase.from('chat_messages')
-            .update({ metadata: { ...fileMeta, line_push_failed: true } })
-            .eq('id', msgId);
-        }
-      })();
+      queueChatOutboundDelivery({ messageId: msgId, channel: 'line', metadata: fileMeta, body: { conversation_id: input.conversationId, text } });
+    } else if (conv.channel === 'messenger') {
+      queueChatOutboundDelivery({ messageId: (data as ChatMessage).id, channel: 'messenger', metadata: fileMeta, body: { message_id: (data as ChatMessage).id } });
     }
 
     return data as ChatMessage;
@@ -3279,6 +3152,8 @@ export interface LineChannel {
   channel_id: string | null;
   channel_access_token: string;
   channel_secret: string;
+  token_configured?: boolean;
+  secret_configured?: boolean;
   is_active: boolean;
   notes: string | null;
   created_at: string;
@@ -3287,13 +3162,13 @@ export interface LineChannel {
 
 export const lineChannelsApi = {
   async list(): Promise<LineChannel[]> {
-    const { data, error } = await supabase
-      .from('line_channels')
-      .select('*')
-      .order('is_active', { ascending: false })
-      .order('created_at', { ascending: false });
+    // New metadata-only RPC; generated schema types are refreshed at release.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data, error } = await db.rpc('list_line_channel_metadata');
     if (error) throw error;
-    return (data ?? []) as LineChannel[];
+    return ((data ?? []) as unknown as Omit<LineChannel, 'channel_access_token' | 'channel_secret'>[])
+      .map(channel => ({ ...channel, channel_access_token: '', channel_secret: '' }));
   },
 
   async create(input: {
@@ -3313,10 +3188,10 @@ export const lineChannelsApi = {
         notes: input.notes ?? null,
         is_active: false,
       })
-      .select('*')
+      .select('id,name,channel_id,is_active,notes,created_at,updated_at')
       .single();
     if (error) throw error;
-    return data as LineChannel;
+    return { ...(data as Omit<LineChannel, 'channel_access_token' | 'channel_secret'>), channel_access_token: '', channel_secret: '', token_configured: true, secret_configured: true };
   },
 
   async update(id: string, patch: Partial<{
@@ -3330,10 +3205,10 @@ export const lineChannelsApi = {
       .from('line_channels')
       .update(patch)
       .eq('id', id)
-      .select('*')
+      .select('id,name,channel_id,is_active,notes,created_at,updated_at')
       .single();
     if (error) throw error;
-    return data as LineChannel;
+    return { ...(data as Omit<LineChannel, 'channel_access_token' | 'channel_secret'>), channel_access_token: '', channel_secret: '', token_configured: true, secret_configured: true };
   },
 
   async remove(id: string): Promise<void> {
@@ -3827,11 +3702,13 @@ export const chatNotesApi = {
 
   /** Persist a new top-to-bottom order. Updates sort_order in parallel. */
   async reorder(orderedIds: string[]): Promise<void> {
-    await Promise.all(
+    const results = await Promise.allSettled(
       orderedIds.map((id, i) =>
         notesTable().update({ sort_order: i }).eq('id', id),
       ),
     );
+    const failed = results.filter((result) => result.status === 'rejected' || result.value.error);
+    if (failed.length) throw new Error(`บันทึกลำดับโน้ตไม่สำเร็จ ${failed.length}/${orderedIds.length} รายการ กรุณาลองใหม่`);
   },
 
   async create(

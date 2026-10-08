@@ -52,121 +52,83 @@ export function normalizeSku(sku: string): string {
     .replace(/^[\s\u200B-\u200D\u2060\uFEFF]+|[\s\u200B-\u200D\u2060\uFEFF]+$/g, "");
 }
 
+const PAGE_SIZE = 1000;
+
+// A factory is required: each range starts from a fresh PostgREST builder.
+async function readAll<T>(query: () => { range: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> }): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await query().range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(`catalog_unavailable: ${error.message}`);
+    const page = (data ?? []) as T[];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
+}
+
 export async function getAllProducts(): Promise<SProduct[]> {
-  const { data } = await supabase
-    .from("storefront_products")
-    .select(SELECT)
-    .order("is_featured", { ascending: false })
-    .order("name_th", { ascending: true });
-  return (data ?? []) as unknown as SProduct[];
+  return (await readAll<SProduct>(() => supabase.from("storefront_products").select(SELECT)
+    .order("is_featured", { ascending: false }).order("name_th").order("id"))).map(sanitizePublicProduct);
 }
 
 export async function getAllSkus(): Promise<string[]> {
-  const { data } = await supabase.from("storefront_products").select("sku");
-  return [
-    ...new Set(
-      ((data ?? []) as { sku: string }[])
-        .map((r) => normalizeSku(r.sku))
-        .filter(Boolean),
-    ),
-  ];
+  const rows = await readAll<{ sku: string }>(() => supabase.from("storefront_products").select("sku,id").order("sku").order("id"));
+  return [...new Set(rows.map(r => normalizeSku(r.sku)).filter(Boolean))];
 }
 
 export async function getProductBySku(sku: string): Promise<SProduct | null> {
   const normalizedSku = normalizeSku(sku);
   if (!normalizedSku) return null;
-
-  const { data } = await supabase
-    .from("storefront_products")
-    .select(SELECT)
-    .eq("sku", normalizedSku)
-    .maybeSingle();
-  if (data) return data as SProduct;
-
-  // Legacy rows may contain one trailing whitespace character. Resolve those
-  // rows while keeping the public URL canonical and leaving source data intact.
-  for (const suffix of [" ", "\u00A0", "\t"]) {
-    const { data: legacyRow } = await supabase
-      .from("storefront_products")
-      .select(SELECT)
-      .eq("sku", `${normalizedSku}${suffix}`)
-      .maybeSingle();
-    if (legacyRow) return legacyRow as SProduct;
-  }
-
-  // Handle any older values with multiple or zero-width trailing characters.
-  const candidates = await getAllProducts();
-  return candidates.find((candidate) => normalizeSku(candidate.sku) === normalizedSku) ?? null;
+  const { data, error } = await supabase.from("storefront_products").select(SELECT).eq("sku", normalizedSku).maybeSingle();
+  if (error) throw new Error(`catalog_unavailable: ${error.message}`);
+  if (data) return sanitizePublicProduct(data as SProduct);
+  // Legacy trailing whitespace remains supported without downloading the full catalog.
+  const prefix = normalizedSku.replace(/[\\%_]/g, "\\$&");
+  const candidates = await readAll<SProduct>(() => supabase.from("storefront_products").select(SELECT)
+    .like("sku", `${prefix}%`).order("sku").order("id"));
+  const matched = candidates.find(candidate => normalizeSku(candidate.sku) === normalizedSku);
+  return matched ? sanitizePublicProduct(matched) : null;
 }
 
 export async function getCategories(): Promise<SCategory[]> {
-  const { data } = await supabase
-    .from("categories")
-    .select("slug,name_th,name_en")
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true });
-  return (data ?? []) as SCategory[];
+  return readAll<SCategory>(() => supabase.from("categories").select("slug,name_th,name_en")
+    .eq("is_active", true).order("sort_order").order("id"));
 }
 
 export async function getProductsByCategory(slug: string): Promise<SProduct[]> {
-  const { data } = await supabase
-    .from("storefront_products")
-    .select(SELECT)
-    .eq("category_slug", slug)
-    .order("name_th", { ascending: true });
-  return (data ?? []) as unknown as SProduct[];
+  return (await readAll<SProduct>(() => supabase.from("storefront_products").select(SELECT)
+    .eq("category_slug", slug).order("name_th").order("id"))).map(sanitizePublicProduct);
 }
 
-/** Free-text product search (name TH/EN, SKU, brand, group, category, tags).
- *  Filters in-memory over the catalog (~hundreds of rows) — flexible matching,
- *  no PostgREST filter-injection risk. Multi-word: every word must match. */
+/** Server search parses known kind/model/size/grit/backing facts and proven
+ * spelling aliases. Explicit variants/SKUs must match; remaining words narrow
+ * the public catalog. RPC parameters and stable pages preserve safe retrieval. */
 export async function searchProducts(q: string): Promise<SProduct[]> {
-  const term = (q || "").trim().toLowerCase();
+  const term = (q || "").trim();
   if (!term) return [];
-  const words = term.split(/\s+/).filter(Boolean);
-  const all = await getAllProducts();
-  return all.filter((p) => {
-    const hay = [
-      p.name_th,
-      p.name_en,
-      p.sku,
-      p.brand,
-      p.group_name,
-      p.category_name_th,
-      ...(p.tags ?? []),
-      ...(p.feature_tags ?? []),
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return words.every((w) => hay.includes(w));
-  });
+  if (term.length > 256) throw new Error("คำค้นยาวเกิน 256 ตัวอักษร");
+  const rows: SProduct[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase.rpc("search_storefront_products", { p_query: term, p_offset: offset, p_limit: PAGE_SIZE });
+    if (error) throw new Error(`catalog_unavailable: ${error.message}`);
+    const page = (data ?? []) as SProduct[];
+    rows.push(...page.map(sanitizePublicProduct));
+    if (page.length < PAGE_SIZE) return rows;
+  }
 }
 
 export async function getGroups(): Promise<SGroup[]> {
-  const { data } = await supabase
-    .from("product_groups")
-    .select("id,name,cover_image,description")
-    .order("name", { ascending: true });
-  return (data ?? []) as SGroup[];
+  return readAll<SGroup>(() => supabase.from("product_groups").select("id,name,cover_image,description").order("name").order("id"));
 }
 
 export async function getGroupById(id: string): Promise<SGroup | null> {
-  const { data } = await supabase
-    .from("product_groups")
-    .select("id,name,cover_image,description")
-    .eq("id", id)
-    .maybeSingle();
+  const { data, error } = await supabase.from("product_groups").select("id,name,cover_image,description").eq("id", id).maybeSingle();
+  if (error) throw new Error(`catalog_unavailable: ${error.message}`);
   return (data as SGroup | null) ?? null;
 }
 
 export async function getProductsByGroup(groupId: string): Promise<SProduct[]> {
-  const { data } = await supabase
-    .from("storefront_products")
-    .select(SELECT)
-    .eq("group_id", groupId)
-    .order("name_th", { ascending: true });
-  return (data ?? []) as unknown as SProduct[];
+  return (await readAll<SProduct>(() => supabase.from("storefront_products").select(SELECT).eq("group_id", groupId).order("name_th").order("id"))).map(sanitizePublicProduct);
 }
 
 // ── Content helpers (AEO: answer-first, lists, tables, FAQ) ──────────────────
@@ -319,17 +281,30 @@ export function keywordsFromProducts(products: SProduct[], extra: string[] = [])
   return out.join(", ");
 }
 
+const PRIVATE_SPEC_KEY = /^(?:image[_-]?studio|internal(?:[_-]|$)|metadata|cost|margin|buy(?:ing)?[_-]?price|purchase[_-]?price|ต้นทุน|ราคาทุน|กำไร)/i;
+
+/** Internal editing metadata and nested objects are not customer specs. */
+export function publicSpecEntries(spec: SProduct["spec"]): [string, string][] {
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) return [];
+  return Object.entries(spec).flatMap(([key, value]) => {
+    if (PRIVATE_SPEC_KEY.test(key.trim()) || !["string", "number", "boolean"].includes(typeof value)) return [];
+    const text = String(value).trim();
+    return text ? [[key, text] as [string, string]] : [];
+  });
+}
+
+function sanitizePublicProduct(product: SProduct): SProduct {
+  const allowed = new Set(publicSpecEntries(product.spec).map(([key]) => key));
+  return { ...product, spec: product.spec ? Object.fromEntries(Object.entries(product.spec).filter(([key]) => allowed.has(key))) : null };
+}
+
 export function featuresOf(p: SProduct): string[] {
   const out: string[] = [];
   if (p.brand) out.push(`แบรนด์: ${p.brand}`);
   if (p.category_name_th) out.push(`หมวดหมู่: ${p.category_name_th}`);
   for (const t of p.feature_tags ?? []) if (t && String(t).trim()) out.push(String(t));
   for (const t of p.tags ?? []) if (t && String(t).trim()) out.push(String(t));
-  if (p.spec && typeof p.spec === "object" && !Array.isArray(p.spec)) {
-    for (const [k, v] of Object.entries(p.spec)) {
-      if (v != null && String(v).trim()) out.push(`${k}: ${v}`);
-    }
-  }
+  for (const [key, value] of publicSpecEntries(p.spec)) out.push(`${key}: ${value}`);
   if (p.unit) out.push(`หน่วยจำหน่าย: ${p.unit}`);
   if (p.min_order_qty && p.min_order_qty > 1)
     out.push(`สั่งขั้นต่ำ: ${p.min_order_qty} ${p.unit || "ชิ้น"}`);
@@ -338,10 +313,7 @@ export function featuresOf(p: SProduct): string[] {
 
 export function specRows(p: SProduct): [string, string][] {
   const rows: [string, string][] = [["รหัสสินค้า (SKU)", p.sku]];
-  if (p.spec && typeof p.spec === "object" && !Array.isArray(p.spec)) {
-    for (const [k, v] of Object.entries(p.spec))
-      if (v != null && String(v).trim()) rows.push([k, String(v)]);
-  }
+  rows.push(...publicSpecEntries(p.spec));
   if (p.brand) rows.push(["แบรนด์", p.brand]);
   if (p.category_name_th) rows.push(["หมวดหมู่", p.category_name_th]);
   if (p.unit) rows.push(["หน่วยจำหน่าย", p.unit]);

@@ -57,7 +57,7 @@ import {
     chatProfileApi,
     type ChatChannel,
     type ChatConversation,
-    type ChatContactNote,
+    type ChatConversationCursor,
     type ChatMessage,
     type ChatMessagePage,
     type ChatStatus,
@@ -65,6 +65,7 @@ import {
 } from '../lib/api';
 import { uploadChatImage, validateImage, uploadChatFile } from '../lib/storage';
 import { supabase } from '../lib/supabase';
+import { resolveChatAttachmentUrl } from '../lib/chat-attachment-url';
 import { useLanguage } from '../i18n';
 import { useAuth } from '../lib/AuthProvider';
 import { Button } from '@/components/ui/button';
@@ -236,9 +237,11 @@ function conversationCacheId(filters: { channel: ChatChannel | null; status: Cha
 }
 
 function compareConversations(a: ChatConversation, b: ChatConversation): number {
-    const aTime = Date.parse(a.last_message_at ?? a.created_at);
-    const bTime = Date.parse(b.last_message_at ?? b.created_at);
-    return bTime - aTime;
+    if (a.last_message_at === null && b.last_message_at !== null) return 1;
+    if (b.last_message_at === null && a.last_message_at !== null) return -1;
+    return Date.parse(b.last_message_at ?? '1970-01-01') - Date.parse(a.last_message_at ?? '1970-01-01')
+        || Date.parse(b.created_at) - Date.parse(a.created_at)
+        || b.id.localeCompare(a.id);
 }
 
 function readMessageCache(conversationId: string): ChatMessagePage | null {
@@ -285,7 +288,8 @@ function updateCachedMessageRows(
 // Falls back to opening the image in a new tab if the fetch is blocked.
 async function downloadImage(url: string) {
     try {
-        const res = await fetch(url);
+        const freshUrl = await resolveChatAttachmentUrl(url);
+        const res = await fetch(freshUrl);
         if (!res.ok) throw new Error(String(res.status));
         const blob = await res.blob();
         const ext = blob.type.includes('png') ? 'png'
@@ -306,20 +310,38 @@ async function downloadImage(url: string) {
 
 // Chat image: click to open full-size in a new tab, hover (or tap the badge)
 // to download the original file.
+function useAttachmentUrl(source: string | null) {
+    const privateUrl = !!source && /\/storage\/v1\/object\/sign\/chat-private-attachments\//.test(source);
+    const [resolved, setResolved] = useState<{ source: string; url: string } | null>(null);
+    useEffect(() => {
+        if (!source || !privateUrl) return;
+        let cancelled = false;
+        const refresh = () => { void resolveChatAttachmentUrl(source).then((url) => {
+            if (!cancelled) setResolved({ source, url });
+        }).catch(() => { if (!cancelled) setResolved(null); }); };
+        refresh();
+        const timer = setInterval(refresh, 240_000);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, [source, privateUrl]);
+    return privateUrl ? resolved?.source === source ? resolved.url : null : source;
+}
+
 function ChatImage({ src, alt }: { src: string; alt: string }) {
+    const url = useAttachmentUrl(src);
+    if (!url) return <span className="text-xs text-neutral-500">กำลังเตรียมรูปแนบ…</span>;
     return (
         <span className="relative inline-block my-2 group align-top">
             <img
-                src={src}
+                src={url}
                 alt={alt}
                 loading="lazy"
-                onClick={() => window.open(src, '_blank', 'noopener')}
+                onClick={() => window.open(url, '_blank', 'noopener')}
                 className="max-w-[260px] max-h-[260px] rounded-lg border border-neutral-200 object-cover shadow-sm cursor-zoom-in"
             />
             <button
                 type="button"
                 title="ดาวน์โหลดรูป"
-                onClick={(e) => { e.stopPropagation(); void downloadImage(src); }}
+                onClick={(e) => { e.stopPropagation(); void downloadImage(url); }}
                 className="absolute top-1.5 right-1.5 grid place-items-center w-7 h-7 rounded-md bg-black/55 text-white opacity-80 sm:opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
             >
                 <Download size={14} />
@@ -331,6 +353,11 @@ function ChatImage({ src, alt }: { src: string; alt: string }) {
 const IMG_MD_RE = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
 // Turn bare http(s) URLs in a text run into clickable links (open in new tab).
 const URL_RE = /(https?:\/\/[^\s<]+)/g;
+function AttachmentLink({ url }: { url: string }) {
+    const href = useAttachmentUrl(url);
+    return href ? <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline break-all hover:text-blue-700">{url}</a>
+        : <span className="text-xs text-neutral-500">กำลังเตรียมลิงก์ไฟล์…</span>;
+}
 function linkifyText(text: string, keyBase: string): ReactNode[] {
     if (!text) return [];
     const nodes: ReactNode[] = [];
@@ -345,8 +372,7 @@ function linkifyText(text: string, keyBase: string): ReactNode[] {
         const tm = url.match(/[)\].,!?]+$/); // keep trailing punctuation out of the link
         if (tm) { trail = tm[0]; url = url.slice(0, -trail.length); }
         nodes.push(
-            <a key={`lnk-${keyBase}-${i++}`} href={url} target="_blank" rel="noopener noreferrer"
-                className="text-blue-600 underline break-all hover:text-blue-700">{url}</a>,
+            <AttachmentLink key={`lnk-${keyBase}-${i++}`} url={url} />,
         );
         if (trail) nodes.push(trail);
         last = m.index + m[1].length;
@@ -446,6 +472,11 @@ export default function Chat() {
     const conversationsRef = useRef<ChatConversation[]>([]);
     const [loadingList, setLoadingList] = useState(true);
     const [listErr, setListErr] = useState<string | null>(null);
+    const [loadingMoreConvs, setLoadingMoreConvs] = useState(false);
+    const [hasMoreConvs, setHasMoreConvs] = useState(false);
+    const conversationCursorRef = useRef<ChatConversationCursor | null>(null);
+    const conversationPagesRef = useRef(1);
+    const moreConversationsInFlightRef = useRef(false);
     const conversationFiltersRef = useRef({ channel, status, search: debouncedSearch });
     const conversationRefreshRef = useRef({ inFlight: false, queued: false, version: 0 });
     const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -461,9 +492,6 @@ export default function Chat() {
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
-    const [prefetchedNotesByConversation, setPrefetchedNotesByConversation] = useState(
-        new Map<string, ChatContactNote[]>(),
-    );
     const [customerSnapshots, setCustomerSnapshots] = useState<Record<string, {
         customer: CustomerSnapshot | null;
         fetchedAt: number;
@@ -553,14 +581,31 @@ export default function Chat() {
     const [messageReloadKey, setMessageReloadKey] = useState(0);
     const selectedIdRef = useRef(selectedId);
     const selectedConversationRef = useRef(selectedConversation);
-    useEffect(() => {
+    useLayoutEffect(() => {
         selectedIdRef.current = selectedId;
         selectedConversationRef.current = selectedConversation;
     }, [selectedId, selectedConversation]);
 
     // Reply
-    const [reply, setReply] = useState('');
-    const [sending, setSending] = useState(false);
+    const [drafts, setDrafts] = useState<Record<string, string>>({});
+    const reply = selectedId ? drafts[selectedId] ?? '' : '';
+    const setReply = (value: string | ((previous: string) => string)) => {
+        if (!selectedId) return;
+        setDrafts((current) => ({ ...current, [selectedId]: typeof value === 'function' ? value(current[selectedId] ?? '') : value }));
+    };
+    const sendingRoomsRef = useRef(new Set<string>());
+    const [sendingRooms, setSendingRooms] = useState(new Set<string>());
+    const sending = !!selectedId && sendingRooms.has(selectedId);
+    const beginSend = (conversationId: string) => {
+        if (sendingRoomsRef.current.has(conversationId)) return false;
+        sendingRoomsRef.current.add(conversationId);
+        setSendingRooms(new Set(sendingRoomsRef.current));
+        return true;
+    };
+    const finishSend = (conversationId: string) => {
+        sendingRoomsRef.current.delete(conversationId);
+        setSendingRooms(new Set(sendingRoomsRef.current));
+    };
     // Quote-reply: the message the admin is replying to (null = normal send)
     const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
 
@@ -664,20 +709,20 @@ export default function Chat() {
                             );
                         }
                     };
-                    const rows = await chatInboxApi.listConversations(
-                        filters,
-                        (baseRows) => publishRows(baseRows, false),
-                        (notes) => {
-                            const latestFilters = conversationFiltersRef.current;
-                            if (
-                                requestVersion !== refresh.version
-                                || filters.channel !== latestFilters.channel
-                                || filters.status !== latestFilters.status
-                                || filters.search !== latestFilters.search
-                            ) return;
-                            setPrefetchedNotesByConversation(notes);
-                        },
-                    );
+                    let rows: ChatConversation[] = [];
+                    let after: ChatConversationCursor | null = null;
+                    for (let index = 0; index < conversationPagesRef.current; index += 1) {
+                        const page = await chatInboxApi.listConversations(
+                            { ...filters, after },
+                            (base) => publishRows([...rows, ...base.conversations], false),
+                        );
+                        if (requestVersion !== refresh.version) break;
+                        rows = [...rows, ...page.conversations];
+                        after = page.cursor;
+                        conversationCursorRef.current = after;
+                        setHasMoreConvs(page.hasMore);
+                        if (!page.hasMore) break;
+                    }
                     publishRows(rows, true);
                 } catch (e) {
                     if (requestVersion === refresh.version) {
@@ -690,6 +735,32 @@ export default function Chat() {
             setLoadingList(false);
         }
     }, [chatCacheUserId]);
+
+    async function loadMoreConversations() {
+        if (moreConversationsInFlightRef.current || conversationRefreshRef.current.inFlight || !hasMoreConvs || !conversationCursorRef.current) return;
+        moreConversationsInFlightRef.current = true;
+        setLoadingMoreConvs(true);
+        const version = conversationRefreshRef.current.version;
+        const filters = { ...conversationFiltersRef.current };
+        try {
+            const page = await chatInboxApi.listConversations({ ...filters, after: conversationCursorRef.current });
+            if (version !== conversationRefreshRef.current.version) return;
+            setConversations((current) => {
+                const byId = new Map(current.map((row) => [row.id, row]));
+                for (const row of page.conversations) if (!byId.has(row.id)) byId.set(row.id, row);
+                return [...byId.values()];
+            });
+            conversationPagesRef.current += 1;
+            conversationCursorRef.current = page.cursor;
+            setHasMoreConvs(page.hasMore);
+            setListErr(null);
+        } catch (error) {
+            if (version === conversationRefreshRef.current.version) setListErr((error as Error).message);
+        } finally {
+            moreConversationsInFlightRef.current = false;
+            setLoadingMoreConvs(false);
+        }
+    }
 
     const topBarContent = useMemo(() => ({
         title: t.chat.title,
@@ -731,6 +802,9 @@ export default function Chat() {
 
     useEffect(() => {
         const filters = { channel, status, search: debouncedSearch };
+        conversationPagesRef.current = 1;
+        conversationCursorRef.current = null;
+        setHasMoreConvs(false);
         const cacheId = conversationCacheId(filters);
         const hydrationVersion = ++conversationHydrationVersionRef.current;
         conversationNetworkCacheKeyRef.current = null;
@@ -1031,6 +1105,7 @@ export default function Chat() {
                     filter: `conversation_id=eq.${selectedId}`,
                 },
                 (payload) => {
+                    if (selectedIdRef.current !== selectedId) return;
                     const row = payload.new as ChatMessage;
                     setMessages((prev) => {
                         const next = mergeMessages(prev, [row]);
@@ -1043,7 +1118,7 @@ export default function Chat() {
                     // thread right now, so clear its unread badge immediately.
                     if (row.sender_type === 'customer') {
                         void markConversationRead(selectedId, row.created_at, 'open').catch((e) => {
-                            setMsgErr((e as Error).message);
+                            if (selectedIdRef.current === selectedId) setMsgErr((e as Error).message);
                         });
                     }
                 },
@@ -1058,6 +1133,7 @@ export default function Chat() {
                 },
                 (payload) => {
                     // e.g. a background LINE push flagged the message as undelivered
+                    if (selectedIdRef.current !== selectedId) return;
                     const row = payload.new as ChatMessage;
                     setMessages((prev) => {
                         const next = prev.map((m) => (m.id === row.id ? { ...m, ...row } : m));
@@ -1256,12 +1332,13 @@ export default function Chat() {
      *  (a file card here; a link to the customer on LINE). */
     async function sendFiles(files: File[]) {
         if (!files.length || !selectedId || sending) return;
-        setSending(true);
+        const conversationId = selectedId;
+        if (!beginSend(conversationId)) return;
         try {
             for (const file of files) {
-                const up = await uploadChatFile(file, selectedId);
+                const up = await uploadChatFile(file, conversationId);
                 const sent = await chatInboxApi.sendFileMessage({
-                    conversationId: selectedId,
+                    conversationId,
                     fileUrl: up.url,
                     fileName: up.name,
                     fileSize: up.size,
@@ -1273,7 +1350,7 @@ export default function Chat() {
         } catch (err) {
             alert(`ส่งไฟล์ไม่สำเร็จ: ${(err as Error).message}`);
         } finally {
-            setSending(false);
+            finishSend(conversationId);
         }
     }
 
@@ -1330,7 +1407,9 @@ export default function Chat() {
         const text = reply.trim();
         const imgs = pendingImages;
         if (!text && imgs.length === 0) return;
-        setSending(true);
+        const conversationId = selectedId;
+        const sentDraft = reply;
+        if (!beginSend(conversationId)) return;
         try {
             let content = text;
             if (imgs.length > 0) {
@@ -1340,13 +1419,13 @@ export default function Chat() {
                 // renders them inline, so no backend change is needed.
                 const urls: string[] = [];
                 for (const p of imgs) {
-                    urls.push(p.url ?? (await uploadChatImage(p.file!, selectedId)));
+                    urls.push(p.url ?? (await uploadChatImage(p.file!, conversationId)));
                 }
                 const md = urls.map((u) => `![image](${u})`).join('\n');
                 content = text ? `${text}\n${md}` : md;
             }
             const sent = await chatInboxApi.sendMessage({
-                conversationId: selectedId,
+                conversationId,
                 content,
                 contentType: imgs.length > 0 ? 'image' : 'text',
                 senderName: agentName,
@@ -1361,23 +1440,26 @@ export default function Chat() {
                     : null,
             });
             applySentMessage(sent);
-            setReply('');
-            setReplyingTo(null);
-            clearPending();
+            setDrafts((current) => current[conversationId] === sentDraft ? { ...current, [conversationId]: '' } : current);
+            if (selectedIdRef.current === conversationId) {
+                setReplyingTo(null);
+                clearPending();
+            }
         } catch (e) {
             alert(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
         } finally {
-            setSending(false);
+            finishSend(conversationId);
         }
     }
 
     /** Send a sticker as a one-tap image message (same pipeline as photos). */
     async function sendSticker(url: string) {
         if (!selectedId || sending) return;
-        setSending(true);
+        const conversationId = selectedId;
+        if (!beginSend(conversationId)) return;
         try {
             const sent = await chatInboxApi.sendMessage({
-                conversationId: selectedId,
+                conversationId,
                 content: `![image](${url})`,
                 contentType: 'image',
                 senderName: agentName,
@@ -1386,7 +1468,7 @@ export default function Chat() {
         } catch (e) {
             alert(`ส่งไม่สำเร็จ: ${(e as Error).message}`);
         } finally {
-            setSending(false);
+            finishSend(conversationId);
         }
     }
 
@@ -1588,6 +1670,12 @@ export default function Chat() {
                                 </div>
                             </button>
                         ))}
+                        {hasMoreConvs && (
+                            <Button variant="ghost" className="w-full my-2" disabled={loadingMoreConvs || loadingList} onClick={() => void loadMoreConversations()}>
+                                {loadingMoreConvs && <Loader2 size={14} className="animate-spin mr-1" />}
+                                โหลดแชตเพิ่มเติม
+                            </Button>
+                        )}
                     </div>
                 </Card>
 
@@ -1869,7 +1957,6 @@ export default function Chat() {
                     <div className="hidden lg:flex flex-shrink-0">
                         <ContactPanel
                             conversation={selectedConv}
-                            prefetchedNotes={prefetchedNotesByConversation.get(selectedConv.id)}
                             customerSnapshot={quoteCustomerPreview}
                             onCustomerSnapshotChanged={(customer) => {
                                 const customerId = customer?.id ?? selectedConv.customer_id;
@@ -1990,20 +2077,24 @@ function FileAttachment({ meta, fallback }: { meta: Record<string, unknown>; fal
     const publicUrl = typeof meta?.file_url === 'string' ? meta.file_url : null;
     const bucket = typeof meta?.file_bucket === 'string' ? meta.file_bucket : null;
     const path = typeof meta?.file_path === 'string' ? meta.file_path : null;
-    const [signedUrl, setSignedUrl] = useState<string | null>(null);
+    const publicFallback = useAttachmentUrl(bucket && path ? null : publicUrl);
+    const fileKey = `${bucket ?? ''}/${path ?? ''}`;
+    const [signed, setSigned] = useState<{ key: string; url: string } | null>(null);
     const [signing, setSigning] = useState(false);
     useEffect(() => {
         let cancelled = false;
-        if (!bucket || !path) { setSignedUrl(null); return; }
+        if (!bucket || !path) { setSigned(null); setSigning(false); return; }
         setSigning(true);
-        void supabase.storage.from(bucket).createSignedUrl(path, 300).then(({ data, error }) => {
-            if (cancelled) return;
-            setSignedUrl(error ? null : (data?.signedUrl ?? null));
-            setSigning(false);
-        });
-        return () => { cancelled = true; };
-    }, [bucket, path]);
-    const url = publicUrl || signedUrl;
+        const refresh = () => { void supabase.storage.from(bucket).createSignedUrl(path, 300).then(({ data, error }) => {
+                if (cancelled) return;
+                setSigned(error || !data?.signedUrl ? null : { key: fileKey, url: data.signedUrl });
+                setSigning(false);
+            }).catch(() => { if (!cancelled) { setSigned(null); setSigning(false); } }); };
+        refresh();
+        const timer = setInterval(refresh, 240_000);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, [bucket, path, fileKey]);
+    const url = bucket && path ? signed?.key === fileKey ? signed.url : null : publicFallback;
     const name = (typeof meta?.file_name === 'string' && meta.file_name) || 'ไฟล์แนบ';
     const size = typeof meta?.file_size === 'number' ? meta.file_size : null;
     const mime = typeof meta?.mime_type === 'string' ? meta.mime_type : '';
@@ -2065,7 +2156,10 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
     const isBot = msg.sender_type === 'bot';
     const isSystem = msg.sender_type === 'system';
     const replyTo = (msg.metadata as { reply_to?: { sender_type: string; sender_name?: string | null; preview: string } } | null)?.reply_to;
-    const pushFailed = !!(msg.metadata as { line_push_failed?: boolean } | null)?.line_push_failed;
+    const deliveryState = typeof msg.metadata?.outbound_delivery === 'string'
+        ? msg.metadata.outbound_delivery
+        : msg.metadata?.line_push_failed || msg.metadata?.messenger_push_failed ? 'failed' : null;
+    const deliveryNeedsReview = deliveryState === 'failed' || deliveryState === 'unsupported' || deliveryState === 'pending';
 
     if (isSystem) {
         return (
@@ -2160,9 +2254,9 @@ function MessageRow({ msg, onReply }: { msg: ChatMessage; onReply?: (m: ChatMess
                         </button>
                     )}
                 </div>
-                {pushFailed && !isCustomer && (
-                    <div className={`mt-0.5 px-1 text-[10px] text-rose-500 flex items-center gap-1 ${isCustomer ? '' : 'justify-end'}`}>
-                        <AlertCircle size={11} /> ส่งไม่ถึงลูกค้า (LINE) — โควต้าอาจเต็ม
+                {deliveryNeedsReview && !isCustomer && (
+                    <div className={`mt-0.5 px-1 text-[10px] ${deliveryState === 'pending' ? 'text-amber-600' : 'text-rose-500'} flex items-center gap-1 justify-end`}>
+                        <AlertCircle size={11} /> {deliveryState === 'pending' ? 'รอยืนยันการส่งถึงลูกค้า' : deliveryState === 'unsupported' ? 'ช่องทางนี้ยังส่งถึงลูกค้าไม่ได้' : 'ส่งไม่ถึงลูกค้า — กรุณาตรวจสถานะช่องทาง'}
                     </div>
                 )}
             </div>

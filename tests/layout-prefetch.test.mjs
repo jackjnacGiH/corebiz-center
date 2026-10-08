@@ -9,8 +9,9 @@ const compiled = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } },
 ).outputText;
 
-function prefetchesAt(pathname) {
-  const effects = [], timers = [], warmed = [];
+async function prefetchesAt(pathname, cancel = null) {
+  const effects = [], timers = new Map(), warmed = [];
+  let nextTimer = 0;
   const react = {
     useState: initial => [initial, () => {}],
     useRef: initial => ({ current: initial }),
@@ -21,8 +22,8 @@ function prefetchesAt(pathname) {
   const exports = {};
   runInNewContext(compiled, {
     exports,
-    setTimeout: callback => { timers.push(callback); return timers.length; },
-    clearTimeout: () => {},
+    setTimeout: (callback, delay) => { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
+    clearTimeout: id => timers.delete(id),
     require(name) {
       if (name === 'react') return { ...react, default: react };
       if (name === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null };
@@ -38,7 +39,7 @@ function prefetchesAt(pathname) {
       if (name === '../../lib/shipping-api') return {
         shippingApi: { initial: () => { warmed.push('shipping:initial'); return Promise.resolve(); } },
       };
-      if (name === './Sidebar' || name === './TopBar' || name === '../BackToTop') return { default: name };
+      if (name === './Sidebar' || name === './TopBar' || name === '../BackToTop' || name === './MobileSidebarDrawerHost') return { default: name };
       if (name === '@/lib/utils') return { cn: (...values) => values.filter(Boolean).join(' ') };
       if (name === '../../lib/cache') return {
         CK: { products: 'products', categories: 'categories', warehouses: 'warehouses', customers: 'customers' },
@@ -52,18 +53,31 @@ function prefetchesAt(pathname) {
     },
   });
   exports.default();
-  for (const setup of effects) setup();
-  for (const timer of timers) timer();
+  const cleanups = effects.map(setup => setup());
+  const dispose = () => { for (const cleanup of cleanups) cleanup?.(); };
+  if (cancel === 'before-timer') dispose();
+  for (const [id, timer] of [...timers.entries()].sort((a, b) => a[1].delay - b[1].delay)) {
+    if (!timers.has(id)) continue;
+    timers.delete(id);
+    const request = timer.callback();
+    if (cancel === 'during-import') dispose();
+    await request;
+  }
   return warmed;
 }
 
-test('Shipping does not start full-list background prefetches', () => {
-  assert.deepEqual(prefetchesAt('/shipping'), []);
-  assert.deepEqual(prefetchesAt('/shipping/'), []);
+test('Shipping does not start full-list background prefetches', async () => {
+  assert.deepEqual(await prefetchesAt('/shipping'), []);
+  assert.deepEqual(await prefetchesAt('/shipping/'), []);
 });
 
-test('other routes keep the existing background cache warm-up', () => {
-  assert.deepEqual(prefetchesAt('/inventory'), [
+test('other routes keep the existing background cache warm-up', async () => {
+  assert.deepEqual(await prefetchesAt('/inventory'), [
     'shipping:initial', 'products', 'categories', 'warehouses', 'customers',
   ]);
+});
+
+test('route/auth effect cancellation prevents shipping and full-list reads before or during its optional import', async () => {
+  assert.deepEqual(await prefetchesAt('/inventory', 'before-timer'), []);
+  assert.deepEqual(await prefetchesAt('/inventory', 'during-import'), []);
 });

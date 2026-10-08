@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getPortalProfile, type PortalProfile } from "@/lib/supabase-browser";
+import { getPortalProfile, supabaseBrowser, type PortalProfile } from "@/lib/supabase-browser";
 
 /**
  * Member price hint on product pages. For a logged-in customer linked to a
@@ -11,12 +11,19 @@ import { getPortalProfile, type PortalProfile } from "@/lib/supabase-browser";
  */
 export default function TierPrice({ price }: { price: number }) {
   const [p, setP] = useState<PortalProfile | null>(null);
+  const [identityVersion, setIdentityVersion] = useState(0);
+  useEffect(() => {
+    const { data } = supabaseBrowser().auth.onAuthStateChange(event => {
+      if (["SIGNED_IN","SIGNED_OUT","USER_UPDATED"].includes(event)) { setP(null); setIdentityVersion(version => version + 1); }
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     let mounted = true;
-    getPortalProfile().then((prof) => { if (mounted) setP(prof); });
+    getPortalProfile().then((prof) => { if (mounted) setP(prof); }, () => { if (mounted) setP(null); });
     return () => { mounted = false; };
-  }, []);
+  }, [identityVersion]);
 
   if (!p || Number(p.discount_percent) <= 0 || price <= 0) return null;
 

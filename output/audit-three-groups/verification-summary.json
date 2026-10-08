@@ -1,0 +1,42 @@
+{
+  "observedAt": "2026-10-08",
+  "baseCommit": "23b14899c21d2e46d7e0c95ba2b47e92dd529ce6",
+  "branch": "codex/audit-three-groups",
+  "productionMutations": false,
+  "tests": {
+    "passed": 516,
+    "failed": 0,
+    "skipped": 0,
+    "liveNetworkBlocked": true
+  },
+  "lint": {
+    "errors": 0,
+    "preexistingWarnings": 3
+  },
+  "build": {
+    "corebiz": "passed",
+    "storefront": "passed",
+    "storefrontPages": 730
+  },
+  "edge": {
+    "deno": "2.9.6",
+    "entrypoints": 13,
+    "result": "passed"
+  },
+  "review": {
+    "auditedFindings": 29,
+    "rlsPoliciesVerified": 8,
+    "rlsPoliciesOptimized": 7,
+    "structuredSearchMetadataBoundary": "passed"
+  },
+  "acceptancePending": [
+    "Historical order stock review",
+    "Legacy public attachment migration and retirement date",
+    "Staging multi-session transactions and provider tests",
+    "GitHub main/production protections",
+    "Real-device cold/warm p50/p95",
+    "Meta full-channel readiness",
+    "Leaked-password protection plan/config and extension dependency review",
+    "Dev-only ESLint glob chain upstream advisory"
+  ]
+}

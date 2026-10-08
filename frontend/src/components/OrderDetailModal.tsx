@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import QuoteDocument, { type OrgInfo, formatThaiAddress } from './QuoteDocument';
 import EditableQuoteItems, { type EditLine } from './EditableQuoteItems';
 import PrintMenu from './PrintMenu';
+import { useAsyncScope } from '../lib/useAsyncScope';
 
 interface Props {
     isOpen: boolean;
@@ -66,7 +67,9 @@ export default function OrderDetailModal({
     const navigate = useNavigate();
     const { t } = useLanguage();
     const { profile } = useAuth();
-    const [order, setOrder] = useState<OrderWithCustomer | null>(null);
+    const [loadedOrder, setOrder] = useState<OrderWithCustomer | null>(null);
+    const order = isOpen && loadedOrder?.id === orderId ? loadedOrder : null;
+    const requestScope = useAsyncScope(isOpen ? orderId : null);
     const [items, setItems] = useState<OrderItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState<string | null>(null);
@@ -83,12 +86,16 @@ export default function OrderDetailModal({
     }, [isOpen]);
 
     async function enterEdit() {
+        if (!order) return;
+        const isCurrent = requestScope.capture();
         setErr(null);
         try {
             if (products.length === 0) setProducts(await productsApi.list());
+            if (!isCurrent()) return;
             const custId = order?.customer?.id;
             if (custId) {
                 const b = await tierApi.customerBenefit(custId).catch(() => null);
+                if (!isCurrent()) return;
                 setMemberPct(b ? Number(b.discount_percent) || 0 : 0);
                 setMemberLabel(b?.tier_label ?? '');
             } else {
@@ -96,53 +103,66 @@ export default function OrderDetailModal({
             }
             setEditing(true);
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         }
     }
 
     async function saveItems(lines: EditLine[], discount: number) {
         if (!order) return;
+        const isCurrent = requestScope.capture();
         setSavingItems(true);
         setErr(null);
         try {
+            const version = (order as OrderWithCustomer & { version?: number }).version;
+            if (version === undefined) throw new Error('กรุณาโหลดคำสั่งซื้อใหม่ก่อนบันทึก');
             await ordersApi.updateItems(order.id, lines.map((l) => ({
+                id: l.id, variant_id: l.variant_id,
                 product_id: l.product_id ?? undefined, sku: l.sku, product_name: l.product_name,
-                quantity: l.quantity, unit_price: l.unit_price, unit: l.unit ?? null, discount: 0,
-            })), discount, Number((order as { shipping_fee?: number }).shipping_fee ?? 0));
+                quantity: l.quantity, unit_price: l.unit_price, unit: l.unit ?? null, discount: l.discount,
+            })), discount, Number((order as { shipping_fee?: number }).shipping_fee ?? 0), version);
+            onStatusChange?.();
+            if (!isCurrent()) return;
             const fresh = await ordersApi.getById(order.id);
+            if (!isCurrent()) return;
             setOrder(fresh.order);
             setItems(fresh.items);
             setEditing(false);
-            onStatusChange?.();
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         } finally {
-            setSavingItems(false);
+            if (isCurrent()) setSavingItems(false);
         }
     }
 
     useEffect(() => {
-        if (!isOpen || !orderId) return;
+        const isCurrent = requestScope.capture();
+        setOrder(null);
+        setItems([]);
+        setEditing(false);
+        setSavingItems(false);
+        if (!isOpen || !orderId) { setLoading(false); return; }
         setLoading(true);
         setErr(null);
         ordersApi
             .getById(orderId)
             .then(({ order, items }) => {
+                if (!isCurrent()) return;
                 setOrder(order);
                 setItems(items);
             })
-            .catch((e) => setErr((e as Error).message))
-            .finally(() => setLoading(false));
-    }, [isOpen, orderId]);
+            .catch((e) => { if (isCurrent()) setErr((e as Error).message); })
+            .finally(() => { if (isCurrent()) setLoading(false); });
+    }, [isOpen, orderId, requestScope]);
 
     async function handleStatusChange(newStatus: OrderStatus) {
         if (!order) return;
+        const isCurrent = requestScope.capture();
         try {
             await ordersApi.updateStatus(order.id, newStatus);
-            setOrder({ ...order, status: newStatus });
             onStatusChange?.();
+            if (isCurrent()) setOrder({ ...order, status: newStatus });
         } catch (e) {
-            setErr((e as Error).message);
+            if (isCurrent()) setErr((e as Error).message);
         }
     }
 
@@ -258,11 +278,12 @@ export default function OrderDetailModal({
                             {editing ? (
                                 <EditableQuoteItems
                                     initial={items.map((it) => ({
+                                        id: it.id, variant_id: (it as OrderItem & { variant_id?: string | null }).variant_id,
                                         product_id: it.product_id, sku: it.sku, product_name: it.product_name,
-                                        quantity: it.quantity, unit_price: Number(it.unit_price), discount: 0,
+                                        quantity: it.quantity, unit_price: Number(it.unit_price), discount: Number(it.discount ?? 0),
                                         unit: (it as { unit?: string | null }).unit ?? null,
                                     }))}
-                                    initialDiscount={Number(order.discount) || items.reduce((s, it) => s + Number((it as { discount?: number }).discount ?? 0), 0)}
+                                    initialDiscount={Number(order.discount) || 0}
                                     memberPct={memberPct}
                                     memberLabel={memberLabel}
                                     products={products}

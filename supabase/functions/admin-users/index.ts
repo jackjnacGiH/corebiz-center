@@ -25,7 +25,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Roles assignable in Phase 1 (the three that have full RLS data access).
+// Staff roles assignable from the Users page.
 const ASSIGNABLE_ROLES = ["owner", "admin", "staff", "agent", "viewer"];
 
 function json(body: unknown, status = 200) {
@@ -181,8 +181,13 @@ Deno.serve(async (req: Request) => {
         return fail("ปิดการใช้งาน Owner คนสุดท้ายไม่ได้");
       const { error } = await admin.from("profiles").update({ is_active: active }).eq("id", id);
       if (error) return fail(error.message);
-      // Force sign-out when deactivating (revoke sessions).
-      if (!active) await admin.auth.admin.signOut(id).catch(() => {});
+      // Ban/unban refresh and new sign-ins through the supported Auth Admin API.
+      const { error: banError } = await admin.auth.admin.updateUserById(id, { ban_duration: active ? "none" : "876000h" });
+      if (banError) return fail("สถานะบัญชีเปลี่ยนแล้ว แต่ตั้งค่า Auth ไม่สำเร็จ: " + banError.message);
+      if (!active) {
+        const { error: revokeError } = await admin.rpc("revoke_user_sessions_internal", { p_user_id: id });
+        if (revokeError) return fail("ปิดบัญชีแล้ว แต่ถอน session ไม่สำเร็จ: " + revokeError.message);
+      }
       await audit(active ? "user.activate" : "user.deactivate", id, {});
       return ok();
     }

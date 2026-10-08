@@ -2,17 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
-const require = createRequire(
-  join(
-    process.env.CUSTOMER_PRICING_TEST_RUNTIME ||
-      process.env.SHIPPING_TEST_RUNTIME ||
-      join(tmpdir(), "corebiz-shipping-test-runtime"),
-    "package.json",
-  ),
-);
+const require = createRequire(import.meta.url);
 const { PGlite } = require("@electric-sql/pglite");
 
 const IDS = {

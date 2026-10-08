@@ -24,6 +24,21 @@ export default function CartDrawer() {
   const [memberPct, setMemberPct] = useState(0);
   const [memberTier, setMemberTier] = useState("");
   const [memberPending, setMemberPending] = useState(false);
+  const [profileVersion, setProfileVersion] = useState(0);
+
+  useEffect(() => {
+    let identity: string | null | undefined;
+    const { data } = supabaseBrowser().auth.onAuthStateChange((_event, session) => {
+      const next = session?.user.id ?? null;
+      if (identity !== undefined && identity !== next) {
+        setName(""); setPhone(""); setCompany(""); setEmail(""); setNote(""); setDoneCode(null);
+        setMember(false); setMemberPct(0); setMemberTier(""); setMemberPending(false);
+        setProfileVersion(version => version + 1);
+      }
+      identity = next;
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   // Logged-in member → prefill the contact form from their portal profile
   // (only fields still empty, so anything they typed is never overwritten).
@@ -50,9 +65,9 @@ export default function CartDrawer() {
         setEmail((v) => v || u.email || "");
         setName((v) => v || (u.user_metadata?.full_name as string | undefined) || "");
       }
-    })();
+    })().catch(() => { if (live) setErr("โหลดข้อมูลสมาชิกไม่สำเร็จ กรุณาปิดแล้วเปิดตะกร้าอีกครั้ง"); });
     return () => { live = false; };
-  }, [open]);
+  }, [open, profileVersion]);
 
   const vat = Math.round(subtotal * 0.07 * 100) / 100;
   const total = subtotal + vat;
@@ -158,7 +173,7 @@ export default function CartDrawer() {
                         <button type="button" onClick={() => setQty(it.sku, it.qty - 1)} className="px-2 text-neutral-500 hover:bg-neutral-50">−</button>
                         <input
                           type="number"
-                          min={1}
+                          min={it.moq || 1}
                           value={it.qty}
                           onChange={(e) => setQty(it.sku, Number(e.target.value) || 1)}
                           className="w-12 text-center outline-none py-1 tabular-nums text-sm"
