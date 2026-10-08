@@ -8,6 +8,11 @@ const basePath = process.env.SHOP_BASE_PATH ?? "";
 const nextConfig: NextConfig = {
   basePath,
   env: { NEXT_PUBLIC_SHOP_BASE_PATH: basePath },
+  experimental: {
+    // Bound build-time catalog reads to two workers with two pages each.
+    cpus: 2,
+    staticGenerationMaxConcurrency: 2,
+  },
   async redirects() {
     return [
       // SEO continuity: the shop used to live under /shop.
