@@ -25,11 +25,22 @@ export interface PromptSpeedBillingFile {
   sheet_name: string;
   rows: PromptSpeedBillingRow[];
   duplicate_rows: number;
+  duplicate_tracking_codes: string[];
   total_amount: number;
 }
 
-const fail = (code: string): never => {
-  throw new Error(code);
+export class ShippingBillingFileError extends Error {
+  tracking_codes: string[];
+
+  constructor(code: string, trackingCodes: string[] = []) {
+    super(code);
+    this.name = "ShippingBillingFileError";
+    this.tracking_codes = trackingCodes;
+  }
+}
+
+const fail = (code: string, trackingCodes: string[] = []): never => {
+  throw new ShippingBillingFileError(code, trackingCodes);
 };
 
 const decodeXml = (value: string) => value
@@ -154,6 +165,7 @@ export async function parsePromptSpeedBillingFile(
     const read = (row: Map<number, string>, header: typeof REQUIRED_HEADERS[number]) =>
       row.get(headerIndexes.get(header) ?? -1) ?? "";
     const found = new Map<string, PromptSpeedBillingRow>();
+    const duplicateTrackingCodes = new Set<string>();
     let duplicateRows = 0;
     for (const row of rows.slice(headerRow + 1)) {
       const trackingCode = read(row, "tracking_code").trim().toUpperCase();
@@ -174,7 +186,10 @@ export async function parsePromptSpeedBillingFile(
       const previous = found.get(trackingCode);
       if (previous) {
         duplicateRows += 1;
-        if (JSON.stringify(previous) !== JSON.stringify(parsed)) fail("billing_duplicate_conflict");
+        duplicateTrackingCodes.add(trackingCode);
+        if (JSON.stringify(previous) !== JSON.stringify(parsed)) {
+          fail("billing_duplicate_conflict", [trackingCode]);
+        }
         continue;
       }
       found.set(trackingCode, parsed);
@@ -188,6 +203,7 @@ export async function parsePromptSpeedBillingFile(
       sheet_name: sheet.name.slice(0, 150),
       rows: billingRows,
       duplicate_rows: duplicateRows,
+      duplicate_tracking_codes: [...duplicateTrackingCodes].sort(),
       total_amount: addMoney(...billingRows.map((row) => row.billed_amount)),
     };
   }
