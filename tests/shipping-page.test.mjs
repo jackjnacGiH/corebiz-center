@@ -664,6 +664,14 @@ test('actual list card stays compact until expanded and preserves shipment actio
   assert.match(JSON.stringify(billedTree), /32\.00/);
   const billingBlock = nodes(billedTree).find(node => node.props?.['data-testid'] === 'shipment-billing');
   assert.ok(billingBlock, 'billing status is a dedicated compact-list column');
+  assert.doesNotMatch(billingBlock.props.className, /rounded|border|bg-slate|px-|py-/, 'billing details render without a surrounding frame');
+  const unbilledTree = renderCard(tracked);
+  const unbilledBlock = nodes(unbilledTree).find(node => node.props?.['data-testid'] === 'shipment-billing');
+  const unbilledStatus = nodes(unbilledBlock).find(node => node.props?.className?.includes('text-orange-600'));
+  assert.ok(unbilledStatus, 'unbilled status is highlighted in orange');
+  const summaryBlock = nodes(unbilledTree).find(node => node.props?.['data-shipment-block'] === 'summary');
+  assert.match(summaryBlock.props.className, /items-start/);
+  assert.match(summaryBlock.props.className, /_150px\]/, 'desktop rows reserve a fixed-width status area');
   const orderLinked = renderCard({ ...tracked, order_id: 'order-1', order_shipping_fee: 45.5 }, { expanded: true });
   assert.match(JSON.stringify(orderLinked), /45\.50/, 'The expanded order-linked row keeps the customer-billed shipping fee separate');
 
