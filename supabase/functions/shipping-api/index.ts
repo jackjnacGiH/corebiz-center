@@ -56,13 +56,7 @@ const record = (v: unknown): Record<string, unknown> =>
     : {};
 const small = (v: unknown, max = 100) =>
   typeof v === "string" ? v.trim().slice(0, max) : "";
-/**
- * Supabase's Edge gateway verifies the bearer JWT before this function runs
- * (`verify_jwt = true`). Reading the already-verified subject locally avoids a
- * second Auth HTTP round-trip on every Shipping read, which otherwise dominates
- * the page load from Thailand to the Sydney project region.
- */
-function verifiedGatewayUserId(token: string): string | null {
+function claimedUserId(token: string): string | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3 || !parts[1]) return null;
@@ -202,8 +196,13 @@ Deno.serve(async (req) => {
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
   try {
-    const userId = verifiedGatewayUserId(token);
-    if (!userId) return fail("unauthorized", 401);
+    const claimedId = claimedUserId(token);
+    if (!claimedId) return fail("unauthorized", 401);
+    const { data: authData, error: authError } = await db.auth.getUser(token);
+    if (authError || !authData.user || authData.user.id !== claimedId) {
+      return fail("unauthorized", 401);
+    }
+    const userId = authData.user.id;
     const [
       { data: profile, error: profileErr },
       { data: grant, error: grantErr },

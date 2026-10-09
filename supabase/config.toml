@@ -1,0 +1,4 @@
+project_id = "owoedccmuqnzdtxvywgt"
+
+[functions.shipping-api]
+verify_jwt = false
