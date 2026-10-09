@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
     if (!canUseShipping(profile, !!grant)) return fail("forbidden", 403);
     const manager = ["owner", "admin"].includes(profile!.role);
     const raw = await req.text();
-    if (raw.length > 150000) return fail("payload_too_large", 413);
+    if (raw.length > 1500000) return fail("payload_too_large", 413);
     let b: Record<string, unknown>;
     try {
       b = record(JSON.parse(raw));
@@ -238,6 +238,8 @@ Deno.serve(async (req) => {
       return fail("invalid_payload");
     }
     const action = small(b.action);
+    if (action !== "import_billing" && raw.length > 150000)
+      return fail("payload_too_large", 413);
     const config: ProviderConfig = {
       environment: settings.environment,
       appId:
@@ -359,6 +361,40 @@ Deno.serve(async (req) => {
       return reply(await compareShippingRates(config, parseDraft(b.draft)));
     }
     if (action === "list") return reply(await loadList(b.page, b.search));
+    if (action === "import_billing") {
+      if (!manager) return fail("forbidden", 403);
+      const rows = Array.isArray(b.rows) ? b.rows : [];
+      const fileName = small(b.file_name, 255);
+      const fileSha256 = small(b.file_sha256, 64).toLocaleLowerCase("en-US");
+      const sheetName = small(b.sheet_name, 150);
+      if (
+        !fileName || !sheetName || !/^[0-9a-f]{64}$/.test(fileSha256) ||
+        rows.length < 1 || rows.length > 5000 ||
+        rows.some((value) => {
+          const row = record(value);
+          const tracking = small(row.tracking_code, 80).toUpperCase();
+          const amounts = [
+            row.shipping_amount,
+            row.remote_area_fee,
+            row.cod_fee,
+            row.fee_vat,
+          ].map(Number);
+          return !/^[A-Z0-9-]{5,80}$/.test(tracking) ||
+            amounts.some((amount) =>
+              !Number.isFinite(amount) || amount < 0 || amount > 10000000
+            );
+        })
+      ) return fail("invalid_billing_import");
+      const { data, error } = await db.rpc("import_shipping_billing", {
+        p_file_name: fileName,
+        p_file_sha256: fileSha256,
+        p_sheet_name: sheetName,
+        p_rows: rows,
+        p_uploaded_by: userId,
+      });
+      if (error) throw error;
+      return reply(record(data));
+    }
     if (action === "order_options") {
       const search = small(b.search, 60).replace(/[%_\\]/g, "");
       const { data, error } = await db

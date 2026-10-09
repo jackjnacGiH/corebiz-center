@@ -88,6 +88,19 @@ function mount(query = '') {
         session: { user: { id: 'user-1' } }, profile: { role: 'owner' },
       }) };
       if (name === '@/lib/shipping-api') return { shippingApi: api };
+      if (name === '@/lib/shipping-billing') return {
+        parsePromptSpeedBillingFile: async file => ({
+          file_name: file.name,
+          file_sha256: 'a'.repeat(64),
+          sheet_name: 'รายละเอียด',
+          rows: [{
+            tracking_code: 'TH011396TFB46F', shipping_amount: 32,
+            remote_area_fee: 0, cod_fee: 0, fee_vat: 0, billed_amount: 32,
+          }],
+          duplicate_rows: 0,
+          total_amount: 32,
+        }),
+      };
       if (name === '@/lib/shipping-validation') return {
         shippingDraftFieldIssueMessage: issue => `${issue.field}:${issue.reason}`,
       };
@@ -195,6 +208,27 @@ test('shipment list expands only one row and collapses it again', async () => {
   h.card(first.id).props.onToggle();
   h.search('another recipient');
   assert.equal(h.card(first.id).props.expanded, false, 'Changing the search closes the open row immediately');
+  h.unmount();
+});
+
+test('manager can upload a PromptSpeed workbook and sees the matched import summary', async () => {
+  const h = await readyList([shipment('billing-row')]);
+  const input = h.find(node => node.type === 'input' && node.props['aria-label'] === 'uploadBilling');
+  assert.ok(input, 'manager sees the billing file input');
+  const target = { files: [{ name: 'statement.xlsx' }], value: 'statement.xlsx' };
+  input.props.onChange({ target });
+  assert.equal(target.value, '', 'the file input resets so the same file can be selected again');
+  await settle(); h.render();
+  const request = h.requests.find(candidate => candidate.action === 'importBilling');
+  assert.ok(request, 'normalized billing rows are sent through the shipping API');
+  assert.equal(request.args[0].rows[0].tracking_code, 'TH011396TFB46F');
+  request.resolve({
+    import_id: 'import-1', duplicate_file: false, total_rows: 1,
+    matched_rows: 1, unmatched_rows: 0, total_amount: 32,
+  });
+  await settle();
+  const notice = h.find(node => node.props?.role === 'status' && JSON.stringify(node).includes('billingImported'));
+  assert.ok(notice);
   h.unmount();
 });
 
@@ -625,6 +659,11 @@ test('actual list card stays compact until expanded and preserves shipment actio
   assert.match(JSON.stringify(pricedTree), /providerShippingCharge/);
   assert.match(JSON.stringify(renderCard(tracked)), /shippingFeeUnavailable/, 'Missing provider charges use an explicit fallback');
   assert.match(JSON.stringify(renderCard({ ...tracked, provider_charge: 0 })), /0\.00/, 'A confirmed zero provider charge remains visible');
+  const billedTree = renderCard({ ...tracked, provider_billed_amount: 32, provider_billed_at: '2026-10-09T00:00:00Z' });
+  assert.match(JSON.stringify(billedTree), /providerBilled/);
+  assert.match(JSON.stringify(billedTree), /32\.00/);
+  const billingBlock = nodes(billedTree).find(node => node.props?.['data-testid'] === 'shipment-billing');
+  assert.ok(billingBlock, 'billing status is a dedicated compact-list column');
   const orderLinked = renderCard({ ...tracked, order_id: 'order-1', order_shipping_fee: 45.5 }, { expanded: true });
   assert.match(JSON.stringify(orderLinked), /45\.50/, 'The expanded order-linked row keeps the customer-billed shipping fee separate');
 

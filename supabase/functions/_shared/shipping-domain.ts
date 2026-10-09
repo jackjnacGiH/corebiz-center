@@ -176,6 +176,9 @@ export interface Shipment {
   provider_updated_at?: string | null;
   provider_charge?: number | null;
   provider_charge_checked_at?: string | null;
+  provider_billed_amount?: number | null;
+  provider_billed_at?: string | null;
+  provider_billing_import_id?: string | null;
   version: number;
   created_at: string;
   updated_at: string;
