@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Loader2,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { useLanguage } from "@/i18n";
 import { useAuth } from "@/lib/AuthProvider";
@@ -55,6 +56,7 @@ import {
 import { printElement } from "@/lib/print";
 import { providerLabelResource } from "@/lib/provider-label";
 import { shippingDraftFieldIssueMessage } from "@/lib/shipping-validation";
+import { parsePromptSpeedBillingFile } from "@/lib/shipping-billing";
 
 type ShippingLabelModule = typeof import("@/components/shipping/ShippingLabel");
 let labelModulePromise: Promise<ShippingLabelModule> | undefined;
@@ -139,6 +141,7 @@ export default function Shipping() {
   const [labelModule, setLabelModule] = useState<ShippingLabelModule | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [bulkStatusBusy, setBulkStatusBusy] = useState(false);
+  const [billingUploadBusy, setBillingUploadBusy] = useState(false);
   const [listRevision, setListRevision] = useState(0);
   const [listAction, setListAction] = useState<{
     shipmentId: string;
@@ -161,6 +164,7 @@ export default function Shipping() {
   const labelReturnFocus = useRef<HTMLElement | null>(null);
   const listProviderLabelObjectUrls = useRef(new Set<string>());
   const providerLabelObjectUrl = useRef("");
+  const billingFileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     mounted.current = true;
@@ -602,6 +606,29 @@ export default function Shipping() {
       if (mounted.current) setBulkStatusBusy(false);
     }
   }
+  async function importBillingFile(file: File) {
+    if (busy || billingUploadBusy || !bootstrap?.manager) return;
+    setBillingUploadBusy(true);
+    try {
+      await run(async () => {
+        const parsed = await parsePromptSpeedBillingFile(file);
+        const result = await shippingApi.importBilling(parsed);
+        const total = new Intl.NumberFormat(language === "th" ? "th-TH" : "en-GB", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(Number(result.total_amount));
+        setNotice(
+          `${result.duplicate_file ? c.billingAlreadyImported : c.billingImported}: ` +
+          `${c.billingMatched} ${result.matched_rows}/${result.total_rows}, ` +
+          `${c.billingUnmatched} ${result.unmatched_rows}, ` +
+          `${c.billingTotal} ${total} ${c.baht}`,
+        );
+        setListRevision((revision) => revision + 1);
+      });
+    } finally {
+      if (mounted.current) setBillingUploadBusy(false);
+    }
+  }
   function openListCarrierLabel(target: Shipment) {
     if (busy || listActionInFlight.current) return;
     // Reserve the tab during the user's click so popup blockers do not reject
@@ -851,6 +878,17 @@ export default function Shipping() {
     carrier_required: c.carrierRequired,
     tracking_required: c.trackingRequired,
     invalid_tracking: c.invalidTracking,
+    billing_invalid_file_type: c.billingInvalidFileType,
+    billing_invalid_file_size: c.billingInvalidFileSize,
+    billing_invalid_workbook: c.billingInvalidWorkbook,
+    billing_missing_columns: c.billingMissingColumns,
+    billing_invalid_amount: c.billingInvalidAmount,
+    billing_invalid_tracking: c.billingInvalidTracking,
+    billing_duplicate_conflict: c.billingDuplicateConflict,
+    billing_too_many_rows: c.billingTooManyRows,
+    billing_no_rows: c.billingNoRows,
+    invalid_billing_import: c.billingInvalidWorkbook,
+    payload_too_large: c.billingInvalidFileSize,
     popup_blocked: c.popupBlocked,
   };
   const errorMessage = errorFieldIssue
@@ -988,7 +1026,34 @@ export default function Shipping() {
           )}
           {view === "list" && (
             <section className="space-y-3" aria-busy={listLoading}>
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-end gap-2">
+                {bootstrap.manager && (
+                  <>
+                    <input
+                      ref={billingFileInput}
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      className="hidden"
+                      aria-label={c.uploadBilling}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (file) void importBillingFile(file);
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy || listLoading || billingUploadBusy}
+                      onClick={() => billingFileInput.current?.click()}
+                    >
+                      {billingUploadBusy
+                        ? <Loader2 size={16} className="animate-spin" />
+                        : <Upload size={16} />}
+                      {billingUploadBusy ? c.uploadingBilling : c.uploadBilling}
+                    </Button>
+                  </>
+                )}
                 <Button
                   type="button"
                   variant="outline"

@@ -110,6 +110,10 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
         auth: { getUser: async () => { authCalls += 1; return { data: { user: { id: actor } }, error: null }; } },
         from: table => new Query(table),
         rpc: async (name, args) => {
+          if (name === 'import_shipping_billing') {
+            const billingImport = provider?.billingImport ?? noProvider;
+            return { data: await billingImport(args), error: null };
+          }
           assert.equal(name, 'shipping_flash_delivered_snapshot');
           const snapshot = await (provider?.flashTracking ?? (async () => null))(args.p_tracking);
           return {
@@ -212,6 +216,45 @@ test('initial load returns authorization settings and the first shipment page in
   for (const table of ['profiles', 'shipping_permissions', 'shipping_settings']) {
     assert.equal(h.queries.filter(query => query.table === table).length, 1, `${table} is read once`);
   }
+});
+
+test('billing statement import is manager-only and passes validated normalized rows to the database function', async () => {
+  const rows = [{
+    tracking_code: 'TH011396TFB46F',
+    shipping_amount: 32,
+    remote_area_fee: 0,
+    cod_fee: 0,
+    fee_vat: 0,
+    billed_amount: 32,
+  }];
+  let calls = 0;
+  const h = api({ provider: { billingImport: async args => {
+    calls += 1;
+    assert.equal(args.p_file_name, 'statement.xlsx');
+    assert.equal(args.p_sheet_name, 'รายละเอียด');
+    assert.equal(args.p_file_sha256, 'a'.repeat(64));
+    assert.equal(JSON.stringify(args.p_rows), JSON.stringify(rows));
+    assert.equal(args.p_uploaded_by, actor);
+    return {
+      import_id: id(90), duplicate_file: false, total_rows: 1,
+      matched_rows: 1, unmatched_rows: 0, total_amount: 32,
+    };
+  } } });
+  const result = await h.call('import_billing', {
+    file_name: 'statement.xlsx', file_sha256: 'a'.repeat(64),
+    sheet_name: 'รายละเอียด', rows,
+  });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.matched_rows, 1);
+  assert.equal(calls, 1);
+
+  const staff = api({ role: 'staff', grant: true, provider: { billingImport: async () => {
+    throw new Error('staff must not reach billing import');
+  } } });
+  assert.equal((await staff.call('import_billing', {
+    file_name: 'statement.xlsx', file_sha256: 'a'.repeat(64),
+    sheet_name: 'รายละเอียด', rows,
+  })).status, 403);
 });
 
 test('shipment list exposes the billed order shipping fee without inventing a provider charge', async () => {

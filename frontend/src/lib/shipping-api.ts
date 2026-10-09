@@ -12,6 +12,7 @@ import type {
   ShippingDraftFieldIssue,
 } from "../../../supabase/functions/_shared/shipping-domain";
 import { isShippingDraftFieldIssue } from "../../../supabase/functions/_shared/shipping-domain";
+import type { PromptSpeedBillingFile } from "./shipping-billing";
 export type {
   Shipment,
   ShippingDraft,
@@ -92,6 +93,14 @@ export interface ShippingProductOption {
   code: string;
   name: string;
   weight: number;
+}
+export interface ShippingBillingImportResult {
+  import_id: string;
+  duplicate_file: boolean;
+  total_rows: number;
+  matched_rows: number;
+  unmatched_rows: number;
+  total_amount: number;
 }
 export class ShippingApiError extends Error {
   shipment: Shipment | null;
@@ -217,6 +226,13 @@ export const shippingApi = {
   compare: (draft: ShippingDraft) => invoke<{ rates: ShippingRate[]; parcel_count: number; quoted_at: string }>("compare_rates", { draft }),
   list: (page: number, search: string) =>
     invoke<{ shipments: Shipment[]; count: number }>("list", { page, search }),
+  importBilling: (file: PromptSpeedBillingFile) =>
+    mutate(() => invoke<ShippingBillingImportResult>("import_billing", {
+      file_name: file.file_name,
+      file_sha256: file.file_sha256,
+      sheet_name: file.sheet_name,
+      rows: file.rows,
+    })),
   get: (id: string) =>
     invoke<{ shipment: Shipment; events: ShippingEvent[] }>("get", { id }),
   create: (id: string, draft: ShippingDraft, order_id: string | null) =>

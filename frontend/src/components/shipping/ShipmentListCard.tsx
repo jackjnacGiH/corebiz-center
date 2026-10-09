@@ -131,6 +131,16 @@ export default function ShipmentListCard({
         maximumFractionDigits: 2,
       }).format(s.provider_charge as number)
     : null;
+  const hasProviderBilling =
+    typeof s.provider_billed_amount === "number" &&
+    Number.isFinite(s.provider_billed_amount) &&
+    s.provider_billed_amount >= 0;
+  const providerBilledAmount = hasProviderBilling
+    ? new Intl.NumberFormat(language === "th" ? "th-TH" : "en-GB", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(s.provider_billed_amount as number)
+    : null;
   const actionButtonClass =
     "transition-transform duration-150 active:scale-95 active:ring-2 active:ring-blue-300";
   const actionClass = (action?: ShipmentListAction) =>
@@ -150,7 +160,7 @@ export default function ShipmentListCard({
       <button
         type="button"
         data-shipment-block="summary"
-        className="group grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 px-4 py-3 text-left transition-colors hover:bg-sky-50/70 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:grid-cols-[minmax(0,1fr)_minmax(150px,.55fr)] xl:grid-cols-[minmax(240px,1.35fr)_minmax(190px,1fr)_minmax(175px,.8fr)_minmax(155px,.7fr)_auto]"
+        className="group grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 px-4 py-3 text-left transition-colors hover:bg-sky-50/70 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:grid-cols-[minmax(0,1fr)_minmax(150px,.55fr)] xl:grid-cols-[minmax(230px,1.25fr)_minmax(170px,.9fr)_minmax(160px,.75fr)_minmax(145px,.65fr)_minmax(145px,.65fr)_auto]"
         aria-expanded={expanded}
         aria-controls={detailsId}
         onClick={onToggle}
@@ -231,6 +241,25 @@ export default function ShipmentListCard({
             {new Date(s.created_at).toLocaleString(
               language === "th" ? "th-TH" : "en-GB",
             )}
+          </span>
+        </span>
+
+        <span
+          data-testid="shipment-billing"
+          className="col-span-2 row-start-4 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 xl:col-span-1 xl:col-auto xl:row-auto xl:bg-transparent xl:px-0 xl:py-0"
+        >
+          <span className="block text-xs font-semibold text-slate-500">
+            {c.providerBillingStatus}
+          </span>
+          <span className={`mt-0.5 block text-sm font-semibold ${
+            hasProviderBilling ? "text-emerald-700" : "text-slate-500"
+          }`}>
+            {hasProviderBilling ? c.providerBilled : c.providerNotBilled}
+          </span>
+          <span className="mt-1 block text-xs tabular-nums text-slate-600">
+            {c.providerBilledAmount}: {providerBilledAmount
+              ? `${providerBilledAmount} ${c.baht}`
+              : "—"}
           </span>
         </span>
 
@@ -373,6 +402,11 @@ export default function ShipmentListCard({
                 {c.providerShippingCharge}: {providerCharge
                   ? `${providerCharge} ${c.baht}`
                   : c.shippingFeeUnavailable}
+              </p>
+              <p>
+                {c.providerBillingStatus}: {hasProviderBilling
+                  ? `${c.providerBilled} · ${c.providerBilledAmount} ${providerBilledAmount} ${c.baht}`
+                  : c.providerNotBilled}
               </p>
               {s.order_id && (
                 <p>
