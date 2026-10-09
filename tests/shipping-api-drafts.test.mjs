@@ -45,7 +45,7 @@ const compiled = ts.transpileModule(readFileSync(new URL('../supabase/functions/
 // Execute the real Deno handler. The fake database applies PostgREST filters,
 // ordering, exact counts and CAS updates to synthetic rows; it makes no network
 // calls and deliberately provides no delete/provider mutation implementation.
-function api({ rows = [shipment(1)], billingRows = [], role = 'owner', active = true, grant = false, customers = [], beforeUpdate, connectionResult = null, provider = null, settings = {} } = {}) {
+function api({ rows = [shipment(1)], billingRows = [], role = 'owner', active = true, grant = false, customers = [], beforeUpdate, connectionResult = null, provider = null, settings = {}, authUserId = actor, authError = null } = {}) {
   const tables = {
     profiles: [{ id: actor, role, is_active: active }],
     shipping_permissions: grant ? [{ user_id: actor }] : [],
@@ -109,7 +109,10 @@ function api({ rows = [shipment(1)], billingRows = [], role = 'owner', active = 
     Deno: { env: { get: () => '' }, serve: callback => { handler = callback; } },
     require: name => {
       if (name.startsWith('npm:@supabase/')) return { createClient: () => ({
-        auth: { getUser: async () => { authCalls += 1; return { data: { user: { id: actor } }, error: null }; } },
+        auth: { getUser: async () => {
+          authCalls += 1;
+          return { data: { user: authUserId ? { id: authUserId } : null }, error: authError };
+        } },
         from: table => new Query(table),
         rpc: async (name, args) => {
           if (name === 'import_shipping_billing') {
@@ -214,10 +217,22 @@ test('initial load returns authorization settings and the first shipment page in
   assert.equal(result.body.bootstrap.brand.name, 'Test company');
   assert.deepEqual(result.body.shipments.map(row => row.id), [visible.id]);
   assert.equal(result.body.count, 1);
-  assert.equal(h.authCalls(), 0, 'the verified gateway subject avoids a second Auth network request');
+  assert.equal(h.authCalls(), 1, 'the function verifies the caller with Supabase Auth');
   for (const table of ['profiles', 'shipping_permissions', 'shipping_settings']) {
     assert.equal(h.queries.filter(query => query.table === table).length, 1, `${table} is read once`);
   }
+});
+
+test('shipping API verifies the bearer with Supabase Auth before privileged database reads', async () => {
+  const rejected = api({ authError: { message: 'invalid token' } });
+  const rejectedResult = await rejected.call('initial');
+  assert.equal(rejectedResult.status, 401);
+  assert.equal(rejected.queries.length, 0);
+
+  const mismatched = api({ authUserId: id(998) });
+  const mismatchedResult = await mismatched.call('initial');
+  assert.equal(mismatchedResult.status, 401);
+  assert.equal(mismatched.queries.length, 0);
 });
 
 test('billing statement import is manager-only and passes validated normalized rows to the database function', async () => {
