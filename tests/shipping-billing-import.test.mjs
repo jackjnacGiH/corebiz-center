@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
-import { parsePromptSpeedBillingFile } from "../frontend/src/lib/shipping-billing.ts";
+import {
+  parsePromptSpeedBillingFile,
+  ShippingBillingFileError,
+} from "../frontend/src/lib/shipping-billing.ts";
 
 const xml = (value) => String(value)
   .replaceAll("&", "&amp;")
@@ -55,6 +58,7 @@ test("PromptSpeed workbook parser calculates the billed total and removes exact 
   assert.equal(result.sheet_name, "รายละเอียดวางบิล");
   assert.equal(result.rows.length, 2);
   assert.equal(result.duplicate_rows, 1);
+  assert.deepEqual(result.duplicate_tracking_codes, ["TH011396TFB46F"]);
   assert.equal(result.rows[1].billed_amount, 111.21);
   assert.equal(result.total_amount, 143.21);
   assert.match(result.file_sha256, /^[0-9a-f]{64}$/);
@@ -68,5 +72,10 @@ test("PromptSpeed workbook parser rejects missing financial columns and conflict
     ["TH011396TFB46F", 32, 0, 0, 0],
     ["TH011396TFB46F", 35, 0, 0, 0],
   ]);
-  await assert.rejects(() => parsePromptSpeedBillingFile(conflicting), /billing_duplicate_conflict/);
+  await assert.rejects(
+    () => parsePromptSpeedBillingFile(conflicting),
+    error => error instanceof ShippingBillingFileError &&
+      error.message === "billing_duplicate_conflict" &&
+      error.tracking_codes[0] === "TH011396TFB46F",
+  );
 });

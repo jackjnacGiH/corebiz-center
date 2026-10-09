@@ -141,6 +141,21 @@ export default function ShipmentListCard({
         maximumFractionDigits: 2,
       }).format(s.provider_billed_amount as number)
     : null;
+  const providerBilledAtDate = hasProviderBilling && s.provider_billed_at
+    ? new Date(s.provider_billed_at)
+    : null;
+  const providerBilledAt = providerBilledAtDate && !Number.isNaN(providerBilledAtDate.getTime())
+    ? new Intl.DateTimeFormat("en-GB", {
+        day: "numeric",
+        month: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "Asia/Bangkok",
+      }).format(providerBilledAtDate).replace(",", "")
+    : null;
   const actionButtonClass =
     "transition-transform duration-150 active:scale-95 active:ring-2 active:ring-blue-300";
   const actionClass = (action?: ShipmentListAction) =>
@@ -248,8 +263,15 @@ export default function ShipmentListCard({
           data-testid="shipment-billing"
           className="col-span-2 row-start-4 min-w-0 xl:col-span-1 xl:col-auto xl:row-auto"
         >
-          <span className="block text-xs font-semibold text-slate-500">
-            {c.providerBillingStatus}
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-xs font-semibold text-slate-500">
+              {c.providerBillingStatus}
+            </span>
+            {providerBilledAt && (
+              <span data-testid="shipment-billed-at" className="text-xs tabular-nums text-slate-500">
+                {providerBilledAt}
+              </span>
+            )}
           </span>
           <span className={`mt-0.5 block text-sm font-semibold ${
             hasProviderBilling ? "text-emerald-700" : "text-orange-600"

@@ -45,7 +45,7 @@ const compiled = ts.transpileModule(readFileSync(new URL('../supabase/functions/
 // Execute the real Deno handler. The fake database applies PostgREST filters,
 // ordering, exact counts and CAS updates to synthetic rows; it makes no network
 // calls and deliberately provides no delete/provider mutation implementation.
-function api({ rows = [shipment(1)], role = 'owner', active = true, grant = false, customers = [], beforeUpdate, connectionResult = null, provider = null, settings = {} } = {}) {
+function api({ rows = [shipment(1)], billingRows = [], role = 'owner', active = true, grant = false, customers = [], beforeUpdate, connectionResult = null, provider = null, settings = {} } = {}) {
   const tables = {
     profiles: [{ id: actor, role, is_active: active }],
     shipping_permissions: grant ? [{ user_id: actor }] : [],
@@ -53,6 +53,7 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
     shipping_cod_accounts: [],
     org_settings: [{ id: true, business_name: 'Test company', logo_url: null }],
     shipments: structuredClone(rows), customers: structuredClone(customers), shipping_attempts: [],
+    shipping_billing_rows: structuredClone(billingRows),
   };
   const queries = [];
   class Query {
@@ -64,6 +65,7 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
     select(columns, options = {}) { this.columns = columns; this.exact = options.count === 'exact'; return this; }
     eq(column, value) { this.filters.push(['eq', column, value]); return this; }
     neq(column, value) { this.filters.push(['neq', column, value]); return this; }
+    is(column, value) { this.filters.push(['is', column, value]); return this; }
     in(column, values) { this.filters.push(['in', column, values]); return this; }
     order(column, options = {}) { this.sorts.push([column, options.ascending !== false]); return this; }
     range(from, to) { this.bounds = [from, to]; return this; }
@@ -81,7 +83,7 @@ function api({ rows = [shipment(1)], role = 'owner', active = true, grant = fals
       }
       if (this.patch && this.table === 'shipments') { beforeUpdate?.(tables.shipments); beforeUpdate = undefined; }
       let data = tables[this.table].filter(row => this.filters.every(([op, key, value]) =>
-        op === 'eq' ? row[key] === value : op === 'neq' ? row[key] !== value : value.includes(row[key])));
+        op === 'eq' || op === 'is' ? row[key] === value : op === 'neq' ? row[key] !== value : value.includes(row[key])));
       data.sort((a, b) => {
         for (const [key, ascending] of this.sorts) {
           const compared = String(a[key]).localeCompare(String(b[key]));
@@ -228,7 +230,10 @@ test('billing statement import is manager-only and passes validated normalized r
     billed_amount: 32,
   }];
   let calls = 0;
-  const h = api({ provider: { billingImport: async args => {
+  const importId = id(90);
+  const h = api({
+    billingRows: [{ import_id: importId, tracking_code: 'TH011796TBEH0A', shipment_id: null }],
+    provider: { billingImport: async args => {
     calls += 1;
     assert.equal(args.p_file_name, 'statement.xlsx');
     assert.equal(args.p_sheet_name, 'รายละเอียด');
@@ -236,8 +241,8 @@ test('billing statement import is manager-only and passes validated normalized r
     assert.equal(JSON.stringify(args.p_rows), JSON.stringify(rows));
     assert.equal(args.p_uploaded_by, actor);
     return {
-      import_id: id(90), duplicate_file: false, total_rows: 1,
-      matched_rows: 1, unmatched_rows: 0, total_amount: 32,
+      import_id: importId, duplicate_file: false, total_rows: 2,
+      matched_rows: 1, unmatched_rows: 1, total_amount: 32,
     };
   } } });
   const result = await h.call('import_billing', {
@@ -246,6 +251,7 @@ test('billing statement import is manager-only and passes validated normalized r
   });
   assert.equal(result.status, 200, JSON.stringify(result.body));
   assert.equal(result.body.matched_rows, 1);
+  assert.deepEqual(result.body.unmatched_tracking_codes, ['TH011796TBEH0A']);
   assert.equal(calls, 1);
 
   const staff = api({ role: 'staff', grant: true, provider: { billingImport: async () => {

@@ -98,6 +98,7 @@ function mount(query = '') {
             remote_area_fee: 0, cod_fee: 0, fee_vat: 0, billed_amount: 32,
           }],
           duplicate_rows: 0,
+          duplicate_tracking_codes: [],
           total_amount: 32,
         }),
       };
@@ -223,12 +224,18 @@ test('manager can upload a PromptSpeed workbook and sees the matched import summ
   assert.ok(request, 'normalized billing rows are sent through the shipping API');
   assert.equal(request.args[0].rows[0].tracking_code, 'TH011396TFB46F');
   request.resolve({
-    import_id: 'import-1', duplicate_file: false, total_rows: 1,
-    matched_rows: 1, unmatched_rows: 0, total_amount: 32,
+    import_id: 'import-1', duplicate_file: false, total_rows: 2,
+    matched_rows: 1, unmatched_rows: 1,
+    unmatched_tracking_codes: ['TH011796TBEH0A'], total_amount: 32,
   });
   await settle();
   const notice = h.find(node => node.props?.role === 'status' && JSON.stringify(node).includes('billingImported'));
   assert.ok(notice);
+  const report = h.find(node => node.type === 'Dialog' && node.props.open);
+  assert.ok(report, 'the import result opens near the upload flow');
+  assert.match(JSON.stringify(report), /billingUnmatchedCodes/);
+  assert.match(JSON.stringify(report), /TH011796TBEH0A/);
+  assert.ok(h.button('billingDownloadReport'), 'the import popup provides a report download');
   h.unmount();
 });
 
@@ -665,6 +672,9 @@ test('actual list card stays compact until expanded and preserves shipment actio
   const billingBlock = nodes(billedTree).find(node => node.props?.['data-testid'] === 'shipment-billing');
   assert.ok(billingBlock, 'billing status is a dedicated compact-list column');
   assert.doesNotMatch(billingBlock.props.className, /rounded|border|bg-slate|px-|py-/, 'billing details render without a surrounding frame');
+  const billedAt = nodes(billedTree).find(node => node.props?.['data-testid'] === 'shipment-billed-at');
+  assert.match(JSON.stringify(billedAt), /09\/10\/2026/);
+  assert.match(JSON.stringify(billedAt), /07:00:00/);
   const unbilledTree = renderCard(tracked);
   const unbilledBlock = nodes(unbilledTree).find(node => node.props?.['data-testid'] === 'shipment-billing');
   const unbilledStatus = nodes(unbilledBlock).find(node => node.props?.className?.includes('text-orange-600'));

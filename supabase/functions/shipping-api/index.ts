@@ -393,7 +393,22 @@ Deno.serve(async (req) => {
         p_uploaded_by: userId,
       });
       if (error) throw error;
-      return reply(record(data));
+      const result = record(data);
+      const importId = small(result.import_id, 80);
+      if (!isUuid(importId)) throw new Error("invalid_billing_import_result");
+      const { data: unmatchedRows, error: unmatchedError } = await db
+        .from("shipping_billing_rows")
+        .select("tracking_code")
+        .eq("import_id", importId)
+        .is("shipment_id", null)
+        .order("tracking_code");
+      if (unmatchedError) throw unmatchedError;
+      return reply({
+        ...result,
+        unmatched_tracking_codes: (unmatchedRows ?? [])
+          .map((value) => small(record(value).tracking_code, 80).toUpperCase())
+          .filter(Boolean),
+      });
     }
     if (action === "order_options") {
       const search = small(b.search, 60).replace(/[%_\\]/g, "");

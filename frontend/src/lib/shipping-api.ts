@@ -100,6 +100,7 @@ export interface ShippingBillingImportResult {
   total_rows: number;
   matched_rows: number;
   unmatched_rows: number;
+  unmatched_tracking_codes: string[];
   total_amount: number;
 }
 export class ShippingApiError extends Error {

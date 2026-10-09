@@ -13,6 +13,7 @@ import {
   Loader2,
   Trash2,
   Upload,
+  Download,
 } from "lucide-react";
 import { useLanguage } from "@/i18n";
 import { useAuth } from "@/lib/AuthProvider";
@@ -56,7 +57,39 @@ import {
 import { printElement } from "@/lib/print";
 import { providerLabelResource } from "@/lib/provider-label";
 import { shippingDraftFieldIssueMessage } from "@/lib/shipping-validation";
-import { parsePromptSpeedBillingFile } from "@/lib/shipping-billing";
+import {
+  parsePromptSpeedBillingFile,
+  ShippingBillingFileError,
+  type PromptSpeedBillingRow,
+} from "@/lib/shipping-billing";
+
+type BillingImportReport = {
+  fileName: string;
+  processedAt: string;
+  totalRows: number;
+  matchedRows: number;
+  totalAmount: number;
+  rows: PromptSpeedBillingRow[];
+  unmatchedTrackingCodes: string[];
+  duplicateTrackingCodes: string[];
+};
+
+const csvCell = (value: string | number) => {
+  const text = String(value);
+  const safe = typeof value === "string" && /^[=+@-]/.test(text) ? `'${text}` : text;
+  return `"${safe.replaceAll('"', '""')}"`;
+};
+
+const billingDateTime = (value: string) => new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "numeric",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Bangkok",
+}).format(new Date(value)).replace(",", "");
 
 type ShippingLabelModule = typeof import("@/components/shipping/ShippingLabel");
 let labelModulePromise: Promise<ShippingLabelModule> | undefined;
@@ -142,6 +175,7 @@ export default function Shipping() {
   const [listLoading, setListLoading] = useState(true);
   const [bulkStatusBusy, setBulkStatusBusy] = useState(false);
   const [billingUploadBusy, setBillingUploadBusy] = useState(false);
+  const [billingImportReport, setBillingImportReport] = useState<BillingImportReport | null>(null);
   const [listRevision, setListRevision] = useState(0);
   const [listAction, setListAction] = useState<{
     shipmentId: string;
@@ -611,8 +645,35 @@ export default function Shipping() {
     setBillingUploadBusy(true);
     try {
       await run(async () => {
-        const parsed = await parsePromptSpeedBillingFile(file);
+        let parsed;
+        try {
+          parsed = await parsePromptSpeedBillingFile(file);
+        } catch (reason) {
+          if (reason instanceof ShippingBillingFileError && reason.tracking_codes.length) {
+            setBillingImportReport({
+              fileName: file.name,
+              processedAt: new Date().toISOString(),
+              totalRows: 0,
+              matchedRows: 0,
+              totalAmount: 0,
+              rows: [],
+              unmatchedTrackingCodes: [],
+              duplicateTrackingCodes: reason.tracking_codes,
+            });
+          }
+          throw reason;
+        }
         const result = await shippingApi.importBilling(parsed);
+        setBillingImportReport({
+          fileName: parsed.file_name,
+          processedAt: new Date().toISOString(),
+          totalRows: result.total_rows,
+          matchedRows: result.matched_rows,
+          totalAmount: Number(result.total_amount),
+          rows: parsed.rows,
+          unmatchedTrackingCodes: result.unmatched_tracking_codes ?? [],
+          duplicateTrackingCodes: parsed.duplicate_tracking_codes,
+        });
         const total = new Intl.NumberFormat(language === "th" ? "th-TH" : "en-GB", {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
@@ -628,6 +689,49 @@ export default function Shipping() {
     } finally {
       if (mounted.current) setBillingUploadBusy(false);
     }
+  }
+  function downloadBillingImportReport() {
+    if (!billingImportReport) return;
+    const unmatched = new Set(billingImportReport.unmatchedTrackingCodes);
+    const duplicates = new Set(billingImportReport.duplicateTrackingCodes);
+    const rowsByTracking = new Map(
+      billingImportReport.rows.map((row) => [row.tracking_code, row]),
+    );
+    const trackingCodes = [...new Set([
+      ...rowsByTracking.keys(),
+      ...unmatched,
+      ...duplicates,
+    ])].sort();
+    const reportRows = [
+      [c.billingReportProcessedAt, billingDateTime(billingImportReport.processedAt)],
+      [c.billingReportFileName, billingImportReport.fileName],
+      [c.billingMatched, billingImportReport.matchedRows],
+      [c.billingUnmatched, billingImportReport.unmatchedTrackingCodes.length],
+      [c.billingDuplicateCodes, billingImportReport.duplicateTrackingCodes.length],
+      [],
+      ["tracking_code", c.billingReportMatchStatus, c.billingReportDuplicateStatus, c.providerBilledAmount],
+      ...trackingCodes.map((trackingCode) => [
+        trackingCode,
+        unmatched.has(trackingCode)
+          ? c.billingReportNotFound
+          : rowsByTracking.has(trackingCode)
+            ? c.billingReportMatched
+            : "—",
+        duplicates.has(trackingCode) ? c.billingReportDuplicate : "—",
+        rowsByTracking.get(trackingCode)?.billed_amount ?? "—",
+      ]),
+    ];
+    const csv = `\uFEFF${reportRows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    const timestamp = billingImportReport.processedAt.replace(/[:.]/g, "-");
+    const basename = billingImportReport.fileName.replace(/\.xlsx$/i, "").replace(/[^\p{L}\p{N}._-]+/gu, "-");
+    anchor.href = url;
+    anchor.download = `${basename || "shipping-billing"}-report-${timestamp}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   }
   function openListCarrierLabel(target: Shipment) {
     if (busy || listActionInFlight.current) return;
@@ -1777,6 +1881,105 @@ export default function Shipping() {
           )}
         </>
       )}
+      <Dialog
+        open={!!billingImportReport}
+        onOpenChange={(open) => { if (!open) setBillingImportReport(null); }}
+      >
+        <DialogContent
+          role="dialog"
+          aria-label={c.billingReportTitle}
+          className="sm:max-w-2xl"
+          showCloseButton={false}
+        >
+          <DialogHeader>
+            <DialogTitle>{c.billingReportTitle}</DialogTitle>
+            <DialogDescription>
+              {c.billingReportDescription}
+            </DialogDescription>
+          </DialogHeader>
+          {billingImportReport && (
+            <div className="space-y-4 text-sm">
+              <dl className="grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs font-semibold text-slate-500">{c.billingReportFileName}</dt>
+                  <dd className="break-all font-medium text-slate-900">{billingImportReport.fileName}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-semibold text-slate-500">{c.billingReportProcessedAt}</dt>
+                  <dd className="font-medium tabular-nums text-slate-900">
+                    {billingDateTime(billingImportReport.processedAt)}
+                  </dd>
+                </div>
+              </dl>
+              <dl className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
+                <div className="rounded-lg bg-emerald-50 p-2">
+                  <dt className="text-xs font-semibold text-emerald-700">{c.billingMatched}</dt>
+                  <dd className="text-lg font-bold text-emerald-800">
+                    {billingImportReport.matchedRows}/{billingImportReport.totalRows}
+                  </dd>
+                </div>
+                <div className="rounded-lg bg-red-50 p-2">
+                  <dt className="text-xs font-semibold text-red-700">{c.billingUnmatched}</dt>
+                  <dd className="text-lg font-bold text-red-800">{billingImportReport.unmatchedTrackingCodes.length}</dd>
+                </div>
+                <div className="rounded-lg bg-amber-50 p-2">
+                  <dt className="text-xs font-semibold text-amber-700">{c.billingDuplicateCodes}</dt>
+                  <dd className="text-lg font-bold text-amber-800">{billingImportReport.duplicateTrackingCodes.length}</dd>
+                </div>
+                <div className="rounded-lg bg-blue-50 p-2">
+                  <dt className="text-xs font-semibold text-blue-700">{c.billingTotal}</dt>
+                  <dd className="text-lg font-bold text-blue-800">
+                    {billingImportReport.totalAmount.toLocaleString(
+                      language === "th" ? "th-TH" : "en-GB",
+                      { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+                    )} {c.baht}
+                  </dd>
+                </div>
+              </dl>
+              {!!billingImportReport.unmatchedTrackingCodes.length && (
+                <section aria-labelledby="billing-unmatched-heading">
+                  <h3 id="billing-unmatched-heading" className="font-semibold text-red-700">
+                    {c.billingUnmatchedCodes} ({billingImportReport.unmatchedTrackingCodes.length})
+                  </h3>
+                  <div className="mt-2 max-h-36 overflow-auto rounded-lg border border-red-200 bg-red-50 p-2">
+                    {billingImportReport.unmatchedTrackingCodes.map((trackingCode) => (
+                      <code key={trackingCode} className="mr-2 mt-1 inline-block rounded bg-white px-2 py-1 font-semibold text-red-800">
+                        {trackingCode}
+                      </code>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {!!billingImportReport.duplicateTrackingCodes.length && (
+                <section aria-labelledby="billing-duplicate-heading">
+                  <h3 id="billing-duplicate-heading" className="font-semibold text-amber-700">
+                    {c.billingDuplicateCodes} ({billingImportReport.duplicateTrackingCodes.length})
+                  </h3>
+                  <div className="mt-2 max-h-36 overflow-auto rounded-lg border border-amber-200 bg-amber-50 p-2">
+                    {billingImportReport.duplicateTrackingCodes.map((trackingCode) => (
+                      <code key={trackingCode} className="mr-2 mt-1 inline-block rounded bg-white px-2 py-1 font-semibold text-amber-800">
+                        {trackingCode}
+                      </code>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {!billingImportReport.unmatchedTrackingCodes.length &&
+                !billingImportReport.duplicateTrackingCodes.length && (
+                  <p className="rounded-lg bg-emerald-50 p-3 font-medium text-emerald-800">
+                    {c.billingReportNoIssues}
+                  </p>
+                )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={downloadBillingImportReport}>
+              <Download size={16} />{c.billingDownloadReport}
+            </Button>
+            <Button autoFocus onClick={() => setBillingImportReport(null)}>{c.close}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={!!pendingDelete} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
         <DialogContent role="alertdialog" showCloseButton={false}>
           <DialogHeader>
