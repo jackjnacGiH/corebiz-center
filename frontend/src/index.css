@@ -1481,3 +1481,18 @@ button, input, select, textarea {
 .commerce-cart-button.cart-bump {
     animation: cart-bump 0.55s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Keep every product searchable/selectable while the browser skips layout and
+   paint work for cards outside the viewport. Printing always renders all. */
+@supports (content-visibility: auto) {
+    .commerce-page article {
+        content-visibility: auto;
+        contain-intrinsic-size: auto 360px;
+    }
+}
+@media print {
+    .commerce-page article {
+        content-visibility: visible;
+        contain-intrinsic-size: none;
+    }
+}

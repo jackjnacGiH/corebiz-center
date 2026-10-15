@@ -7,6 +7,24 @@ const supabase = { channel() { return { on() { return this; }, subscribe() { ret
 const clickRoom = (h, id) => { const button = elements(h.tree, node => node.type === 'button' && text(node).includes(`Room ${id}`))[0]; assert.ok(button); button.props.onClick(); h.render(); };
 const input = h => elements(h.tree, node => node.type === 'textarea')[0];
 
+test('composing a reply preserves all 500 inbox rows without rebuilding their subtree', async () => {
+  const conversations = Array.from({ length: 500 }, (_, index) => room(String(index)));
+  const h = mountComponent('frontend/src/pages/Chat.tsx', {}, {
+    '../lib/supabase': { supabase },
+    '../lib/api': { chatProfileApi: {}, chatInboxApi: {
+      listConversations: async (_filters, onBase) => { const page = { conversations, hasMore: false, cursor: null }; onBase?.(page); return page; },
+      listMessages: async () => ({ messages: [], hasMore: false }), markRead: async () => true,
+    } },
+  });
+  await settle(); h.render(); clickRoom(h, '0'); await settle(); h.render();
+  const before = elements(h.tree, node => node.type === 'button' && text(node).includes('Room '));
+  assert.equal(before.length, 500);
+  input(h).props.onChange({ target: { value: 'draft, not sent' } }); h.render();
+  const after = elements(h.tree, node => node.type === 'button' && text(node).includes('Room '));
+  after.forEach((row, index) => assert.strictEqual(row, before[index]));
+  assert.equal(input(h).props.value, 'draft, not sent'); h.unmount();
+});
+
 test('actual Chat keeps drafts and pending send completion scoped to room A while writing in B', async () => {
   const send = deferred(), sends = [];
   const conversations = [room('A'), room('B')];

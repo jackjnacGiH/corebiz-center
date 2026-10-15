@@ -1,3 +1,4 @@
+import ProductListImage from '../components/ProductListImage';
 import { lazy, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
   AlertTriangle,
@@ -123,7 +124,7 @@ function ProductThumb({
   return (
     <HoverCard openDelay={150} closeDelay={150}>
       <HoverCardTrigger asChild>
-        <img
+        <ProductListImage
           src={hero}
           alt={alt}
           loading="lazy"
@@ -473,7 +474,7 @@ export default function Ecommerce() {
         )}
         <div className="aspect-square bg-white p-1.5 border-b border-slate-100">
           {hero ? (
-            <img
+            <ProductListImage
               src={hero}
               alt={p.name_th}
               loading="lazy"
@@ -572,7 +573,7 @@ export default function Ecommerce() {
         )}
         <div className="aspect-square bg-white p-2 border-b border-slate-100">
           {hero ? (
-            <img
+            <ProductListImage
               src={hero}
               alt={p.name_th}
               loading="lazy"
@@ -976,7 +977,7 @@ export default function Ecommerce() {
                       aspectRatio: '1 / 1',
                     }}
                   >
-                    <img
+                    <ProductListImage
                       src={hero}
                       alt={p.name_th}
                       loading="lazy"
@@ -1463,7 +1464,7 @@ export default function Ecommerce() {
                   <div key={`${item.product.id}-${item.madeToOrder ? 'mto' : 'std'}`} className="cart-line-item">
                     <div className={`cart-line-thumb ${isMto ? 'tone-amber' : 'tone-steel'}`}>
                       {thumbUrl ? (
-                        <img
+                        <ProductListImage
                           src={thumbUrl}
                           alt={item.product.name_th}
                           className="w-full h-full object-contain rounded-md"
@@ -1784,7 +1785,7 @@ function GroupGridCard({
             aspectRatio: '1 / 1',
           }}
         >
-          <img
+          <ProductListImage
             src={group.cover_image}
             alt={group.name}
             loading="lazy"
@@ -1880,7 +1881,7 @@ function GroupCompactCard({
 
       <div className="aspect-square bg-white p-1.5 border-b border-slate-100">
         {group.cover_image ? (
-          <img
+          <ProductListImage
             src={group.cover_image}
             alt={group.name}
             loading="lazy"
@@ -1957,7 +1958,7 @@ function SideBySideGroupExpansion({
         <aside className="sm:w-48 lg:w-56 xl:w-64 flex-shrink-0">
           <div className="rounded-lg border border-indigo-200 bg-white p-3 h-full flex flex-col">
             {group.cover_image ? (
-              <img
+              <ProductListImage
                 src={group.cover_image}
                 alt=""
                 className="w-full aspect-square rounded-md object-contain border border-slate-200 bg-white p-1"
@@ -2037,7 +2038,7 @@ function GroupBanner({
           Boss Jack's request: สลับ ขนาดรูปที่แสดง ของกลุ่ม กับ expand inline. */}
       <div className="flex-shrink-0">
         {group.cover_image ? (
-          <img
+          <ProductListImage
             src={group.cover_image}
             alt=""
             className="w-28 h-28 rounded-md object-contain border border-slate-200 bg-white p-1"

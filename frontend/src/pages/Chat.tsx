@@ -1513,6 +1513,80 @@ export default function Chat() {
         }
     }
 
+    // Reuse the inbox subtree while composing or loading unrelated room panels.
+    const conversationRows = useMemo(() => visibleConversations.map((c) => (
+                            <button
+                                key={c.id}
+                                style={CHAT_PERSISTENT_CACHE_ENABLED ? {
+                                    contentVisibility: 'auto',
+                                    containIntrinsicSize: '80px',
+                                } : undefined}
+                                onClick={() => {
+                                    setSelectedConversation(c);
+                                    setSelectedId(c.id);
+                                }}
+                                className={cn(
+                                    'w-full text-left p-3 border-b border-neutral-100 hover:bg-neutral-50 transition',
+                                    selectedId === c.id && 'bg-indigo-50 border-l-2 border-l-indigo-500',
+                                )}
+                            >
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span
+                                        className={cn(
+                                            'inline-flex items-center gap-1 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border',
+                                            CHANNEL_COLOR[c.channel],
+                                        )}
+                                    >
+                                        {CHANNEL_ICON[c.channel]} {CHANNEL_LABEL[c.channel]}
+                                    </span>
+                                    {c.bot_enabled === false && (
+                                        <span
+                                            className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700"
+                                            title="บอทถูกปิดสำหรับแชทนี้ — แอดมินตอบเอง"
+                                        >
+                                            🤖 Off
+                                        </span>
+                                    )}
+                                    <span className="text-[10px] text-neutral-400 tabular-nums ml-auto">
+                                        {timeAgo(c.last_message_at ?? c.created_at)}
+                                    </span>
+                                </div>
+                                <div className="flex items-start gap-2">
+                                    <ChatAvatar
+                                        key={`${c.id}:${c.avatar_url ?? ''}`}
+                                        conversationId={c.id}
+                                        channel={c.channel}
+                                        src={c.avatar_url}
+                                        alt={c.display_name}
+                                        imageClassName="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
+                                        fallbackClassName="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 grid place-items-center text-white text-sm font-bold flex-shrink-0"
+                                        fallback={c.display_name.charAt(0).toUpperCase()}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-medium text-neutral-900 truncate">
+                                            {c.display_name}
+                                        </div>
+                                        {c.company && (
+                                            <div className="text-[11px] text-indigo-600 truncate flex items-center gap-1" title={c.company}>
+                                                <span aria-hidden>🏢</span>
+                                                <span className="truncate">{c.company}</span>
+                                            </div>
+                                        )}
+                                        {c.last_message_preview && (
+                                            <div className="text-xs text-neutral-500 truncate mt-0.5">
+                                                {c.last_message_preview}
+                                            </div>
+                                        )}
+                                        {c.unread_count > 0 && (
+                                            <span className="inline-block mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500 text-white">
+                                                {c.unread_count} new
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </button>
+                        )), [visibleConversations, selectedId]);
+
     return (
         <div
             className="animate-fade-in flex flex-col"
@@ -1598,78 +1672,7 @@ export default function Chat() {
                                 {t.chat.emptyList}
                             </div>
                         )}
-                        {visibleConversations.map((c) => (
-                            <button
-                                key={c.id}
-                                style={CHAT_PERSISTENT_CACHE_ENABLED ? {
-                                    contentVisibility: 'auto',
-                                    containIntrinsicSize: '80px',
-                                } : undefined}
-                                onClick={() => {
-                                    setSelectedConversation(c);
-                                    setSelectedId(c.id);
-                                }}
-                                className={cn(
-                                    'w-full text-left p-3 border-b border-neutral-100 hover:bg-neutral-50 transition',
-                                    selectedId === c.id && 'bg-indigo-50 border-l-2 border-l-indigo-500',
-                                )}
-                            >
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span
-                                        className={cn(
-                                            'inline-flex items-center gap-1 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border',
-                                            CHANNEL_COLOR[c.channel],
-                                        )}
-                                    >
-                                        {CHANNEL_ICON[c.channel]} {CHANNEL_LABEL[c.channel]}
-                                    </span>
-                                    {c.bot_enabled === false && (
-                                        <span
-                                            className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700"
-                                            title="บอทถูกปิดสำหรับแชทนี้ — แอดมินตอบเอง"
-                                        >
-                                            🤖 Off
-                                        </span>
-                                    )}
-                                    <span className="text-[10px] text-neutral-400 tabular-nums ml-auto">
-                                        {timeAgo(c.last_message_at ?? c.created_at)}
-                                    </span>
-                                </div>
-                                <div className="flex items-start gap-2">
-                                    <ChatAvatar
-                                        key={`${c.id}:${c.avatar_url ?? ''}`}
-                                        conversationId={c.id}
-                                        channel={c.channel}
-                                        src={c.avatar_url}
-                                        alt={c.display_name}
-                                        imageClassName="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-neutral-200 bg-neutral-100"
-                                        fallbackClassName="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 grid place-items-center text-white text-sm font-bold flex-shrink-0"
-                                        fallback={c.display_name.charAt(0).toUpperCase()}
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-sm font-medium text-neutral-900 truncate">
-                                            {c.display_name}
-                                        </div>
-                                        {c.company && (
-                                            <div className="text-[11px] text-indigo-600 truncate flex items-center gap-1" title={c.company}>
-                                                <span aria-hidden>🏢</span>
-                                                <span className="truncate">{c.company}</span>
-                                            </div>
-                                        )}
-                                        {c.last_message_preview && (
-                                            <div className="text-xs text-neutral-500 truncate mt-0.5">
-                                                {c.last_message_preview}
-                                            </div>
-                                        )}
-                                        {c.unread_count > 0 && (
-                                            <span className="inline-block mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500 text-white">
-                                                {c.unread_count} new
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            </button>
-                        ))}
+                        {conversationRows}
                         {hasMoreConvs && (
                             <Button variant="ghost" className="w-full my-2" disabled={loadingMoreConvs || loadingList} onClick={() => void loadMoreConversations()}>
                                 {loadingMoreConvs && <Loader2 size={14} className="animate-spin mr-1" />}

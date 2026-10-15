@@ -8,7 +8,7 @@ export const deferred = () => { let resolve, reject; const promise = new Promise
 
 // Evaluate actual TSX, keeping only the DOM/external services fake. Effects and
 // deferred promises remain separate so tests can force A/B responses out of order.
-export function mountComponent(path, initialProps, services = {}) {
+export function mountComponent(path, initialProps, services = {}, sourceOverride) {
   const slots = [], effects = [];
   let cursor = 0, props = initialProps, tree;
   const sameDeps = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
@@ -45,7 +45,7 @@ export function mountComponent(path, initialProps, services = {}) {
       return stub;
     },
   };
-  const source = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8').replace(/import\.meta\.env/g, 'AUDIT_ENV');
+  const source = (sourceOverride ?? readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8')).replace(/import\.meta\.env/g, 'AUDIT_ENV');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
   runInNewContext(compiled, globals);
   const render = nextProps => { if (nextProps) props = nextProps; cursor = 0; tree = globals.exports.default(props); while (effects.length) effects.shift()(); return tree; };
