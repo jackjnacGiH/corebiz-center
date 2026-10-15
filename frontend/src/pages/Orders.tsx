@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Eye, ShoppingCart, RefreshCw, FileText, CheckCircle2 } from 'lucide-react';
 import {
     ordersApi,
@@ -11,8 +11,7 @@ import {
 import { useLanguage } from '../i18n';
 import { useRealtimeRefresh, useRealtimeTable } from '../lib/useRealtimeTable';
 import { swrList, hasCache, invalidateListPrefix } from '../lib/cache';
-import OrderDetailModal from '../components/OrderDetailModal';
-import QuoteDetailModal from '../components/QuoteDetailModal';
+import DeferredContent from '../components/DeferredContent';
 import PageHeader from '../components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,6 +25,9 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+
+const OrderDetailModal = lazy(() => import('../components/OrderDetailModal'));
+const QuoteDetailModal = lazy(() => import('../components/QuoteDetailModal'));
 
 type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'returned';
 
@@ -498,19 +500,19 @@ export default function Orders() {
                 </Button>}
             </div>
 
-            <OrderDetailModal
+            <DeferredContent active={detailOrderId !== null}><OrderDetailModal
                 isOpen={detailOrderId !== null}
                 orderId={detailOrderId}
                 onClose={() => setDetailOrderId(null)}
                 onStatusChange={() => void load(true)}
-            />
+            /></DeferredContent>
 
-            <QuoteDetailModal
+            <DeferredContent active={detailQuoteId !== null}><QuoteDetailModal
                 isOpen={detailQuoteId !== null}
                 quoteId={detailQuoteId}
                 onClose={() => setDetailQuoteId(null)}
                 onChange={() => void load(true)}
-            />
+            /></DeferredContent>
         </div>
     );
 }

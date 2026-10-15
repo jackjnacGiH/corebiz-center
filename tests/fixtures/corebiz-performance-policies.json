@@ -1,0 +1,417 @@
+{
+  "policies": [
+    {
+      "schemaname": "public",
+      "tablename": "categories",
+      "policyname": "categories_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "categories",
+      "policyname": "categories_staff_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "ALL",
+      "qual": "is_staff()",
+      "with_check": "is_staff()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "customer_branches",
+      "policyname": "customer_branches_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "customers",
+      "policyname": "customers_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "customers",
+      "policyname": "customers_staff_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "ALL",
+      "qual": "is_staff()",
+      "with_check": "is_staff()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory",
+      "policyname": "inventory_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "inventory",
+      "policyname": "inventory_staff_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "ALL",
+      "qual": "is_staff()",
+      "with_check": "is_staff()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "notifications",
+      "policyname": "notifications_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "product_groups",
+      "policyname": "product_groups_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "products",
+      "policyname": "products_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "products",
+      "policyname": "products_staff_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "ALL",
+      "qual": "is_staff()",
+      "with_check": "is_staff()"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "warehouses",
+      "policyname": "warehouses_read_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "SELECT",
+      "qual": "can_read()",
+      "with_check": null
+    },
+    {
+      "schemaname": "public",
+      "tablename": "warehouses",
+      "policyname": "warehouses_staff_all",
+      "permissive": "PERMISSIVE",
+      "roles": [
+        "authenticated"
+      ],
+      "cmd": "ALL",
+      "qual": "is_staff()",
+      "with_check": "is_staff()"
+    }
+  ],
+  "helpers": [
+    {
+      "name": "can_read",
+      "definition": "CREATE OR REPLACE FUNCTION public.can_read()\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\n  select exists(select 1 from public.profiles p\n    where p.id = auth.uid() and p.is_active\n      and p.role in ('owner','admin','staff','agent','viewer')); $function$\n"
+    },
+    {
+      "name": "is_owner",
+      "definition": "CREATE OR REPLACE FUNCTION public.is_owner()\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\n  select exists (\n    select 1\n    from public.profiles p\n    where p.id = auth.uid()\n      and p.is_active = true\n      and p.role = 'owner'\n  );\n$function$\n"
+    },
+    {
+      "name": "is_staff",
+      "definition": "CREATE OR REPLACE FUNCTION public.is_staff()\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\n  select exists (\n    select 1\n    from public.profiles p\n    where p.id = auth.uid()\n      and p.is_active = true\n      and p.role in ('owner','admin','staff')\n  );\n$function$\n"
+    }
+  ],
+  "verified_at": "2026-10-15",
+  "all_policies": [
+  {
+    "tablename": "categories",
+    "policyname": "categories_no_staff_delete",
+    "roles": "{authenticated}",
+    "cmd": "DELETE",
+    "qual": "can_delete()",
+    "with_check": null
+  },
+  {
+    "tablename": "categories",
+    "policyname": "categories_public_read",
+    "roles": "{anon}",
+    "cmd": "SELECT",
+    "qual": "(is_active = true)",
+    "with_check": null
+  },
+  {
+    "tablename": "categories",
+    "policyname": "categories_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "categories",
+    "policyname": "categories_staff_all",
+    "roles": "{authenticated}",
+    "cmd": "ALL",
+    "qual": "is_staff()",
+    "with_check": "is_staff()"
+  },
+  {
+    "tablename": "customer_branches",
+    "policyname": "customer_branches_delete",
+    "roles": "{authenticated}",
+    "cmd": "DELETE",
+    "qual": "(is_staff() OR is_owner())",
+    "with_check": null
+  },
+  {
+    "tablename": "customer_branches",
+    "policyname": "customer_branches_insert",
+    "roles": "{authenticated}",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(is_staff() OR is_owner())"
+  },
+  {
+    "tablename": "customer_branches",
+    "policyname": "customer_branches_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "customer_branches",
+    "policyname": "customer_branches_select",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "(is_staff() OR is_owner())",
+    "with_check": null
+  },
+  {
+    "tablename": "customer_branches",
+    "policyname": "customer_branches_update",
+    "roles": "{authenticated}",
+    "cmd": "UPDATE",
+    "qual": "(is_staff() OR is_owner())",
+    "with_check": "(is_staff() OR is_owner())"
+  },
+  {
+    "tablename": "customers",
+    "policyname": "customers_no_staff_delete",
+    "roles": "{authenticated}",
+    "cmd": "DELETE",
+    "qual": "can_delete()",
+    "with_check": null
+  },
+  {
+    "tablename": "customers",
+    "policyname": "customers_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "customers",
+    "policyname": "customers_staff_all",
+    "roles": "{authenticated}",
+    "cmd": "ALL",
+    "qual": "is_staff()",
+    "with_check": "is_staff()"
+  },
+  {
+    "tablename": "inventory",
+    "policyname": "inventory_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "inventory",
+    "policyname": "inventory_staff_all",
+    "roles": "{authenticated}",
+    "cmd": "ALL",
+    "qual": "is_staff()",
+    "with_check": "is_staff()"
+  },
+  {
+    "tablename": "notifications",
+    "policyname": "Service inserts notifications",
+    "roles": "{authenticated}",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "is_staff()"
+  },
+  {
+    "tablename": "notifications",
+    "policyname": "Staff can mark notifications read",
+    "roles": "{authenticated}",
+    "cmd": "UPDATE",
+    "qual": "(( SELECT is_staff() AS is_staff) AND ((recipient_id IS NULL) OR (recipient_id = ( SELECT auth.uid() AS uid))))",
+    "with_check": "(( SELECT is_staff() AS is_staff) AND ((recipient_id IS NULL) OR (recipient_id = ( SELECT auth.uid() AS uid))))"
+  },
+  {
+    "tablename": "notifications",
+    "policyname": "Staff can view their notifications",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "(( SELECT is_staff() AS is_staff) AND ((recipient_id IS NULL) OR (recipient_id = ( SELECT auth.uid() AS uid))))",
+    "with_check": null
+  },
+  {
+    "tablename": "notifications",
+    "policyname": "notifications_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "product_groups",
+    "policyname": "product_groups_delete",
+    "roles": "{authenticated}",
+    "cmd": "DELETE",
+    "qual": "(is_staff() OR is_owner())",
+    "with_check": null
+  },
+  {
+    "tablename": "product_groups",
+    "policyname": "product_groups_insert",
+    "roles": "{authenticated}",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(is_staff() OR is_owner())"
+  },
+  {
+    "tablename": "product_groups",
+    "policyname": "product_groups_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "product_groups",
+    "policyname": "product_groups_select",
+    "roles": "{anon,authenticated}",
+    "cmd": "SELECT",
+    "qual": "true",
+    "with_check": null
+  },
+  {
+    "tablename": "product_groups",
+    "policyname": "product_groups_update",
+    "roles": "{authenticated}",
+    "cmd": "UPDATE",
+    "qual": "(is_staff() OR is_owner())",
+    "with_check": "(is_staff() OR is_owner())"
+  },
+  {
+    "tablename": "products",
+    "policyname": "products_no_staff_delete",
+    "roles": "{authenticated}",
+    "cmd": "DELETE",
+    "qual": "can_delete()",
+    "with_check": null
+  },
+  {
+    "tablename": "products",
+    "policyname": "products_public_read",
+    "roles": "{anon}",
+    "cmd": "SELECT",
+    "qual": "(status = 'active'::text)",
+    "with_check": null
+  },
+  {
+    "tablename": "products",
+    "policyname": "products_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "products",
+    "policyname": "products_staff_all",
+    "roles": "{authenticated}",
+    "cmd": "ALL",
+    "qual": "is_staff()",
+    "with_check": "is_staff()"
+  },
+  {
+    "tablename": "warehouses",
+    "policyname": "warehouses_no_staff_delete",
+    "roles": "{authenticated}",
+    "cmd": "DELETE",
+    "qual": "can_delete()",
+    "with_check": null
+  },
+  {
+    "tablename": "warehouses",
+    "policyname": "warehouses_read_all",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "can_read()",
+    "with_check": null
+  },
+  {
+    "tablename": "warehouses",
+    "policyname": "warehouses_staff_all",
+    "roles": "{authenticated}",
+    "cmd": "ALL",
+    "qual": "is_staff()",
+    "with_check": "is_staff()"
+  }
+]
+}

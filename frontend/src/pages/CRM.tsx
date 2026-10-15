@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Users,
     Search,
@@ -29,27 +29,30 @@ import { isAdminOrOwner } from '@/lib/permissions';
 import type { Customer, CustomerBranch, Json } from '../lib/database.types';
 import { useLanguage } from '../i18n';
 import { useRealtimeTable } from '../lib/useRealtimeTable';
-import CustomerModal, { type CustomerFormData } from '../components/CustomerModal';
-import ImportCustomersModal from '../components/ImportCustomersModal';
+import type { CustomerFormData } from '../components/CustomerModal';
+import DeferredContent from '../components/DeferredContent';
 import PageHeader from '../components/PageHeader';
 import StatTile from '../components/StatTile';
-import CustomerSegments from '../components/CustomerSegments';
-import CustomerProfile from '../components/CustomerProfile';
-import CustomerReorder from '../components/CustomerReorder';
-import CustomerWinback from '../components/CustomerWinback';
-import CustomerQuoteFollowup from '../components/CustomerQuoteFollowup';
-import CustomerSurvey from '../components/CustomerSurvey';
-import CustomerReferral from '../components/CustomerReferral';
-import TierBenefits from '../components/TierBenefits';
-import CustomerCampaign from '../components/CustomerCampaign';
-import CrmDashboard from '../components/CrmDashboard';
-import CustomerSchedule from '../components/CustomerSchedule';
 import CustomerTable from '../components/CustomerTable';
 import { buildCustomersCsv, downloadCsv } from '../lib/customerCsv';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+
+const CustomerModal = lazy(() => import('../components/CustomerModal'));
+const ImportCustomersModal = lazy(() => import('../components/ImportCustomersModal'));
+const CustomerSegments = lazy(() => import('../components/CustomerSegments'));
+const CustomerProfile = lazy(() => import('../components/CustomerProfile'));
+const CustomerReorder = lazy(() => import('../components/CustomerReorder'));
+const CustomerWinback = lazy(() => import('../components/CustomerWinback'));
+const CustomerQuoteFollowup = lazy(() => import('../components/CustomerQuoteFollowup'));
+const CustomerSurvey = lazy(() => import('../components/CustomerSurvey'));
+const CustomerReferral = lazy(() => import('../components/CustomerReferral'));
+const TierBenefits = lazy(() => import('../components/TierBenefits'));
+const CustomerCampaign = lazy(() => import('../components/CustomerCampaign'));
+const CrmDashboard = lazy(() => import('../components/CrmDashboard'));
+const CustomerSchedule = lazy(() => import('../components/CustomerSchedule'));
 
 const CUSTOMER_PAGE_SIZE = 100;
 const REALTIME_RELOAD_DELAY_MS = 150;
@@ -647,6 +650,7 @@ export default function CRM() {
                 </button>
             </div>
 
+            <DeferredContent active={view !== 'list'}>
             {view === 'dashboard' && <CrmDashboard />}
             {view === 'rfm' && <CustomerSegments />}
             {view === 'reorder' && <CustomerReorder />}
@@ -657,6 +661,7 @@ export default function CRM() {
             {view === 'tier' && <TierBenefits />}
             {view === 'campaign' && <CustomerCampaign />}
             {view === 'schedule' && <CustomerSchedule />}
+            </DeferredContent>
 
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -757,22 +762,22 @@ export default function CRM() {
             </>
             )}
 
-            <CustomerModal
+            <DeferredContent active={isModalOpen}><CustomerModal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 onSave={handleSave}
                 editing={editing}
-            />
+            /></DeferredContent>
 
-            <ImportCustomersModal
+            <DeferredContent active={isImportOpen}><ImportCustomersModal
                 isOpen={isImportOpen}
                 onClose={() => setIsImportOpen(false)}
                 onImported={() => void load()}
                 existingCustomers={customers}
-            />
+            /></DeferredContent>
 
             {profileId && (
-                <CustomerProfile customerId={profileId} onClose={() => setProfileId(null)} />
+                <DeferredContent active><CustomerProfile customerId={profileId} onClose={() => setProfileId(null)} /></DeferredContent>
             )}
         </div>
     );
