@@ -1,4 +1,4 @@
-import { lazy, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Package, Plus, Search, Edit2, Trash2, Copy, AlertTriangle, RefreshCw,
   ArrowUpDown, ArrowUp, ArrowDown, MapPin, Box, Tag, ChevronDown,
@@ -22,6 +22,7 @@ import { swrList, CK, hasCache } from '../lib/cache';
 import { useLanguage } from '../i18n';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import ProductImagePreview from '../components/ProductImagePreview';
+import ProductListImage from '../components/ProductListImage';
 import { buildInventoryCsv, downloadCsv } from '../lib/inventoryCsv';
 
 const ProductModal = lazy(() => import('../components/ProductModal'));
@@ -125,7 +126,7 @@ export default function Inventory() {
   // force=true skips the cache (Reload / realtime / after a write). Plain
   // navigation serves cached lists instantly + revalidates in background.
   const loadVersion = useRef<symbol | null>(null);
-  async function load(force = false) {
+  const load = useCallback(async (force = false) => {
     const version = Symbol();
     loadVersion.current = version;
     const isCurrent = () => version === loadVersion.current;
@@ -156,7 +157,7 @@ export default function Inventory() {
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }
+  }, []);
 
   /**
    * Fire the manual sync RPC, then poll the latest sync log every second
@@ -194,16 +195,18 @@ export default function Inventory() {
   useEffect(() => {
     void load();
     return () => { loadVersion.current = null; };
-  }, []);
+  }, [load]);
   const refreshRealtime = useRealtimeRefresh(() => load(true));
   useRealtimeTable('products', refreshRealtime);
   useRealtimeTable('inventory', refreshRealtime);
   useRealtimeTable('product_groups', refreshRealtime);
 
+  // Keep typing responsive while the full matching list is rendered.
+  const deferredSearch = useDeferredValue(search);
   // Filter + sort
   const searchTokens = useMemo(
-    () => search.toLowerCase().split(/\s+/).filter(Boolean),
-    [search],
+    () => deferredSearch.toLowerCase().split(/\s+/).filter(Boolean),
+    [deferredSearch],
   );
   const filtered = useMemo(() => {
     let rows = products.filter(p => {
@@ -307,11 +310,11 @@ export default function Inventory() {
     await load(true);
   }
 
-  async function handleDelete(p: ProductWithInventory) {
+  const handleDelete = useCallback(async (p: ProductWithInventory) => {
     if (!window.confirm(`ลบ ${p.sku} — ${p.name_th}?`)) return;
     try { await productsApi.remove(p.id); await load(true); }
     catch (e) { setErr((e as Error).message); }
-  }
+  }, [load]);
 
   const [bulkDeleting, setBulkDeleting] = useState(false);
   async function handleBulkDelete() {
@@ -362,6 +365,219 @@ export default function Inventory() {
   }
 
   const rowPad = density === 'compact' ? 'py-2.5' : 'py-4';
+  const productRows = useMemo(() => filtered.map(p => {
+                const status   = deriveStatus(p);
+                const statusM  = STATUS_META[status];
+                const prodM    = PRODUCT_STATUS_META[p.status] ?? PRODUCT_STATUS_META.active;
+                const inv0     = p.inventory[0];
+                const reorder  = inv0?.reorder_level ?? 10;
+                const listPrice = Number(p.price);
+                const effective = getEffectivePrice(p);
+                const hasDisc   = effective < listPrice;
+                const discPct   = hasDisc ? Math.round(((listPrice - effective) / listPrice) * 100) : 0;
+                const margin   = calcMargin(effective, Number(p.cost ?? 0));
+                const value    = p.total_quantity * effective;
+                const expanded = expandedId === p.id;
+                const isSelected = selected.has(p.id);
+
+                return (
+                  <>
+                    <tr
+                      key={p.id}
+                      className={`group transition ${
+                        isSelected ? 'bg-blue-50/50' : 'hover:bg-slate-50/70'
+                      } cursor-pointer`}
+                      onClick={() => setExpandedId(expanded ? null : p.id)}
+                    >
+                      <td className={`${rowPad} px-4`} onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={e => {
+                            const next = new Set(selected);
+                            if (e.target.checked) next.add(p.id); else next.delete(p.id);
+                            setSelected(next);
+                          }}
+                          className="w-3.5 h-3.5 rounded border-slate-300 accent-blue-600"
+                        />
+                      </td>
+
+                      <td className={`${rowPad} px-4`}>
+                        <code className="text-xs font-mono text-blue-600 font-medium">{p.sku}</code>
+                        {p.barcode && (
+                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">{p.barcode}</div>
+                        )}
+                      </td>
+
+                      <td
+                        className={`${rowPad} px-3 w-14`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {(() => {
+                          const imgs = Array.isArray(p.images)
+                            ? (p.images as unknown[]).filter((x): x is string => typeof x === 'string')
+                            : [];
+                          const hero = imgs[0];
+                          if (hero) {
+                            return (
+                              <HoverCard openDelay={150} closeDelay={150}>
+                                <HoverCardTrigger asChild>
+                                  <ProductListImage
+                                    src={hero}
+                                    alt={p.name_th}
+                                    className="w-10 h-10 rounded-md object-cover border border-slate-200 bg-white cursor-zoom-in"
+                                    loading="lazy"
+                                  />
+                                </HoverCardTrigger>
+                                <HoverCardContent
+                                  side="right"
+                                  align="start"
+                                  sideOffset={8}
+                                  className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
+                                >
+                                  <ProductImagePreview images={imgs} alt={p.name_th} />
+                                </HoverCardContent>
+                              </HoverCard>
+                            );
+                          }
+                          return (
+                            <div className="w-10 h-10 rounded-md border border-dashed border-slate-200 bg-slate-50 grid place-items-center text-slate-300">
+                              <Box size={16} />
+                            </div>
+                          );
+                        })()}
+                      </td>
+
+                      <td className={`${rowPad} px-4 max-w-md`}>
+                        <div className="text-sm text-slate-900 font-medium truncate">{p.name_th}</div>
+                        <div className="text-xs text-slate-500 mt-0.5 truncate">
+                          {p.brand && <span>{p.brand}</span>}
+                          {p.brand && p.name_en && <span className="mx-1.5 text-slate-300">·</span>}
+                          {p.name_en && <span className="italic">{p.name_en}</span>}
+                        </div>
+                        {p.group && (
+                          <div
+                            className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 max-w-full"
+                            title={`อยู่ในกลุ่ม: ${p.group.name}`}
+                          >
+                            <Boxes size={9} className="flex-shrink-0" />
+                            <span className="truncate">{p.group.name}</span>
+                          </div>
+                        )}
+                      </td>
+
+                      <td className={`${rowPad} px-4 text-slate-700 text-sm`}>
+                        {p.category?.name_th ?? <span className="text-slate-300">—</span>}
+                      </td>
+
+                      <td className={`${rowPad} px-4 text-center`}>
+                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${prodM.text}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${prodM.dot}`} />
+                          {prodM.label}
+                        </span>
+                      </td>
+
+                      <td className={`${rowPad} px-4 text-right`}>
+                        {hasDisc ? (
+                          <>
+                            <div className="flex items-baseline justify-end gap-1.5">
+                              <span className="text-xs line-through text-slate-400 tabular-nums">
+                                {formatTHB(listPrice)}
+                              </span>
+                              <span className="text-base font-bold text-rose-600 tabular-nums">
+                                {formatTHB(effective)}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5 flex items-center justify-end gap-1.5">
+                              <span className="text-rose-600 font-semibold">-{discPct}%</span>
+                              {margin !== null && <span>margin {margin.toFixed(0)}%</span>}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-sm font-semibold text-slate-900">
+                              {formatTHB(listPrice)}
+                            </div>
+                            {margin !== null && (
+                              <div className="text-[10px] text-slate-500 mt-0.5">
+                                margin {margin.toFixed(0)}%
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </td>
+
+                      <td className={`${rowPad} px-4`}>
+                        <StockCell
+                          qty={p.total_quantity}
+                          reorder={reorder}
+                          unit={p.unit}
+                          statusMeta={statusM}
+                          statusLabel={t.inventory.stockStatus[status]}
+                          reserved={inv0?.reserved ?? 0}
+                          lastSyncedAt={p.last_synced_at}
+                        />
+                      </td>
+
+                      <td className={`${rowPad} px-4 text-slate-500 text-xs`}>
+                        {inv0?.shelf ? (
+                          <span className="inline-flex items-center gap-1">
+                            <MapPin size={11} className="text-slate-400" />
+                            {inv0.shelf}{inv0.row_no ? `-${inv0.row_no}` : ''}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+
+                      <td className={`${rowPad} px-4 text-right`}>
+                        <div className="text-sm font-semibold text-slate-900">
+                          {formatTHB(value, { compact: true })}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {relativeTime(p.updated_at)}
+                        </div>
+                      </td>
+
+                      <td className={`${rowPad} px-4`}>
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditingProduct(p); setCopyFromProduct(null); setIsModalOpen(true); }}
+                            className="p-1.5 rounded text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition"
+                            title="แก้ไข"
+                          >
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditingProduct(null); setCopyFromProduct(p); setIsModalOpen(true); }}
+                            className="p-1.5 rounded text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                            title="คัดลอกสินค้า"
+                          >
+                            <Copy size={13} />
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); handleDelete(p); }}
+                            className="p-1.5 rounded text-slate-500 hover:text-red-600 hover:bg-red-50 transition"
+                            title="ลบ"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                          <ChevronRight size={14} className={`text-slate-400 transition ${expanded ? 'rotate-90' : ''}`} />
+                        </div>
+                      </td>
+                    </tr>
+
+                    {expanded && (
+                      <tr className="bg-slate-50/50">
+                        <td colSpan={10} className="px-6 py-5">
+                          <ExpandedRow p={p} warehouses={warehouses} />
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              }), [filtered, rowPad, selected, expandedId, warehouses, handleDelete, t.inventory.stockStatus]);
+
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -606,218 +822,7 @@ export default function Inventory() {
                 </tr>
               )}
 
-              {!loading && filtered.map(p => {
-                const status   = deriveStatus(p);
-                const statusM  = STATUS_META[status];
-                const prodM    = PRODUCT_STATUS_META[p.status] ?? PRODUCT_STATUS_META.active;
-                const inv0     = p.inventory[0];
-                const reorder  = inv0?.reorder_level ?? 10;
-                const listPrice = Number(p.price);
-                const effective = getEffectivePrice(p);
-                const hasDisc   = effective < listPrice;
-                const discPct   = hasDisc ? Math.round(((listPrice - effective) / listPrice) * 100) : 0;
-                const margin   = calcMargin(effective, Number(p.cost ?? 0));
-                const value    = p.total_quantity * effective;
-                const expanded = expandedId === p.id;
-                const isSelected = selected.has(p.id);
-
-                return (
-                  <>
-                    <tr
-                      key={p.id}
-                      className={`group transition ${
-                        isSelected ? 'bg-blue-50/50' : 'hover:bg-slate-50/70'
-                      } cursor-pointer`}
-                      onClick={() => setExpandedId(expanded ? null : p.id)}
-                    >
-                      <td className={`${rowPad} px-4`} onClick={e => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={e => {
-                            const next = new Set(selected);
-                            if (e.target.checked) next.add(p.id); else next.delete(p.id);
-                            setSelected(next);
-                          }}
-                          className="w-3.5 h-3.5 rounded border-slate-300 accent-blue-600"
-                        />
-                      </td>
-
-                      <td className={`${rowPad} px-4`}>
-                        <code className="text-xs font-mono text-blue-600 font-medium">{p.sku}</code>
-                        {p.barcode && (
-                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">{p.barcode}</div>
-                        )}
-                      </td>
-
-                      <td
-                        className={`${rowPad} px-3 w-14`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const imgs = Array.isArray(p.images)
-                            ? (p.images as unknown[]).filter((x): x is string => typeof x === 'string')
-                            : [];
-                          const hero = imgs[0];
-                          if (hero) {
-                            return (
-                              <HoverCard openDelay={150} closeDelay={150}>
-                                <HoverCardTrigger asChild>
-                                  <img
-                                    src={hero}
-                                    alt={p.name_th}
-                                    className="w-10 h-10 rounded-md object-cover border border-slate-200 bg-white cursor-zoom-in"
-                                    loading="lazy"
-                                  />
-                                </HoverCardTrigger>
-                                <HoverCardContent
-                                  side="right"
-                                  align="start"
-                                  sideOffset={8}
-                                  className="w-auto p-0 border-slate-200 shadow-xl rounded-lg overflow-hidden"
-                                >
-                                  <ProductImagePreview images={imgs} alt={p.name_th} />
-                                </HoverCardContent>
-                              </HoverCard>
-                            );
-                          }
-                          return (
-                            <div className="w-10 h-10 rounded-md border border-dashed border-slate-200 bg-slate-50 grid place-items-center text-slate-300">
-                              <Box size={16} />
-                            </div>
-                          );
-                        })()}
-                      </td>
-
-                      <td className={`${rowPad} px-4 max-w-md`}>
-                        <div className="text-sm text-slate-900 font-medium truncate">{p.name_th}</div>
-                        <div className="text-xs text-slate-500 mt-0.5 truncate">
-                          {p.brand && <span>{p.brand}</span>}
-                          {p.brand && p.name_en && <span className="mx-1.5 text-slate-300">·</span>}
-                          {p.name_en && <span className="italic">{p.name_en}</span>}
-                        </div>
-                        {p.group && (
-                          <div
-                            className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 max-w-full"
-                            title={`อยู่ในกลุ่ม: ${p.group.name}`}
-                          >
-                            <Boxes size={9} className="flex-shrink-0" />
-                            <span className="truncate">{p.group.name}</span>
-                          </div>
-                        )}
-                      </td>
-
-                      <td className={`${rowPad} px-4 text-slate-700 text-sm`}>
-                        {p.category?.name_th ?? <span className="text-slate-300">—</span>}
-                      </td>
-
-                      <td className={`${rowPad} px-4 text-center`}>
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${prodM.text}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${prodM.dot}`} />
-                          {prodM.label}
-                        </span>
-                      </td>
-
-                      <td className={`${rowPad} px-4 text-right`}>
-                        {hasDisc ? (
-                          <>
-                            <div className="flex items-baseline justify-end gap-1.5">
-                              <span className="text-xs line-through text-slate-400 tabular-nums">
-                                {formatTHB(listPrice)}
-                              </span>
-                              <span className="text-base font-bold text-rose-600 tabular-nums">
-                                {formatTHB(effective)}
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-500 mt-0.5 flex items-center justify-end gap-1.5">
-                              <span className="text-rose-600 font-semibold">-{discPct}%</span>
-                              {margin !== null && <span>margin {margin.toFixed(0)}%</span>}
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="text-sm font-semibold text-slate-900">
-                              {formatTHB(listPrice)}
-                            </div>
-                            {margin !== null && (
-                              <div className="text-[10px] text-slate-500 mt-0.5">
-                                margin {margin.toFixed(0)}%
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </td>
-
-                      <td className={`${rowPad} px-4`}>
-                        <StockCell
-                          qty={p.total_quantity}
-                          reorder={reorder}
-                          unit={p.unit}
-                          statusMeta={statusM}
-                          statusLabel={t.inventory.stockStatus[status]}
-                          reserved={inv0?.reserved ?? 0}
-                          lastSyncedAt={p.last_synced_at}
-                        />
-                      </td>
-
-                      <td className={`${rowPad} px-4 text-slate-500 text-xs`}>
-                        {inv0?.shelf ? (
-                          <span className="inline-flex items-center gap-1">
-                            <MapPin size={11} className="text-slate-400" />
-                            {inv0.shelf}{inv0.row_no ? `-${inv0.row_no}` : ''}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-
-                      <td className={`${rowPad} px-4 text-right`}>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {formatTHB(value, { compact: true })}
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">
-                          {relativeTime(p.updated_at)}
-                        </div>
-                      </td>
-
-                      <td className={`${rowPad} px-4`}>
-                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
-                          <button
-                            onClick={e => { e.stopPropagation(); setEditingProduct(p); setCopyFromProduct(null); setIsModalOpen(true); }}
-                            className="p-1.5 rounded text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition"
-                            title="แก้ไข"
-                          >
-                            <Edit2 size={13} />
-                          </button>
-                          <button
-                            onClick={e => { e.stopPropagation(); setEditingProduct(null); setCopyFromProduct(p); setIsModalOpen(true); }}
-                            className="p-1.5 rounded text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition"
-                            title="คัดลอกสินค้า"
-                          >
-                            <Copy size={13} />
-                          </button>
-                          <button
-                            onClick={e => { e.stopPropagation(); handleDelete(p); }}
-                            className="p-1.5 rounded text-slate-500 hover:text-red-600 hover:bg-red-50 transition"
-                            title="ลบ"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                          <ChevronRight size={14} className={`text-slate-400 transition ${expanded ? 'rotate-90' : ''}`} />
-                        </div>
-                      </td>
-                    </tr>
-
-                    {expanded && (
-                      <tr className="bg-slate-50/50">
-                        <td colSpan={10} className="px-6 py-5">
-                          <ExpandedRow p={p} warehouses={warehouses} />
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                );
-              })}
+              {!loading && productRows}
             </tbody>
           </table>
         </div>

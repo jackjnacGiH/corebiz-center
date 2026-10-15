@@ -605,6 +605,43 @@ test('submit blocks formatted phone numbers before making a provider request', a
   assert.equal(h.tables.shipping_attempts.length, 0);
 });
 
+test('Flash and PromptSpeed status reads start together; exact provider match and original delivery precedence remain required', async () => {
+  for (const matched of [true, false]) {
+    const row = submittableShipment(1);
+    Object.assign(row, { status: 'on_delivery', tracking_number: 'TH210697UBBJ9B', provider_updated_at: '2026-10-05T01:29:32.000Z' });
+    row.draft.carrier_code = 'FLASH_EXPRESS_SPEED';
+    let release; const wait = new Promise(resolve => { release = resolve; });
+    const started = [];
+    const h = api({ rows: [row], provider: {
+      request: async () => {
+        started.push('promptspeed'); await wait;
+        return { ok: true, status: 200, data: { data: [{ tracking_number: matched ? row.tracking_number : 'OTHER', carrier_code: row.draft.carrier_code, status: 'closed', update_date: '2026-10-05 08:29:32', actual_price: '63.0000' }] } };
+      },
+      flashTracking: async () => { started.push('flash'); await wait; return { status: 'delivered', updatedAt: '2026-10-07T06:30:26.000Z' }; },
+    } });
+    const call = h.call('refresh_status', { id: id(1), version: 7 });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(started.sort(), ['flash', 'promptspeed']);
+    release(); const result = await call;
+    assert.equal(result.status, matched ? 200 : 502);
+    if (matched) { assert.equal(result.body.shipment.status, 'delivered'); assert.equal(result.body.shipment.provider_charge, 63); }
+    else assert.equal(h.tables.shipments[0].status, 'on_delivery');
+  }
+});
+
+test('invalid PromptSpeed status fails immediately without waiting for the parallel Flash read', async () => {
+  const row = submittableShipment(1);
+  Object.assign(row, { status: 'on_delivery', tracking_number: 'TH210697UBBJ9B' });
+  row.draft.carrier_code = 'FLASH_EXPRESS_SPEED';
+  const h = api({ rows: [row], provider: {
+    request: async () => ({ ok: true, status: 200, data: { data: [] } }),
+    flashTracking: async () => new Promise(() => {}),
+  } });
+  const result = await h.call('refresh_status', { id: id(1), version: 7 });
+  assert.equal(result.status, 502);
+  assert.equal(h.tables.shipments[0].status, 'on_delivery');
+});
+
 test('print accepts the provider array PDF for the requested tracking number', async () => {
   const row = submittableShipment(1);
   row.status = 'waiting';

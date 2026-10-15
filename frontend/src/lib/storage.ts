@@ -8,6 +8,7 @@
  *   - authenticated users (admin/staff) may upload/update/delete
  */
 import { supabase } from './supabase';
+import { optimizeProductImage } from './optimize-product-image';
 
 const BUCKET = 'products';
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -50,6 +51,7 @@ export function validateImage(file: File): void {
  */
 export async function uploadProductImage(file: File, productKey: string): Promise<string> {
     validateImage(file);
+    file = await optimizeProductImage(file);
 
     const ext = extFor(file);
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

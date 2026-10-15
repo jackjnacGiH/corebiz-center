@@ -143,3 +143,41 @@ test("a dropped read connection retries once without issuing shipment mutations"
   assert.equal(operations.filter(op => op === "quote").length, 3);
   assert.ok(operations.every(op => ["carriers", "quote"].includes(op)));
 });
+
+test("warm comparisons share only carrier metadata, never quotes or a different provider configuration", async () => {
+  let catalogues = 0, quotes = 0;
+  const request = async (_config, operation) => {
+    if (operation === 'carriers') { catalogues++; return response(200, { data: [{ code: 'A' }] }); }
+    quotes++; return response(200, { data: [rate('A', String(quotes))] });
+  };
+  const config = { environment: 'uat', appId: 'test', secret: 'test', readsEnabled: true, specConfirmed: true };
+  const one = draft(); one.parcels = [one.parcels[0]]; one.parcel_total = 1;
+  const first = await compareShippingRates(config, one, undefined, request);
+  const second = await compareShippingRates(config, one, undefined, request);
+  assert.equal(catalogues, 1); assert.equal(quotes, 2);
+  assert.notEqual(first.rates[0].total, second.rates[0].total);
+  await compareShippingRates({ ...config, environment: 'production' }, one, undefined, request);
+  await compareShippingRates({ ...config, secret: 'rotated' }, one, undefined, request);
+  assert.equal(catalogues, 3);
+});
+
+test("concurrent comparisons share catalogue discovery and failed discovery is not retained", async () => {
+  let catalogues = 0, quotes = 0, release;
+  const wait = new Promise(resolve => { release = resolve; });
+  const request = async (_config, operation) => {
+    if (operation === 'carriers') { catalogues++; await wait; return response(200, { data: [{ code: 'A' }] }); }
+    quotes++; return response(200, { data: [rate('A', '10')] });
+  };
+  const a = compareShippingRates({}, draft(), undefined, request);
+  const b = compareShippingRates({}, draft(), undefined, request);
+  release(); await Promise.all([a, b]);
+  assert.equal(catalogues, 1); assert.equal(quotes, 4);
+  let failed = true, attempts = 0;
+  const failing = async (_config, operation) => {
+    if (operation === 'carriers') { attempts++; return failed ? response(403, { error: true }) : response(200, { data: [{ code: 'A' }] }); }
+    return response(200, { data: [rate('A', '10')] });
+  };
+  await assert.rejects(compareShippingRates({}, draft(), undefined, failing));
+  failed = false; await compareShippingRates({}, draft(), undefined, failing);
+  assert.equal(attempts, 2);
+});

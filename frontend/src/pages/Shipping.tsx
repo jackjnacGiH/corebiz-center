@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useLanguage } from "@/i18n";
 import { useAuth } from "@/lib/AuthProvider";
+import { mapSettledLimit } from "@/lib/concurrent";
 import {
   shippingApi,
   type Shipment,
@@ -586,13 +587,14 @@ export default function Shipping() {
           ? { shipments: rows, count }
           : await shippingApi.list(0, "");
         const pageCount = Math.ceil(firstPage.count / 25);
-        const remainingPages = pageCount > 1
-          ? await Promise.all(
-              Array.from({ length: pageCount - 1 }, (_, index) =>
-                shippingApi.list(index + 1, "")
-              ),
-            )
-          : [];
+        const pageResults = await mapSettledLimit(
+          Array.from({ length: Math.max(0, pageCount - 1) }, (_, index) => index + 1),
+          3,
+          (index) => shippingApi.list(index, ""),
+        );
+        const failedPage = pageResults.find((result) => result.status === "rejected");
+        if (failedPage?.status === "rejected") throw failedPage.reason;
+        const remainingPages = pageResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
         const candidates = [
           ...firstPage.shipments,
           ...remainingPages.flatMap((result) => result.shipments),
@@ -610,16 +612,12 @@ export default function Shipping() {
 
         const refreshed: Shipment[] = [];
         let failed = 0;
-        for (let index = 0; index < targets.length; index += 3) {
-          const results = await Promise.allSettled(
-            targets.slice(index, index + 3).map((target) =>
-              shippingApi.action("refresh_status", target)
-            ),
-          );
-          for (const result of results) {
-            if (result.status === "fulfilled") refreshed.push(result.value.shipment);
-            else failed += 1;
-          }
+        const results = await mapSettledLimit(targets, 3, (target) =>
+          shippingApi.action("refresh_status", target)
+        );
+        for (const result of results) {
+          if (result.status === "fulfilled") refreshed.push(result.value.shipment);
+          else failed += 1;
         }
         const refreshedById = new Map(refreshed.map((row) => [row.id, row]));
         setRows((current) => current.map((row) => {

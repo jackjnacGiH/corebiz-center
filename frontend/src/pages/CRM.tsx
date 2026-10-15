@@ -23,6 +23,7 @@ import {
     ChevronRight,
 } from 'lucide-react';
 import { customersApi, customerBranchesApi } from '../lib/api';
+import { CK, hasCache, peekList, swrList } from '../lib/cache';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '@/lib/AuthProvider';
 import { isAdminOrOwner } from '@/lib/permissions';
@@ -57,11 +58,6 @@ const CustomerSchedule = lazy(() => import('../components/CustomerSchedule'));
 const CUSTOMER_PAGE_SIZE = 100;
 const REALTIME_RELOAD_DELAY_MS = 150;
 
-// Session-lived cache so re-entering CRM shows data instantly (then revalidates
-// in the background). Survives route changes; reset on full reload.
-let customersCache: Customer[] | null = null;
-let branchesCache: CustomerBranch[] | null = null;
-
 /** Portal tax-id link request awaiting Owner/Admin approval (RPC row). */
 interface PendingLink {
     contact_id: string;
@@ -83,9 +79,9 @@ export default function CRM() {
     const canApprove = isAdminOrOwner(profile?.role);
     const [pendingLinks, setPendingLinks] = useState<PendingLink[]>([]);
     const [linkBusy, setLinkBusy] = useState<string | null>(null);
-    const [customers, setCustomers] = useState<Customer[]>(() => customersCache ?? []);
-    const [branches, setBranches] = useState<CustomerBranch[]>(() => branchesCache ?? []);
-    const [loading, setLoading] = useState(customersCache === null);
+    const [customers, setCustomers] = useState<Customer[]>(() => peekList<Customer[]>(CK.customers) ?? []);
+    const [branches, setBranches] = useState<CustomerBranch[]>(() => peekList<CustomerBranch[]>(CK.customerBranches) ?? []);
+    const [loading, setLoading] = useState(!hasCache(CK.customers));
     const [err, setErr] = useState<string | null>(null);
     const [search, setSearch] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -102,7 +98,7 @@ export default function CRM() {
     const loadQueuedRef = useRef(false);
     const realtimeReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const load = useCallback(async () => {
+    const load = useCallback(async (force = true) => {
         // All callers share one request cycle. If Realtime fires again while a
         // refresh is active, run at most one trailing refresh after it finishes.
         if (loadInFlightRef.current) {
@@ -114,19 +110,26 @@ export default function CRM() {
             setErr(null);
             // Cold load → show spinner. Warm (cached) → keep showing cached data
             // while we revalidate silently in the background.
-            if (customersCache === null) setLoading(true);
+            if (!hasCache(CK.customers)) setLoading(true);
 
             try {
                 do {
                     loadQueuedRef.current = false;
+                    const refreshed = { customers: false, branches: false };
+                    const backgroundError = (error: unknown) => setErr((error as Error).message);
                     const [freshCustomers, freshBranches] = await Promise.all([
-                        customersApi.list(),
-                        customerBranchesApi.listAll(),
+                        swrList(CK.customers, () => customersApi.list(), { force, onFresh: (data) => {
+                            refreshed.customers = true; setCustomers(data);
+                        }, onBackgroundError: backgroundError }),
+                        swrList(CK.customerBranches, () => customerBranchesApi.listAll(), { force, onFresh: (data) => {
+                            refreshed.branches = true; setBranches(data);
+                        }, onBackgroundError: backgroundError }),
                     ]);
-                    customersCache = freshCustomers;
-                    branchesCache = freshBranches;
-                    setCustomers(freshCustomers);
-                    setBranches(freshBranches);
+                    if (!refreshed.customers) setCustomers(freshCustomers);
+                    if (!refreshed.branches) setBranches(freshBranches);
+                    // A write/realtime event queued during the first cached read
+                    // must still fetch a fresh generation after that read.
+                    force = true;
                 } while (loadQueuedRef.current);
             } catch (error) {
                 setErr((error as Error).message);
@@ -178,7 +181,7 @@ export default function CRM() {
     }
 
     useEffect(() => {
-        void load();
+        void load(false);
         void loadPendingLinks();
     }, [load, loadPendingLinks]);
 
