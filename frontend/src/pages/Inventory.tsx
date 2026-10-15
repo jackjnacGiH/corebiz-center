@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Package, Plus, Search, Edit2, Trash2, Copy, AlertTriangle, RefreshCw,
   ArrowUpDown, ArrowUp, ArrowDown, MapPin, Box, Tag, ChevronDown,
   ChevronRight, Upload, FileDown, Filter, History, Boxes, Sparkles,
 } from 'lucide-react';
-import ProductModal, { type ProductFormData } from '../components/ProductModal';
-import BulkEditProductsModal from '../components/BulkEditProductsModal';
+import type { ProductFormData } from '../components/ProductModal';
+import DeferredContent from '../components/DeferredContent';
 import {
   productsApi,
   inventoryApi,
@@ -22,10 +22,13 @@ import { swrList, CK, hasCache } from '../lib/cache';
 import { useLanguage } from '../i18n';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import ProductImagePreview from '../components/ProductImagePreview';
-import ImportInventoryModal from '../components/ImportInventoryModal';
-import SyncLogDrawer from '../components/SyncLogDrawer';
-import ProductGroupManagerModal from '../components/ProductGroupManagerModal';
 import { buildInventoryCsv, downloadCsv } from '../lib/inventoryCsv';
+
+const ProductModal = lazy(() => import('../components/ProductModal'));
+const BulkEditProductsModal = lazy(() => import('../components/BulkEditProductsModal'));
+const ImportInventoryModal = lazy(() => import('../components/ImportInventoryModal'));
+const SyncLogDrawer = lazy(() => import('../components/SyncLogDrawer'));
+const ProductGroupManagerModal = lazy(() => import('../components/ProductGroupManagerModal'));
 
 // ─── types & helpers ─────────────────────────────────────────────────────
 type StockStatus = 'out' | 'low' | 'watch' | 'normal';
@@ -820,7 +823,7 @@ export default function Inventory() {
         </div>
       </section>
 
-      <ProductModal
+      <DeferredContent active={isModalOpen}><ProductModal
         isOpen={isModalOpen}
         onClose={() => {
           setIsModalOpen(false);
@@ -832,34 +835,34 @@ export default function Inventory() {
         editingProduct={editingProduct}
         copyFromProduct={copyFromProduct}
         categories={categories}
-      />
+      /></DeferredContent>
 
-      <BulkEditProductsModal
+      <DeferredContent active={bulkEditOpen}><BulkEditProductsModal
         isOpen={bulkEditOpen}
         selectedProducts={selectedProducts}
         categories={categories}
         onClose={() => setBulkEditOpen(false)}
         onSave={handleBulkEditSave}
-      />
+      /></DeferredContent>
 
-      <ImportInventoryModal
+      <DeferredContent active={isImportOpen}><ImportInventoryModal
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}
         onImported={() => void load(true)}
         existingProducts={products}
         categories={categories}
-      />
+      /></DeferredContent>
 
-      <SyncLogDrawer
+      <DeferredContent active={isSyncLogOpen}><SyncLogDrawer
         open={isSyncLogOpen}
         onClose={() => setIsSyncLogOpen(false)}
-      />
+      /></DeferredContent>
 
-      <ProductGroupManagerModal
+      <DeferredContent active={isGroupManagerOpen}><ProductGroupManagerModal
         isOpen={isGroupManagerOpen}
         onClose={() => setIsGroupManagerOpen(false)}
         onChanged={() => void load(true)}
-      />
+      /></DeferredContent>
     </div>
   );
 }

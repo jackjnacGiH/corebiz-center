@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { lazy, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -38,9 +38,12 @@ import type { Category, Customer } from '../lib/database.types';
 import { useRealtimeRefresh, useRealtimeTable } from '../lib/useRealtimeTable';
 import { swrList, CK, hasCache } from '../lib/cache';
 import ProductImagePreview from '../components/ProductImagePreview';
-import CustomerPickerModal from '../components/CustomerPickerModal';
-import QuotePreviewPanel, { type PreviewLine } from '../components/QuotePreviewPanel';
+import type { PreviewLine } from '../components/QuotePreviewPanel';
+import DeferredContent from '../components/DeferredContent';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
+
+const CustomerPickerModal = lazy(() => import('../components/CustomerPickerModal'));
+const QuotePreviewPanel = lazy(() => import('../components/QuotePreviewPanel'));
 
 type LeadTimeKey = 'ready' | 'twoThreeDays' | 'low';
 
@@ -1693,15 +1696,15 @@ export default function Ecommerce() {
         </div>
       )}
 
-      <CustomerPickerModal
+      <DeferredContent active={custPickerOpen}><CustomerPickerModal
         open={custPickerOpen}
         customers={customers}
         selectedId={quoteCustomer?.id ?? null}
         onClose={() => setCustPickerOpen(false)}
         onSelect={(c) => void pickQuoteCustomer(c)}
-      />
+      /></DeferredContent>
 
-      <QuotePreviewPanel
+      <DeferredContent active={isCartOpen && showPreview && cart.length > 0}><QuotePreviewPanel
         open={isCartOpen && showPreview && cart.length > 0}
         org={quoteOrg}
         customer={quoteCustomer}
@@ -1716,7 +1719,7 @@ export default function Ecommerce() {
         onNote={setQuoteNote}
         format={formatCurrency}
         onClose={() => setShowPreview(false)}
-      />
+      /></DeferredContent>
     </div>
   );
 }

@@ -1,0 +1,13 @@
+{
+  "scope": "Local PostgreSQL fixture; timing is not end-user latency",
+  "before": {
+    "rowCount": 5000,
+    "calls": 5001,
+    "ms": 44.283
+  },
+  "after": {
+    "rowCount": 5000,
+    "calls": 1,
+    "ms": 2.229
+  }
+}
