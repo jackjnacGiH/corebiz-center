@@ -102,6 +102,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                             to={item.path}
                             end={item.path === '/'}
                             onClick={onItemClick}
+                            onPointerEnter={() => { void import('../../lib/prefetch-page').then(({ prefetchPage }) => prefetchPage(item.path)); }}
+                            onFocus={() => { void import('../../lib/prefetch-page').then(({ prefetchPage }) => prefetchPage(item.path)); }}
                             className={({ isActive }) =>
                                 cn('nav-link', isActive && 'active', collapsed && 'nav-link--collapsed')
                             }

@@ -10,6 +10,8 @@
  * No external library — just a module-level Map (lives for the SPA session).
  */
 
+import { clearReadFlights } from './read-flight.ts';
+
 type Entry<T = unknown> = { data: T; at: number };
 type Pending = {
   promise: Promise<unknown>;
@@ -134,6 +136,7 @@ export function invalidateListPrefix(prefix: string): void {
 /** Detach cached and pending reads before the authenticated identity changes.
  * A late response from the previous account cannot refill the new cache. */
 export function clearListCache(): void {
+  clearReadFlights();
   store.clear();
   pending.clear();
 }
@@ -143,10 +146,15 @@ export function hasCache(key: string): boolean {
   return store.has(key);
 }
 
+export function peekList<T>(key: string): T | undefined {
+  return store.get(key)?.data as T | undefined;
+}
+
 /** Cache keys — keep them in one place to avoid typos across pages. */
 export const CK = {
   products: 'products',
   customers: 'customers',
+  customerBranches: 'customer-branches',
   categories: 'categories',
   warehouses: 'warehouses',
   shippingInitial: 'shipping:initial',

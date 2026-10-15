@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as domain from '../supabase/functions/_shared/shipping-domain.ts';
+import { mapSettledLimit } from '../frontend/src/lib/concurrent.ts';
 
 const compiled = ts.transpileModule(readFileSync(new URL('../frontend/src/pages/Shipping.tsx', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
@@ -88,6 +89,7 @@ function mount(query = '') {
         session: { user: { id: 'user-1' } }, profile: { role: 'owner' },
       }) };
       if (name === '@/lib/shipping-api') return { shippingApi: api };
+      if (name === '@/lib/concurrent') return { mapSettledLimit };
       if (name === '@/lib/shipping-billing') return {
         parsePromptSpeedBillingFile: async file => ({
           file_name: file.name,

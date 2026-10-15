@@ -71,10 +71,22 @@ test('Shipping does not start full-list background prefetches', async () => {
   assert.deepEqual(await prefetchesAt('/shipping/'), []);
 });
 
-test('other routes keep the existing background cache warm-up', async () => {
-  assert.deepEqual(await prefetchesAt('/inventory'), [
-    'shipping:initial', 'products', 'categories', 'warehouses', 'customers',
-  ]);
+test('Chat and Dashboard do not download the complete catalogue/CRM without navigation intent', async () => {
+  for (const path of ['/chat', '/', '/inventory']) {
+    assert.deepEqual(await prefetchesAt(path), ['shipping:initial']);
+  }
+});
+
+test('menu intent warms only the relevant lists, preserving full data and cache sharing', () => {
+  const source = readFileSync(new URL('../frontend/src/lib/prefetch-page.ts', import.meta.url), 'utf8');
+  const warmed = [], exports = {};
+  const CK = { products: 'products', customers: 'customers', categories: 'categories', warehouses: 'warehouses', customerBranches: 'branches' };
+  runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
+    exports, require: name => name === './cache' ? { CK, prefetchList: key => warmed.push(key) } : {},
+  });
+  exports.prefetchPage('/chat'); assert.deepEqual(warmed, []);
+  exports.prefetchPage('/crm'); assert.deepEqual(warmed.splice(0), ['customers', 'branches']);
+  exports.prefetchPage('/inventory'); assert.deepEqual(warmed.splice(0), ['products', 'categories', 'warehouses']);
 });
 
 test('route/auth effect cancellation prevents shipping and full-list reads before or during its optional import', async () => {

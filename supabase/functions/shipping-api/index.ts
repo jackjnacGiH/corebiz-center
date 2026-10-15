@@ -982,11 +982,18 @@ Deno.serve(async (req) => {
     }
     if (action === "refresh_status") {
       if (!shipment.tracking_number) return fail("tracking_required");
-      const r = await requestProvider(config, "list", undefined, {
-        viewpoint: "all",
-        search: shipment.tracking_number,
-        limit: "25",
-      });
+      const checkFlash = shipment.draft.carrier_code.startsWith("FLASH") &&
+        ["waiting", "on_delivery"].includes(shipment.status);
+      // Independent read-only providers can run together. PromptSpeed must
+      // still validate the exact tracking/carrier before Flash is considered.
+      const [r, flashResult] = await Promise.all([
+        requestProvider(config, "list", undefined, {
+          viewpoint: "all", search: shipment.tracking_number, limit: "25",
+        }),
+        checkFlash
+          ? db.rpc("shipping_flash_delivered_snapshot", { p_tracking: shipment.tracking_number })
+          : Promise.resolve(null),
+      ]);
       if (!r.ok || !Array.isArray(r.data.data))
         return fail("provider_response_invalid", 502);
       const found = providerRows(r)
@@ -999,14 +1006,8 @@ Deno.serve(async (req) => {
       if (!found) return fail("provider_response_invalid", 502);
       let snapshot = providerShipmentSnapshot(found);
       if (!snapshot.status) return fail("provider_response_invalid", 502);
-      if (
-        shipment.draft.carrier_code.startsWith("FLASH") &&
-        ["waiting", "on_delivery"].includes(shipment.status)
-      ) {
-        const { data: flashData, error: flashError } = await db.rpc(
-          "shipping_flash_delivered_snapshot",
-          { p_tracking: shipment.tracking_number },
-        );
+      if (flashResult) {
+        const { data: flashData, error: flashError } = flashResult;
         const direct = flashError ? null : parseFlashDatabaseSnapshot(flashData);
         if (direct) snapshot = { ...snapshot, ...direct };
       }

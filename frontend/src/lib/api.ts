@@ -6,6 +6,7 @@
  * to a plain Error if non-null.
  */
 import { supabase } from './supabase';
+import { shareRead } from './read-flight';
 import { conversationCursorFilter, inboxSearchPattern } from './chat-inbox-pagination';
 import { privateChatFileLocation, queueChatOutboundDelivery } from './chat-outbound';
 import type { AppRole } from './supabase';
@@ -1471,9 +1472,12 @@ export const dashboardApi = {
     const d60 = new Date(now.getTime() - 60 * 86400000).toISOString();
 
     // Total revenue (all-time paid)
-    const { data: revRows, error: revErr } = await supabase
-      .from('orders')
-      .select('total, payment_status, status, created_at');
+    const [revenue, stock, newCustomers] = await Promise.all([
+      supabase.from('orders').select('total, payment_status, status, created_at'),
+      supabase.from('inventory').select('product_id, quantity, reorder_level'),
+      supabase.from('customers').select('id', { count: 'exact', head: true }).gte('created_at', d30),
+    ]);
+    const { data: revRows, error: revErr } = revenue;
     if (revErr) throw revErr;
 
     const allRevenue = (revRows ?? [])
@@ -1499,9 +1503,7 @@ export const dashboardApi = {
       .length;
 
     // Low stock — query distinct products with any inventory <= reorder_level
-    const { data: lowStockRows, error: lsErr } = await supabase
-      .from('inventory')
-      .select('product_id, quantity, reorder_level');
+    const { data: lowStockRows, error: lsErr } = stock;
     if (lsErr) throw lsErr;
 
     const lowProducts = new Set<string>();
@@ -1510,10 +1512,7 @@ export const dashboardApi = {
     }
 
     // New customers in last 30 days
-    const { count: newCustCount, error: ncErr } = await supabase
-      .from('customers')
-      .select('id', { count: 'exact', head: true })
-      .gte('created_at', d30);
+    const { count: newCustCount, error: ncErr } = newCustomers;
     if (ncErr) throw ncErr;
 
     return {
@@ -1563,11 +1562,14 @@ export const dashboardApi = {
     const events: ActivityEvent[] = [];
 
     // Recent orders
-    const { data: orderRows } = await supabase
-      .from('orders')
-      .select('id, code, status, total, created_at, customer:customers(name)')
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    const [recentOrders, recentCustomers] = await Promise.all([
+      supabase.from('orders')
+        .select('id, code, status, total, created_at, customer:customers(name)')
+        .order('created_at', { ascending: false }).limit(limit),
+      supabase.from('customers').select('id, name, created_at')
+        .order('created_at', { ascending: false }).limit(5),
+    ]);
+    const { data: orderRows } = recentOrders;
 
     for (const o of (orderRows ?? []) as unknown as Array<{
       id: string; code: string; status: string; total: number; created_at: string;
@@ -1582,11 +1584,7 @@ export const dashboardApi = {
     }
 
     // Recent new customers
-    const { data: custRows } = await supabase
-      .from('customers')
-      .select('id, name, created_at')
-      .order('created_at', { ascending: false })
-      .limit(5);
+    const { data: custRows } = recentCustomers;
 
     for (const c of custRows ?? []) {
       events.push({
@@ -2826,6 +2824,8 @@ export const chatInboxApi = {
     opts: { limit?: number; before?: ChatMessageCursor; signal?: AbortSignal } = {},
   ): Promise<ChatMessagePage> {
     const limit = Math.max(1, Math.min(opts.limit ?? 100, 200));
+    const key = JSON.stringify(['chat-messages', conversationId, limit, opts.before ?? null]);
+    return shareRead(key, async (signal) => {
     let query = supabase
       .from('chat_messages')
       .select('*')
@@ -2838,7 +2838,7 @@ export const chatInboxApi = {
         `created_at.lt.${opts.before.createdAt},and(created_at.eq.${opts.before.createdAt},id.lt.${opts.before.id})`,
       );
     }
-    if (opts.signal) query = query.abortSignal(opts.signal);
+    query = query.abortSignal(signal);
     const { data, error } = await query;
     if (error) throw error;
     const rows = (data ?? []) as ChatMessage[];
@@ -2846,6 +2846,7 @@ export const chatInboxApi = {
     if (hasMore) rows.pop();
     rows.reverse();
     return { messages: rows, hasMore };
+    }, opts.signal);
   },
 
   /** Admin sends a reply. Inserts the chat_messages row (the database trigger

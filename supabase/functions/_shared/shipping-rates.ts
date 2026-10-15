@@ -5,7 +5,37 @@ import {
   providerRows,
   requestProvider,
   type ProviderConfig,
+  type ProviderResponse,
 } from "./promptspeed.ts";
+
+// Carrier metadata only; every comparison still gets new monetary quotes.
+// Scope by transport and full provider config so tests, accounts, credentials
+// and readiness changes cannot share a catalogue. Never cache failures.
+const carrierCatalogues = new WeakMap<typeof requestProvider, Map<string, {
+  until: number; promise: Promise<ProviderResponse>;
+}>>();
+const CARRIER_TTL_MS = 30_000;
+async function carrierCatalogue(config: ProviderConfig, request: typeof requestProvider, read: () => Promise<ProviderResponse>): Promise<ProviderResponse> {
+  let cache = carrierCatalogues.get(request);
+  if (!cache) { cache = new Map(); carrierCatalogues.set(request, cache); }
+  const key = JSON.stringify(config);
+  const hit = cache.get(key);
+  if (hit && hit.until > Date.now()) return hit.promise;
+  // Small per-isolate bound, including in-flight entries.
+  if (cache.size >= 8) cache.delete(cache.keys().next().value!);
+  const entry = { until: Date.now() + CARRIER_TTL_MS, promise: Promise.resolve({} as ProviderResponse) };
+  entry.promise = read().then((response) => {
+    if (!response.ok || !Array.isArray(response.data.data)) {
+      if (cache.get(key) === entry) cache.delete(key);
+    }
+    return response;
+  }, (error) => {
+    if (cache.get(key) === entry) cache.delete(key);
+    throw error;
+  });
+  cache.set(key, entry);
+  return entry.promise;
+}
 
 export interface ShippingCarrier {
   code: string;
@@ -108,7 +138,7 @@ export async function compareShippingRates(
       }
     }
   };
-  const carrierResponse = await read("carriers", undefined, { limit: "100" });
+  const carrierResponse = await carrierCatalogue(config, request, () => read("carriers", undefined, { limit: "100" }));
   if (!carrierResponse.ok || !Array.isArray(carrierResponse.data.data))
     throw providerReadError(carrierResponse);
   const carrierRows = providerRows(carrierResponse);

@@ -6,8 +6,6 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import BackToTop from '../BackToTop';
 import { cn } from '@/lib/utils';
-import { prefetchList, CK } from '../../lib/cache';
-import { productsApi, customersApi, categoriesApi, warehousesApi } from '../../lib/api';
 import { useAuth } from '../../lib/AuthProvider';
 import type { TopBarPageContent } from './TopBar';
 
@@ -22,7 +20,6 @@ const Layout: React.FC = () => {
     const { session, profile } = useAuth();
     const [topBarContent, setTopBarContent] = React.useState<TopBarPageContent | null>(null);
     const outletContext = React.useMemo<LayoutOutletContext>(() => ({ setTopBarContent }), []);
-    const heavyPrefetchStarted = React.useRef(false);
     const shippingPrefetchScope = React.useRef('');
     const shippingCacheScope = session && profile && ['owner', 'admin', 'staff'].includes(profile.role)
         ? `${session.user.id}:${profile.role}`
@@ -66,20 +63,6 @@ const Layout: React.FC = () => {
             if (started && !completed && shippingPrefetchScope.current === shippingCacheScope) shippingPrefetchScope.current = '';
         };
     }, [location.pathname, shippingCacheScope]);
-
-    // Warm the heavy lists after the Shipping request has had a head start.
-    // These remain background-only and never block route rendering.
-    React.useEffect(() => {
-        if (heavyPrefetchStarted.current || location.pathname.startsWith('/shipping')) return;
-        const t = setTimeout(() => {
-            heavyPrefetchStarted.current = true;
-            prefetchList(CK.products, () => productsApi.list());
-            prefetchList(CK.categories, () => categoriesApi.list());
-            prefetchList(CK.warehouses, () => warehousesApi.list());
-            prefetchList(CK.customers, () => customersApi.list());
-        }, 2500);
-        return () => clearTimeout(t);
-    }, [location.pathname]);
 
     return (
         <div className={cn('app-layout', collapsed && !isMobile && 'app-layout--collapsed')}>
