@@ -986,14 +986,12 @@ Deno.serve(async (req) => {
         ["waiting", "on_delivery"].includes(shipment.status);
       // Independent read-only providers can run together. PromptSpeed must
       // still validate the exact tracking/carrier before Flash is considered.
-      const [r, flashResult] = await Promise.all([
-        requestProvider(config, "list", undefined, {
-          viewpoint: "all", search: shipment.tracking_number, limit: "25",
-        }),
-        checkFlash
-          ? db.rpc("shipping_flash_delivered_snapshot", { p_tracking: shipment.tracking_number })
-          : Promise.resolve(null),
-      ]);
+      const flashRead = checkFlash ? Promise.allSettled([
+        db.rpc("shipping_flash_delivered_snapshot", { p_tracking: shipment.tracking_number }),
+      ]) : null;
+      const r = await requestProvider(config, "list", undefined, {
+        viewpoint: "all", search: shipment.tracking_number, limit: "25",
+      });
       if (!r.ok || !Array.isArray(r.data.data))
         return fail("provider_response_invalid", 502);
       const found = providerRows(r)
@@ -1006,8 +1004,10 @@ Deno.serve(async (req) => {
       if (!found) return fail("provider_response_invalid", 502);
       let snapshot = providerShipmentSnapshot(found);
       if (!snapshot.status) return fail("provider_response_invalid", 502);
-      if (flashResult) {
-        const { data: flashData, error: flashError } = flashResult;
+      if (flashRead) {
+        const [flashResult] = await flashRead;
+        if (flashResult.status === "rejected") throw flashResult.reason;
+        const { data: flashData, error: flashError } = flashResult.value;
         const direct = flashError ? null : parseFlashDatabaseSnapshot(flashData);
         if (direct) snapshot = { ...snapshot, ...direct };
       }

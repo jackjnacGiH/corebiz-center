@@ -629,6 +629,19 @@ test('Flash and PromptSpeed status reads start together; exact provider match an
   }
 });
 
+test('invalid PromptSpeed status fails immediately without waiting for the parallel Flash read', async () => {
+  const row = submittableShipment(1);
+  Object.assign(row, { status: 'on_delivery', tracking_number: 'TH210697UBBJ9B' });
+  row.draft.carrier_code = 'FLASH_EXPRESS_SPEED';
+  const h = api({ rows: [row], provider: {
+    request: async () => ({ ok: true, status: 200, data: { data: [] } }),
+    flashTracking: async () => new Promise(() => {}),
+  } });
+  const result = await h.call('refresh_status', { id: id(1), version: 7 });
+  assert.equal(result.status, 502);
+  assert.equal(h.tables.shipments[0].status, 'on_delivery');
+});
+
 test('print accepts the provider array PDF for the requested tracking number', async () => {
   const row = submittableShipment(1);
   row.status = 'waiting';
