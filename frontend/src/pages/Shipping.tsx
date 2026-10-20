@@ -28,6 +28,7 @@ import {
   type ShippingProductOption,
 } from "@/lib/shipping-api";
 import {
+  canArchiveShipment,
   emptyDraft,
   emptyAddress,
   parseDraft,
@@ -776,13 +777,13 @@ export default function Shipping() {
     });
   }
   function deleteDraft(target: Shipment) {
-    if (busy || deletingDraft.current || target.status !== "draft" || target.tracking_number) return;
+    if (busy || deletingDraft.current || !canArchiveShipment(target)) return;
     const unsaved = view === "editor" && shipment?.id === target.id && dirty;
     setPendingDelete({ shipment: target, unsaved });
   }
   async function confirmDeleteDraft() {
     const target = pendingDelete?.shipment;
-    if (!target || busy || deletingDraft.current || target.status !== "draft" || target.tracking_number) return;
+    if (!target || busy || deletingDraft.current || !canArchiveShipment(target)) return;
     deletingDraft.current = true;
     setPendingDelete(null);
     try {
@@ -799,7 +800,7 @@ export default function Shipping() {
         setCount(0);
         setListLoading(true);
         setListRevision((revision) => revision + 1);
-        setNotice(c.draftDeleted);
+        setNotice(target.status === "draft" ? c.draftDeleted : c.shipmentDeleted);
       });
     } finally {
       deletingDraft.current = false;
@@ -1752,16 +1753,16 @@ export default function Shipping() {
                       >
                         {c.submit}
                       </Button>
-                      {!shipment.tracking_number && <Button
-                        variant="outline"
-                        className="text-destructive hover:text-destructive"
-                        disabled={busy}
-                        onClick={() => void deleteDraft(shipment)}
-                      >
-                        <Trash2 size={16} />{c.deleteDraft}
-                      </Button>}
                     </>
                   )}
+                  {canArchiveShipment(shipment) && <Button
+                    variant="outline"
+                    className="text-destructive hover:text-destructive"
+                    disabled={busy}
+                    onClick={() => void deleteDraft(shipment)}
+                  >
+                    <Trash2 size={16} />{shipment.status === "draft" ? c.deleteDraft : c.deleteShipment}
+                  </Button>}
                   {shipment.tracking_number && (
                     <>
                       {trackingUrl && (
@@ -1981,8 +1982,8 @@ export default function Shipping() {
       <Dialog open={!!pendingDelete} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
         <DialogContent role="alertdialog" showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>{c.deleteDraft}</DialogTitle>
-            <DialogDescription>{c.confirmDeleteDraft}</DialogDescription>
+            <DialogTitle>{pendingDelete?.shipment.status === "outcome_unknown" ? c.deleteShipment : c.deleteDraft}</DialogTitle>
+            <DialogDescription>{pendingDelete?.shipment.status === "outcome_unknown" ? c.confirmDeleteShipment : c.confirmDeleteDraft}</DialogDescription>
           </DialogHeader>
           <p className="break-all rounded-md bg-muted px-3 py-2 text-sm font-semibold">{pendingDelete?.shipment.reference_no}</p>
           {pendingDelete?.unsaved && <p className="text-sm text-amber-800">{c.deleteUnsaved}</p>}

@@ -184,6 +184,15 @@ export interface Shipment {
   updated_at: string;
   created_by: string;
 }
+// Removing a pending item only hides it locally; provider bookings/history remain.
+export function canArchiveShipment(s: Pick<Shipment,
+  "status" | "tracking_number" | "provider_billed_at" | "provider_billed_amount" | "provider_billing_import_id"
+>): boolean {
+  return (s.status === "draft" || s.status === "outcome_unknown") &&
+    !s.tracking_number && s.provider_billed_at == null &&
+    s.provider_billed_amount == null && s.provider_billing_import_id == null;
+}
+
 export const emptyAddress = (): ShippingAddress => ({
   company: "",
   fullname: "",

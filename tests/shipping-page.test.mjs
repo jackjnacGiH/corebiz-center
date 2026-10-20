@@ -534,10 +534,13 @@ test('an oversized box shows the specific dimension blocker before quote or subm
   h.unmount();
 });
 
-test('deletion handler refuses non-drafts and any draft that already has tracking', async () => {
+test('deletion handler refuses protected, tracked or billed shipments', async () => {
   for (const changes of [
-    { status: 'submitting' }, { status: 'outcome_unknown' }, { status: 'waiting' },
+    { status: 'submitting' }, { status: 'waiting' },
     { status: 'delivered' }, { status: 'archived' }, { tracking_number: 'TRACK-1' },
+    { status: 'outcome_unknown', tracking_number: 'TRACK-1' },
+    { status: 'outcome_unknown', provider_billed_at: '2026-10-01T00:00:00Z' },
+    { status: 'outcome_unknown', provider_billed_amount: 0 },
   ]) {
     const row = shipment('protected', changes), h = await readyList([row]);
     h.card(row.id).props.onDelete();
@@ -550,6 +553,29 @@ test('deletion handler refuses non-drafts and any draft that already has trackin
     assert.equal(h.button('deleteDraft'), undefined);
     h.unmount();
   }
+});
+
+test('pending-review removal requires confirmation and only hides the row after server acceptance', async () => {
+  const row = shipment('pending-review', { status: 'outcome_unknown' });
+  const h = await readyList([row]);
+  h.card(row.id).props.onDelete();
+  assert.ok(h.find(node => node.type === 'DialogTitle' && node.props.children === 'deleteShipment'));
+  assert.ok(h.find(node => node.type === 'DialogDescription' && node.props.children === 'confirmDeleteShipment'));
+  h.button('cancel').props.onClick();
+  assert.equal(h.requests.filter(request => request.action === 'action').length, 0);
+  h.card(row.id).props.onDelete();
+  h.button('confirmDeleteAction').props.onClick();
+  const action = h.requests.at(-1);
+  assert.equal(action.args[0], 'archive');
+  assert.equal(action.args[1].id, row.id);
+  assert.deepEqual(h.rows(), [row.id]);
+  action.resolve({ shipment: { ...row, status: 'archived', version: 4 } });
+  await settle(); h.runTimers();
+  h.listRequests().at(-1).resolve({ shipments: [], count: 0 });
+  await settle();
+  assert.deepEqual(h.rows(), []);
+  assert.equal(h.find(node => node.props.role === 'status').props.children, 'shipmentDeleted');
+  h.unmount();
 });
 
 test('actual list card stays compact until expanded and preserves shipment actions', () => {
@@ -593,11 +619,14 @@ test('actual list card stays compact until expanded and preserves shipment actio
 
     const controls = buttons(renderCard(row, { expanded: true, onOpen: () => opened++, onDelete: () => deleted++ }));
     const editable = row.status === 'draft' && !row.tracking_number;
-    assert.equal(controls.length, editable ? 3 : 2);
+    assert.equal(controls.length, domain.canArchiveShipment(row) ? 3 : 2);
     assert.ok(controls.find(button => button.props['aria-label'] === `jnacPrint ${row.reference_no}`), 'Every saved shipment has a J NAC label action');
     assert.equal(controls[0].props.children.at(-1), editable ? 'Edit' : 'Open');
     controls[0].props.onClick(); assert.equal(opened, 1);
-    if (editable) { controls[1].props.onClick(); assert.equal(deleted, 1); }
+    if (domain.canArchiveShipment(row)) {
+      assert.equal(controls[1].props.children.at(-1), editable ? 'Delete draft' : 'deleteShipment');
+      controls[1].props.onClick(); assert.equal(deleted, 1);
+    }
     assert.ok(buttons(renderCard(row, { expanded: true, busy: true })).every(button => button.props.disabled));
   }
 

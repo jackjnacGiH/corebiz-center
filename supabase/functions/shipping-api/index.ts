@@ -9,6 +9,7 @@ import {
   shipmentWithContactFields,
   isUuid,
   canUseShipping,
+  canArchiveShipment,
   readyIssues,
   shipmentSearchFilter,
   providerPayload,
@@ -771,7 +772,7 @@ Deno.serve(async (req) => {
     ) => {
       if (!Number.isInteger(b.version) || b.version !== shipment.version)
         throw new Error("conflict");
-      const { data, error } = await db
+      const query = db
         .from("shipments")
         .update({
           ...patch,
@@ -781,8 +782,14 @@ Deno.serve(async (req) => {
         })
         .eq("id", shipment.id)
         .eq("version", b.version)
-        .in("status", allowed)
-        .select("*")
+        .in("status", allowed);
+      if (action === "archive") {
+        query.is("tracking_number", null)
+          .is("provider_billed_at", null)
+          .is("provider_billed_amount", null)
+          .is("provider_billing_import_id", null);
+      }
+      const { data, error } = await query.select("*")
         .maybeSingle();
       if (error) throw error;
       if (!data) throw new Error("conflict");
@@ -793,9 +800,9 @@ Deno.serve(async (req) => {
         shipment: await mutate({ draft: parseDraftUpdate(b.draft, shipment.draft) }, ["draft"]),
       });
     if (action === "archive") {
-      if (shipment.tracking_number) return fail("conflict", 409);
+      if (!canArchiveShipment(shipment)) return fail("conflict", 409);
       return reply({
-        shipment: await mutate({ status: "archived" }, ["draft"]),
+        shipment: await mutate({ status: "archived" }, [shipment.status]),
       });
     }
     if (
