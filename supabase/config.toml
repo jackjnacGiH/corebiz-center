@@ -2,3 +2,7 @@ project_id = "owoedccmuqnzdtxvywgt"
 
 [functions.shipping-api]
 verify_jwt = false
+
+# Internal scheduler; the handler verifies a dedicated Vault key before access.
+[functions.archive-maintenance-history]
+verify_jwt = false

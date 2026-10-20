@@ -47,7 +47,7 @@ jobs:
             supabase/functions/rag-chat/index.ts supabase/functions/rag-search/index.ts \
             supabase/functions/reprocess-line-files/index.ts supabase/functions/facebook-webhook/index.ts \
             supabase/functions/messenger-push/index.ts supabase/functions/shipping-api/index.ts \
-            supabase/functions/storefront-quote/index.ts
+            supabase/functions/storefront-quote/index.ts supabase/functions/archive-maintenance-history/index.ts
 
       - name: Lint and build active services
         run: |
