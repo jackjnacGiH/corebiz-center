@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { createRefreshQueue } from '../frontend/src/lib/refreshQueue.ts';
+import { createVisibilityRefresh } from '../frontend/src/lib/visibilityRefresh.ts';
 
 // Exercise the real hook against a small commit/effect lifecycle and a mock
 // channel. No DOM or database is needed to verify subscription ownership.
@@ -56,6 +57,7 @@ function harness() {
     if (name === 'react') return react;
     if (name === './supabase') return { supabase };
     if (name === './refreshQueue') return { createRefreshQueue };
+    if (name === './visibilityRefresh') return { createVisibilityRefresh };
     throw new Error(`Unexpected dependency ${name}`);
   } });
   return {

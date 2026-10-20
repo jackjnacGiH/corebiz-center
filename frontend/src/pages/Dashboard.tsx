@@ -215,7 +215,7 @@ const Dashboard = () => {
         void load();
         return () => { loadVersion.current = null; };
     }, []);
-    const refreshRealtime = useRealtimeRefresh(load);
+    const refreshRealtime = useRealtimeRefresh(load, { pauseWhenHidden: true });
     useRealtimeTable('quotes',    refreshRealtime);
     useRealtimeTable('orders',    refreshRealtime);
     useRealtimeTable('customers', refreshRealtime);
