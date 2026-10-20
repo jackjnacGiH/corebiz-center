@@ -18,7 +18,8 @@ function shipment(n, status = 'draft', extra = {}) {
   const draft = domain.emptyDraft();
   draft.destination = { ...domain.emptyAddress(), fullname: `Recipient ${n}`, address: `Address ${n}`, telephone1: '0000000000' };
   return { id: id(n), reference_no: `SHP-TEST-${n}`, status, draft, version: 7,
-    tracking_number: null, created_at: '2026-09-01T00:00:00Z', created_by: actor,
+    tracking_number: null, provider_billed_at: null, provider_billed_amount: null, provider_billing_import_id: null,
+    created_at: '2026-09-01T00:00:00Z', created_by: actor,
     order_id: null, order_code: null, orders: null, ...extra };
 }
 function submittableShipment(n) {
@@ -324,7 +325,11 @@ test('archiving an authorized draft preserves its record and records actor, vers
   assert.equal(h.tables.shipments.length, 1, 'archive must not delete the shipment');
   assert.deepEqual(result.body.shipment.draft, before.draft);
   const write = h.queries.find(query => query.patch);
-  assert.deepEqual(JSON.parse(JSON.stringify(write.filters)), [['eq', 'id', id(1)], ['eq', 'version', 7], ['in', 'status', ['draft']]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(write.filters)), [
+    ['eq', 'id', id(1)], ['eq', 'version', 7], ['in', 'status', ['draft']],
+    ['is', 'tracking_number', null], ['is', 'provider_billed_at', null],
+    ['is', 'provider_billed_amount', null], ['is', 'provider_billing_import_id', null],
+  ]);
   assert.equal((await h.call('list')).body.count, 0);
   assert.deepEqual((await h.call('recipient_options', { search: 'Recipient' })).body.recipients, []);
 });
@@ -339,12 +344,58 @@ test('stale versions and tracked drafts are rejected before any update', async (
   }
 });
 
-test('submitting, uncertain, delivered and other non-draft states cannot be archived', async () => {
-  for (const status of ['submitting', 'outcome_unknown', 'waiting', 'on_delivery', 'delivered', 'canceled', 'archived']) {
+test('submitting, shipped and other protected states cannot be archived', async () => {
+  for (const status of ['submitting', 'waiting', 'on_delivery', 'delivered', 'on_return', 'returned', 'claimed', 'closed', 'canceled', 'archived']) {
     const h = api({ rows: [shipment(1, status)] });
     const result = await h.call('archive', { id: id(1), version: 7 });
     assert.equal(result.status, 409, status); assert.equal(result.body.error, 'conflict');
     assert.equal(h.tables.shipments[0].status, status); assert.equal(h.tables.shipments[0].version, 7);
+  }
+});
+
+test('authorized staff can remove pending-review items locally without losing history or calling the provider', async () => {
+  const row = shipment(1, 'outcome_unknown', { order_id: id(80), order_code: 'SO-TEST' });
+  const h = api({ rows: [row, shipment(2, 'waiting')], role: 'staff', grant: true });
+  h.tables.shipping_attempts.push({ id: id(90), shipment_id: row.id, outcome: 'unknown' });
+  const result = await h.call('archive', { id: row.id, version: 7 });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.shipment.status, 'archived');
+  assert.equal(result.body.shipment.version, 8);
+  assert.equal(result.body.shipment.updated_by, actor);
+  assert.deepEqual(result.body.shipment.draft, row.draft);
+  assert.equal(result.body.shipment.order_id, row.order_id);
+  assert.equal(h.tables.shipments.length, 2);
+  assert.equal(h.tables.shipping_attempts.length, 1);
+  assert.deepEqual(h.tables.shipments[1], shipment(2, 'waiting'));
+  assert.deepEqual((await h.call('list')).body.shipments.map(s => s.id), [id(2)]);
+});
+
+test('pending-review deletion rejects tracked, billed, stale or unauthorized requests', async () => {
+  for (const extra of [
+    { tracking_number: 'TRACK-1' }, { provider_billed_at: '2026-10-01T00:00:00Z' },
+    { provider_billed_amount: 0 }, { provider_billing_import_id: id(90) },
+  ]) {
+    const row = shipment(1, 'outcome_unknown', extra), h = api({ rows: [row] });
+    assert.equal((await h.call('archive', { id: row.id, version: 7 })).status, 409);
+    assert.deepEqual(h.tables.shipments[0], row);
+  }
+  for (const config of [{}, { role: 'staff' }, { role: 'owner', active: false }]) {
+    const row = shipment(1, 'outcome_unknown'), h = api({ rows: [row], ...config });
+    assert.equal((await h.call('archive', { id: row.id, version: 6 })).status, config.role ? 403 : 409);
+    assert.deepEqual(h.tables.shipments[0], row);
+  }
+});
+
+test('pending-review archive cannot race with tracking, billing or another action', async () => {
+  for (const change of [
+    { tracking_number: 'TRACK-1' }, { provider_billed_at: '2026-10-01T00:00:00Z' },
+    { provider_billed_amount: 0 }, { provider_billing_import_id: id(90) },
+    { version: 8 }, { status: 'waiting' },
+  ]) {
+    const h = api({ rows: [shipment(1, 'outcome_unknown')], beforeUpdate: rows => Object.assign(rows[0], change) });
+    assert.equal((await h.call('archive', { id: id(1), version: 7 })).status, 409);
+    assert.notEqual(h.tables.shipments[0].status, 'archived');
+    assert.equal(h.tables.shipments[0].updated_by, undefined);
   }
 });
 

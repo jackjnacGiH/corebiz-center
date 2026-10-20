@@ -22,6 +22,7 @@ import {
   shippingTrackingUrl,
 } from "@/lib/shipping-carriers";
 import {
+  canArchiveShipment,
   shippingParcels,
   summarizeShippingItems,
   type Shipment,
@@ -468,7 +469,7 @@ export default function ShipmentListCard({
                   {editableDraft && <Pencil size={15} />}
                   {editableDraft ? t.common.edit : c.open}
                 </Button>
-                {editableDraft && (
+                {canArchiveShipment(s) && (
                   <Button
                     type="button"
                     size="sm"
@@ -478,7 +479,7 @@ export default function ShipmentListCard({
                     onClick={onDelete}
                   >
                     <Trash2 size={15} />
-                    {c.deleteDraft}
+                    {s.status === "draft" ? c.deleteDraft : c.deleteShipment}
                   </Button>
                 )}
                 <Button
