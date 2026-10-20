@@ -1,23 +1,28 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { supabase } from './supabase';
 import { createRefreshQueue } from './refreshQueue';
+import { createVisibilityRefresh } from './visibilityRefresh';
 
 /** One page-level refresh queue, shared by all tables that reload that page.
  * The page loader keeps responsibility for displaying its existing errors. */
-export function useRealtimeRefresh(onRefresh: () => Promise<void>) {
+export function useRealtimeRefresh(onRefresh: () => Promise<void>, options: { pauseWhenHidden?: boolean } = {}) {
+  const pauseWhenHidden = options.pauseWhenHidden === true;
   const refreshRef = useRef(onRefresh);
   const queueRef = useRef<ReturnType<typeof createRefreshQueue> | null>(null);
   useLayoutEffect(() => {
     refreshRef.current = onRefresh;
   }, [onRefresh]);
   useEffect(() => {
-    const queue = createRefreshQueue(() => refreshRef.current());
+    const refresh = () => refreshRef.current();
+    const queue = pauseWhenHidden
+      ? createVisibilityRefresh(refresh, document)
+      : createRefreshQueue(refresh);
     queueRef.current = queue;
     return () => {
       queue.dispose();
       if (queueRef.current === queue) queueRef.current = null;
     };
-  }, []);
+  }, [pauseWhenHidden]);
   return useCallback(() => queueRef.current?.request() ?? Promise.resolve(), []);
 }
 

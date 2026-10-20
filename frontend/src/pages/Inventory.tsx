@@ -196,7 +196,7 @@ export default function Inventory() {
     void load();
     return () => { loadVersion.current = null; };
   }, [load]);
-  const refreshRealtime = useRealtimeRefresh(() => load(true));
+  const refreshRealtime = useRealtimeRefresh(() => load(true), { pauseWhenHidden: true });
   useRealtimeTable('products', refreshRealtime);
   useRealtimeTable('inventory', refreshRealtime);
   useRealtimeTable('product_groups', refreshRealtime);

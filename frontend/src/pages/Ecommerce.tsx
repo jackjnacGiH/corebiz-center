@@ -265,7 +265,7 @@ export default function Ecommerce() {
     return () => { loadVersion.current = null; };
   }, []);
   // Realtime — refresh when products/inventory change (force fresh)
-  const refreshRealtime = useRealtimeRefresh(() => load(true));
+  const refreshRealtime = useRealtimeRefresh(() => load(true), { pauseWhenHidden: true });
   useRealtimeTable('products', refreshRealtime);
   useRealtimeTable('inventory', refreshRealtime);
   useRealtimeTable('product_groups', refreshRealtime);
