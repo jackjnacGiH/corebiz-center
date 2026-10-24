@@ -1,0 +1,127 @@
+{
+  "status": "owner-confirmed sources; not an authenticated application approval",
+  "confirmation_refs": [
+    "Sentinel_675681caa8bc819198fd3b1c1f3f4a2b",
+    "Sentinel_a1b3b302434881918f5e53d3b86d8466"
+  ],
+  "digest": "d6f4d285c0ecfc3cd53d4d8369d6a0b5b7fa6396d8fba919ed18a6365a19a75a",
+  "binding": {
+    "schema_version": 2,
+    "records": [
+      {
+        "active": true,
+        "status": "draft",
+        "revision": "source-binding-v2",
+        "source_ref": "faq/2026-05/เลขบัญชี-โอนเงิน-ชำระเงิน.md; faq/2026-05/แผนที่-location.md",
+        "sources": [
+          {
+            "key": "business_name",
+            "kind": "org_settings",
+            "field": "business_name",
+            "sha256": "bf3d2d39287f7aee865a9f8ac224643d74c5753ac2be7a1c97d4bad353670be9"
+          },
+          {
+            "key": "address",
+            "kind": "org_settings",
+            "field": "address",
+            "sha256": "7e8b84d89fe63ab5bdfe424abe3b7258e470951e963dbedefb89029c71032f43"
+          },
+          {
+            "key": "kb2",
+            "kind": "knowledge_chunk",
+            "id": "13fabccb-8d76-4a09-9c5c-286774b42d8c",
+            "source_path": "faq/2026-05/เลขบัญชี-โอนเงิน-ชำระเงิน.md",
+            "chunk_index": 0,
+            "content_hash": "f65bf5ad",
+            "updated_at": "2026-07-11T03:12:52.621548+00:00",
+            "sha256": "a95dca8d47736c8391ccc7cf81090ca1cc50958f051369d124889e7f046e14f4"
+          },
+          {
+            "key": "kb3",
+            "kind": "knowledge_chunk",
+            "id": "891feda8-9855-4186-b2b2-84838c83a134",
+            "source_path": "faq/2026-05/แผนที่-location.md",
+            "chunk_index": 0,
+            "content_hash": "68ab4638",
+            "updated_at": "2026-10-24T10:47:49.063483+00:00",
+            "sha256": "72fdae4c54dd667f6052ea62c656936b578cbf68cafca57f9b54332c05acb861"
+          },
+          {
+            "key": "kb4",
+            "kind": "knowledge_chunk",
+            "id": "00250e60-16fb-4054-89d3-f6e4595090e9",
+            "source_path": "faq/2026-05/แผนที่-location.md",
+            "chunk_index": 1,
+            "content_hash": "bdd583cc",
+            "updated_at": "2026-10-24T10:47:49.063483+00:00",
+            "sha256": "c07f266d1f15216d25011fa189923d067129c9f4da8e9a542c9ee6b3ca45be7a"
+          },
+          {
+            "key": "kb5",
+            "kind": "knowledge_chunk",
+            "id": "44739888-ef86-43f4-b086-361560057073",
+            "source_path": "faq/2026-05/แผนที่-location.md",
+            "chunk_index": 2,
+            "content_hash": "da2900ff",
+            "updated_at": "2026-10-24T10:47:49.063483+00:00",
+            "sha256": "8e8bbee23f487be8bdcc6f6cf334a0b9c17c0ad1392655f6c47dc025bc8482e4"
+          }
+        ],
+        "fields": {
+          "legal_name": [
+            {
+              "source": "business_name",
+              "start": 0,
+              "end": 31
+            },
+            {
+              "source": "kb2",
+              "start": 92,
+              "end": 123
+            },
+            {
+              "source": "kb4",
+              "start": 47,
+              "end": 78
+            }
+          ],
+          "registered_address": [
+            {
+              "source": "address",
+              "start": 0,
+              "end": 87
+            }
+          ],
+          "account_name": [
+            {
+              "source": "kb2",
+              "start": 92,
+              "end": 123
+            }
+          ],
+          "bank_name": [
+            {
+              "source": "kb2",
+              "start": 128,
+              "end": 161
+            }
+          ],
+          "account_number": [
+            {
+              "source": "kb2",
+              "start": 169,
+              "end": 182
+            }
+          ],
+          "account_type": [
+            {
+              "source": "kb2",
+              "start": 184,
+              "end": 193
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

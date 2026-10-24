@@ -45,6 +45,7 @@ jobs:
             supabase/functions/openai-embed/index.ts supabase/functions/line-push/index.ts \
             supabase/functions/admin-users/index.ts supabase/functions/line-webhook/index.ts \
             supabase/functions/rag-chat/index.ts supabase/functions/rag-search/index.ts \
+            supabase/functions/critical-company-approval/index.ts \
             supabase/functions/reprocess-line-files/index.ts supabase/functions/facebook-webhook/index.ts \
             supabase/functions/messenger-push/index.ts supabase/functions/shipping-api/index.ts \
             supabase/functions/storefront-quote/index.ts supabase/functions/archive-maintenance-history/index.ts

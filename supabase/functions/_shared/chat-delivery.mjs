@@ -1,3 +1,5 @@
+import { createCriticalReview, hasCriticalClaim } from './critical-company-info.mjs';
+
 export async function runDurableChatDelivery(admin, { channel, eventKey, process, replay }) {
   const claim = await admin.rpc('claim_chat_delivery_event', { p_channel: channel, p_event_key: eventKey });
   if (claim.error) throw claim.error;
@@ -42,6 +44,17 @@ export async function runDurableChatDelivery(admin, { channel, eventKey, process
     },
   };
   try {
+    // Prepared old bot replies bypass RAG on retry. Never replay stale bank,
+    // company or handoff claims as though today's master/receipt validated them.
+    // Human-authored outbound messages retain their explicit staff retry path.
+    if (row.reply_text && !row.reply_metadata?.staff_message_id
+      && (row.reply_metadata?.critical_response === true || hasCriticalClaim(row.reply_text))) {
+      await createCriticalReview(admin, { conversationId: row.conversation_id, channel,
+        query: `Prepared bot reply held for staff review; event ${eventKey}`,
+        kind: 'company_payment', readOnly: false });
+      await context.update('processing_unknown', { error: 'critical_reply_replay_requires_review' });
+      return 'processing_unknown';
+    }
     if (row.reply_text) await replay(context, row);
     else await process(context);
     if (!['delivered', 'delivery_unknown', 'processing_unknown', 'reply_pending'].includes(row.state)) await context.update('ignored');

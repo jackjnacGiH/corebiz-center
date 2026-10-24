@@ -98,7 +98,7 @@ test("LINE history keeps bot and Admin turns, but drops system notices and old p
   ]);
 });
 
-test("LINE history keeps sixteen dialogue turns including the product anchor", async () => {
+test("LINE history keeps a bounded 64-row evidence window including the product anchor", async () => {
   const prior = Array.from({ length: itemLimit }, (_, i) => ({
     sender_type: i % 2 ? "bot" : "customer",
     content: i === 0 ? "ผ้าทรายสายพาน PACO Y966 #60" : `turn ${i}`,

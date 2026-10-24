@@ -27,7 +27,8 @@ function naturalSort(values) {
  * product model.
  */
 export function extractModelCodes(value) {
-  const text = String(value ?? "").toUpperCase();
+  const text = String(value ?? "").toUpperCase()
+    .replace(/\d+(?:\.\d+)?\s*[X×*]\s*\d+(?:\.\d+)?(?:\s*[X×*]\s*\d+(?:\.\d+)?){0,2}/gu, " ");
   return unique([...text.matchAll(MODEL_CODE_RE)]
     .filter((match) => !NON_MODEL_CODE_PREFIXES.has(match[1]))
     .map((match) => `${match[1]}${match[2]}`.replace(/[^A-Z0-9]/g, "")));
@@ -46,7 +47,7 @@ export function normalizeProductSearchQuery(value) {
     // A quote request and its quantity describe the transaction, not the
     // product identity. Keep them in the original customer turn for quoting.
     .replace(/^(?:(?:ขอ|ต้องการ|อยากได้|ทำ|ทํา|ออก|ส่ง)\s*)?ใบเสนอราคา\s*(?:ค่ะ|คะ|ครับ)?\s*[:：-]?\s*/iu, "")
-    .replace(/\s*(?:=|จำนวน|qty|quantity)\s*\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:ครับ|ค่ะ|คะ)?\s*$/iu, (assignment, offset, whole) => {
+    .replace(/\s*(?:=|จำนวน|qty|quantity)\s*\d{1,6}\s*(?:ชิ้น|ตัว|อัน|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:ครับ|ค่ะ|คะ)?\s*$/iu, (assignment, offset, whole) => {
       // A named product facet is identity, even when it uses '='. Only a
       // trailing order quantity may be removed from the catalog query.
       const preceding = whole.slice(0, offset).trimEnd();

@@ -85,10 +85,11 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { runDurableChatDelivery } from "../_shared/chat-delivery.mjs";
 import { uploadPrivateChatAttachment } from "../_shared/chat-attachment-storage.mjs";
+import { currentConversationTurn, withConversationTurn } from "../_shared/conversation-turn-lease.mjs";
 
 const TOKEN_OPTIMIZATION_ENABLED = Deno.env.get("CHAT_TOKEN_OPTIMIZATION_ENABLED") !== "false";
-const CHAT_HISTORY_FETCH_LIMIT = 24;
-const CHAT_HISTORY_ITEM_LIMIT = TOKEN_OPTIMIZATION_ENABLED ? 16 : 20;
+const CHAT_HISTORY_FETCH_LIMIT = 65; // Current inbound row + at most 64 preceding rows.
+const CHAT_HISTORY_ITEM_LIMIT = TOKEN_OPTIMIZATION_ENABLED ? 64 : 64;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -390,14 +391,12 @@ function stripBlockedEmergencyNotice(text: string): string {
   return BLOCKED_NOTICE_FINGERPRINT.test(text) ? "" : text;
 }
 
-function sanitizeReply(text: string): string {
+function sanitizeReply(text: string, verbatim = false): string {
+  if (verbatim) return text;
   text = stripBlockedEmergencyNotice(text);
   if (!text) return text;
-  // A transfer receipt is not proof of payment. Never repeat, extract, or
-  // guess any monetary amount from a slip; accounting must verify it.
-  if (/(?:สลิป(?:โอนเงิน|แจ้งชำระเงิน)?|แจ้งโอนเงิน|ฝ่ายบัญชี.*ตรวจสอบ(?:ยอด|การชำระ)|ตรวจสอบ(?:ยอด|การโอน))/u.test(text)) {
-    return "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊";
-  }
+  // rag-chat owns receipt-backed review status. Never upgrade a pending or
+  // failed handoff into a successful accounting acknowledgement here.
   // Drop the obsolete "บัญชีของฉัน / /account" (log-in) pointer. Quotes now go
   // out as a public no-login link, so telling the customer to log in just
   // confuses them ("ทำไมต้องเข้าระบบ").
@@ -492,7 +491,8 @@ async function callRagChat(
   requestId: string,
   routingVariant: RoutingVariant,
   images: Array<{ mimeType: string; data: string }> = [],
-): Promise<{ answer: string; quoteCode: string | null }> {
+  turnToken: string | null = null,
+): Promise<{ answer: string; quoteCode: string | null; verbatim: boolean; activeItem: unknown }> {
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${serviceKey}`,
     "apikey": serviceKey,
@@ -509,6 +509,7 @@ async function callRagChat(
       query, history, images, stream: false, channel: "line",
       conversation_id: conversationId, request_id: requestId,
       routing_variant: routingVariant,
+      conversation_turn_token: turnToken,
     }),
   });
   let data: Record<string, unknown> = {};
@@ -524,6 +525,7 @@ async function callRagChat(
     throw new Error(`rag_chat_http_${res.status}`);
   }
   const answer = (data.answer as string) || "";
+  if (data.verbatim === true) return { answer, quoteCode: null, verbatim: true, activeItem: null };
   // If the bot's request_quote tool created a draft quote, rag-chat exposes
   // its code in tool_calls[].result_summary — pull it out so we can send the
   // customer a public (no-login) link to view + download the PDF.
@@ -536,7 +538,7 @@ async function callRagChat(
     const m = /"quote_code":\s*"(QT-[^"]+)"/.exec(summary);
     if (m) { quoteCode = m[1]; break; }
   }
-  return { answer, quoteCode };
+  return { answer, quoteCode, verbatim: false, activeItem: data.active_item ?? null };
 }
 
 function extractQuickReplies(text: string) {
@@ -721,7 +723,8 @@ function stripQuoteLink(s: string): string {
 
 // A LINE reply can contain one composed message. Keeping the quote status and
 // its public link together avoids three separate bot bubbles for one image.
-function composeQuoteReply(answer: string, quoteLink: string | null): string {
+function composeQuoteReply(answer: string, quoteLink: string | null, verbatim = false): string {
+  if (verbatim) return answer;
   const cleanAnswer = stripQuoteLink(answer);
   return quoteLink ? [cleanAnswer, quoteLink].filter(Boolean).join("\n\n") : cleanAnswer;
 }
@@ -744,6 +747,7 @@ async function loadHistory(admin: SupabaseClient, conversationId: string, incomi
         // Keep the staff response in sequence, including its source, so a short
         // customer reply can answer the question the human actually asked.
         content: r.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content,
+        ...(r.sender_type === "bot" && r.metadata?.verified_product ? { verified_product: r.metadata.verified_product } : {}),
       };
     })
     .filter((m) => m.content.length > 0)
@@ -926,6 +930,9 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   phaseTimings.conversation_ms = Date.now() - conversationStartedAt;
   if (!conversationId) throw new Error("conversation_upsert_failed");
   delivery.conversationId = conversationId;
+  // Hold the lease through inbound storage, RAG, final bot checks and actual
+  // reply completion. A rapid URL + quantity + billing burst stays ordered.
+  return await withConversationTurn(admin, conversationId, async (lease: { token: string }) => {
   const routingVariant = routingVariantForConversation(conversationId);
 
   const msg = ev.message;
@@ -954,6 +961,8 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     let aiReply: string;
     let quoteCode: string | null = null;
     let ragCalled = false;
+    let verbatimReply = false;
+    let activeItem: unknown = null;
     if (!img) {
       aiReply = "ขออภัยค่ะ ตอนนี้เอยเปิดดูรูปไม่ได้ รบกวนพิมพ์ชื่อ/รุ่นสินค้ามาได้ไหมคะ เอยจะช่วยหาให้นะคะ 😊";
     } else {
@@ -965,11 +974,13 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       await delivery.update("processing", { metadata: { work_started: true } });
       const rag = await callRagChat(
         supabaseUrl, serviceKey, "", priorHistory, conversationId,
-        requestId, routingVariant, [img],
+        requestId, routingVariant, [img], lease.token,
       );
       phaseTimings.rag_ms = Date.now() - ragStartedAt;
       ragCalled = true;
-      aiReply = sanitizeReply(rag.answer);
+      verbatimReply = rag.verbatim;
+      activeItem = rag.activeItem;
+      aiReply = sanitizeReply(rag.answer, rag.verbatim);
       quoteCode = rag.quoteCode;
     }
     let lineReplyMs: number | null = null;
@@ -978,10 +989,10 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
       const quoteStartedAt = Date.now();
       const linkMsg = quoteCode ? await prepareQuoteLink(admin, conversationId, quoteCode) : null;
       phaseTimings.quote_link_ms = Date.now() - quoteStartedAt;
-      const replyText = composeQuoteReply(aiReply, linkMsg);
+      const replyText = composeQuoteReply(aiReply, linkMsg, verbatimReply);
       let delivered = false;
       const finalFlagStartedAt = Date.now();
-      const finalAllowed = await shouldBotReply(admin, conversationId, true);
+      const finalAllowed = await shouldBotReply(admin, conversationId, true) && await currentConversationTurn(admin, conversationId, lease.token);
       phaseTimings.bot_flags_final_ms = Date.now() - finalFlagStartedAt;
       if (!finalAllowed) {
         console.log("LINE bot reply cancelled by final bot flag check", { requestId, conversationId });
@@ -990,6 +1001,8 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
         delivered = await delivery.send(replyText, {
           channel_id: channel.id, channel_name: channel.name, from_image: true,
           quote_link: Boolean(linkMsg), quote_code: quoteCode,
+          verified_product: activeItem,
+          critical_response: verbatimReply,
         }, (text: string) => replyToLine(channel.channel_access_token, ev.replyToken!, text));
         const replyAttemptMs = Date.now() - replyStartedAt;
         phaseTimings.line_reply_attempt_ms = replyAttemptMs;
@@ -1083,12 +1096,12 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
   await delivery.update("processing", { metadata: { work_started: true } });
   const rag = await callRagChat(
     supabaseUrl, serviceKey, msg.text, priorHistory, conversationId,
-    requestId, routingVariant,
+    requestId, routingVariant, [], lease.token,
   );
   phaseTimings.rag_ms = Date.now() - ragStartedAt;
   // rag-chat may return HTTP 200 with an empty model completion. Keep the
   // customer informed even if its catalog recovery cannot produce a reply.
-  const aiReply = sanitizeReply(rag.answer) || "เอยรับข้อความแล้วค่ะ ช่วยบอกรายละเอียดสินค้าหรือคำถามเพิ่มอีกนิดนะคะ";
+  const aiReply = sanitizeReply(rag.answer, rag.verbatim) || "เอยรับข้อความแล้วค่ะ ช่วยบอกรายละเอียดสินค้าหรือคำถามเพิ่มอีกนิดนะคะ";
 
   let lineReplyMs: number | null = null;
   let replyCompletedAt = Date.now();
@@ -1099,17 +1112,17 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     const linkMsg = rag.quoteCode ? await prepareQuoteLink(admin, conversationId, rag.quoteCode) : null;
     phaseTimings.quote_link_ms = Date.now() - quoteStartedAt;
 
-    const replyText = composeQuoteReply(aiReply, linkMsg);
+    const replyText = composeQuoteReply(aiReply, linkMsg, rag.verbatim);
     let delivered = false;
     const finalFlagStartedAt = Date.now();
-    const finalAllowed = await shouldBotReply(admin, conversationId, true);
+    const finalAllowed = await shouldBotReply(admin, conversationId, true) && await currentConversationTurn(admin, conversationId, lease.token);
     phaseTimings.bot_flags_final_ms = Date.now() - finalFlagStartedAt;
     if (!finalAllowed) {
       console.log("LINE bot reply cancelled by final bot flag check", { requestId, conversationId });
     } else if (ev.replyToken) {
       const replyStartedAt = Date.now();
       delivered = await delivery.send(replyText, {
-        channel_id: channel.id, channel_name: channel.name,
+        channel_id: channel.id, channel_name: channel.name, verified_product: rag.activeItem, critical_response: rag.verbatim,
         quote_link: Boolean(linkMsg), quote_code: rag.quoteCode,
       }, (text: string) => replyToLine(channel.channel_access_token, ev.replyToken!, text));
       const replyAttemptMs = Date.now() - replyStartedAt;
@@ -1132,4 +1145,5 @@ async function handleEvent(admin: SupabaseClient, channel: LineChannel, ev: Line
     endToEndMs: replyCompletedAt - eventStartedAt,
     phaseTimings: { ...phaseTimings },
   }));
+  });
 }
