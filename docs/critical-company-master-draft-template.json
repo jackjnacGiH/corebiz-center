@@ -1,0 +1,5 @@
+{
+  "schema_version": 2,
+  "records": [],
+  "note": "Obsolete manual-entry template. Use critical-company-source-binding-reviewed.json and authenticated critical-company-approval preview/bind endpoint. No authenticated approval has been written."
+}

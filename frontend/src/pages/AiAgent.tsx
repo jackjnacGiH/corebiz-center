@@ -28,6 +28,8 @@ const CATEGORY_BADGE: Record<AgentCategory, string> = {
 const KIND_LABEL: Record<string, string> = {
   'ops.restock': 'เติมสต็อก',
   'ops.outstanding_payment': 'เงินค้างชำระ',
+  'ops.critical_company_review': 'ตรวจสอบข้อมูลบริษัท/หลักฐานชำระเงิน',
+  'ops.chat_followup': 'ติดตามลูกค้า/ตรวจสอบสเปกและหน่วยสินค้า',
   'ops.daily_report': 'สรุปรายวัน',
   'sales.quote_convert': 'ปิดการขาย',
   'sales.quote_followup': 'ตามใบเสนอราคา',

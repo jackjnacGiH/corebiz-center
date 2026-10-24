@@ -5,10 +5,10 @@ const PRODUCT_BRAND_RE = /\b(?:DEERFOS|MIRKA|MIKA|KLINGSPOR|NORTON|VSM)\b/iu;
 const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)|แทน(?:ตัว|รุ่น|สินค้า)เดิม/iu;
 const FACET_SWITCH_RE = /^(?:ขอ)?เปลี่ยน(?:เป็น|ไป)?\s*(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด|#\s*\d+)|^(?:ขอ)?เปลี่ยน(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลัง).{0,12}เป็น/iu;
 const DEPENDENT_PRODUCT_RE = /^(?:แล้ว|ส่วน|ถ้า|เลือก|รุ่น|ตัว|อัน|แบบ|ของ|อีก|ขอ(?:เป็น|เอา))\s*/iu;
-const DEICTIC_FOLLOW_UP_RE = /^(?:(?:สินค้า|รุ่น|จาน|ตัว|อัน|แบบ)นี้|เอา(?:รุ่น|ตัว|อัน|แบบ)?นี้|(?:สั่ง|เอา|ต้องการ)\s*(?:จำนวน\s*)?\d+\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|(?:ใช้|เอา|ขอ)\s*(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด))/iu;
-const FOLLOW_UP_RE = /^(?:\d{1,2}(?:\s|$)|(?:จำนวน\s*)?\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|#\s*\d{1,5}|(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|มี(?:รุ่น|แบบ|เบอร์)ไหน|รุ่นไหน|แนะนำ|ราคา(?:เท่าไร|เท่าไหร่|อะไร)|กี่บาท|เท่าไร|เท่าไหร่|(?:ทำ|ขอ|เอา)ใบเสนอราคา|เอา\s*\d|(?:เอา|ได้|ตกลง|โอเค|ครับ|yes)(?:เลย)?(?:ครับ|ค่ะ|คะ)?$|(?:ทำ|จัด)เลย(?:ครับ|ค่ะ|คะ)?$)/iu;
-const QUANTITY_REPLY_RE = /^(?:(?:ต้องการ|เอา|สั่ง|จำนวน)\s*)?\d{1,6}\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:\s*(?:ครับ|ค่ะ|คะ))?$/iu;
-const QUANTITY_QUESTION_RE = /(?:จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|เส้น|ใบ|กล่อง|ม้วน|pcs?)|ต้องการปรับจำนวน|how many|what quantity)/iu;
+const DEICTIC_FOLLOW_UP_RE = /^(?:(?:สินค้า|รุ่น|จาน|ตัว|อัน|แบบ)นี้|เอา(?:รุ่น|ตัว|อัน|แบบ)?นี้|(?:สั่ง|เอา|ต้องการ)\s*(?:จำนวน\s*)?\d+\s*(?:ชิ้น|ตัว|อัน|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)|(?:ใช้|เอา|ขอ)\s*(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด))/iu;
+const FOLLOW_UP_RE = /^(?:\d{1,2}(?:\s|$)|(?:จำนวน\s*)?\d{1,6}\s*(?:ชิ้น|ตัว|อัน|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)|#\s*\d{1,5}|(?:เบอร์|ขนาด|ไซซ์|size|grit|สี|หลังอ่อน|หลังแข็ง|หลังกาว|สักหลาด)|\d+(?:\.\d+)?\s*(?:"|นิ้ว|mm|มม)|มี(?:รุ่น|แบบ|เบอร์)ไหน|รุ่นไหน|แนะนำ|ราคา(?:เท่าไร|เท่าไหร่|อะไร)|กี่บาท|เท่าไร|เท่าไหร่|(?:ทำ|ขอ|เอา)ใบเสนอราคา|เอา\s*\d|(?:เอา|ได้|ตกลง|โอเค|ครับ|yes)(?:เลย)?(?:ครับ|ค่ะ|คะ)?$|(?:ทำ|จัด)เลย(?:ครับ|ค่ะ|คะ)?$)/iu;
+const QUANTITY_REPLY_RE = /^(?:(?:ต้องการ|เอา|สั่ง|จำนวน)\s*)?\d{1,6}\s*(?:ชิ้น|ตัว|อัน|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:\s*(?:ครับ|ค่ะ|คะ))?$/iu;
+const QUANTITY_QUESTION_RE = /(?:จำนวน\s*กี่|ต้องการ\s*กี่|กี่\s*(?:ชิ้น|ตัว|อัน|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)|ต้องการปรับจำนวน|how many|what quantity)/iu;
 const INDEPENDENT_QUESTION_RE = /(?:ชำระ|ชําระ|จ่าย|โอน|มัดจำ|มัดจํา|payment|pay\b|ค่าขนส่ง|จัดส่ง|ส่งของ|เวลาทำการ|เปิดกี่โมง|ที่อยู่|แผนที่|ใบเสนอราคา(?:เดิม|เลขที่|ที่ส่ง|ที่ทำ|แล้ว)|\bQT-\d+)/iu;
 const SHORT_QUOTE_CONSENT_RE = /^(?:เอา|ได้|ตกลง|ทำ|ทํา|จัด|โอเค|yes|please do)(?:เลย)?(?:ครับ|ค่ะ|คะ|ด้วย)?[.!\s]*$/iu;
 const POSITIVE_QUOTE_CHOICE_RE = /^ต้องการ(?:\s*ใบเสนอราคา)?(?:ครับ|ค่ะ|คะ)?[.!\s]*$/iu;
@@ -16,6 +16,7 @@ const NEGATIVE_QUOTE_CHOICE_RE = /^ไม่ต้องการ(?:\s*ใบเ
 const QUOTE_OFFER_RE = /(?:ใบเสนอราคา|quotation).{0,40}(?:ไหม|มั้ย|หรือเปล่า|หรือไม่|\?)/iu;
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+const routingText = (value) => clean(value).replace(/^(?:ค่ะ|ครับ|คะ)[\s,]+/u, "");
 
 function catalogChoice(query, assistantText) {
   const text = clean(query).replace(/^(?:ขอ(?:เป็น|เอา)|เอา)\s*/iu, "");
@@ -31,6 +32,7 @@ function catalogChoice(query, assistantText) {
 
 function hasProductIdentity(query) {
   const text = clean(query);
+  if (/https?:\/\/(?:www\.)?jnac\.online\/p\/[A-Z0-9._-]+(?:[/?#\s]|$)/iu.test(text)) return true;
   if (PRODUCT_NAME_RE.test(text) || PRODUCT_BRAND_RE.test(text)) return true;
   return extractModelCodes(text).some((code) => !/^(?:QT|SO|DN)\d+$/u.test(code));
 }
@@ -48,6 +50,7 @@ function productKind(query) {
 
 function isNewProductTurn(query, precedingAssistant, priorTopicQuery) {
   const text = clean(query);
+  if (/ชื่อบริษัท\s*[:：]|เลขผู้เสียภาษี|tax\s*id|billing\s*address|company\s*name\s*[:：]/iu.test(text)) return false;
   if (!text || catalogChoice(text, precedingAssistant)) return false;
   if (FACET_SWITCH_RE.test(text)) return false;
   if (PRODUCT_SWITCH_RE.test(text)) return hasProductIdentity(text);
@@ -63,8 +66,9 @@ function isNewProductTurn(query, precedingAssistant, priorTopicQuery) {
 }
 
 function isFollowUpTurn(query, precedingAssistant) {
-  const text = clean(query);
+  const text = routingText(query);
   if (!text) return false;
+  if (/^(?:\d+(?:\.\d+)?\s*[x×*]\s*\d)|(?:แพ็ค|แพ็ก|แพค|pack).{0,20}(?:กี่|how many)|(?:ชื่อบริษัท\s*[:：]|ที่อยู่ออกบิล|เลขผู้เสียภาษี|tax\s*id|billing\s*address)/iu.test(text)) return true;
   if (catalogChoice(text, precedingAssistant)) return true;
   if (INDEPENDENT_QUESTION_RE.test(text) && !/(?:ทำ|ขอ|เอา)ใบเสนอราคา/iu.test(text)) return false;
   if (QUANTITY_REPLY_RE.test(text) && QUANTITY_QUESTION_RE.test(precedingAssistant)) return true;
@@ -84,7 +88,7 @@ export function routeLatestTurn(query, history = []) {
       // The product resolver reads one numbered choice per line. Keep only
       // those bot offers multiline; normalize all other turns as before.
       const content = role === "assistant" && /^\s*1\.\s+/mu.test(raw) ? raw : clean(raw);
-      return { role, content };
+      return { role, content, ...(item?.verified_product ? { verified_product: item.verified_product } : {}) };
     })
     .filter((item) => item.content);
   let topicStart = -1;

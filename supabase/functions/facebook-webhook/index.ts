@@ -12,6 +12,10 @@ import {
 
 import { OWNER_TEST, ownerTestAllowed, safeOwnerTestAnswer, normalizedMessengerProfile } from "../_shared/facebook-owner-test.mjs";
 
+import { JNAC_PAGE_ID, jnacRoomMatches, conservativeHoursAnswer, facebookQuery } from "../_shared/facebook-release-safety.mjs";
+
+import { requireStaff } from "../_shared/staff-auth.mjs";
+
 const graphVersion = Deno.env.get("META_GRAPH_API_VERSION") || "v26.0";
 const graphBase = `https://graph.facebook.com/${graphVersion}`;
 const pageId = Deno.env.get("META_PAGE_ID")?.trim() || "";
@@ -22,7 +26,7 @@ const publicChannelEnabled = Deno.env.get("FACEBOOK_PUBLIC_CHANNEL_ENABLED") ===
 
 type PageEvent =
   | { kind: "message"; senderId: string; messageId: string; text: string; contentType?: "image" | "file" | "sticker"; attachmentUrl?: string }
-  | { kind: "comment"; commentId: string; postId: string; text: string; authorId: string };
+  | { kind: "comment"; commentId: string; postId: string; text: string; authorId: string; ownerRetryActor?: string };
 type ClaimedEvent =
   | { kind: "message"; event: Extract<PageEvent, { kind: "message" }>; conversationId: string; incomingId: string }
   | { kind: "comment"; event: Extract<PageEvent, { kind: "comment" }>; conversationId: string; incomingId: string };
@@ -62,7 +66,7 @@ async function upsertConversation(admin: SupabaseClient, senderId: string, comme
     channel: "messenger", external_id: senderId,
     display_name: comment ? `Facebook comment ${comment.commentId.slice(-6)}` : `Facebook ${senderId.slice(-6)}`,
     status: "open", metadata: { page_id: pageId, facebook_surface: comment ? "comment" : "messenger",
-      ...(comment ? { comment_id: comment.commentId, post_id: comment.postId } : {}) },
+      ...(comment ? { comment_id: comment.commentId, post_id: comment.postId, author_id: comment.authorId } : {}) },
   }).select("id").single();
   if (error?.code === "23505") {
     const { data: raced } = await admin.from("chat_conversations")
@@ -86,6 +90,7 @@ async function botEnabled(admin: SupabaseClient, conversationId: string, event: 
   return global.data.bot_enabled !== false
     && channel.data.bot_enabled === true
     && conversation.data.bot_enabled !== false
+    && jnacRoomMatches(pageId, conversation.data, event)
     && (publicChannelEnabled || ownerTestAllowed(pageId, conversation.data, event, OWNER_TEST.commentAuthor, true));
 }
 
@@ -118,6 +123,7 @@ async function askCoreBiz(url: string, serviceKey: string, query: string, histor
 }
 
 async function quoteLink(admin: SupabaseClient, result: Record<string, unknown>): Promise<string | null> {
+  if (result.verbatim === true) return null;
   const calls = Array.isArray(result.tool_calls) ? result.tool_calls as Array<Record<string, unknown>> : [];
   for (const call of calls) {
     if (call.name !== "request_quote") continue;
@@ -161,7 +167,7 @@ async function claimInbox(admin: SupabaseClient, event: Extract<PageEvent, { kin
   let { data, error } = await admin.from("chat_messages").insert({
     conversation_id: conversationId, sender_type: "customer", content: event.text,
     content_type: event.contentType ?? "text", external_msg_id: event.messageId,
-    metadata: { page_id: pageId, facebook_bot_status: "pending", delivery_ledger_version: "1",
+    metadata: { page_id: pageId, facebook_bot_status: "pending", delivery_ledger_version: "1", facebook_public_channel_enabled: publicChannelEnabled,
       ...(event.attachmentUrl ? { image_url: event.contentType === "image" ? event.attachmentUrl : undefined,
         file_url: event.contentType === "file" ? event.attachmentUrl : undefined } : {}) },
   }).select("id").single();
@@ -178,7 +184,7 @@ async function claimInbox(admin: SupabaseClient, event: Extract<PageEvent, { kin
 
 async function setInboxStatus(admin: SupabaseClient, incomingId: string, status: "delivered" | "skipped" | "failed", errorCode?: string, event?: Extract<PageEvent, { kind: "message" }>) {
   const { error } = await admin.from("chat_messages").update({
-    metadata: { page_id: pageId, facebook_bot_status: status, delivery_ledger_version: "1",
+    metadata: { page_id: pageId, facebook_bot_status: status, delivery_ledger_version: "1", facebook_public_channel_enabled: publicChannelEnabled,
       ...(event?.attachmentUrl && event.contentType === "image" ? { image_url: event.attachmentUrl } : {}),
       ...(event?.attachmentUrl && event.contentType === "file" ? { file_url: event.attachmentUrl } : {}),
       ...(errorCode ? { error_code: errorCode.slice(0, 80) } : {}) },
@@ -195,7 +201,8 @@ async function handleInbox(admin: SupabaseClient, claim: Extract<ClaimedEvent, {
   }
   const history = await recentHistory(admin, conversationId, event.messageId);
   if (publicChannelEnabled) await delivery.update("processing", { metadata: { work_started: true } });
-  const result = await askCoreBiz(url, serviceKey, event.text, history, publicChannelEnabled ? conversationId : undefined);
+  const hoursAnswer = conservativeHoursAnswer(event.text);
+  const result: Record<string, any> = hoursAnswer ? { answer: hoursAnswer } : await askCoreBiz(url, serviceKey, event.text, history, publicChannelEnabled ? conversationId : undefined);
   if (!publicChannelEnabled && (!safeOwnerTestAnswer(event.text) || !safeOwnerTestAnswer(result.answer))) { await setInboxStatus(admin, incomingId, "skipped", "owner_test_commitment_guard"); return; }
   if (result.paused) { await setInboxStatus(admin, incomingId, "skipped"); return; }
   if (!String(result.answer ?? "").trim()) throw new Error("empty_bot_answer");
@@ -203,8 +210,12 @@ async function handleInbox(admin: SupabaseClient, claim: Extract<ClaimedEvent, {
   const answer = [String(result.answer).trim(), link].filter(Boolean).join("\n\n");
   // Re-check the kill switch before sending; staff may have taken over while RAG ran.
   if (!await botEnabled(admin, conversationId, event)) { await setInboxStatus(admin, incomingId, "skipped"); return; }
-  await delivery.send(answer, { page_id: pageId, rag_request_id: result.request_id ?? null, facebook_surface: "messenger" },
-    async (text: string) => { await sendInbox(event.senderId, text); return true; });
+  await delivery.send(answer, { page_id: pageId, rag_request_id: result.request_id ?? null, facebook_surface: "messenger", critical_response: result.verbatim === true, verified_product: result.active_item ?? null },
+    async (text: string) => {
+      const ids = await sendInbox(event.senderId, text);
+      await delivery.update("sending", { metadata: { page_id: pageId, facebook_surface: "messenger", rag_request_id: result.request_id ?? null, facebook_receipt_ids: ids } });
+      return true;
+    });
   await setInboxStatus(admin, incomingId, "delivered");
 }
 
@@ -216,7 +227,7 @@ async function claimComment(admin: SupabaseClient, event: Extract<PageEvent, { k
   let { data: incoming, error: messageError } = await admin.from("chat_messages").insert({
     conversation_id: conversationId, sender_type: "customer", content: event.text,
     content_type: "text", external_msg_id: externalId,
-    metadata: { page_id: pageId, facebook_surface: "comment", comment_id: event.commentId, author_id: event.authorId, delivery_ledger_version: "1",
+    metadata: { page_id: pageId, facebook_surface: "comment", comment_id: event.commentId, author_id: event.authorId, delivery_ledger_version: "1", facebook_public_channel_enabled: publicChannelEnabled,
       post_id: event.postId, facebook_bot_status: "pending" },
   }).select("id").single();
   if (messageError?.code === "23505") {
@@ -247,7 +258,7 @@ async function handleComment(admin: SupabaseClient, claim: Extract<ClaimedEvent,
     }).eq("comment_id", event.commentId);
     if (error) console.error("facebook comment status update failed", { code: error.code });
     await admin.from("chat_messages").update({ metadata: {
-      page_id: pageId, facebook_surface: "comment", comment_id: event.commentId, author_id: event.authorId, post_id: event.postId, delivery_ledger_version: "1",
+      page_id: pageId, facebook_surface: "comment", comment_id: event.commentId, author_id: event.authorId, owner_retry_actor: event.ownerRetryActor ?? null, post_id: event.postId, delivery_ledger_version: "1", facebook_public_channel_enabled: publicChannelEnabled,
       facebook_bot_status: status === "replied" ? "delivered" : status,
       ...(errorCode ? { error_code: errorCode.slice(0, 80) } : {}),
     } }).eq("id", incomingId);
@@ -262,6 +273,7 @@ async function handleComment(admin: SupabaseClient, claim: Extract<ClaimedEvent,
       const response = await graphPost(`${encodeURIComponent(event.commentId)}/comments`, { message: text });
       replyId = String(response.id ?? "");
       if (!replyId) throw new Error("graph_missing_receipt");
+      await delivery.update("sending", { metadata: { ...metadata, facebook_receipt_ids: [replyId] } });
       return true;
     });
     await setStatus("replied", replyId);
@@ -276,12 +288,20 @@ async function handleComment(admin: SupabaseClient, claim: Extract<ClaimedEvent,
       return;
     }
     // Comments keep the read-only RAG path: never create quotes/customer tasks.
-    const query = publicChannelEnabled ? event.text : event.text.slice(OWNER_TEST.commentPrefix.length).replace(/^\s*[:：-]\s*/, "").trim();
+    const query = facebookQuery(event.text, OWNER_TEST.commentPrefix);
+    const hoursAnswer = conservativeHoursAnswer(query);
+    if (hoursAnswer) { await publish(hoursAnswer); return; }
     const result = await askCoreBiz(url, serviceKey, query, []);
     if (result.paused) { await setStatus("skipped"); return; }
     const answerText = typeof result.answer === "string" ? result.answer : "";
     const answer = hasPublicEvidence(result, answerText) ? cleanPublicCommentAnswer(answerText) : null;
-    if (!answer || (!publicChannelEnabled && !safeOwnerTestAnswer(answer))) { await setStatus("skipped", undefined, "unverified_public_answer"); return; }
+    if (!answer || (!publicChannelEnabled && !safeOwnerTestAnswer(answer))) {
+      // Neutral handoff only: never invent models or claim a staff task was made.
+      if (/(?:ใบตัด|รุ่น|สินค้า|product|model)/iu.test(query)) {
+        await publish("รบกวนทัก Inbox เพื่อให้เจ้าหน้าที่ตรวจสอบรุ่นสินค้าที่ต้องการเพิ่มเติมค่ะ", result.request_id);
+      } else await setStatus("skipped", undefined, "unverified_public_answer");
+      return;
+    }
     await publish(answer, result.request_id);
   } catch (cause) {
     await setStatus("failed", undefined, (cause as Error).message.slice(0, 80));
@@ -317,6 +337,31 @@ async function enrichOwnerProfile(admin: SupabaseClient, conversationId: string,
   } catch { /* Never log response/profile/token, preserve fallback. */ }
 }
 
+async function enrichCommentProfile(admin: SupabaseClient, conversationId: string, event: PageEvent): Promise<void> {
+  if (event.kind !== "comment" || pageId !== JNAC_PAGE_ID || event.authorId !== OWNER_TEST.commentAuthor) return;
+  // Only this owner identity was independently verified on both surfaces.
+  // Never treat arbitrary comment author IDs as Messenger PSIDs.
+  const source = await admin.from("chat_conversations").select("display_name,avatar_url,metadata")
+    .eq("id", OWNER_TEST.messengerRoom).eq("external_id", OWNER_TEST.messengerSender).maybeSingle();
+  if (source.error || source.data?.metadata?.page_id !== pageId) return;
+  const room = await admin.from("chat_conversations").select("id,channel,external_id,display_name,metadata")
+    .eq("id", conversationId).maybeSingle();
+  if (room.error || !room.data || !jnacRoomMatches(pageId, room.data, event)) return;
+  const patch: Record<string, unknown> = {};
+  if (source.data.avatar_url) patch.avatar_url = source.data.avatar_url;
+  if (source.data.display_name && room.data.display_name === `Facebook comment ${event.commentId.slice(-6)}`) patch.display_name = source.data.display_name;
+  if (!Object.keys(patch).length) return;
+  patch.metadata = { ...room.data.metadata, facebook_profile_source: "verified_owner_messenger", facebook_profile_author_id: event.authorId };
+  await admin.from("chat_conversations").update(patch).eq("id", conversationId).eq("display_name", room.data.display_name);
+}
+
+function scheduleProfile(task: Promise<void>): void {
+  const safeTask = task.catch(() => {});
+  const runtime = (globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(safeTask);
+  else void safeTask;
+}
+
 async function processEvents(admin: SupabaseClient, events: ClaimedEvent[], url: string, serviceKey: string): Promise<boolean> {
   let failed = false;
   for (const claim of events) {
@@ -326,16 +371,25 @@ async function processEvents(admin: SupabaseClient, events: ClaimedEvent[], url:
         process: async (delivery: any) => {
           delivery.conversationId = claim.conversationId;
           if (claim.kind === "message") {
-            void enrichOwnerProfile(admin, claim.conversationId, claim.event).catch(() => {});
+            scheduleProfile(enrichOwnerProfile(admin, claim.conversationId, claim.event));
             await handleInbox(admin, claim, url, serviceKey, delivery);
-          } else await handleComment(admin, claim, url, serviceKey, delivery);
+          } else {
+            scheduleProfile(enrichCommentProfile(admin, claim.conversationId, claim.event));
+            await handleComment(admin, claim, url, serviceKey, delivery);
+          }
         },
         replay: async (delivery: any, row: any) => {
           delivery.conversationId = row.conversation_id;
           if (!await botEnabled(admin, claim.conversationId, claim.event)) { await delivery.update("ignored"); return; }
           await delivery.send(row.reply_text, row.reply_metadata, async (text: string) => {
-            if (claim.kind === "message") await sendInbox(claim.event.senderId, text);
-            else await graphPost(`${encodeURIComponent(claim.event.commentId)}/comments`, { message: text });
+            let ids: string[];
+            if (claim.kind === "message") ids = await sendInbox(claim.event.senderId, text);
+            else {
+              const receipt = await graphPost(`${encodeURIComponent(claim.event.commentId)}/comments`, { message: text });
+              if (!receipt.id) throw new Error("graph_missing_receipt");
+              ids = [String(receipt.id)];
+            }
+            await delivery.update("sending", { metadata: { ...row.reply_metadata, facebook_receipt_ids: ids } });
             return true;
           });
           if (claim.kind === "message") await setInboxStatus(admin, claim.incomingId, "delivered");
@@ -352,7 +406,42 @@ async function processEvents(admin: SupabaseClient, events: ClaimedEvent[], url:
   return !failed;
 }
 
+const APPROVED_RETRY_MESSAGE_ID = "666e3c92-41ca-4407-886f-932dc0db1626";
+async function retryApprovedOwnerComment(admin: SupabaseClient, messageId: unknown, actorId: string): Promise<Response> {
+  if (messageId !== APPROVED_RETRY_MESSAGE_ID || pageId !== JNAC_PAGE_ID) return json({ error: "retry_not_approved" }, 403);
+  const message = await admin.from("chat_messages").select("id,conversation_id,sender_type,content,external_msg_id,metadata").eq("id", messageId).maybeSingle();
+  if (message.error) return json({ error: "database_unavailable" }, 503);
+  const m = message.data;
+  if (!m || m.sender_type !== "customer" || m.metadata?.author_id !== OWNER_TEST.commentAuthor || m.metadata?.page_id !== JNAC_PAGE_ID) return json({ error: "retry_identity_mismatch" }, 409);
+  const room = await admin.from("chat_conversations").select("id,channel,external_id,metadata,bot_enabled").eq("id", m.conversation_id).maybeSingle();
+  const event: Extract<PageEvent, {kind: "comment"}> = { kind: "comment", text: m.content, authorId: m.metadata.author_id, ownerRetryActor: actorId,
+    commentId: "1712157964251672_1125959816613510", postId: "103826764792590_1712157964251672" };
+  if (room.error || !jnacRoomMatches(pageId, room.data, event) || m.external_msg_id !== `facebook-comment:${event.commentId}`) return json({ error: "retry_target_mismatch" }, 409);
+  if (!await botEnabled(admin, m.conversation_id, event)) return json({ error: "bot_paused" }, 409);
+  const eventKey = `comment.${event.commentId}`;
+  const ledger = await admin.from("chat_delivery_events").select("state,reply_text,reply_metadata,updated_at").eq("channel", "messenger").eq("event_key", eventKey).maybeSingle();
+  if (ledger.error || !ledger.data) return json({ error: "retry_ledger_unavailable" }, 503);
+  if (ledger.data.state === "delivered") return json({ ok: true, state: "delivered", already_processed: true, receipts: ledger.data.reply_metadata?.facebook_receipt_ids ?? [] });
+  if (ledger.data.state !== "ignored" || ledger.data.reply_text) return json({ error: "delivery_requires_review", state: ledger.data.state }, 409);
+  const outgoing = await admin.from("chat_messages").select("id").eq("conversation_id", m.conversation_id).in("sender_type", ["bot", "agent"]).limit(1);
+  if (outgoing.error || outgoing.data?.length) return json({ error: "existing_outbound_requires_review" }, 409);
+  // Compare-and-set only the explicitly approved, provably unsent ignored event.
+  // Never reopen sending/unknown/delivered states or any other old message.
+  const resumed = await admin.from("chat_delivery_events").update({ state: "failed", lease_until: null, claim_token: null, last_error: null })
+    .eq("channel", "messenger").eq("event_key", eventKey).eq("state", "ignored").eq("updated_at", ledger.data.updated_at).select("event_key").maybeSingle();
+  if (resumed.error || !resumed.data) return json({ error: "retry_claim_conflict" }, 409);
+  const audited = await admin.from("chat_messages").update({ metadata: { ...m.metadata, facebook_bot_status: "pending", owner_retry_actor: actorId, owner_retry_at: new Date().toISOString() } }).eq("id", m.id);
+  if (audited.error) return json({ error: "retry_audit_failed" }, 503);
+  const reset = await admin.from("facebook_comment_events").update({ status: "pending", error_code: null }).eq("comment_id", event.commentId);
+  if (reset.error) return json({ error: "retry_status_failed" }, 503);
+  const completed = await processEvents(admin, [{ kind: "comment", event, conversationId: m.conversation_id, incomingId: m.id }], Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  if (!completed) return json({ error: "delivery_requires_review" }, 503);
+  const result = await admin.from("chat_delivery_events").select("state,reply_metadata").eq("channel", "messenger").eq("event_key", eventKey).maybeSingle();
+  return json({ ok: result.data?.state === "delivered", state: result.data?.state, receipts: result.data?.reply_metadata?.facebook_receipt_ids ?? [] });
+}
+
 Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "https://www.jnac.online", "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-client-info,x-corebiz-owner-retry", "Access-Control-Allow-Methods": "POST,OPTIONS" } });
   if (req.method === "GET") {
     const params = new URL(req.url).searchParams;
     if (!verifyToken || params.get("hub.mode") !== "subscribe" || params.get("hub.verify_token") !== verifyToken) {
@@ -361,8 +450,21 @@ Deno.serve(async (req: Request) => {
     return new Response(params.get("hub.challenge") ?? "", { status: 200 });
   }
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
-  if (!pageId || !pageToken || !appSecret) return json({ ok: false, error: "facebook_not_configured" }, 503);
+  if (pageId !== JNAC_PAGE_ID || !pageToken || !appSecret) return json({ ok: false, error: "facebook_not_configured" }, 503);
   const raw = await req.text();
+  if (req.headers.get("x-corebiz-owner-retry") === "1") {
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+    const access = await requireStaff(admin, req, ["owner"]);
+    let response: Response;
+    if (access.error) response = json({ error: access.error }, access.status);
+    else {
+      let body;
+      try { body = JSON.parse(raw); } catch { return json({ error: "invalid_json" }, 400); }
+      response = await retryApprovedOwnerComment(admin, body?.message_id, access.actor.id);
+    }
+    response.headers.set("Access-Control-Allow-Origin", "https://www.jnac.online");
+    return response;
+  }
   if (!await validSignature(raw, req.headers.get("x-hub-signature-256") ?? "")) {
     return json({ ok: false, error: "invalid_signature" }, 401);
   }

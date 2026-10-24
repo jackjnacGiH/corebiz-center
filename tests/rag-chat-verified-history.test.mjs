@@ -47,7 +47,7 @@ function historyAdmin(rows, dbError = null) {
           assert.equal(state.conversationId, "conversation-1");
           assert.equal(state.cutoff, "2026-09-26T05:08:00.000Z");
           assert.deepEqual(state.orders, ["created_at", "id"]);
-          assert.equal(maximum, 24);
+          assert.equal(maximum, 64);
           if (dbError) return { data: null, error: dbError };
           const data = rows.filter((row) => row.conversation_id === state.conversationId
             && row.created_at < state.cutoff)

@@ -73,6 +73,7 @@ const safeStateText = (value, maxChars = 160) => {
 const safeSku = (value) => {
   const sku = clampText(value, 64).toUpperCase();
   if (!sku || !/^[A-Z0-9][A-Z0-9._/-]{0,63}$/.test(sku)) return null;
+  if (/^\d+(?:\.\d+)?(?:X\d+(?:\.\d+)?){1,3}$/u.test(sku)) return null;
   if (/^\d{12,}$/.test(sku) || /^(?:PO|QT|SO|DN)(?:[-_/]|\d)/.test(sku)) return null;
   return sku;
 };

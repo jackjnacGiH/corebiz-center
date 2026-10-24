@@ -45,6 +45,7 @@ import {
 import type { BotLearningCandidate, BotLearningSettings, OrgSettings } from '../lib/database.types';
 import { useLanguage, type Language } from '../i18n';
 import PageHeader from '../components/PageHeader';
+import CriticalCompanyBinding from '../components/CriticalCompanyBinding';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -646,6 +647,7 @@ export default function Settings() {
 
                 {/* ── Workspace tab ───────────────────────────────────── */}
                 <TabsContent value="workspace" className="space-y-4 mt-0">
+                    {profile?.role === 'owner' && <CriticalCompanyBinding />}
                     <Card className="gap-5 py-6">
                         <CardHeader className="px-6">
                             <CardTitle className="text-base font-semibold text-neutral-900">

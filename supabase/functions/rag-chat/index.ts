@@ -48,6 +48,17 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { uploadPrivateChatAttachment } from "../_shared/chat-attachment-storage.mjs";
+import { activeItemContext, activeItemPrompt, catalogueQuantity, isHumanRequest, linguisticText, resolvedActiveQuery } from "../_shared/active-item-context.mjs";
+import { currentConversationTurn, withConversationTurn } from "../_shared/conversation-turn-lease.mjs";
+import {
+  hasCriticalClaim,
+  IMAGE_KIND_INSTRUCTION,
+  IMAGE_KIND_TOOL,
+  inspectImageTurn,
+  resolveCriticalReply,
+  createCriticalReview,
+  redactCriticalMetadata,
+} from "../_shared/critical-company-info.mjs";
 import {
   buildProductSelection,
   extractModelCodes,
@@ -223,6 +234,7 @@ type RequestTelemetry = {
   edgeRegion: string | null;
   routingVariant: RoutingVariant;
   contentKind: "text" | "image";
+  turnToken?: string | null;
 };
 
 /** Keep non-critical analytics and learning writes off the customer response
@@ -258,9 +270,7 @@ function resolveResponseLanguage(
 ): Lang {
   if (query.trim() && detectLanguage(query) === "th") return "th";
   // Size/grit/model-only follow-ups do not establish an English language.
-  const withoutModel = (value: string) => value
-    .replace(/\b[A-Z]{2,6}[\s._/-]*\d+[A-Z0-9-]*\b/gi, " ")
-    .replace(/^\s*(?:Eco|MIRKA(?:\s+GOLD)?)\s*$/iu, " ");
+  const withoutModel = linguisticText;
   const nonModelText = withoutModel(query);
   if (/[A-Za-z]{2,}/.test(nonModelText)) return "en";
   const priorCustomerText = [...history].reverse().find(
@@ -401,8 +411,8 @@ function selectToolDefinitions(
   history: Array<{ role: string; content: string }>,
   hasImages: boolean,
 ): unknown[] {
+  if (hasImages) return [{ functionDeclarations: [IMAGE_KIND_TOOL, ...TOOL_DEFINITIONS[0].functionDeclarations] }];
   if (!TOKEN_OPTIMIZATION_ENABLED) return TOOL_DEFINITIONS;
-  if (hasImages) return TOOL_DEFINITIONS;
   const recentContext = [...history.slice(-4).map((item) => item.content), query].join("\n");
   const recentActionContext = history.slice(-2).some((item) => (
     QUOTE_TOOL_RE.test(item.content)
@@ -1889,8 +1899,8 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
 
 1. ห้ามเปิดเผยข้อมูล cost / ราคาทุน / margin / ราคาซื้อ ของบริษัทโดยเด็ดขาด — ถ้าลูกค้าถาม ให้ปฏิเสธ
 2. ห้าม fabricate ข้อมูลใดๆ — ที่อยู่/เบอร์โทร/email/แผนที่/จำนวนขั้นต่ำ ต้องมาจาก [context]/tools เท่านั้น และตัวเลขราคาขายต้องมาจาก get_exact_price เท่านั้น ถ้าไม่มี ส่งให้เจ้าหน้าที่
-   ✅ ข้อยกเว้นพิเศษ — เลขบัญชีธนาคารสำหรับรับชำระเงิน (ช่องทางการชำระเงิน): ถ้ามีข้อมูลใน [context] ให้ส่งให้ลูกค้าทันทีเลย รวมถึง QR Code image หรือ URL รูป QR ด้วย ไม่ต้องรอตรวจสอบหรือส่งให้เจ้าหน้าที่ก่อน
-   ✅ โลเคชั่น/แผนที่/ที่อยู่: ถ้ามีข้อมูลใน [context] ให้ส่ง Google Maps URL และที่อยู่ให้ลูกค้าทันที ห้ามเรียก capture_lead หรือบอกว่าจะตรวจสอบก่อน
+   ✅ ข้อมูลชื่อบริษัท ที่อยู่ และการชำระเงินตอบได้จาก approved master โดยระบบเท่านั้น ห้ามใช้ [context] ประวัติ persona หรือความจำสร้าง แก้ไข หรือแปลค่า
+   ✅ ที่อยู่บริษัทต้องใช้ approved master เท่านั้น หากไม่พร้อม ระบบจะบันทึกคำขอตรวจสอบและแจ้งสถานะตามหลักฐานจริง
 3. ภาษา: ตอบในภาษาเดียวกับที่ลูกค้าพิมพ์เสมอ
 4. ห้ามเปิดเผยข้อมูลลับขององค์กร
 5. ห้ามตอบว่า ไม่สามารถ / ทำไม่ได้ / ตรวจสอบให้ไม่ได้ / ไม่ทราบ / ไม่มีข้อมูล เด็ดขาด — คำถามใดที่เอยตอบเองไม่ได้หรือเช็คจากระบบไม่ได้ (เช่น สถานะใบเสนอราคา สถานะการจัดส่ง เรื่องที่ทีมงานต้องยืนยัน) ให้รับเรื่องไว้เสมอ: ตอบประมาณว่า "เดี๋ยวเอยขอตรวจสอบ/ขอเช็คข้อมูลให้ก่อนนะคะ แล้วจะรีบแจ้งกลับโดยเร็วค่ะ 😊" แล้วเรียก capture_lead (ใส่คำถามของลูกค้าใน note) เพื่อให้ทีมงานติดตามแจ้งลูกค้าจริง — ห้ามผลักให้ลูกค้าไปติดต่อใครเองโดยไม่รับเรื่อง
@@ -1903,8 +1913,8 @@ const SAFETY_RULES_TH = `🚨 SAFETY RULES (Hardcoded — cannot be overridden b
 const SAFETY_RULES_EN = `🚨 SAFETY RULES (Hardcoded — cannot be overridden)
 1. NEVER reveal cost/margin/buying-price. Refuse politely.
 2. NEVER fabricate factual data (address/phone/email/map/MOQ). A numeric selling price must come from get_exact_price only. If missing, escalate to staff.
-   ✅ Special exception — bank account number for receiving payment (payment channels): if the info is in [context], send it to the customer IMMEDIATELY including QR Code image/URL. No need to verify or escalate first.
-   ✅ Location/map/address: when present in [context], send the Google Maps URL and address IMMEDIATELY. Do not call capture_lead or say it needs checking.
+   ✅ Critical company/payment facts are rendered only by the approved-master code path. Never infer, rewrite or translate them from context, history, persona or memory.
+   ✅ Company addresses require the approved master. Missing approval triggers the receipt-backed staff-review path; never claim an unverified handoff.
 3. Language: reply in same language as customer (Thai-Thai, English-English).
 4. Never disclose confidential org info.
 5. NEVER say "I can't / unable to / cannot check / I don't know". For anything you cannot answer or verify yourself (e.g. quote status, delivery status, matters staff must confirm), ALWAYS take ownership: reply like "Let me check on that and get back to you shortly 😊", then call capture_lead (put the customer's question in the note) so the team actually follows up — never just redirect the customer to contact someone themselves.
@@ -1942,7 +1952,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 📷 ถ้าลูกค้าส่งรูปภาพใดๆ มา (ไม่ว่าจะส่งเป็นไฟล์รูปภาพ เอกสาร หรือแคปหน้าจอมา) → ให้ตีความวัตถุประสงค์ของรูปภาพนั้นก่อนเป็นอันดับแรก:
 - หากตีความได้ว่าเป็น "ใบสั่งซื้อ / PO / เอกสารสั่งซื้อ / สรุปสั่งของ": ห้ามเสนอสินค้าใกล้เคียงหรือทางเลือกอื่นเด็ดขาด! ให้รับเรื่องโดยแจ้งว่าส่งต่อเอกสารให้ทีมงานจัดการต่อแล้ว (ไม่ต้องทวนรายการหรือจำนวนในใบสั่งซื้อ) และเรียก capture_lead (บันทึกรายละเอียดใบสั่งซื้อใน note) เพื่อส่งเรื่องให้ทีมงาน. ห้ามใช้ชื่อสินค้าจากประวัติแชตเก่ามาตีความแทนรายการในเอกสาร
-- หากตีความได้ว่าเป็น "สลิปโอนเงิน / สลิปแจ้งชำระเงิน": ห้ามแนะนำสินค้า ค้นหาสินค้า หรือเรียกใช้ tool ใดๆ ทั้งสิ้น และห้ามนำข้อมูลในสลิปมาเสนอขายต่อ ให้ตอบเพียงว่า "ขอบพระคุณค่ะ เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ" ห้ามระบุ/อ่าน/คาดเดายอดเงิน วันที่ เวลา เลขบัญชี ชื่อผู้โอน เลขอ้างอิง หรือยืนยันว่าชำระสำเร็จโดยเด็ดขาด แม้เห็นข้อมูลในภาพ
+- หากเป็นสลิปหรือหลักฐานชำระเงิน: จัดประเภท [[IMAGE:payment_receipt]] ห้ามอ่านข้อความหรือยืนยันยอด/บัญชี/การชำระ และห้ามเรียก tools ระบบจะสร้างคำขอตรวจสอบและแสดงสถานะจริง ห้ามอ้างว่าส่งฝ่ายบัญชีแล้ว
 - หากเป็นรูปภาพอื่นๆ (เช่น รูปสินค้าจริง ชิ้นงานหน้างาน หรือตัวอย่างการใช้งานทั่วไป): ให้ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ และเรียก find_products เพื่อค้นหาสินค้าที่เกี่ยวข้องหรือใกล้เคียงเสนอให้ลูกค้า — ห้ามเดาราคา/สเป็กจากรูปเอง
 
 📦 ช่องข้อมูลจาก tool: stock (0=สินค้าสั่งผลิต, null=ยังไม่ได้ตรวจ), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
@@ -1984,7 +1994,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
    - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.
 📷 If the customer sends any IMAGE (whether uploaded as a photo, doc screenshot, or any file) → You must interpret the intent of the image first:
 - If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team. Never use a product from old chat history as a substitute for the document contents.
-- If interpreted as a "bank transfer slip / payment receipt": DO NOT recommend products, search products, or call any tools. Reply only with a generic accounting-review acknowledgement. Never state, extract, infer, or confirm an amount, date, time, account number, payer, reference, or payment success from the image.
+- For a bank transfer slip/payment receipt, classify [[IMAGE:payment_receipt]]. Never transcribe it, confirm payment, call tools, or claim accounting received it. Code creates a review request and renders only its verified status.
 - If it is any other image (e.g., product photo, physical workpiece, general usage example): Describe what you see briefly and call find_products to recommend matching or related products to the customer. Never invent price/specs from a photo.
 📦 Fields: stock (0=made to order, null=not verified), in_stock, min_order_qty (always use), unit.
 
@@ -2170,15 +2180,15 @@ async function loadVerifiedChatHistory(
   admin: SupabaseClient, conversationId: string, requestStartedAt: number,
 ): Promise<Array<{ role: string; content: string }> | null> {
   const { data, error } = await admin.from("chat_messages")
-    .select("sender_type, content").eq("conversation_id", conversationId)
+    .select("sender_type, content, metadata").eq("conversation_id", conversationId)
     .lt("created_at", new Date(requestStartedAt).toISOString())
     .order("created_at", { ascending: false }).order("id", { ascending: false })
-    .limit(24);
+    .limit(64);
   if (error) {
     console.warn("verified chat history read failed:", error.message);
     return null;
   }
-  const rows = (data ?? []) as Array<{ sender_type: string; content: string }>;
+  const rows = (data ?? []) as Array<{ sender_type: string; content: string; metadata?: Record<string, unknown> }>;
   const messages = rows.reverse()
     .filter((row) => row.sender_type === "customer" || row.sender_type === "bot" || row.sender_type === "agent")
     .map((row) => {
@@ -2192,17 +2202,18 @@ async function loadVerifiedChatHistory(
       const content = cleaned.slice(0,
         /ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(cleaned) ? 4_500 : MAX_HISTORY_ITEM_CHARS);
       return { role: row.sender_type === "customer" ? "user" : "assistant",
-        content: row.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content };
+        content: row.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content,
+        ...(row.sender_type === "bot" && row.metadata?.verified_product ? { verified_product: row.metadata.verified_product } : {}) };
     })
     .filter((row) => row.content)
-    .slice(-MAX_HISTORY_ITEMS);
+    .slice(-64);
   const bounded: Array<{ role: string; content: string }> = [];
   let chars = 0;
   for (let index = messages.length - 1; index >= 0; index--) {
     const remaining = MAX_HISTORY_TOTAL_CHARS - chars;
     if (remaining <= 0) break;
     const content = messages[index].content.slice(0, remaining);
-    bounded.unshift({ role: messages[index].role, content });
+    bounded.unshift({ ...messages[index], content });
     chars += content.length;
   }
   return bounded;
@@ -2316,19 +2327,6 @@ function isUuid(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-const PAYMENT_RECEIPT_ACK_TH = "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊";
-const PAYMENT_RECEIPT_ACK_EN = "Thank you. Our accounting team will review the payment notification shortly. 😊";
-const PAYMENT_RECEIPT_REPLY_RE = /(?:สลิป(?:โอนเงิน|แจ้งชำระเงิน)?|แจ้งโอนเงิน|ฝ่ายบัญชี.*ตรวจสอบ(?:ยอด|การชำระ)|ตรวจสอบ(?:ยอด|การโอน)|payment\s*(?:receipt|slip)|bank\s*transfer\s*slip|accounting.*(?:verify|review))/iu;
-const PAYMENT_RECEIPT_QUERY_RE = /(?:สลิป|แจ้งโอน|โอนเงินแล้ว|ส่งหลักฐาน(?:การ)?ชำระ|payment\s*(?:receipt|slip)|bank\s*transfer\s*(?:receipt|slip|sent))/iu;
-
-function sanitizePaymentReceiptAnswer(query: string, images: ImagePart[], answer: string, lang: Lang): string {
-  const receiptContext = images.length > 0 || PAYMENT_RECEIPT_QUERY_RE.test(query);
-  if (receiptContext && PAYMENT_RECEIPT_REPLY_RE.test(answer)) {
-    return lang === "th" ? PAYMENT_RECEIPT_ACK_TH : PAYMENT_RECEIPT_ACK_EN;
-  }
-  return answer;
-}
-
 Deno.serve(async (req: Request) => {
   const requestStartedAt = Date.now();
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
@@ -2349,15 +2347,18 @@ Deno.serve(async (req: Request) => {
   const query = rawQuery;
   const images = normalizeImages(body.images);
   const rawHistory = Array.isArray(body.history) ? body.history : [];
-  const history: Array<{ role: string; content: string }> = [];
+  const history: Array<{ role: string; content: string; verified_product?: unknown }> = [];
   let historyChars = 0;
-  for (const item of rawHistory.slice(-MAX_HISTORY_ITEMS).reverse()) {
+  const trustedHistoryLimit = internalServiceCall ? 64 : MAX_HISTORY_ITEMS;
+  const trustedHistoryChars = internalServiceCall ? 32_000 : MAX_HISTORY_TOTAL_CHARS;
+  for (const item of rawHistory.slice(-trustedHistoryLimit).reverse()) {
     const row = (item ?? {}) as Record<string, unknown>;
-    const remaining = MAX_HISTORY_TOTAL_CHARS - historyChars;
+    const remaining = trustedHistoryChars - historyChars;
     if (remaining <= 0) break;
     const content = String(row.content ?? "").trim().slice(0, Math.min(MAX_HISTORY_ITEM_CHARS, remaining));
     if (!content) continue;
-    history.unshift({ role: row.role === "assistant" ? "assistant" : "user", content });
+    history.unshift({ role: row.role === "assistant" ? "assistant" : "user", content,
+      ...(internalServiceCall && row.verified_product ? { verified_product: row.verified_product } : {}) });
     historyChars += content.length;
   }
   const match_count = Math.max(1, Math.min(MAX_CONTEXT_CHUNKS, Number(body.match_count ?? DEFAULT_MATCH_COUNT) || DEFAULT_MATCH_COUNT));
@@ -2381,6 +2382,7 @@ Deno.serve(async (req: Request) => {
     edgeRegion: Deno.env.get("SB_REGION") ?? Deno.env.get("DENO_REGION") ?? null,
     routingVariant,
     contentKind: images.length > 0 ? "image" : "text",
+    turnToken: internalServiceCall && isUuid(body.conversation_turn_token) ? body.conversation_turn_token : null,
   };
 
   if (!query && images.length === 0) return new Response(JSON.stringify({ error: MSG[lang].queryRequired }), { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
@@ -2432,8 +2434,7 @@ Deno.serve(async (req: Request) => {
         };
         try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, internalConversationId, persistMessages, readOnly, telemetry, send); }
         catch (e) {
-          const msg = (e as Error).message ?? String(e);
-          const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
+          const friendly = MSG[lang].aiBusy; // Never expose raw provider/database errors.
           send({ type: "error", message: friendly, read_only: readOnly });
           if (!readOnly) recordFailedAiRun(admin, telemetry, conversationId, channel, e);
         } finally { try { controller.close(); } catch (_e) { /* ignore */ } }
@@ -2445,8 +2446,7 @@ Deno.serve(async (req: Request) => {
   const events: Array<Record<string, unknown>> = [];
   try { await handleQuery(admin, query, images, history, match_count, matchThreshold, lang, channel, conversationId, internalConversationId, persistMessages, readOnly, telemetry, (e) => events.push(e)); }
   catch (e) {
-    const msg = (e as Error).message ?? String(e);
-    const friendly = /503|UNAVAILABLE|429/.test(msg) ? MSG[lang].aiBusy : msg;
+    const friendly = MSG[lang].aiBusy; // Never expose raw provider/database errors.
     events.push({ type: "error", message: friendly, read_only: readOnly });
     if (!readOnly) recordFailedAiRun(admin, telemetry, conversationId, channel, e);
   }
@@ -2472,6 +2472,8 @@ Deno.serve(async (req: Request) => {
     conversation_id: conversationId,
     channel,
     read_only: readOnly,
+    verbatim: done.verbatim === true,
+    active_item: done.active_item ?? null,
     clarification_candidates,
     paused: pausedEv ? (pausedEv as Record<string, unknown>).reason : undefined,
     blocked: blockedAnswer ? "cost_query" : undefined,
@@ -2479,7 +2481,40 @@ Deno.serve(async (req: Request) => {
   }), { status: errEv ? 500 : 200, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
 });
 
-async function handleQuery(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, trustedConversationId: string | null, persistMessages: boolean, readOnly: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
+async function handleQuery(...args: Parameters<typeof handleQueryCore>) {
+  const [admin, query, images, history, matchCount, threshold, lang, channel, conversationId, trustedId, persist, readOnly, telemetry, send] = args;
+  const run = async (token: string | null) => {
+    const events: Array<Record<string, unknown>> = [];
+    await handleQueryCore(admin, query, images, history, matchCount, threshold, lang, channel, conversationId, trustedId, false, readOnly, { ...telemetry, turnToken: token }, event => events.push(event));
+    if (conversationId && token && !await currentConversationTurn(admin, conversationId, token)) {
+      send({ type: "paused", reason: "stale_conversation_turn" });
+      return;
+    }
+    for (let i = 0; i < events.length; i++) events[i] = redactCriticalMetadata(events[i]);
+    const done = events.find(event => event.type === "done");
+    let answer = events.find(event => event.type === "blocked")?.answer
+      ?? events.filter(event => event.type === "text").map(event => String(event.chunk ?? "")).join("");
+    // This outer gate also covers deterministic early returns, not only the
+    // model loop. Persist and emit exactly the same final protected response.
+    if (typeof answer === "string" && answer && done?.verbatim !== true) {
+      const protectedReply = await resolveCriticalReply(admin, { query, answer, images, conversationId, channel, lang, readOnly });
+      if (protectedReply.handled) {
+        answer = protectedReply.answer;
+        for (let i = events.length - 1; i >= 0; i--) if (events[i].type === "text") events.splice(i, 1);
+        events.unshift({ type: "text", chunk: answer });
+        if (done) Object.assign(done, { verbatim: true, sources: [], tool_calls: [], active_item: null });
+      }
+    }
+    if (persist && !readOnly && conversationId && typeof answer === "string" && answer.trim()) {
+      await saveMessage(admin, conversationId, "bot", answer, { model: done?.model, channel, tool_calls: done?.tool_calls ?? [], verified_product: done?.active_item ?? null });
+    }
+    for (const event of events) send(event);
+  };
+  if (!conversationId || readOnly) return await run(null);
+  return await withConversationTurn(admin, conversationId, async (lease: { token: string }) => await run(lease.token), { inheritedToken: telemetry.turnToken ?? null });
+}
+
+async function handleQueryCore(admin: SupabaseClient, query: string, images: ImagePart[], history: Array<{ role: string; content: string }>, match_count: number, matchThreshold: number, lang: Lang, channel: string, conversationId: string | null, trustedConversationId: string | null, persistMessages: boolean, readOnly: boolean, telemetry: RequestTelemetry, send: (event: Record<string, unknown>) => void) {
   const botFlagsStartedAt = Date.now();
   const [globalOn, channelOn, convOn] = await Promise.all([
     isGlobalBotEnabled(admin),
@@ -2536,10 +2571,26 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     return;
   }
 
+  // Run before callback, product, quote, retrieval and persona paths. Neither
+  // absent KB matches nor a stale chat message can authorize critical facts.
+  const criticalRequest = await resolveCriticalReply(admin, {
+    query, answer: "", images, conversationId, channel, lang, readOnly,
+  });
+  if (criticalRequest.handled) {
+    const answer = criticalRequest.answer;
+    if (conversationId && persistMessages) await saveMessage(admin, conversationId, "bot", answer, {
+      model: "guardrail:critical_company", critical_state: criticalRequest.state,
+    });
+    send({ type: "text", chunk: answer });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "guardrail:critical_company", tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly, verbatim: true });
+    scheduleSimpleRun("guardrail:critical_company", criticalRequest.state ?? "critical_review", Date.now() - telemetry.startedAt);
+    return;
+  }
+
   // A callback request is an operational commitment, not an LLM judgement.
   // Create the follow-up task deterministically so a friendly acknowledgement
   // can never be sent without notifying the sales team.
-  if (query && images.length === 0 && isCallbackRequest(query)) {
+  if (query && images.length === 0 && isCallbackRequest(query) && !isHumanRequest(query)) {
     const toolStartedAt = Date.now();
     const args = { interest: lang === "th" ? "ขอให้ติดต่อกลับ" : "callback request", note: query };
     const decision = readOnlyToolDecision("capture_lead", readOnly);
@@ -2576,10 +2627,43 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     : null;
   const trustedQuoteHistory = Boolean(trustedConversationId || persistedHistory !== null);
   const contextHistory = persistedHistory ?? history;
+  const activeContext = activeItemContext(query, trustedQuoteHistory ? contextHistory : []);
   const latestTurn = images.length > 0 || !CHAT_LATEST_TURN_ROUTING_ENABLED
     ? { kind: "follow_up", history: contextHistory, topicQuery: null }
     : routeLatestTurn(query, contextHistory);
-  const productHistory = latestTurn.history;
+  const productHistory = latestTurn.history.slice(-MAX_HISTORY_ITEMS);
+  if (activeContext.quote_pending && activeContext.quote_evidence && trustedQuoteHistory
+    && !productHistory.some(item => item.role === "user" && /ใบเสนอราคา|quotation|\bquote\b/iu.test(item.content))) {
+    productHistory.unshift({ role: "user", content: activeContext.quote_evidence });
+  }
+  const activeQuery = resolvedActiveQuery(activeContext, query);
+  const finishContextReply = (answer: string, model: string, toolCalls: unknown[] = [], product: Record<string, unknown> | null = null) => {
+    send({ type: "text", chunk: answer });
+    send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model, tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly, active_item: product?.sku ? { source: "catalogue", sku: product.sku } : null });
+    scheduleSimpleRun(model, "active_context", Date.now() - telemetry.startedAt);
+  };
+  const reviewActiveItem = async (kind: string) => {
+    const summary = `${query}\n${JSON.stringify({ identity: activeContext.identity, facts: activeContext.facts, missing: activeContext.missing, conflicting: activeContext.conflicting, conflict_evidence: activeContext.conflict_evidence })}`;
+    const receipt = await createCriticalReview(admin, { conversationId, channel, query: summary, kind, readOnly });
+    const answer = lang === "th"
+      ? receipt.state === "queued" ? "บันทึกคำขอพร้อมสเปกและจำนวนที่แจ้งไว้ในคิวทีมงานแล้ว กำลังรอเจ้าหน้าที่รับเรื่องค่ะ"
+        : receipt.state === "received" ? "เจ้าหน้าที่รับคำขอพร้อมสเปกและจำนวนที่แจ้งแล้ว กำลังรอผลตรวจสอบค่ะ"
+        : receipt.state === "read_only" ? "โหมดทดสอบ ไม่มีการส่งคำขอให้ทีมงานจริงค่ะ"
+        : "ยังยืนยันการบันทึกคำขอให้ทีมงานไม่ได้ค่ะ จึงยังยืนยันไม่ได้ว่าเจ้าหน้าที่รับเรื่อง กรุณาลองอีกครั้งในแชทนี้ค่ะ"
+      : receipt.state === "queued" ? "Your request, specifications and quantity are saved in the staff queue, awaiting staff acceptance."
+        : receipt.state === "received" ? "A staff member accepted the request. Verification is still pending."
+        : receipt.state === "read_only" ? "Read-only test: no staff request was sent."
+        : "There is no verified receipt for the staff request yet. Please try again here.";
+    finishContextReply(answer, "guardrail:active_item_review");
+  };
+  if (activeContext.human_requested || activeContext.conflicting.length > 0) {
+    await reviewActiveItem(activeContext.human_requested ? "human_request" : "product_specification");
+    return;
+  }
+  if (activeContext.multiple) {
+    finishContextReply(lang === "th" ? "ข้อความนี้มีหลายรายการค่ะ รบกวนระบุว่าสเปกและจำนวนล่าสุดเป็นของรายการใด เพื่อไม่ให้สลับสินค้าค่ะ" : "There are multiple items. Which item do the latest specifications and quantity belong to?", "guardrail:multiple_active_items");
+    return;
+  }
   if (trustedQuoteHistory && images.length === 0 && declinedGuidedQuoteRequest(query, productHistory)) {
     const answer = lang === "th"
       ? "รับทราบค่ะ หากต้องการใบเสนอราคาภายหลังแจ้งเอยได้เลยนะคะ"
@@ -2590,6 +2674,49 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "catalog:quote_declined", tool_calls: [], request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
     scheduleSimpleRun("catalog:quote_declined", "ok", firstTokenMs, [], 0, 0);
     return;
+  }
+  if (images.length === 0 && activeContext.facts.requested_sku) {
+    const sku = String(activeContext.facts.requested_sku.value);
+    const product = await getProductDetail(admin, sku) as Record<string, unknown>;
+    if (product.sku !== sku || product.error) { await reviewActiveItem("product_specification"); return; }
+    const productName = String(product.name_th || product.name_en || "");
+    const requestedGrit = activeContext.facts.grit?.value;
+    const catalogueGrits = productMatchFacets(productName).grit;
+    const requestedDimensions = activeContext.facts.dimensions?.value;
+    const catalogueDimension = /\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?(?:\s*[x×*]\s*\d+(?:\.\d+)?){0,2}/iu.exec(productName)?.[0]?.replace(/\s/g, "");
+    if ((requestedGrit && !catalogueGrits.includes(`#${requestedGrit}`))
+      || (requestedDimensions && catalogueDimension !== requestedDimensions)) { await reviewActiveItem("product_specification"); return; }
+    const conversion = catalogueQuantity(activeContext, product);
+    const spec = product.spec as Record<string, unknown> | null;
+    const piecesPerPack = spec?.pieces_per_pack;
+    if (activeContext.pack_question) {
+      if (!Number.isSafeInteger(piecesPerPack) || Number(piecesPerPack) <= 0) { await reviewActiveItem("product_specification"); return; }
+      finishContextReply(lang === "th" ? `${String(product.name_th || product.name_en)} (SKU ${sku}) มี ${piecesPerPack} ชิ้นต่อแพ็คตามข้อมูลสินค้าในระบบค่ะ` : `${String(product.name_en || product.name_th)} (SKU ${sku}): ${piecesPerPack} pieces per pack in the current catalogue.`, "catalog:verified_pack_size");
+      return;
+    }
+    if (conversion.needs_review) { await reviewActiveItem("product_specification"); return; }
+    const quantity = conversion.quantity;
+    if (activeContext.quote_pending && quantity != null && !quoteCreationBlockReason(query, false, productHistory)) {
+      const response = readOnly ? { quote_created: false, customer_details_required: false }
+        : await requestQuote(admin, { items: [{ sku, qty: quantity }] }, channel, conversationId, query, false, productHistory, trustedQuoteHistory) as Record<string, unknown>;
+      const answer = readOnly ? (lang === "th" ? "โหมดทดสอบ ไม่ได้สร้างใบเสนอราคาจริงค่ะ" : "Read-only test: no quotation was created.")
+        : response.quote_created === true && typeof response.quote_code === "string" ? (lang === "th" ? `ทำใบเสนอราคาเลขที่ ${response.quote_code} ตามรายการและจำนวนที่ยืนยันแล้วค่ะ` : `Quotation ${response.quote_code} was created for the confirmed item and quantity.`)
+        : response.quote_reused === true ? (lang === "th" ? `ใช้ใบเสนอราคาเดิมเลขที่ ${response.existing_quote_code} สำหรับรายการและจำนวนเดิมค่ะ` : `Use existing quotation ${response.existing_quote_code} for the same item and quantity.`)
+        : response.customer_details_required === true ? (lang === "th" ? "ขอข้อมูลที่ยังขาดสำหรับออกบิล: ชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) ค่ะ" : "Please provide the missing billing details: company name, billing address, 13-digit tax ID and branch, if any.") : null;
+      if (!answer) { await reviewActiveItem("product_specification"); return; }
+      finishContextReply(answer, "catalog:active_item_quote", [{ name: "request_quote", args: { items: [{ sku, qty: quantity }] }, result_summary: JSON.stringify(response).slice(0, 200) }], product);
+      return;
+    }
+    // Billing replies stay in the existing linking tool path. The deterministic
+    // context retains the item while request_quote checks existing CRM billing.
+    if (!/ชื่อบริษัท\s*[:：]|เลขผู้เสียภาษี|tax\s*id|billing\s*address/iu.test(query)) {
+      const minimum = Math.max(1, Math.ceil(Number(product.min_order_qty) || 1));
+      const priced = await getExactPrice(admin, { sku, qty: quantity ?? minimum }, conversationId);
+      const price = isSuccessfulExactPriceResult(priced.response) ? priced.response as Record<string, unknown> : null;
+      if (quantity != null && !price) { await reviewActiveItem("product_specification"); return; }
+      finishContextReply(guidedExactProductAnswer(product, quantity, price, lang), "catalog:active_item", [], product);
+      return;
+    }
   }
   const acceptedQuote = trustedQuoteHistory && images.length === 0
     ? confirmedGuidedQuoteRequest(query, productHistory)
@@ -2659,7 +2786,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   if (PRODUCT_GUIDED_SELECTION_ENABLED && query && images.length === 0) {
     const guidedStartedAt = Date.now();
     try {
-      const guided = await guidedProductDecision(query, productHistory, lang, (catalogQuery: string) => findProducts(admin, catalogQuery));
+      const guided = await guidedProductDecision(activeQuery, productHistory, lang, (catalogQuery: string) => findProducts(admin, catalogQuery));
       guidedQuery = guided?.lookupQuery ?? null;
       const exactRows = Array.isArray(guided?.result?.products) ? guided.result.products : [];
       const exactProduct = !guided?.result?.selection_required && exactRows.length === 1
@@ -2731,7 +2858,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
             tool_calls: toolCalls.map((call) => ({ name: call.name, args: call.args })),
           });
         }
-        send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "catalog:guided_selection", tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
+        send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model: "catalog:guided_selection", tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly, active_item: exactProduct?.sku ? { source: "catalogue", sku: exactProduct.sku } : null });
         scheduleSimpleRun("catalog:guided_selection", "ok", firstTokenMs, toolCalls.map((call) => call.name), Date.now() - guidedStartedAt, toolCalls.length);
         return;
       }
@@ -2744,7 +2871,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const learningSettings = await getLearningSettings(admin);
   // Decide retrieval before loading the rest of the prompt context so the
   // embedding request can overlap independent database reads.
-  const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, productHistory);
+  const ragRoutingQuery = guidedQuery ?? (activeQuery !== query ? activeQuery : mergeFacetOnlyProductQuery(query, productHistory));
   const requestToolDefinitions = selectToolDefinitions(ragRoutingQuery, productHistory, images.length > 0);
   const requestToolCount = requestToolDefinitions.length > 0
     ? ((requestToolDefinitions[0] as { functionDeclarations?: unknown[] }).functionDeclarations?.length ?? 0)
@@ -2837,28 +2964,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     }
     search_ms = Date.now() - t1;
 
-    // ── Forced retrieval for payment / bank-account queries ────────────────
-    // RAG embedding similarity may be low for short queries like "ขอเลขบัญชี".
-    // If the query is clearly about payment, always inject the payment KB doc.
-    const PAYMENT_RE = /เลขบัญชี|บัญชีธนาคาร|โอนเงิน|ชำระเงิน|ช่องทางชำระ|qr\s*code|qr/i;
-    if (query && PAYMENT_RE.test(query)) {
-      const paymentAlreadyLoaded = expandedRows.some(
-        (r) => /บัญชี|payment|ชำระ|โอน/i.test(r.source_path)
-      );
-      if (!paymentAlreadyLoaded) {
-        const { data: paymentDocs } = await admin
-          .from("knowledge_chunks")
-          .select("source_path, chunk_index, title, content")
-          .ilike("source_path", "%บัญชี%")
-          .eq("visibility", "public")
-          .order("chunk_index", { ascending: true })
-          .limit(MAX_CONTEXT_CHUNKS);
-        if (paymentDocs && paymentDocs.length > 0) {
-          expandedRows = [...paymentDocs, ...expandedRows].slice(0, MAX_CONTEXT_CHUNKS);
-        }
-      }
-    }
-    // ── End forced retrieval ───────────────────────────────────────────────
+    // Critical company/payment queries bypass RAG via the approved-master gate.
 
     // ── Forced retrieval for location / map / address queries ─────────────
     // Short or misspelled Thai queries can fall below the vector threshold
@@ -2925,13 +3031,14 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     persona,
     contextText,
     lang,
-    images.length > 0 ? conversationMemory : null,
+    null, // Derive factual continuity from bounded message/tool evidence, never dirty model memory.
     approvedGuidance,
     images.length > 0 ? trustedCustomerContext
       : trustedCustomerContext && { ...trustedCustomerContext, history: [] },
     learningSettings.structured_memory_enabled,
     TOKEN_OPTIMIZATION_ENABLED && requestToolCount <= 1,
-  );
+  ) + `\n\n${activeItemPrompt(activeContext)}`
+    + (images.length > 0 ? `\n\n[Mandatory image classification]\n${IMAGE_KIND_INSTRUCTION}` : "");
   const generationStartedAt = Date.now();
   const defaultImgPrompt = lang === "en"
     ? "The customer sent this image. Please inspect it according to image rules."
@@ -2956,6 +3063,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   const memoryToolOutcomes: MemoryToolOutcome[] = [];
   let usedModel = GEMINI_MODELS[0];
   let fullAnswer = "";
+  let criticalAnswer = false;
   let firstTokenMs: number | null = null;
   let llm_ms = 0;
   let tool_ms = 0;
@@ -3002,7 +3110,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   let verifiedZeroStockProduct: Record<string, unknown> | null = null;
   let trustedQuoteResult: unknown = null;
   let quoteCustomerDetailsRequired = false;
-  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+  generationLoop: for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let iterText = "";
     const llmStartedAt = Date.now();
     const r = await streamGeminiWithFallback(geminiKey, systemPrompt, contents, requestToolDefinitions, (chunk) => {
@@ -3017,6 +3125,31 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
     usage.prompt_tokens += r.usage.prompt_tokens;
     usage.completion_tokens += r.usage.completion_tokens;
     usage.total_tokens += r.usage.total_tokens;
+    if (images.length > 0 && iter === 0) {
+      const classifications = r.toolCalls.filter((call) => call.name === "classify_inbound_image");
+      const classificationKind = classifications.some(call => call.args.kind === "payment_receipt") ? "payment_receipt"
+        : classifications.length > 1 ? "other" : classifications[0]?.args.kind;
+      const imageTurn = inspectImageTurn(iterText, classificationKind);
+      if (imageTurn.review) {
+        // No tool from this completion has run. Slips and ambiguous images
+        // create only a review task; never a sales lead, quote or OCR readback.
+        const reviewed = await resolveCriticalReply(admin, {
+          intent: imageTurn.kind, query, answer: "", images, conversationId, channel, lang, readOnly,
+        });
+        fullAnswer = reviewed.answer;
+        criticalAnswer = true;
+        break;
+      }
+      iterText = imageTurn.answer;
+    }
+    if (hasCriticalClaim(iterText)) {
+      const reviewed = await resolveCriticalReply(admin, {
+        query, answer: iterText, images, conversationId, channel, lang, readOnly,
+      });
+      fullAnswer = reviewed.answer;
+      criticalAnswer = true;
+      break;
+    }
     if (r.toolCalls.length === 0) {
       appendDistinctAnswer(iterText);
       break;
@@ -3030,6 +3163,13 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       const effectiveArgs = call.name === "find_products" && hasContextualProductQuery
         ? { ...call.args, query: contextualProductQuery }
         : call.args;
+      if (["capture_lead", "request_quote"].includes(call.name)
+        && hasCriticalClaim([effectiveArgs.interest, effectiveArgs.note].filter(Boolean).join(" "))) {
+        const reviewed = await resolveCriticalReply(admin, { query, answer: "Bank account: unverified tool note", images, conversationId, channel, lang, readOnly });
+        fullAnswer = reviewed.answer;
+        criticalAnswer = true;
+        break generationLoop;
+      }
       let result: unknown;
       let executed = false;
       let dispatchResultMeta: ToolResultMeta | undefined;
@@ -3038,7 +3178,9 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       // Only an unresolved variant selection blocks workflow mutations. A
       // resolved lookup may legitimately be followed by a bulk lead, explicit
       // callback, draft quote, or quote-customer link in the same model turn.
-      if (readOnlySuppressed) {
+      if (call.name === "classify_inbound_image") {
+        result = { ok: true, classification_only: true };
+      } else if (readOnlySuppressed) {
         result = readOnlyDecision.result;
       } else if (
         call.name === "get_exact_price" &&
@@ -3057,6 +3199,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
         result = { ok: false, suppressed: true, reason: "product_selection_or_lookup_already_handled" };
       } else {
         send({ type: "tool_call", name: call.name, args: effectiveArgs });
+        if (conversationId && telemetry.turnToken && !await currentConversationTurn(admin, conversationId, telemetry.turnToken)) throw new Error("conversation_turn_stale");
         const dispatched = await dispatchTool(admin, call.name, effectiveArgs, send, channel, conversationId, query, images.length > 0, productHistory, trustedQuoteHistory);
         result = dispatched.response;
         if (call.name === "get_exact_price") {
@@ -3195,62 +3338,73 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
       : "Could you tell me which product or detail you are looking for?");
     console.warn("empty model output recovered with retry request", { request_id: telemetry.requestId });
   }
-  fullAnswer = sanitizePaymentReceiptAnswer(query, images, fullAnswer, lang);
-  // Every non-null outcome has passed the exact-price guard, whose first
-  // prerequisite is an object. Make that existing invariant explicit to TS.
-  const exactPriceResults = [...exactPriceOutcomes.values()].filter((result): result is Record<string, unknown> => result !== null && typeof result === 'object');
-  const guardedPriceAnswer = guardNumericSellingPriceAnswer({
-    query,
-    answer: fullAnswer,
-    lang,
-    exactPriceResults,
-    exactPriceAttemptCount: exactPriceOutcomes.size,
-    expectedExactProductCount: exactPriceEligibleSkus.size,
-    requestedProductItemCount,
-    trustedQuoteResult,
-  });
-  if (guardedPriceAnswer.guarded) {
-    console.warn("numeric selling price suppressed", {
-      request_id: telemetry.requestId,
-      reason: guardedPriceAnswer.reason,
-      exact_price_attempt_count: exactPriceOutcomes.size,
-      exact_price_success_count: exactPriceResults.length,
-      exact_product_count: exactPriceEligibleSkus.size,
-      requested_product_item_count: requestedProductItemCount,
-      trusted_quote: trustedQuoteResult !== null,
+  // Receipt handling is receipt-backed in resolveCriticalReply, never a text
+  // transformation claiming an accounting handoff.
+  if (!criticalAnswer) {
+    // Every non-null outcome has passed the exact-price guard, whose first
+    // prerequisite is an object. Make that existing invariant explicit to TS.
+    const exactPriceResults = [...exactPriceOutcomes.values()].filter((result): result is Record<string, unknown> => result !== null && typeof result === 'object');
+    const guardedPriceAnswer = guardNumericSellingPriceAnswer({
+      query,
+      answer: fullAnswer,
+      lang,
+      exactPriceResults,
+      exactPriceAttemptCount: exactPriceOutcomes.size,
+      expectedExactProductCount: exactPriceEligibleSkus.size,
+      requestedProductItemCount,
+      trustedQuoteResult,
     });
+    if (guardedPriceAnswer.guarded) {
+      console.warn("numeric selling price suppressed", {
+        request_id: telemetry.requestId,
+        reason: guardedPriceAnswer.reason,
+        exact_price_attempt_count: exactPriceOutcomes.size,
+        exact_price_success_count: exactPriceResults.length,
+        exact_product_count: exactPriceEligibleSkus.size,
+        requested_product_item_count: requestedProductItemCount,
+        trusted_quote: trustedQuoteResult !== null,
+      });
+    }
+    fullAnswer = guardedPriceAnswer.answer;
+    const requestedQuantity = guidedRequestedQuantity(query, productHistory, query);
+    const directQuoteRequest = /ใบเสนอราคา|quotation|\bquote\b/iu.test(query);
+    const minimum = Math.max(1, Math.ceil(Number(verifiedExactProduct?.min_order_qty) || 1));
+    const replyQuantity = requestedQuantity == null || requestedQuantity < minimum ? minimum : requestedQuantity;
+    const matchingPrices = exactPriceResults.filter((result) => verifiedExactProduct
+      && String(result.sku).toUpperCase() === String(verifiedExactProduct.sku).toUpperCase()
+      && Number(result.quantity) === replyQuantity);
+    const exactReplyPrice = matchingPrices.length === 1 ? matchingPrices[0] : null;
+    if (guardedPriceAnswer.reason === "verified_exact_price_reply"
+      && exactPriceEligibleSkus.size === 1 && verifiedExactProduct && exactReplyPrice
+      && (!directQuoteRequest || requestedQuantity == null)) {
+      fullAnswer = guidedExactProductAnswer(verifiedExactProduct, requestedQuantity, exactReplyPrice, lang);
+    }
+    if (directQuoteRequest && requestedQuantity != null && verifiedExactProduct
+      && guardedPriceAnswer.reason === "verified_exact_price_reply" && !exactReplyPrice) {
+      fullAnswer = guidedExactProductAnswer(verifiedExactProduct, requestedQuantity, null, lang);
+    }
+    if (quoteCustomerDetailsRequired && !trustedQuoteResult) {
+      const verifiedPriceText = guardedPriceAnswer.reason === "verified_exact_price_reply"
+        && (requestedQuantity == null || exactReplyPrice)
+        ? guardedPriceAnswer.answer : "";
+      const billingQuestion = lang === "th"
+        ? "ก่อนทำใบเสนอราคา รบกวนแจ้งชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) ค่ะ"
+        : "To prepare the quotation, please provide your company name, billing address, 13-digit tax ID, and branch (if any).";
+      fullAnswer = [verifiedPriceText, billingQuestion].filter(Boolean).join("\n");
+    }
+    if (!productSelectionPending && verifiedZeroStockProduct) {
+      fullAnswer = withVerifiedZeroStockLabel(fullAnswer, verifiedZeroStockProduct, lang);
+    }
+    fullAnswer = withQuoteQuickReplies(fullAnswer, lang);
   }
-  fullAnswer = guardedPriceAnswer.answer;
-  const requestedQuantity = guidedRequestedQuantity(query, productHistory, query);
-  const directQuoteRequest = /ใบเสนอราคา|quotation|\bquote\b/iu.test(query);
-  const minimum = Math.max(1, Math.ceil(Number(verifiedExactProduct?.min_order_qty) || 1));
-  const replyQuantity = requestedQuantity == null || requestedQuantity < minimum ? minimum : requestedQuantity;
-  const matchingPrices = exactPriceResults.filter((result) => verifiedExactProduct
-    && String(result.sku).toUpperCase() === String(verifiedExactProduct.sku).toUpperCase()
-    && Number(result.quantity) === replyQuantity);
-  const exactReplyPrice = matchingPrices.length === 1 ? matchingPrices[0] : null;
-  if (guardedPriceAnswer.reason === "verified_exact_price_reply"
-    && exactPriceEligibleSkus.size === 1 && verifiedExactProduct && exactReplyPrice
-    && (!directQuoteRequest || requestedQuantity == null)) {
-    fullAnswer = guidedExactProductAnswer(verifiedExactProduct, requestedQuantity, exactReplyPrice, lang);
-  }
-  if (directQuoteRequest && requestedQuantity != null && verifiedExactProduct
-    && guardedPriceAnswer.reason === "verified_exact_price_reply" && !exactReplyPrice) {
-    fullAnswer = guidedExactProductAnswer(verifiedExactProduct, requestedQuantity, null, lang);
-  }
-  if (quoteCustomerDetailsRequired && !trustedQuoteResult) {
-    const verifiedPriceText = guardedPriceAnswer.reason === "verified_exact_price_reply"
-      && (requestedQuantity == null || exactReplyPrice)
-      ? guardedPriceAnswer.answer : "";
-    const billingQuestion = lang === "th"
-      ? "ก่อนทำใบเสนอราคา รบกวนแจ้งชื่อบริษัท ที่อยู่ออกบิล เลขผู้เสียภาษี 13 หลัก และสาขา (ถ้ามี) ค่ะ"
-      : "To prepare the quotation, please provide your company name, billing address, 13-digit tax ID, and branch (if any).";
-    fullAnswer = [verifiedPriceText, billingQuestion].filter(Boolean).join("\n");
-  }
-  if (!productSelectionPending && verifiedZeroStockProduct) {
-    fullAnswer = withVerifiedZeroStockLabel(fullAnswer, verifiedZeroStockProduct, lang);
-  }
-  fullAnswer = withQuoteQuickReplies(fullAnswer, lang);
+  // Last gate, after every response transformation and before streaming or
+  // persistence. An unsolicited generated critical claim is never repaired
+  // by matching a few fields; the entire answer is replaced safely.
+  const finalCriticalReply = criticalAnswer ? { handled: true, answer: fullAnswer } : await resolveCriticalReply(admin, {
+    query, answer: fullAnswer, images, conversationId, channel, lang, readOnly,
+  });
+  fullAnswer = finalCriticalReply.answer;
+  criticalAnswer ||= finalCriticalReply.handled;
   if (fullAnswer) send({ type: "text", chunk: fullAnswer });
 
   const generationMs = Date.now() - generationStartedAt;
@@ -3270,7 +3424,7 @@ async function handleQuery(admin: SupabaseClient, query: string, images: ImagePa
   }
   await Promise.all(responseCriticalWrites);
   const totalMs = Date.now() - telemetry.startedAt;
-  send({ type: "done", sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: allToolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly });
+  send({ type: "done", sources: criticalAnswer ? [] : sources, tokens: usage, elapsed_ms: elapsed, model: usedModel, tool_calls: criticalAnswer ? [] : allToolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly, verbatim: criticalAnswer, active_item: !criticalAnswer && exactPriceEligibleSkus.size === 1 && verifiedExactProduct?.sku ? { source: "catalogue", sku: verifiedExactProduct.sku } : null });
   if (!readOnly) {
     // This starts only after the response's final event. The RPC compares
     // p_turn_at with the stored turn timestamp, so a slower older summary can

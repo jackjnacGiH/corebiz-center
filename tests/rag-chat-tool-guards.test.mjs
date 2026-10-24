@@ -84,7 +84,7 @@ test("facet-only product follow-up bypasses unrelated knowledge retrieval", () =
   const skipStart = source.indexOf("function shouldSkipRAG");
   const skipEnd = source.indexOf("const TOOL_DEFINITIONS", skipStart);
   const skipRag = source.slice(skipStart, skipEnd);
-  const routingStart = source.indexOf("const ragRoutingQuery = guidedQuery ?? mergeFacetOnlyProductQuery(query, productHistory)");
+  const routingStart = source.indexOf("const ragRoutingQuery = guidedQuery ?? (activeQuery !== query");
   const routingEnd = source.indexOf("const systemPrompt", routingStart);
   const routing = source.slice(routingStart, routingEnd);
 
@@ -96,12 +96,13 @@ test("facet-only product follow-up bypasses unrelated knowledge retrieval", () =
 
 test("latest-turn scope gates every product decision path before old history reaches the model", () => {
   assert.match(source, /const contextHistory = persistedHistory \?\? history;[\s\S]*?const latestTurn = images\.length > 0 \|\| !CHAT_LATEST_TURN_ROUTING_ENABLED[\s\S]*?routeLatestTurn\(query, contextHistory\)/);
-  assert.match(source, /guidedProductDecision\(query, productHistory,/);
+  assert.match(source, /guidedProductDecision\(activeQuery, productHistory,/);
   assert.match(source, /guidedRequestedQuantity\(query, productHistory,/);
   assert.match(source, /selectToolDefinitions\(ragRoutingQuery, productHistory,/);
   assert.match(source, /\.\.\.productHistory\.map\(\(h\)/);
   assert.match(source, /recoverEmptyProductAnswer\(guidedQuery \?\? query, productHistory,/);
-  assert.match(source, /images\.length > 0 \? conversationMemory : null/);
+  assert.match(source, /activeItemPrompt\(activeContext\)/);
+  assert.match(source, /null, \/\/ Derive factual continuity from bounded message\/tool evidence/);
   assert.match(source, /trustedCustomerContext && \{ \.\.\.trustedCustomerContext, history: \[\] \}/);
 });
 
@@ -182,7 +183,7 @@ test("tool-loop buffers one final text event and rewrites contextual product loo
 });
 
 test("explicit callback remains a deterministic guard before the model tool loop", () => {
-  const callbackStart = source.indexOf("if (query && images.length === 0 && isCallbackRequest(query))");
+  const callbackStart = source.indexOf("if (query && images.length === 0 && isCallbackRequest(query) && !isHumanRequest(query))");
   const callbackEnd = source.indexOf("const setupStartedAt", callbackStart);
   const callbackGuard = source.slice(callbackStart, callbackEnd);
   const toolLoop = source.indexOf("const contextualProductQuery");
@@ -210,7 +211,7 @@ test("product lookups run before mutations regardless of model call order", () =
 
 test("selection blocking stays sticky and suppressed tools are never recorded", () => {
   const start = source.indexOf("let productSelectionPending = false");
-  const end = source.indexOf("fullAnswer = sanitizePaymentReceiptAnswer", start);
+  const end = source.indexOf("// Receipt handling is receipt-backed", start);
   const loop = source.slice(start, end);
 
   assert.match(loop, /if \(lookupDisposition === "needs_selection"\) productSelectionPending = true/);

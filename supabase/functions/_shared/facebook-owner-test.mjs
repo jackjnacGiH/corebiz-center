@@ -7,6 +7,7 @@ export const OWNER_TEST = Object.freeze({
   commentRoom: '3dee9468-98f9-43af-94c6-143f6c67606f',
   commentId: '1710900114377457_936353852519068',
   postId: '103826764792590_1710900114377457',
+  ownerTestPostIds: Object.freeze(['103826764792590_1710900114377457', '103826764792590_1712157964251672']),
   commentAuthor: '3741480519195393', // Verified signed event 75e90e07-efa8-4e54-938a-ccbc8318f741.
   commentPrefix: 'ทดสอบบอทคอมเมนต์ JNAC เจ้าของ',
 });
@@ -20,10 +21,9 @@ export function ownerTestAllowed(pageId, room, event, verifiedCommentAuthor = ''
     && event.senderId === OWNER_TEST.messengerSender;
   // Must be populated only after resolving the author from a legitimate event.
   return commentTestsEnabled === true && event.kind === 'comment' && verifiedCommentAuthor === OWNER_TEST.commentAuthor
-    && room.metadata?.facebook_surface === 'comment' && room.metadata?.post_id === OWNER_TEST.postId
+    && room.metadata?.facebook_surface === 'comment' && OWNER_TEST.ownerTestPostIds.includes(room.metadata?.post_id)
     && room.external_id === `comment:${OWNER_TEST.pageId}:${event.commentId}`
-    && room.metadata?.comment_id === event.commentId && event.postId === OWNER_TEST.postId
-    && String(event.text).startsWith(OWNER_TEST.commentPrefix)
+    && room.metadata?.comment_id === event.commentId && event.postId === room.metadata?.post_id
     && event.authorId === verifiedCommentAuthor;
 }
 
