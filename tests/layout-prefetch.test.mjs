@@ -71,8 +71,13 @@ test('Shipping does not start full-list background prefetches', async () => {
   assert.deepEqual(await prefetchesAt('/shipping/'), []);
 });
 
-test('Chat and Dashboard do not download the complete catalogue/CRM without navigation intent', async () => {
-  for (const path of ['/chat', '/', '/inventory']) {
+test('Chat reserves the initial connection for the inbox, without speculative Shipping reads', async () => {
+  assert.deepEqual(await prefetchesAt('/chat'), []);
+  assert.deepEqual(await prefetchesAt('/chat/'), []);
+});
+
+test('Dashboard and Inventory retain bounded Shipping warmup without full catalogue/CRM reads', async () => {
+  for (const path of ['/', '/inventory']) {
     assert.deepEqual(await prefetchesAt(path), ['shipping:initial']);
   }
 });
