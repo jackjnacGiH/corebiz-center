@@ -38,6 +38,9 @@ const Layout: React.FC = () => {
         if (
             !shippingCacheScope ||
             shippingPrefetchScope.current === shippingCacheScope ||
+            // The inbox is a foreground priority on slower connections. Keep
+            // speculative Shipping data out of its initial request waterfall.
+            location.pathname === '/chat' || location.pathname === '/chat/' ||
             location.pathname.startsWith('/shipping')
         ) return;
         let disposed = false;

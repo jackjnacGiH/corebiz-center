@@ -1,10 +1,11 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { Suspense, lazy } from 'react';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { Suspense, lazy, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import { LanguageProvider } from './LanguageProvider';
 import { AuthProvider } from './lib/AuthProvider';
 import ProtectedRoute from './lib/ProtectedRoute';
+import { preloadRequestedRoute, sharedRouteImport } from './lib/route-code';
 
 // Route components are code-split (lazy) so each page ships its own chunk
 // instead of one ~3MB bundle — first paint loads only what the route needs.
@@ -13,9 +14,13 @@ const Ecommerce = lazy(() => import('./pages/Ecommerce'));
 const Inventory = lazy(() => import('./pages/Inventory'));
 const ImageStudio = lazy(() => import('./pages/ImageStudio'));
 const Orders = lazy(() => import('./pages/Orders'));
-const Shipping = lazy(() => import('./pages/Shipping'));
+const priorityRouteLoaders = {
+  chat: sharedRouteImport(() => import('./pages/Chat')),
+  shipping: sharedRouteImport(() => import('./pages/Shipping')),
+};
+const Shipping = lazy(priorityRouteLoaders.shipping);
 const CRM = lazy(() => import('./pages/CRM'));
-const Chat = lazy(() => import('./pages/Chat'));
+const Chat = lazy(priorityRouteLoaders.chat);
 const Marketing = lazy(() => import('./pages/Marketing'));
 const OpenclawRAG = lazy(() => import('./pages/OpenclawRAG'));
 const KnowledgeChat = lazy(() => import('./pages/KnowledgeChat'));
@@ -33,6 +38,14 @@ const Login = lazy(() => import('./pages/auth/Login'));
 const AuthCallback = lazy(() => import('./pages/auth/AuthCallback'));
 const LineCallback = lazy(() => import('./pages/auth/LineCallback'));
 
+function RouteCodeWarmup() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    preloadRequestedRoute(pathname, priorityRouteLoaders);
+  }, [pathname]);
+  return null;
+}
+
 function PageFallback() {
   return (
     <div className="min-h-screen grid place-items-center text-neutral-400">
@@ -46,6 +59,7 @@ function App() {
     <LanguageProvider>
       <AuthProvider>
         <BrowserRouter basename="/center">
+          <RouteCodeWarmup />
           <Suspense fallback={<PageFallback />}>
             <Routes>
               <Route path="/login" element={<Login />} />
