@@ -45,6 +45,7 @@ export interface TopBarPageContent {
     subtitle?: string;
     icon?: React.ReactNode;
     actions?: React.ReactNode;
+    toolbarActions?: React.ReactNode;
 }
 
 // ─── Notification icon style per type ────────────────────────────────────
@@ -162,6 +163,7 @@ const TopBar: React.FC<TopBarProps> = ({
 
             {/* Right: language, help, notifications, profile */}
             <div className="header-actions flex-shrink-0">
+                {pageContent?.toolbarActions}
                 {!isMobile && (
                     <div
                         className="language-switch"

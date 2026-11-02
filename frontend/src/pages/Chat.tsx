@@ -79,6 +79,7 @@ import ImageCropModal, { captureScreen } from '../components/chat/ImageCropModal
 import ProductCardButton from '../components/chat/ProductCardButton';
 import StickerButton from '../components/chat/StickerButton';
 import type { LayoutOutletContext } from '../components/layout/Layout';
+import BotMasterSwitch from '../components/chat/BotMasterSwitch';
 
 const CHANNEL_LABEL: Record<ChatChannel, string> = {
     livechat: 'Web Chat',
@@ -766,6 +767,7 @@ export default function Chat() {
         title: t.chat.title,
         subtitle: t.chat.subtitle,
         icon: <MessageSquare size={16} />,
+        toolbarActions: <BotMasterSwitch />,
         actions: (
             <Button
                 variant="outline"
