@@ -110,7 +110,7 @@ function BotMasterSwitchControl() {
                 </span>
             </button>
             {error && (
-                <div role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-red-200 bg-white p-3 text-xs text-red-700 shadow-lg">
+                <div role="alert" className="fixed right-4 top-[var(--header-height)] z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-red-200 bg-white p-3 text-xs text-red-700 shadow-lg sm:absolute sm:right-0 sm:top-full">
                     <p>{error === 'read' ? labels.readError : labels.saveError}</p>
                     <button type="button" onClick={() => void load()} className="mt-2 rounded border border-red-200 px-2 py-1 font-semibold hover:bg-red-50">
                         {labels.retry}
