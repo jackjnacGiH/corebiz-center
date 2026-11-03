@@ -1091,19 +1091,19 @@ test("an exact catalog SKU is searched directly even when the customer gives no 
   assert.equal(guidedCatalogQuery("SKU 2020006681 และ SKU 2020003043 ขอราคา"), null);
   for (const conflictingType of ["abrasive belt", "sanding belt"]) {
     const query = `${conflictingType} SKU 2020006681`;
-    assert.notEqual(guidedCatalogQuery(query), row.sku);
+    assert.equal(guidedCatalogQuery(query), row.sku);
     const conflict = await guidedProductDecision(query, [], "en",
       term => edge.findProducts(fakeAdmin([row]), term));
-    assert.equal(conflict.result.products?.length ?? 0, 0);
+    assert.equal(conflict.result.products?.[0]?.sku, row.sku);
   }
   const conflicting = 'กระดาษทรายกลมสักหลาด PS33 5" #180 SKU 2020003043';
-  assert.notEqual(guidedCatalogQuery(conflicting), "2020003043");
+  assert.equal(guidedCatalogQuery(conflicting), "2020003043");
   const mismatch = await guidedProductDecision(conflicting, [], "th",
     term => edge.findProducts(fakeAdmin([row, {
       sku: "2020003043", status: "active",
       name_th: 'กระดาษทรายกลมหลังกาว MIRKA GOLD 5" #500',
     }]), term));
-  assert.equal(mismatch.result.products?.length ?? 0, 0);
+  assert.equal(mismatch.result.products?.[0]?.sku, "2020003043");
 });
 
 test("a direct quotation request without customer quantity cannot use catalog MOQ", async () => {

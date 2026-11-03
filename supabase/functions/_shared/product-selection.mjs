@@ -14,6 +14,25 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+/** Customer-authored SKU tokens only; identity still requires an exact DB hit. */
+export function extractExplicitProductSkus(value) {
+  // A non-code placeholder also prevents an orphaned "SKU" label from
+  // consuming the next prose word after an excluded URL or document number.
+  const text = String(value ?? "")
+    .replace(/(?:https?:\/\/|www\.)[^\s<>]+/giu, " [] ")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, " [] ")
+    .replace(/(?<![A-Z0-9._/-])(?:QT|SO|DN)\s*[-/:]?\s*\d[A-Z0-9._/-]*/giu, " [] ")
+    .replace(/(?:เบอร์โทร(?:ศัพท์)?|โทร(?:ศัพท์)?|เลข(?:ประจำตัว)?ผู้เสียภาษี|เลขภาษี|\b(?:phone|telephone|tel|mobile|fax|tax\s*id)\b)\s*[.:：]?\s*\+?\d[\d\s().-]*/giu, " [] ")
+    .replace(/(?<=[A-Z0-9])\.(?=\s|$|["'”’)\]},;!?])/giu, "");
+  const mentions = [
+    ...[...text.matchAll(/(?<![A-Z0-9._/-])SKU\s*[:：]?\s*([A-Z0-9][A-Z0-9._/-]{3,63})(?![A-Z0-9._/-])/giu)]
+      .map((match) => ({ sku: match[1], index: match.index })),
+    ...[...text.matchAll(/(?<![A-Z0-9._/-])20\d{8}(?![A-Z0-9._/-])/giu)]
+      .map((match) => ({ sku: match[0], index: match.index })),
+  ];
+  return unique(mentions.sort((left, right) => left.index - right.index).map(({ sku }) => sku));
+}
+
 function naturalSort(values) {
   return [...values].sort((left, right) => left.localeCompare(right, "th", {
     numeric: true,

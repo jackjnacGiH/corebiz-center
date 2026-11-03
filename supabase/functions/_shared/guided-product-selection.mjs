@@ -1,4 +1,4 @@
-import { extractModelCodes, normalizeProductSearchQuery, productMatchFacets } from "./product-selection.mjs";
+import { extractExplicitProductSkus, extractModelCodes, normalizeProductSearchQuery, productMatchFacets } from "./product-selection.mjs";
 import { pendingProductQuestion } from "./product-turn-context.mjs";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
@@ -239,16 +239,9 @@ export function guidedCatalogQuery(query, history = []) {
     if (offeredSku) return offeredSku;
     return normalizeProductSearchQuery(current);
   }
-  const skuMentions = [...current.matchAll(/\bSKU\s*[:：]?\s*([A-Z0-9._/-]{4,})\b/giu)]
-    .map((match) => match[1]);
-  const numericSkuMentions = [...current.matchAll(/\b20\d{8}\b/gu)]
-    .map((match) => match[0]);
-  const skus = [...new Set([...skuMentions, ...numericSkuMentions])];
+  const skus = extractExplicitProductSkus(current);
   if (skus.length > 1) return null;
-  if (skus.length === 1 && (skuMentions.length > 0 || /ราคา|สินค้า/iu.test(current) || current === skus[0])) {
-    const skuOnlyQuestion = /^(?:(?:ขอ|เช็ก|เช็ค|สอบถาม|ดู)\s*)?(?:(?:ราคา|price|ใบเสนอราคา)\s*)?(?:SKU\s*[:：]?\s*)?[A-Z0-9._/-]{4,}\s*(?:ราคา(?:เท่า(?:ไหร่|ไร))?|price|ครับ|ค่ะ|คะ)?$/iu.test(current);
-    return skuOnlyQuestion ? skus[0] : normalizeProductSearchQuery(current);
-  }
+  if (skus.length === 1) return /^20\d{8}$/u.test(skus[0]) ? skus[0] : `SKU ${skus[0]}`;
   const flapDiscQuery = guidedFlapDiscQuery(current, history);
   if (flapDiscQuery) return flapDiscQuery;
   if (NONWOVEN_ROLL_RE.test(current)) return normalizeProductSearchQuery(current);

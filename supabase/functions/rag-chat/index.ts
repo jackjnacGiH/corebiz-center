@@ -48,7 +48,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { uploadPrivateChatAttachment } from "../_shared/chat-attachment-storage.mjs";
-import { activeItemContext, activeItemPrompt, catalogueQuantity, isHumanRequest, linguisticText, resolvedActiveQuery } from "../_shared/active-item-context.mjs";
+import { activeItemContext, activeItemPrompt, catalogueQuantity, isHumanRequest, isPackQuestion, linguisticText, resolvedActiveQuery } from "../_shared/active-item-context.mjs";
 import { currentConversationTurn, withConversationTurn } from "../_shared/conversation-turn-lease.mjs";
 import {
   hasCriticalClaim,
@@ -61,6 +61,7 @@ import {
 } from "../_shared/critical-company-info.mjs";
 import {
   buildProductSelection,
+  extractExplicitProductSkus,
   extractModelCodes,
   hasExactModelCodeMatch,
   matchesExplicitProductVariant,
@@ -737,6 +738,23 @@ async function findProducts(admin: SupabaseClient, query: string) {
   const original = (query ?? "").trim();
   if (!original) return { products: [], note: "empty query" };
 
+  // A complete catalogue SKU is an identity, not another AND-search token.
+  // Resolve it before keyword rewriting, variant filters or similarity scores.
+  const exactSkus = extractExplicitProductSkus(original);
+  const bareIdentifier = /^[A-Z0-9][A-Z0-9._/-]{3,63}$/iu.test(original) && /\d/u.test(original) ? original : null;
+  const requestedSku = exactSkus.length === 1 ? exactSkus[0] : exactSkus.length === 0 ? bareIdentifier : null;
+  if (requestedSku) {
+    const { data, error } = await admin.from("products")
+      .select(`${PRODUCT_COLUMNS_CUSTOMER}, inventory(quantity)`)
+      .eq("sku", requestedSku).eq("status", "active").limit(2);
+    if (error) return { products: [], error: error.message, requested_sku: requestedSku };
+    if ((data ?? []).length > 1) return { products: [], error: "ambiguous exact SKU", requested_sku: requestedSku };
+    if (exactSkus.length === 1 || (data ?? []).length > 0) return {
+      products: (data ?? []).map((product) => formatProductForLLM(product as Record<string, unknown>)),
+      selection_required: false, requested_sku: requestedSku, match_policy: "exact_sku_v1",
+    };
+  }
+
   const { rewritten, applied } = await rewriteWithKeywords(admin, original);
   const q = normalizeProductSearchQuery(normalizeGuidedProductTerm(rewritten));
   const requestedFamily = productFamilyFor(q);
@@ -1296,7 +1314,9 @@ async function dispatchTool(
   try {
     switch (name) {
       case "find_products": {
-        const result = await findProducts(admin, String(args.query ?? ""));
+        const requestedSkus = extractExplicitProductSkus(userQuery);
+        const lookupQuery = requestedSkus.length === 1 ? `SKU ${requestedSkus[0]}` : String(args.query ?? "");
+        const result = await findProducts(admin, lookupQuery);
         if (result && typeof result === "object" && "clarification_candidates" in result) {
           const candidates = (result as Record<string, unknown>).clarification_candidates;
           if (Array.isArray(candidates) && candidates.length > 0) {
@@ -2642,6 +2662,41 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
     send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model, tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly, active_item: product?.sku ? { source: "catalogue", sku: product.sku } : null });
     scheduleSimpleRun(model, "active_context", Date.now() - telemetry.startedAt);
   };
+  const currentSkus = extractExplicitProductSkus(query);
+  const operationalRequest = /ใบเสนอราคา|quotation|\bquote\b|สั่งเลย|สั่งซื้อ|ยกเลิก|คืนเงิน|cancel|refund|\border\b|จัดส่ง|tracking|delivery|ชำระ|โอนเงิน|payment/iu.test(query);
+  const additionalProductRequest = /เพิ่มอีก|อีกสินค้า|another\s+product|both\s+products/iu.test(query);
+  if (images.length === 0 && currentSkus.length === 1 && !operationalRequest
+    && !additionalProductRequest && !isHumanRequest(query) && !isPackQuestion(query)) {
+    const sku = currentSkus[0];
+    const lookup = await findProducts(admin, query) as Record<string, unknown>;
+    const products = Array.isArray(lookup.products) ? lookup.products : [];
+    const product = products.length === 1 && products[0]?.sku === sku ? products[0] as Record<string, unknown> : null;
+    if (!product || "error" in lookup) {
+      const unavailable = "error" in lookup;
+      finishContextReply(lang === "th"
+        ? unavailable ? `ขณะนี้ยังตรวจข้อมูล SKU ${sku} จากระบบไม่ได้ค่ะ กรุณาลองอีกครั้งนะคะ`
+          : `ยังไม่พบ SKU ${sku} ในรายการสินค้าที่เปิดจำหน่ายค่ะ รบกวนตรวจสอบรหัสสินค้าอีกครั้งนะคะ`
+        : unavailable ? `I cannot verify SKU ${sku} right now. Please try again.`
+          : `SKU ${sku} was not found in the active catalogue. Please check the product code.`,
+      unavailable ? "catalog:exact_sku_unavailable" : "catalog:exact_sku_not_found");
+      return;
+    }
+    // Only the current message may supply quantity for this explicit SKU.
+    // Older product/quantity context cannot replace the requested catalogue row.
+    const conversion = catalogueQuantity(activeItemContext(query, []), product);
+    const quantity = conversion.needs_review ? null
+      : conversion.quantity ?? guidedRequestedQuantity(query, [], sku);
+    const minimum = Math.max(1, Math.ceil(Number(product.min_order_qty) || 1));
+    let price: Record<string, unknown> | null = null;
+    try {
+      const priced = await getExactPrice(admin, { sku, qty: quantity ?? minimum }, conversationId);
+      if (isSuccessfulExactPriceResult(priced.response)) price = priced.response as Record<string, unknown>;
+    } catch { /* Keep the verified product; never invent a price or send a sales handoff. */ }
+    const toolCalls = [{ name: "find_products", args: { query: sku }, result_meta: { disposition: "resolved", selected_skus: [sku] } },
+      ...(price ? [{ name: "get_exact_price", args: { sku, qty: quantity ?? minimum }, result_summary: JSON.stringify(price).slice(0, 200) }] : [])];
+    finishContextReply(guidedExactProductAnswer(product, quantity, price, lang), "catalog:exact_sku", toolCalls, product);
+    return;
+  }
   const reviewActiveItem = async (kind: string) => {
     const summary = `${query}\n${JSON.stringify({ identity: activeContext.identity, facts: activeContext.facts, missing: activeContext.missing, conflicting: activeContext.conflicting, conflict_evidence: activeContext.conflict_evidence })}`;
     const receipt = await createCriticalReview(admin, { conversationId, channel, query: summary, kind, readOnly });

@@ -1,16 +1,17 @@
 import { routeLatestTurn } from "./latest-turn-context.mjs";
-import { extractModelCodes, normalizeProductSearchQuery, productIdentitySearchText } from "./product-selection.mjs";
+import { extractExplicitProductSkus, extractModelCodes, normalizeProductSearchQuery, productIdentitySearchText } from "./product-selection.mjs";
 
 const QUOTE = /ใบเสนอราคา|quotation|\bquote\b/iu;
 const BILLING = /ชื่อบริษัท\s*[:：]|ที่อยู่ออกบิล|เลขผู้เสียภาษี|tax\s*id|billing\s*(?:address|details)|company\s*name\s*[:：]/iu;
 const PAYMENT = /บัญชี|สลิป|โอนเงิน|ชำระเงิน|bank\s*account|payment\s*(?:slip|receipt)/iu;
-const QUANTITY = /(?:จำนวน\s*[:：]?\s*)?(\d{1,6})\s*(ตัว|ชิ้น|อัน|แพ็ค|แพ็ก|แพค|กล่อง|ม้วน|เส้น|ใบ|ชุด|ถุง|pcs?|pieces?|packs?|boxes?)(?=\s|$|ค่ะ|ครับ|คะ|[,.!?])/iu;
+const QUANTITY = /(?<![A-Z0-9._/,+−-])(?:จำนวน\s*[:：]?\s*)?(\d{1,6})\s*(ตัว|ชิ้น|อัน|แพ็ค|แพ็ก|แพค|กล่อง|ม้วน|เส้น|ใบ|ชุด|ถุง|pcs?|pieces?|packs?|boxes?)(?=\s|$|ค่ะ|ครับ|คะ|[,.!?])/iu;
 const DIMENSIONS = /\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?(?:\s*[x×*]\s*\d+(?:\.\d+)?){0,2}/iu;
 const GRIT = /(?:เบอร์|กริต|grit|#|\bP)\s*[:：=#]?\s*(\d{1,5})/iu;
 const SHANK = /(?:แกน|shank)\s*(\d+(?:\.\d+)?)\s*(?:มม\.?|mm)?/iu;
 const PRODUCT = /กระดาษทราย|ผ้าทราย|จานทราย|ล้อทราย|ล้อขัด|ลูกขัด|ใบ(?:ตัด|เจียร|ขัด)|หินเจียร|แปรง|สายพาน|flap|abrasive/iu;
 const CHANGE = /เปลี่ยน|แก้(?:เป็น|ขนาด|เบอร์)|แทน|change|instead/iu;
 const HUMAN = /ขอ(?:คุย|ติดต่อ|พบ).{0,12}(?:เจ้าหน้าที่|พนักงาน|แอดมิน|คนจริง)|ให้(?:เจ้าหน้าที่|พนักงาน|แอดมิน).{0,12}(?:ติดต่อ|ตอบ)|คุยกับคน|human|speak\s+to\s+(?:a\s+)?(?:person|staff)/iu;
+const ADDITIONAL_PRODUCT = /เพิ่มอีก|อีกสินค้า|another\s+product|both\s+products/iu;
 
 export function customerProductLinks(text) {
   const skus = [];
@@ -82,6 +83,28 @@ export function activeItemContext(query, history = []) {
     if (turn.role === "assistant" && turn.verified_product?.source === "catalogue"
       && typeof turn.verified_product.sku === "string" && /^[A-Z0-9][A-Z0-9._/-]{1,63}$/iu.test(turn.verified_product.sku)
       && !/^\d+(?:\.\d+)?(?:X\d+(?:\.\d+)?){1,3}$/iu.test(turn.verified_product.sku)) {
+      const previous = turns[index - 1];
+      const previousText = previous?.role === "user" ? previous.content : "";
+      const previousSkus = extractExplicitProductSkus(previousText);
+      if (previousSkus.length === 1 && previousSkus[0] === turn.verified_product.sku
+        && !ADDITIONAL_PRODUCT.test(previousText) && !BILLING.test(previousText) && !PAYMENT.test(previousText)) {
+        // The exact catalogue card supersedes descriptions attached to that
+        // customer SKU. Later customer changes still create fresh conflicts.
+        for (const field of Object.keys(facts)) delete facts[field];
+        identity = null;
+        multiple = false;
+        conflicts.length = 0;
+        conflictEvidence.length = 0;
+        quotePending = QUOTE.test(previousText)
+          && !/ไม่ต้องการ.{0,12}ใบเสนอราคา|cancel.{0,12}quote/iu.test(previousText);
+        quoteEvidence = quotePending ? previousText.slice(0, 350) : null;
+        const quantity = isPackQuestion(previousText) ? null : requestedQuantity(previousText);
+        if (quantity) {
+          const evidence = `customer_turn:${index - 1}`;
+          set("quantity", quantity.quantity, evidence);
+          set("unit", quantity.unit, evidence);
+        }
+      }
       facts.requested_sku = { value: turn.verified_product.sku, source: "catalogue", evidence: `verified_product_turn:${index}` };
     }
     if (turn.role !== "user") continue;
@@ -93,7 +116,7 @@ export function activeItemContext(query, history = []) {
     const models = extractModelCodes(text.replace(/https?:\/\/\S+/giu, ""));
     const namedTypes = [...text.matchAll(new RegExp(PRODUCT.source, "giu"))].map(match => match[0]);
     if (links.length > 1 || models.length > 1 || new Set(namedTypes).size > 1
-      || /(?:เพิ่มอีก|อีกสินค้า|another\s+product|both\s+products)/iu.test(text)) multiple = true;
+      || ADDITIONAL_PRODUCT.test(text)) multiple = true;
     const evidence = `customer_turn:${index}`;
     if (links.length === 1) set("requested_sku", links[0], evidence, CHANGE.test(text));
     if (!identity && (PRODUCT.test(text) || models.length === 1)) identity = productIdentitySearchText(normalizeProductSearchQuery(text.replace(/https?:\/\/\S+/giu, ""))).slice(0, 350);
