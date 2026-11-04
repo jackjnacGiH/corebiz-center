@@ -35,9 +35,14 @@ test("image slips and missing classifications stop operational tools before disp
     const db = database();
     const runtime = await ragRuntime(db, [{ text, tools: [{ name: "request_quote", args: {} }, { name: "capture_lead", args: {} }] }]);
     const { data } = await runtime.request({ query: "", images: [{ mimeType: "image/png", data: "dGVzdA==" }], conversation_id: conversationId, channel: "line", stream: false });
-    assert.match(data.answer, /เจ้าหน้าที่ตรวจสอบ/);
-    assert.match(data.answer, /กำลังรอเจ้าหน้าที่รับเรื่อง/);
-    assert.doesNotMatch(data.answer, /INVENTED|OCR|ฝ่ายบัญชี.*เรียบร้อย/);
+    if (text.startsWith("[[IMAGE:payment_receipt]]")) {
+      assert.equal(data.answer, "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊");
+    } else {
+      assert.match(data.answer, /เจ้าหน้าที่ตรวจสอบ/);
+      assert.match(data.answer, /กำลังรอเจ้าหน้าที่รับเรื่อง/);
+      assert.doesNotMatch(data.answer, /ฝ่ายบัญชี.*เรียบร้อย/);
+    }
+    assert.doesNotMatch(data.answer, /INVENTED|OCR/);
     assert.deepEqual(runtime.trace.dispatched, []);
     assert.equal(db.calls.length, 1);
     assert.equal(db.calls[0].args.p_payload.review_kind, text.startsWith("[[IMAGE:payment_receipt]]") ? "payment_receipt" : "image_review");
@@ -129,7 +134,7 @@ test("real LINE and Messenger transformations preserve critical replies and neve
     value => value, () => { throw Error("Critical reply must bypass quote transform"); }, () => undefined,
   );
   const textParts = new Function(extractFunction(facebook, "textParts") + "\nreturn textParts;")();
-  for (const answer of [renderApprovedMaster(snapshot().records[0], "payment", "th"), "หลักฐานการชำระเงินยังไม่ได้ยืนยัน กำลังรอเจ้าหน้าที่รับเรื่องค่ะ", "ยังบันทึกคำขอตรวจสอบไม่สำเร็จ เรื่องยังไม่ได้ถูกส่งค่ะ"]) {
+  for (const answer of [renderApprovedMaster(snapshot().records[0], "payment", "th"), "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊", "หลักฐานการชำระเงินยังไม่ได้ยืนยัน กำลังรอเจ้าหน้าที่รับเรื่องค่ะ", "ยังบันทึกคำขอตรวจสอบไม่สำเร็จ เรื่องยังไม่ได้ถูกส่งค่ะ"]) {
     const clean = sanitizeReply(answer, true);
     const composed = composeQuoteReply(clean, "unexpected quote link", true);
     assert.equal(composed, answer);

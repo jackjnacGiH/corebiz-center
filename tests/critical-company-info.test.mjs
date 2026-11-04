@@ -71,7 +71,18 @@ test("RPC/readback failures, terminal tasks and actual staff acceptance stay dis
   assert.equal((await resolveCriticalReply(database(), request({ conversationId: null }))).state, "failed");
 });
 
-test("read-only never creates a task; slips never expose OCR values or imply confirmed payment", async () => {
+test("slips acknowledge a saved review only; read-only never creates a task or confirms payment", async () => {
+  for (const options of [{}, { taskStatus: "approved", reviewed: true }]) {
+    const queued = database(options);
+    const result = await resolveCriticalReply(queued, request({ query: "ส่งสลิปให้ค่ะ" }));
+    assert.equal(result.answer, "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊");
+    assert.equal(queued.calls[0].args.p_payload.review_kind, "payment_receipt");
+    assert.equal(queued.calls[0].args.p_payload.verification_pending, true);
+  }
+  for (const options of [{ rpcError: true }, { readMissing: true }, { taskStatus: "failed" }]) {
+    const result = await resolveCriticalReply(database(options), request({ query: "ส่งสลิปให้ค่ะ" }));
+    assert.doesNotMatch(result.answer, /ฝ่ายบัญชี.*เรียบร้อย/);
+  }
   const db = database({ master: snapshot() });
   const result = await resolveCriticalReply(db, request({ query: "ส่งสลิปให้ค่ะ", answer: "OCR must never be used", readOnly: true }));
   assert.equal(result.state, "read_only");
