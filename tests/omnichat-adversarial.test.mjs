@@ -18,7 +18,7 @@ test("contradictory image classifications fail closed before operational tools",
     const db = database(), runtime = await ragRuntime(db, [completion]);
     const { data } = await runtime.request({ query: "", images: [{ mimeType: "image/png", data: "dGVzdA==" }], conversation_id: conversationId, channel: "line", stream: false });
     assert.deepEqual(runtime.trace.dispatched, []);
-    assert.match(data.answer, /ยังไม่ได้ยืนยันการชำระเงิน/);
+    assert.equal(data.answer, "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊");
     assert.equal(db.calls[0].args.p_payload.review_kind, "payment_receipt");
   }
 });

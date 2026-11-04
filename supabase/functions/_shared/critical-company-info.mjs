@@ -91,6 +91,10 @@ export function renderApprovedMaster(master, intent, lang = "th") {
 }
 
 export function reviewReply(state, lang = "th", receipt = false, image = false) {
+  // Acknowledge a persisted receipt review without confirming the payment.
+  if (receipt && lang === "th" && ["queued", "received"].includes(state)) {
+    return "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊";
+  }
   const introduction = image
     ? (lang === "en" ? "The image needs staff review. " : "รูปภาพต้องให้เจ้าหน้าที่ตรวจสอบก่อนค่ะ ")
     : receipt
