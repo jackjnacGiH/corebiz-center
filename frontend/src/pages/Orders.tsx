@@ -1,7 +1,9 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Eye, ShoppingCart, RefreshCw, FileText, CheckCircle2 } from 'lucide-react';
 import {
     ordersApi,
+    quoteRecordApi,
     salesDocumentsApi,
     type OrderWithCustomer,
     type QuoteListItem,
@@ -25,6 +27,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { useAsyncScope } from '../lib/useAsyncScope';
 
 const OrderDetailModal = lazy(() => import('../components/OrderDetailModal'));
 const QuoteDetailModal = lazy(() => import('../components/QuoteDetailModal'));
@@ -102,7 +105,12 @@ const STATUS_ORDER: OrderStatus[] = [
 ];
 
 export default function Orders() {
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
+    const navigate = useNavigate();
+    const sourceChatScope = useAsyncScope('orders');
+    const openingSourceChat = useRef(false);
+    const [openingQuoteId, setOpeningQuoteId] = useState<string | null>(null);
+    const [sourceChatNotice, setSourceChatNotice] = useState<string | null>(null);
     const [orders, setOrders] = useState<OrderWithCustomer[]>([]);
     const [quotes, setQuotes] = useState<QuoteListItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -117,6 +125,39 @@ export default function Orders() {
     const [statusCounts, setStatusCounts] = useState<Record<string, number>>({ all: 0 });
     const pageGeneration = useRef(0);
     const moreInFlight = useRef(false);
+
+    async function openSourceChat(quoteId: string, code: string) {
+        if (openingSourceChat.current) return;
+        openingSourceChat.current = true;
+        const isCurrent = sourceChatScope.capture();
+        setOpeningQuoteId(quoteId);
+        setSourceChatNotice(null);
+        setErr(null);
+        try {
+            const conversationId = await quoteRecordApi.getSourceConversationId(quoteId);
+            if (!isCurrent()) return;
+            if (conversationId) {
+                navigate(`/chat?id=${encodeURIComponent(conversationId)}`);
+            } else {
+                setSourceChatNotice(language === 'th'
+                    ? `${code}: ไม่มีห้องแชตต้นทางที่ผูกกับใบเสนอราคานี้ อาจสร้างจากหน้าร้านออนไลน์หรือสร้างโดยเจ้าหน้าที่`
+                    : `${code}: No originating chat is linked to this quote. It may have been created on the storefront or by staff.`);
+            }
+        } catch (error) {
+            if (!isCurrent()) return;
+            const reason = (error as Error).message;
+            setErr(language === 'th'
+                ? reason === 'quote_source_chat_ambiguous' ? 'พบห้องแชตต้นทางมากกว่าหนึ่งห้อง กรุณาตรวจสอบที่มาของใบเสนอราคานี้'
+                    : reason === 'quote_source_chat_unavailable' ? 'ไม่พบห้องแชตต้นทาง หรือไม่มีสิทธิ์เข้าถึงห้องนี้'
+                    : 'เปิดห้องแชตต้นทางไม่สำเร็จ กรุณาลองอีกครั้ง'
+                : reason === 'quote_source_chat_ambiguous' ? 'More than one originating chat was found. Please check this quote.'
+                    : reason === 'quote_source_chat_unavailable' ? 'The originating chat is unavailable or you do not have access.'
+                    : 'Could not open the originating chat. Please try again.');
+        } finally {
+            openingSourceChat.current = false;
+            if (isCurrent()) setOpeningQuoteId(null);
+        }
+    }
 
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 200);
@@ -322,6 +363,12 @@ export default function Orders() {
                 ))}
             </div>
 
+            {sourceChatNotice && (
+                <div role="status" className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                    {sourceChatNotice}
+                </div>
+            )}
+
             {err && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                     ✗ {err}
@@ -378,9 +425,20 @@ export default function Orders() {
                                         className={r.kind === 'quote' ? 'bg-amber-50/30' : undefined}
                                     >
                                         <TableCell className="px-5 font-mono text-sm">
-                                            <span className={r.kind === 'quote' ? 'text-amber-700' : 'text-indigo-600'}>
-                                                {r.code}
-                                            </span>
+                                            {r.kind === 'quote' ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void openSourceChat(r.id, r.code)}
+                                                    disabled={openingQuoteId !== null}
+                                                    aria-busy={openingQuoteId === r.id}
+                                                    title={language === 'th' ? 'เปิดห้องแชตต้นทางของใบเสนอราคา' : 'Open the originating chat'}
+                                                    className="text-amber-700 underline decoration-dotted underline-offset-4 hover:text-amber-900 focus-visible:outline-2 focus-visible:outline-amber-500 disabled:cursor-wait disabled:opacity-60"
+                                                >
+                                                    {r.code}
+                                                </button>
+                                            ) : (
+                                                <span className="text-indigo-600">{r.code}</span>
+                                            )}
                                         </TableCell>
                                         <TableCell>
                                             <div className="font-semibold text-neutral-900">

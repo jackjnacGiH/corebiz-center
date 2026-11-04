@@ -6,6 +6,7 @@
  * to a plain Error if non-null.
  */
 import { supabase } from './supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { shareRead } from './read-flight';
 import { conversationCursorFilter, inboxSearchPattern } from './chat-inbox-pagination';
 import { privateChatFileLocation, queueChatOutboundDelivery } from './chat-outbound';
@@ -1769,6 +1770,37 @@ export interface QuoteItem {
 }
 
 export const quoteRecordApi = {
+  /** Resolve the recorded origin, never a customer's most recent chat. */
+  async getSourceConversationId(quoteId: string): Promise<string | null> {
+    const db = supabase as SupabaseClient;
+    const uniqueConversation = (values: unknown[]) => {
+      const ids = [...new Set(values.filter((value): value is string =>
+        typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value),
+      ))];
+      if (ids.length > 1) throw new Error('quote_source_chat_ambiguous');
+      return ids[0] ?? null;
+    };
+    const { data: tasks, error: taskError } = await db.from('agent_tasks')
+      .select('payload')
+      .eq('related_type', 'quote').eq('related_id', quoteId)
+      .eq('kind', 'sales.quote_request').eq('payload->>quote_id', quoteId);
+    if (taskError) throw taskError;
+    let conversationId = uniqueConversation((tasks ?? []).map(task => task.payload?.conversation_id));
+    if (!conversationId) {
+      const { data: messages, error } = await db.from('chat_messages')
+        .select('conversation_id').eq('sender_type', 'bot')
+        .contains('metadata', { quote_id: quoteId, quote_link: true });
+      if (error) throw error;
+      conversationId = uniqueConversation((messages ?? []).map(message => message.conversation_id));
+    }
+    if (!conversationId) return null;
+    const { data: conversation, error } = await db.from('chat_conversations')
+      .select('id').eq('id', conversationId).maybeSingle();
+    if (error) throw error;
+    if (!conversation) throw new Error('quote_source_chat_unavailable');
+    return conversation.id as string;
+  },
+
   async list(options: SalesDocumentQuery = {}): Promise<QuoteListItem[]> {
     const page = await salesDocumentsApi.listPage({ ...options, kind: 'quote' });
     return page.items.map(item => item.document as QuoteListItem);
