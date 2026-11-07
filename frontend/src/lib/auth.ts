@@ -24,7 +24,8 @@ const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefin
  *
  * Returns true (assume healthy) if the URL isn't configured — never hard-block.
  */
-export async function isAuthHealthy(timeoutMs = 7000): Promise<boolean> {
+// Auth can take longer after a project restart; allow its cold start to finish.
+export async function isAuthHealthy(timeoutMs = 20000): Promise<boolean> {
   if (!SUPABASE_URL) return true;
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
