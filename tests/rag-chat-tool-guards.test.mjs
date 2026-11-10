@@ -95,7 +95,7 @@ test("facet-only product follow-up bypasses unrelated knowledge retrieval", () =
 });
 
 test("latest-turn scope gates every product decision path before old history reaches the model", () => {
-  assert.match(source, /const contextHistory = persistedHistory \?\? history;[\s\S]*?const latestTurn = images\.length > 0 \|\| !CHAT_LATEST_TURN_ROUTING_ENABLED[\s\S]*?routeLatestTurn\(query, contextHistory\)/);
+  assert.match(source, /const contextHistory = persistedHistory \?\? history;[\s\S]*?const latestTurn = images\.length > 0 \|\| !CHAT_LATEST_TURN_ROUTING_ENABLED[\s\S]*?routeLatestTurn\(declinedOptions \? "6" : query, contextHistory\)/);
   assert.match(source, /guidedProductDecision\(activeQuery, productHistory,/);
   assert.match(source, /guidedRequestedQuantity\(query, productHistory,/);
   assert.match(source, /selectToolDefinitions\(ragRoutingQuery, productHistory,/);

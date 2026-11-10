@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { transform } from "esbuild";
+import { PRODUCT_OPTIONS_MENU_RE } from "../supabase/functions/_shared/product-turn-context.mjs";
 
 const source = readFileSync(new URL("../supabase/functions/rag-chat/index.ts", import.meta.url), "utf8");
 const start = source.indexOf("async function loadVerifiedChatHistory(");
@@ -14,6 +15,7 @@ const { code } = await transform(`
   const MAX_HISTORY_ITEMS = 16;
   const MAX_HISTORY_ITEM_CHARS = 1_200;
   const MAX_HISTORY_TOTAL_CHARS = 8_000;
+  const PRODUCT_OPTIONS_MENU_RE = ${PRODUCT_OPTIONS_MENU_RE};
   ${fragment}
 `, { loader: "ts", format: "esm" });
 const { loadVerifiedChatHistory } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);

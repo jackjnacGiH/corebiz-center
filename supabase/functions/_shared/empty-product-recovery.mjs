@@ -1,6 +1,6 @@
 import { extractModelCodes, productMatchFacets } from "./product-selection.mjs";
 import { productModelSearchRoot } from "./product-match-score.mjs";
-import { mergeFacetOnlyProductQuery, pendingProductQuestion } from "./product-turn-context.mjs";
+import { formatProductOptions, mergeFacetOnlyProductQuery, pendingProductQuestion } from "./product-turn-context.mjs";
 import { withVerifiedZeroStockLabel } from "./guided-product-selection.mjs";
 
 const PRODUCT_WORD_RE = /กระดาษทราย|ผ้าทราย|จานทราย|ล้อทราย|สายพาน|ใบขัด|ใบตัด|ใบเจียร|แผ่นขัด|\b(?:sku|abrasive|sanding|product)\b/iu;
@@ -35,10 +35,18 @@ function selectionAnswer(result, productQuery, lang) {
   if (asksGritList) {
     const model = extractModelCodes(productQuery)[0];
     const size = productMatchFacets(productQuery).size[0] ?? "";
-    const label = `${model}${size ? ` ${size}` : ""}`;
-    return lang === "th"
-      ? `พบ ${label}${onlyVelcro ? " แบบหลังสักหลาด" : ""} ในระบบค่ะ เบอร์ที่มี: ${grits.join(", ")}\nต้องการเบอร์ไหนคะ${onlyVelcro ? " หากต้องการหลังกาว แจ้งได้ค่ะ เอยจะค้นรุ่นที่ตรงให้" : ""}`
-      : `I found ${label}${onlyVelcro ? " with Velcro backing" : ""}. Available grits: ${grits.join(", ")}. Which grit would you like?`;
+    const label = [model, size].filter(Boolean).join(" ") || productFactQuery(productQuery).replace(GRIT_LIST_RE, "").trim();
+    const identity = [label, onlyVelcro ? (lang === "th" ? "สักหลาด" : "Velcro") : ""].filter(Boolean).join(" ");
+    const choices = grits.map((grit, index) => {
+      const variant = result.products?.find((product) => productMatchFacets(product.name_th || product.name_en).grit.includes(grit));
+      const name = clean(lang === "th" ? variant?.name_th || variant?.name_en : variant?.name_en || variant?.name_th);
+      const option = name && (!model || extractModelCodes(name).includes(model)) ? name : `${identity} ${grit}`.trim();
+      return `${index + 1}. ${option}`;
+    });
+    const intro = lang === "th"
+      ? `พบ ${label}${onlyVelcro ? " แบบหลังสักหลาด" : ""} ในระบบค่ะ ต้องการเบอร์ไหนคะ${onlyVelcro ? " หากต้องการหลังกาว แจ้งได้ค่ะ เอยจะค้นรุ่นที่ตรงให้" : ""}`
+      : `I found ${label}${onlyVelcro ? " with Velcro backing" : ""}. Which grit would you like?`;
+    return formatProductOptions([intro, ...choices].join("\n"), lang);
   }
   const question = pendingProductQuestion(result, lang);
   if (onlyVelcro && !productMatchFacets(productQuery).backing.length) {
@@ -86,8 +94,9 @@ export async function recoverEmptyProductAnswer(query, history, lang, lookup) {
     return { answer: withVerifiedZeroStockLabel(answer, p, lang), lookupQuery: structuredQuery, result };
   }
   if (Array.isArray(result?.products) && result.products.length > 1) {
-    const choices = result.products.slice(0, 3).map((p, i) => `${i + 1}. ${clean(lang === "th" ? p.name_th || p.name_en : p.name_en || p.name_th)}`).join("\n");
-    const answer = lang === "th" ? `พบหลายรายการค่ะ กรุณาเลือกสินค้าที่ต้องการ\n${choices}` : `I found several items. Please choose one:\n${choices}`;
+    const choices = result.products.map((p, i) => `${i + 1}. ${clean(lang === "th" ? p.name_th || p.name_en : p.name_en || p.name_th)}`);
+    const intro = lang === "th" ? "พบหลายรายการค่ะ กรุณาเลือกสินค้าที่ต้องการ" : "I found several items. Please choose one:";
+    const answer = formatProductOptions([intro, ...choices].join("\n"), lang);
     return { answer, lookupQuery: structuredQuery, result };
   }
   const root = productModelSearchRoot(productQuery);

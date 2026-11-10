@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
 const sourceUrl = new URL("../supabase/functions/rag-chat/index.ts", import.meta.url);
 const catalog = JSON.parse(readFileSync(new URL("fixtures/sa331-catalog.json", import.meta.url), "utf8"));
+const noMatchChoice = "6. ไม่มีสินค้าที่ต้องการในตัวเลือก";
+const numberedChoices = (answer) => answer.split(/\r?\n/u).filter((line) => /^\d{1,2}\. /u.test(line));
 const adhesiveCatalog = [
   ...[60, 80, 100, 120, 150, 180, 220].map((grit, index) => ({
     sku: String(2020003334 + index), status: "active", brand: "Klingspor",
@@ -196,7 +198,7 @@ test("duplicate catalog names include a verified SKU choice that resolves after 
   assert.match(guided.answer, /1\. .*SKU 2020000001/);
   assert.equal(guidedCatalogQuery("1", [{ role: "assistant", content: guided.answer }]), "2020000001");
 });
-test("catalog discovery pages at ten choices and a numeric reply selects the shown item", async () => {
+test("catalog discovery offers five items and preserves a legacy show-more reply", async () => {
   const rows = Array.from({ length: 12 }, (_, i) => ({
     sku: `candidate-${i + 1}`, status: "active",
     name_th: `กระดาษทรายกลมหลังกาว AD${i + 10} 5" #80`,
@@ -204,17 +206,24 @@ test("catalog discovery pages at ten choices and a numeric reply selects the sho
   const query = 'กระดาษทรายหลังกาว 5" #80';
   const result = await edge.findProducts(fakeAdmin(rows), query);
   assert.equal(result.candidate_options.length, 12);
-  assert.match(result.clarification_question_th, /ตัวเลือกสินค้า หน้า 1\/2/);
-  assert.match(result.clarification_question_th, /11\. แสดงเพิ่มเติม/);
+  assert.deepEqual(numberedChoices(result.clarification_question_th), [
+    ...result.candidate_options.slice(0, 5).map((name, i) => `${i + 1}. ${name}`),
+    noMatchChoice,
+  ]);
+  const legacyOffer = ["ตัวเลือกสินค้า หน้า 1/2",
+    ...result.candidate_options.slice(0, 10).map((name, i) => `${i + 1}. ${name}`), "11. แสดงเพิ่มเติม"].join("\n");
   const history = [{ role: "user", content: query },
-    { role: "assistant", content: result.clarification_question_th }];
+    { role: "assistant", content: legacyOffer }];
   const next = await guidedProductDecision("11", history, "th", async () => result);
-  assert.match(next.answer, /ตัวเลือกสินค้า หน้า 2\/2/);
-  assert.match(next.answer, /1\. กระดาษทรายกลมหลังกาว/);
-  assert.doesNotMatch(next.answer, /11\. แสดงเพิ่มเติม/);
+  assert.deepEqual(numberedChoices(next.answer), [
+    `1. ${result.candidate_options[10]}`,
+    `2. ${result.candidate_options[11]}`,
+    noMatchChoice,
+  ]);
   const selected = guidedCatalogQuery("2", [...history, { role: "user", content: "11" },
     { role: "assistant", content: next.answer }]);
-  assert.equal(selected, result.candidate_options[11]);
+  const chosen = await edge.findProducts(fakeAdmin(rows), selected);
+  assert.equal(chosen.products[0].sku, rows.find(row => row.name_th === result.candidate_options[11]).sku);
 });
 test("verified history keeps the final show-more action on a long candidate page", async () => {
   const longName = 'กระดาษทรายกลมหลังกาว รุ่นทดสอบชื่อยาวพิเศษ'.repeat(3);
@@ -699,72 +708,73 @@ test("numeric-only grit follow-up keeps Thai and completes the previous SA331VC 
   assert.match(recovered.answer, /1\. กระดาษทรายกลมสักหลาด SA331 5" #1500/);
   assert.doesNotMatch(recovered.answer, /Sorry|Please send/);
 });
-test("SA331 5-inch grit question lists real available grits and correct backing", async () => {
+test("SA331 5-inch grit recovery offers selectable catalog grits and correct backing", async () => {
   const query = 'รุ่น SA331 5" มีเบอร์อะไรบ้าง';
-  const recovered = await recoverEmptyProductAnswer(query, [], "th", q => edge.findProducts(fakeAdmin(), q));
+  const lookup = (q) => edge.findProducts(fakeAdmin(), q);
+  const recovered = await recoverEmptyProductAnswer(query, [], "th", lookup);
   assert.match(recovered.answer, /หลังสักหลาด/);
-  assert.match(recovered.answer, /#40/);
-  assert.match(recovered.answer, /#1500/);
-  assert.match(recovered.answer, /#2000/);
+  const choices = numberedChoices(recovered.answer);
+  assert.equal(choices.length, 6);
+  assert.equal(choices.at(-1), noMatchChoice);
+  assert.deepEqual(choices.slice(0, 5).map(line => Number(/#(\d+)$/u.exec(line)?.[1])), [40, 60, 80, 100, 120]);
+  const selected = await guidedProductDecision("5", [
+    { role: "user", content: query }, { role: "assistant", content: recovered.answer },
+  ], "th", lookup);
+  assert.match(selected.result.products[0].name_th, /SA331 5" #120$/u);
   assert.doesNotMatch(recovered.answer, /ใช้ขนาดเท่าไร/);
   assert.doesNotMatch(recovered.answer, /ยังยืนยันรุ่น SA331/);
 });
-test("SA331 5-inch grit choices paginate and resolve both new and old numbered replies", async () => {
+test("SA331 5-inch grit choices are capped and old numbered replies still resolve", async () => {
   const query = 'กระดาษทรายกลมสักหลาด SA331 5"';
   const lookup = value => edge.findProducts(fakeAdmin(), value);
   const first = await guidedProductDecision(query, [], "th", lookup);
   assert.equal(first.result.count, 19);
   assert.equal(first.result.match_scan_complete, true);
   assert.deepEqual(first.result.missing_fields, ["grit"]);
-  assert.match(first.answer, /หน้า 1\/2/);
-  assert.match(first.answer, /11\. แสดงเพิ่มเติม/);
-  assert.doesNotMatch(first.answer, /#1500|พิมพ์หมายเลขหน้ารายการ/);
-  const firstOptions = first.answer.split(/\r?\n/u).filter(line => /^\d{1,2}\. /u.test(line));
-  assert.equal(firstOptions.length, 11);
-  assert.deepEqual(firstOptions.slice(0, 10).map(line => Number(/#(\d+)$/u.exec(line)?.[1])),
-    [40, 60, 80, 100, 120, 150, 180, 220, 240, 280]);
+  const firstOptions = numberedChoices(first.answer);
+  assert.equal(firstOptions.length, 6);
+  assert.equal(firstOptions.at(-1), noMatchChoice);
+  assert.deepEqual(firstOptions.slice(0, 5).map(line => Number(/#(\d+)$/u.exec(line)?.[1])), [40, 60, 80, 100, 120]);
+  assert.doesNotMatch(first.answer, /แสดงเพิ่มเติม|หน้า 1\/2|#1500/);
 
-  const firstHistory = [{ role: "user", content: query }, { role: "assistant", content: first.answer }];
-  const moreRoute = routeLatestTurn("แสดงเพิ่มเติม", firstHistory);
+  const oldNames = catalog.filter((row) => row.name_th.startsWith(`${query} #`)).map((row) => row.name_th)
+    .sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
+  const legacyPage = ["หน้า 1/2", ...oldNames.slice(0, 10).map((name, i) => `${i + 1}. ${name}`),
+    "11. แสดงเพิ่มเติม"].join("\n");
+  const legacyHistory = [{ role: "user", content: query }, { role: "assistant", content: legacyPage }];
+  const moreRoute = routeLatestTurn("แสดงเพิ่มเติม", legacyHistory);
   assert.equal(moreRoute.kind, "follow_up");
   const second = await guidedProductDecision("แสดงเพิ่มเติม", moreRoute.history, "th", lookup);
-  assert.match(second.answer, /หน้า 2\/2/);
-  assert.doesNotMatch(second.answer, /แสดงเพิ่มเติม|^\d+\..*#40$/mu);
-  const secondOptions = second.answer.split(/\r?\n/u).filter(line => /^\d{1,2}\. /u.test(line));
-  assert.equal(secondOptions.length, 9);
-  assert.deepEqual(secondOptions.map(line => Number(/#(\d+)$/u.exec(line)?.[1])),
-    [320, 400, 500, 600, 800, 1000, 1200, 1500, 2000]);
-  assert.match(secondOptions[7], /^8\..*#1500$/u);
+  const secondOptions = numberedChoices(second.answer);
+  assert.equal(secondOptions.length, 6);
+  assert.equal(secondOptions.at(-1), noMatchChoice);
+  assert.deepEqual(secondOptions.slice(0, 5).map(line => Number(/#(\d+)$/u.exec(line)?.[1])), [320, 400, 500, 600, 800]);
+  assert.doesNotMatch(second.answer, /แสดงเพิ่มเติม|หน้า 2\/2/);
 
-  const typedMore = routeLatestTurn("11", firstHistory);
+  const typedMore = routeLatestTurn("11", legacyHistory);
   assert.equal((await guidedProductDecision("11", typedMore.history, "th", lookup)).answer, second.answer);
-  const secondHistory = [...firstHistory, { role: "user", content: "แสดงเพิ่มเติม" },
+  const secondHistory = [...legacyHistory, { role: "user", content: "แสดงเพิ่มเติม" },
     { role: "assistant", content: second.answer }];
-  const chosenRoute = routeLatestTurn("8", secondHistory);
-  const chosen = await guidedProductDecision("8", chosenRoute.history, "th", lookup);
+  const chosenRoute = routeLatestTurn("5", secondHistory);
+  const chosen = await guidedProductDecision("5", chosenRoute.history, "th", lookup);
   assert.equal(chosen.result.selection_required, undefined);
-  assert.equal(chosen.result.products[0].sku, "2020000992");
+  assert.match(chosen.result.products[0].name_th, /#800$/u);
 
-  const oldOffer = (await lookup(query)).clarification_question_th;
+  const oldOffer = oldNames.map((name, i) => `${i + 1}. ${name}`).join("\n");
   const oldRoute = routeLatestTurn("18", [{ role: "user", content: query }, { role: "assistant", content: oldOffer }]);
   assert.equal(oldRoute.kind, "follow_up");
   const oldChoice = await guidedProductDecision("18", oldRoute.history, "th", lookup);
   assert.equal(oldChoice.result.products[0].sku, "2020000992");
 });
-test("an unavailable SA331 grit still paginates the catalog alternatives", async () => {
+test("an unavailable SA331 grit offers up to five actual alternatives", async () => {
   const query = 'กระดาษทรายกลมสักหลาด SA331 5" #999';
   const lookup = value => edge.findProducts(fakeAdmin(), value);
   const first = await guidedProductDecision(query, [], "th", lookup);
   assert.match(first.answer, /ยังไม่พบเบอร์ #999/);
-  assert.match(first.answer, /หน้า 1\/2/);
-  assert.match(first.answer, /11\. แสดงเพิ่มเติม/);
-  assert.doesNotMatch(first.answer, /^\d+\..*#1500$/mu);
-
-  const history = [{ role: "user", content: query }, { role: "assistant", content: first.answer }];
-  const more = await guidedProductDecision("แสดงเพิ่มเติม",
-    routeLatestTurn("แสดงเพิ่มเติม", history).history, "th", lookup);
-  assert.match(more.answer, /หน้า 2\/2/);
-  assert.match(more.answer, /^8\..*#1500$/mu);
+  const options = numberedChoices(first.answer);
+  assert.equal(options.length, 6);
+  assert.equal(options.at(-1), noMatchChoice);
+  assert.doesNotMatch(first.answer, /แสดงเพิ่มเติม|^\d+\..*#1500$/mu);
 });
 test("adhesive disc question offers the two real model families before asking grit", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(adhesiveCatalog), q);
@@ -782,7 +792,8 @@ test("adhesive disc question offers the two real model families before asking gr
   assert.equal(chosen.result.selection_required, true);
   assert.deepEqual(chosen.result.missing_fields, ["grit"]);
   assert.match(chosen.answer, /1\. กระดาษทรายกลมหลังกาว PS36 5" #60/);
-  assert.match(chosen.answer, /7\. กระดาษทรายกลมหลังกาว PS36 5" #220/);
+  assert.match(chosen.answer, /5\. กระดาษทรายกลมหลังกาว PS36 5" #150/);
+  assert.equal(numberedChoices(chosen.answer).at(-1), noMatchChoice);
 
   const typed = await guidedProductDecision("PS36", [
     { role: "user", content: "มีกระดาษทรายหลังกาาว จำหน่ายไหมครับ" },
@@ -842,13 +853,9 @@ test("flap-disc question offers catalog backings before model and grit", async (
   const model = await guidedProductDecision("1", modelHistory, "th", lookup);
   assert.deepEqual(model.result.missing_fields, ["grit"]);
   assert.match(model.answer, /#40/);
-  assert.match(model.answer, /11\. แสดงเพิ่มเติม/);
-  const moreHistory = [...modelHistory, { role: "user", content: "1" },
-    { role: "assistant", content: model.answer }];
-  const more = await guidedProductDecision("แสดงเพิ่มเติม",
-    routeLatestTurn("แสดงเพิ่มเติม", moreHistory).history, "th", lookup);
-  assert.match(more.answer, /#400/);
-  assert.doesNotMatch(model.answer, /หลังแข็ง/);
+  assert.equal(numberedChoices(model.answer).length, 6);
+  assert.equal(numberedChoices(model.answer).at(-1), noMatchChoice);
+  assert.doesNotMatch(model.answer, /แสดงเพิ่มเติม|#400|หลังแข็ง/);
 
   const exact = await guidedProductDecision('จานทรายหลังอ่อน CS310X 48P 4" #80', [], "th", lookup);
   assert.equal(exact.answer, null);
@@ -970,7 +977,8 @@ test("unavailable #800 offers verified adhesive models instead of escalating imm
   assert.match(result.answer, /ยังไม่พบเบอร์ #800/);
   assert.match(result.answer, /MIRKA GOLD/);
   assert.match(result.answer, /PS36/);
-  assert.doesNotMatch(result.answer, /เชอร์รี่|ไม่มีสินค้า/);
+  assert.equal(numberedChoices(result.answer).at(-1), noMatchChoice);
+  assert.doesNotMatch(result.answer.replace(noMatchChoice, ""), /เชอร์รี่|ไม่มีสินค้า/);
   const insisted = await guidedProductDecision('ต้องเป็นหลังกาว 5" #800 เท่านั้น', [], "th", lookup);
   assert.equal(insisted.escalate, true);
   assert.equal(insisted.answer, null);
@@ -983,17 +991,9 @@ test("Mika follow-up stays in adhesive catalog and offers actual MIRKA GOLD grit
   ], "th", lookup);
   assert.equal(result.result.selection_required, true);
   assert.match(result.answer, /MIRKA GOLD 5" #80/);
-  assert.match(result.answer, /11\. แสดงเพิ่มเติม/);
-  const history = [
-    { role: "user", content: 'ต้องการหลังกาว 5" #800 ครับ' },
-    { role: "assistant", content: "มีรุ่นที่ต้องการให้เลือกค่ะ" },
-    { role: "user", content: "แล้วรุ่น Mika มีไหมครับ" },
-    { role: "assistant", content: result.answer },
-  ];
-  const more = await guidedProductDecision("แสดงเพิ่มเติม",
-    routeLatestTurn("แสดงเพิ่มเติม", history).history, "th", lookup);
-  assert.match(more.answer, /MIRKA GOLD 5" #500/);
-  assert.doesNotMatch(result.answer, /สักหลาด/);
+  assert.equal(numberedChoices(result.answer).length, 6);
+  assert.equal(numberedChoices(result.answer).at(-1), noMatchChoice);
+  assert.doesNotMatch(result.answer, /แสดงเพิ่มเติม|MIRKA GOLD 5" #500|สักหลาด/);
 });
 test("quantity reply keeps the confirmed SKU and quotes only a matching resolver result", async () => {
   const history = [
