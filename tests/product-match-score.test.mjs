@@ -7,6 +7,7 @@ import { productSearchDisposition, shouldSuppressToolForProductSearch, matchesEx
 import { pendingProductQuestion } from "../supabase/functions/_shared/product-turn-context.mjs";
 import { guardNumericSellingPriceAnswer } from "../supabase/functions/_shared/price-answer-guard.mjs";
 import { guidedExactProductAnswer } from "../supabase/functions/_shared/guided-product-selection.mjs";
+import { messengerQuickReplies, pageEvents } from "../supabase/functions/_shared/facebook-channel.mjs";
 
 const product = { sku: "2020000992", name_th: 'กระดาษทรายกลมสักหลาด SA331 5" #1500', name_en: 'DEERFOS Velcro Sanding Disc 5" #1500', brand: "DEERFOS" };
 const generic = { candidateProductType: "sanding_disc" };
@@ -80,7 +81,7 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   const block = source.slice(source.indexOf("function extractQuickReplies("), source.indexOf("function textToLineMessages("));
   const extract = new Function(stripTypeScriptTypes(block) + "\nreturn extractQuickReplies;")();
   const buttons = extract(pendingProductQuestion(result()));
-  assert.equal(buttons.items.length, 1);
+  assert.equal(extract(`1. ${product.name_th}`).items.length, 1);
   assert.equal(buttons.items[0].action.text, product.name_th);
   assert.match(buttons.items[0].action.label, /SA331 #1500/);
   const unverifiedCode = extract('ข้อมูลสินค้าในระบบยังไม่ยืนยันรหัส 7447 กรุณาเลือกยืนยันรายการก่อนทำใบเสนอราคา\n1. ม้วนใยขัดสังเคราะห์ สก๊อตไบร์ท 6นิ้วx10M. #320');
@@ -116,4 +117,58 @@ test("LINE shows a button even for one candidate; it sends the exact product nam
   assert.equal(secondPageButtons.items.length, 9);
   assert.equal(secondPageButtons.items[7].action.text, 'กระดาษทรายกลมสักหลาด SA331 5" #1500');
   assert.equal(extract("ไม่มีตัวเลือก"), undefined);
+});
+
+test("LINE and Messenger preserve staff option 6 after one to five products", () => {
+  const source = readFileSync(new URL("../supabase/functions/line-webhook/index.ts", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("function extractQuickReplies("), source.indexOf("function textToLineMessages("));
+  const extract = new Function(stripTypeScriptTypes(block) + "\nreturn extractQuickReplies;")();
+  for (const [option, title] of [
+    ["ไม่มีสินค้าที่ต้องการในตัวเลือก", "6. ไม่มีในตัวเลือก"],
+    ["None of these products match", "6. None of these"],
+  ]) {
+    for (let count = 1; count <= 5; count++) {
+      const products = Array.from({ length: count }, (_, i) => `สินค้า SA331 #${40 + i * 20}`);
+      const answer = [...products.map((name, i) => `${i + 1}. ${name}`), `6. ${option}`].join("\n");
+      const line = extract(answer).items;
+      const messenger = messengerQuickReplies(answer);
+      assert.deepEqual(line.map(item => item.action.text), [...products, option]);
+      assert.deepEqual(messenger.map(item => item.payload), [...products, option]);
+      assert.equal(line.at(-1).action.label, title);
+      assert.equal(messenger.at(-1).title, title);
+      const events = pageEvents({ object: "page", entry: [{ id: "test-page", messaging: [{
+        sender: { id: "test-customer" },
+        message: { mid: "test-message", text: title, quick_reply: { payload: messenger.at(-1).payload } },
+      }] }] }, "test-page");
+      assert.equal(events[0].text, option);
+    }
+  }
+  assert.equal(messengerQuickReplies("1. สินค้า SA331 #40\n6. สินค้า SA331 #60").length, 1);
+});
+
+test("Messenger history retains product menu option 6 and identifies staff turns", async () => {
+  const source = readFileSync(new URL("../supabase/functions/facebook-webhook/index.ts", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("async function recentHistory("), source.indexOf("async function askCoreBiz("));
+  const history = new Function(stripTypeScriptTypes(block) + "\nreturn recentHistory;")();
+  const intro = "รายละเอียดสินค้าที่พบ ".repeat(65);
+  const offer = `${intro}\nตัวเลือกสินค้า\n1. สินค้า SA331 #40\n6. ไม่มีสินค้าที่ต้องการในตัวเลือก`;
+  assert.ok(offer.length > 1_200 && offer.length < 4_500);
+  const rows = [
+    { sender_type: "customer", external_msg_id: "later", content: "ข้อความถัดไป" },
+    { sender_type: "customer", external_msg_id: "current", content: "6" },
+    { sender_type: "bot", external_msg_id: null, content: offer },
+    { sender_type: "agent", external_msg_id: null, content: "แจ้งรายละเอียดสินค้าได้เลยค่ะ" },
+    { sender_type: "bot", external_msg_id: null, content: intro },
+  ];
+  const query = {
+    select() { return this; }, eq() { return this; }, order() { return this; },
+    limit() { return { data: rows.slice(), error: null }; },
+  };
+  const admin = { from: () => query };
+  assert.deepEqual(await history(admin, "room", "current"), [
+    { role: "assistant", content: intro.slice(0, 1_200) },
+    { role: "assistant", content: "[เจ้าหน้าที่]\nแจ้งรายละเอียดสินค้าได้เลยค่ะ" },
+    { role: "assistant", content: offer },
+  ]);
+  assert.deepEqual(await history(admin, "room", "missing"), []);
 });

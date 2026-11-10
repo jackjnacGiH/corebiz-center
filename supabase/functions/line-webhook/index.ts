@@ -578,8 +578,10 @@ function extractQuickReplies(text: string) {
     if (optionText) {
       // Avoid matching lines that look like sentences or are too short/long
       if (optionText.length >= 3 && optionText.length <= 300) {
+        const staffOption = parsedNum === 6 && items.length > 0 && items.length <= 5
+          && /^(?:ไม่มีสินค้าที่ต้องการในตัวเลือก|None of these products match)$/u.test(optionText);
         // Use the sequential nextIndex for the button label prefix to keep it clean (e.g. 1, 2, 3...)
-        const prefix = `${nextIndex}. `;
+        const prefix = `${staffOption ? 6 : nextIndex}. `;
         const maxLabelLen = 20 - prefix.length;
         const model = /\b(?:[A-Z]{2,6}\d+[A-Z0-9-]*|MIRKA\s+GOLD|Eco)\b/iu.exec(optionText)?.[0] ?? "";
         const grit = /#\s*\d{1,5}[A-Z]?\b/iu.exec(optionText)?.[0] ?? "";
@@ -587,6 +589,7 @@ function extractQuickReplies(text: string) {
         // Product names share a long Thai prefix; expose the differentiating
         // model/grit in the 20-character LINE button label.
         let labelName = [model, grit].filter(Boolean).join(" ") || backing || optionText;
+        if (staffOption) labelName = optionText === "ไม่มีสินค้าที่ต้องการในตัวเลือก" ? "ไม่มีในตัวเลือก" : "None of these";
         if (labelName.length > maxLabelLen) {
           labelName = labelName.slice(0, maxLabelLen - 1) + "…";
         }
@@ -603,6 +606,7 @@ function extractQuickReplies(text: string) {
           });
           nextIndex++;
         }
+        if (staffOption) break;
       }
     }
   }
