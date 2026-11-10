@@ -126,6 +126,33 @@ function extractFunction(source, name) {
   return stripped.slice(start, next + 2);
 }
 
+test("LINE sends the reserved staff option through the outbound filter as Quick Reply 6", async () => {
+  const source = readFileSync(new URL("../supabase/functions/line-webhook/index.ts", import.meta.url), "utf8");
+  const functions = ["sanitizeReply", "extractQuickReplies", "textToLineMessages"]
+    .map(name => extractFunction(source, name)).join("\n") + `\nasync ${extractFunction(source, "replyToLine")}`;
+  let payload;
+  const { sanitizeReply, replyToLine } = new Function("stripBlockedEmergencyNotice", "fetch", functions + "\nreturn {sanitizeReply,replyToLine};")(
+    text => text,
+    async (url, request) => {
+      assert.equal(url, "https://api.line.me/v2/bot/message/reply");
+      payload = JSON.parse(request.body);
+      return { ok: true };
+    },
+  );
+  const caption = "ไม่มีสินค้าที่ต้องการในตัวเลือก";
+  for (const count of [1, 5]) {
+    const products = Array.from({ length: count }, (_, i) => `ล้อทรายสีแดง ${20 + i}x25x6mm. #400`);
+    const menu = ["ไม่มีสินค้าอื่นในระบบ", "ตัวเลือกสินค้า", ...products.map((name, i) => `${i + 1}. ${name}`), `6. ${caption}`].join("\r\n");
+    assert.equal(await replyToLine("test-access", "test-reply", sanitizeReply(menu)), true);
+    assert.equal(payload.messages.length, 1);
+    const [message] = payload.messages;
+    assert.match(message.text, new RegExp(`^6\\. ${caption}\\s*$`, "mu"));
+    assert.doesNotMatch(message.text, /ไม่มีสินค้าอื่นในระบบ/u);
+    assert.deepEqual(message.quickReply.items.map(item => item.action.text), [...products, caption]);
+    assert.equal(message.quickReply.items.at(-1).action.label, "6. ไม่มีในตัวเลือก");
+  }
+});
+
 test("real LINE and Messenger transformations preserve critical replies and never add accounting claims", () => {
   const line = readFileSync(new URL("../supabase/functions/line-webhook/index.ts", import.meta.url), "utf8");
   const facebook = readFileSync(new URL("../supabase/functions/facebook-webhook/index.ts", import.meta.url), "utf8");
