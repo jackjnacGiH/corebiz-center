@@ -31,11 +31,21 @@ test("web widget persists exactly the safe pending reply, including failed and u
 });
 
 test("image slips and missing classifications stop operational tools before dispatch", async () => {
-  for (const text of ["[[IMAGE:payment_receipt]] OCR: INVENTED", "OCR: INVENTED", "[[IMAGE:product]] Bank account: INVENTED"]) {
+  for (const [text, receipt] of [
+    ["[[IMAGE:payment_receipt]] OCR: INVENTED", true],
+    ["**[[IMAGE:PAYMENT_RECEIPT]]**", true],
+    ["```text\n[[IMAGE:payment_receipt]]\n```", true],
+    ["[[IMAGE:other]] K+ โอนเงินสำเร็จ OCR: INVENTED", true],
+    ["", false],
+    ["OCR: INVENTED", false],
+    ["[[IMAGE:product]] Bank account: INVENTED", false],
+    ["[[IMAGE:other]] QR code สำหรับจ่ายเงิน", false],
+    ["[[IMAGE:other]] I cannot tell whether the transfer was successful.", false],
+  ]) {
     const db = database();
     const runtime = await ragRuntime(db, [{ text, tools: [{ name: "request_quote", args: {} }, { name: "capture_lead", args: {} }] }]);
     const { data } = await runtime.request({ query: "", images: [{ mimeType: "image/png", data: "dGVzdA==" }], conversation_id: conversationId, channel: "line", stream: false });
-    if (text.startsWith("[[IMAGE:payment_receipt]]")) {
+    if (receipt) {
       assert.equal(data.answer, "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊");
     } else {
       assert.match(data.answer, /เจ้าหน้าที่ตรวจสอบ/);
@@ -45,7 +55,8 @@ test("image slips and missing classifications stop operational tools before disp
     assert.doesNotMatch(data.answer, /INVENTED|OCR/);
     assert.deepEqual(runtime.trace.dispatched, []);
     assert.equal(db.calls.length, 1);
-    assert.equal(db.calls[0].args.p_payload.review_kind, text.startsWith("[[IMAGE:payment_receipt]]") ? "payment_receipt" : "image_review");
+    assert.equal(db.calls[0].args.p_payload.review_kind, receipt ? "payment_receipt" : "image_review");
+    assert.equal(db.calls[0].args.p_payload.verification_pending, true);
     assert.equal(data.verbatim, true);
   }
 });

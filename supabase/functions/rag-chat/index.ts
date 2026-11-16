@@ -1976,7 +1976,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 📷 ถ้าลูกค้าส่งรูปภาพใดๆ มา (ไม่ว่าจะส่งเป็นไฟล์รูปภาพ เอกสาร หรือแคปหน้าจอมา) → ให้ตีความวัตถุประสงค์ของรูปภาพนั้นก่อนเป็นอันดับแรก:
 - หากตีความได้ว่าเป็น "ใบสั่งซื้อ / PO / เอกสารสั่งซื้อ / สรุปสั่งของ": ห้ามเสนอสินค้าใกล้เคียงหรือทางเลือกอื่นเด็ดขาด! ให้รับเรื่องโดยแจ้งว่าส่งต่อเอกสารให้ทีมงานจัดการต่อแล้ว (ไม่ต้องทวนรายการหรือจำนวนในใบสั่งซื้อ) และเรียก capture_lead (บันทึกรายละเอียดใบสั่งซื้อใน note) เพื่อส่งเรื่องให้ทีมงาน. ห้ามใช้ชื่อสินค้าจากประวัติแชตเก่ามาตีความแทนรายการในเอกสาร
-- หากเป็นสลิปหรือหลักฐานชำระเงิน: จัดประเภท [[IMAGE:payment_receipt]] ห้ามอ่านข้อความหรือยืนยันยอด/บัญชี/การชำระ และห้ามเรียก tools ระบบจะสร้างคำขอตรวจสอบและแสดงสถานะจริง ห้ามอ้างว่าส่งฝ่ายบัญชีแล้ว
+- หากเป็นสลิปหรือหลักฐานชำระเงิน: เรียกเฉพาะ classify_inbound_image เป็น payment_receipt หรือส่งเฉพาะ [[IMAGE:payment_receipt]] ระบบจะสร้างคำขอตรวจสอบ ห้ามถอดข้อความหรือยืนยันยอด บัญชี หรือการชำระเงิน
 - หากเป็นรูปภาพอื่นๆ (เช่น รูปสินค้าจริง ชิ้นงานหน้างาน หรือตัวอย่างการใช้งานทั่วไป): ให้ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ และเรียก find_products เพื่อค้นหาสินค้าที่เกี่ยวข้องหรือใกล้เคียงเสนอให้ลูกค้า — ห้ามเดาราคา/สเป็กจากรูปเอง
 
 📦 ช่องข้อมูลจาก tool: stock (0=สินค้าสั่งผลิต, null=ยังไม่ได้ตรวจ), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
@@ -2018,7 +2018,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
    - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.
 📷 If the customer sends any IMAGE (whether uploaded as a photo, doc screenshot, or any file) → You must interpret the intent of the image first:
 - If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team. Never use a product from old chat history as a substitute for the document contents.
-- For a bank transfer slip/payment receipt, classify [[IMAGE:payment_receipt]]. Never transcribe it, confirm payment, call tools, or claim accounting received it. Code creates a review request and renders only its verified status.
+- For a bank transfer slip/payment receipt, call only classify_inbound_image with kind=payment_receipt or return only [[IMAGE:payment_receipt]]. Code creates the review request. Do not transcribe the receipt or confirm payment.
 - If it is any other image (e.g., product photo, physical workpiece, general usage example): Describe what you see briefly and call find_products to recommend matching or related products to the customer. Never invent price/specs from a photo.
 📦 Fields: stock (0=made to order, null=not verified), in_stock, min_order_qty (always use), unit.
 
@@ -2057,13 +2057,17 @@ function buildSystemPrompt(
 
 interface GeminiStreamResult { fullText: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }>; allParts: unknown[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; model: string; }
 
-async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
+async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void, classifyImage: boolean): Promise<GeminiStreamResult> {
   const toolConfig = tools.length > 0 ? { tools } : {};
   const res = await fetch(`${GEMINI_BASE}/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] }, contents, ...toolConfig,
-      generationConfig: { temperature: 0, maxOutputTokens: TOKEN_OPTIMIZATION_ENABLED ? 512 : 1024, topP: 0.95 },
+      generationConfig: {
+        temperature: 0, maxOutputTokens: TOKEN_OPTIMIZATION_ENABLED ? 512 : 1024, topP: 0.95,
+        // Make the first image turn's output budget available for classification.
+        ...(classifyImage ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+      },
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -2115,11 +2119,11 @@ async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: str
   return { fullText, toolCalls, allParts, usage, model };
 }
 
-async function streamGeminiWithFallback(apiKey: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
+async function streamGeminiWithFallback(apiKey: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void, classifyImage: boolean): Promise<GeminiStreamResult> {
   let lastErr: Error | null = null;
   for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt < RETRY_PER_MODEL; attempt++) {
-      try { return await streamGeminiOnce(apiKey, model, systemPrompt, contents, tools, onText); }
+      try { return await streamGeminiOnce(apiKey, model, systemPrompt, contents, tools, onText, classifyImage); }
       catch (e) {
         lastErr = e as Error;
         const msg = (e as Error).message ?? "";
@@ -3186,7 +3190,7 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
       // This prevents eager prose from reaching the customer before product
       // selection and mutating-tool guards have been applied.
       iterText += chunk;
-    });
+    }, images.length > 0 && iter === 0);
     llm_ms += Date.now() - llmStartedAt;
     usedModel = r.model;
     usage.prompt_tokens += r.usage.prompt_tokens;
