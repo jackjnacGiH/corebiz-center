@@ -200,10 +200,11 @@ export function inspectImageTurn(text, toolKind = null) {
   const answer = String(text ?? "").replace(/^\s*\[\[IMAGE:[^\]]+\]\]\s*/u, "");
   const receiptText = detectionText(text).trim();
   const classificationText = receiptText.replace(/^```[^\n]*\r?\n/u, "").replace(/^[\s*>`_]+/u, "");
+  const imageDescription = detectionText(answer);
+  const completedTransferHeader = /^[\t ]*(?:(?:K\s*(?:PLUS|\+)|SCB\s+EASY)\s*[:–-]?\s*)?(?:(?:โอนเงิน|ชำระเงิน)\s*สำเร็จ|(?:transfer|payment)\s+(?:was\s+)?(?:successful|completed)\b)/imu;
   const receipt = kind === "payment_receipt" || match?.[1] === "payment_receipt"
     || /^\[\[IMAGE:payment_receipt\]\]/iu.test(classificationText)
-    || RECEIPT.test(detectionText(answer))
-    || /(?:โอนเงิน|ชำระเงิน)\s*สำเร็จ|\b(?:transfer|payment)\s+(?:was\s+)?(?:successful|completed)\b/iu.test(receiptText);
+    || RECEIPT.test(imageDescription) || completedTransferHeader.test(imageDescription);
   // Missing/invalid classification fails closed before executing any tool.
   return { answer, review: receipt || (match && toolKind != null && match[1] !== toolKind) || !["product", "billing", "purchase_order"].includes(kind) || hasCriticalClaim(answer),
     kind: receipt ? "payment_receipt" : "image_review" };

@@ -40,6 +40,7 @@ test("image slips and missing classifications stop operational tools before disp
     ["OCR: INVENTED", false],
     ["[[IMAGE:product]] Bank account: INVENTED", false],
     ["[[IMAGE:other]] QR code สำหรับจ่ายเงิน", false],
+    ["[[IMAGE:other]] I cannot tell whether the transfer was successful.", false],
   ]) {
     const db = database();
     const runtime = await ragRuntime(db, [{ text, tools: [{ name: "request_quote", args: {} }, { name: "capture_lead", args: {} }] }]);
