@@ -10,9 +10,9 @@ import SearchBox from "@/components/SearchBox";
 export const revalidate = 300;
 export const dynamicParams = true;
 
-export async function generateStaticParams() {
-  const cats = await getCategories();
-  return cats.map((c) => ({ slug: c.slug }));
+export function generateStaticParams() {
+  // ISR generates the category on its first visit; the sitemap lists its URL.
+  return [];
 }
 
 export async function generateMetadata({
