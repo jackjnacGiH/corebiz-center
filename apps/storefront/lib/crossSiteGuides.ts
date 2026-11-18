@@ -70,3 +70,30 @@ export function getGroupCrossSiteGuide(groupId: string, groupName = ""): CrossSi
 export function getProductCrossSiteGuide(text: string): CrossSiteGuide | null {
   return findTopicGuide(text);
 }
+
+const COMPARISON_GUIDES: Record<string, CrossSiteGuide[]> = {
+  "fiber-disc-vs-flap-disc": [ABRASIVES_TOPIC_GUIDES[0], {
+    eyebrow: "บทความเชิงลึกที่ jnac.co.th",
+    title: "กระดาษทรายกลมหลังไฟเบอร์ (Fiber Disc)",
+    description: "ดูโครงสร้าง เม็ดขัด แผ่นรอง และแนวทางเลือก Fiber Disc ก่อนเทียบกับ Flap Disc รุ่นจริง",
+    href: "https://www.jnac.co.th/14885674/%E0%B8%81%E0%B8%A3%E0%B8%B0%E0%B8%94%E0%B8%B2%E0%B8%A9%E0%B8%97%E0%B8%A3%E0%B8%B2%E0%B8%A2-fiber-disc",
+    cta: "อ่านคู่มือ Fiber Disc",
+  }],
+  "flap-disc-soft-vs-hard-backing": [ABRASIVES_TOPIC_GUIDES[0]],
+  "wet-vs-dry-sandpaper": [ABRASIVES_TOPIC_GUIDES[2]],
+  "psa-vs-hook-loop-sandpaper": [ABRASIVES_TOPIC_GUIDES[2]],
+  "aluminum-oxide-vs-zirconia-vs-ceramic": [
+    ABRASIVES_TOPIC_GUIDES[2],
+    {
+      eyebrow: "บทความเชิงลึกที่ jnac.co.th",
+      title: "กระดาษทรายกลมหลังไฟเบอร์ (Fiber Disc)",
+      description: "ดูตัวอย่างการระบุ Aluminum Oxide และ Zirconia บนวัสดุขัด พร้อมข้อควรตรวจจากรุ่นจริง",
+      href: "https://www.jnac.co.th/14885674/%E0%B8%81%E0%B8%A3%E0%B8%B0%E0%B8%94%E0%B8%B2%E0%B8%A9%E0%B8%97%E0%B8%A3%E0%B8%B2%E0%B8%A2-fiber-disc",
+      cta: "อ่านคู่มือ Fiber Disc",
+    },
+  ],
+};
+
+export function getComparisonCrossSiteGuides(slug: string): CrossSiteGuide[] {
+  return COMPARISON_GUIDES[slug] ?? [];
+}
