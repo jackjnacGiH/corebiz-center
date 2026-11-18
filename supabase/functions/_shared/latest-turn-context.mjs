@@ -1,4 +1,5 @@
 import { extractModelCodes } from "./product-selection.mjs";
+import { numberedChoices } from "./product-turn-context.mjs";
 
 const PRODUCT_NAME_RE = /กระดาษทราย|ผ้าทราย|จานทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|สก๊อตไบรท์|สก๊อตไบร์ท|ล้อทราย|ล้อขัด|ลูกขัด|ใบ(?:ขัด|ตัด|เจียร)|หินเจียร|แผ่น(?:ขัด|เจียร)|แปรง(?:ลวด|ขัด)|สายพาน(?:ขัด|ทราย)|สว่านลม|เครื่องมือ(?:ลม)?|\b(?:flap\s*disc|nonwoven|scotch\s*brite)\b/iu;
 const PRODUCT_BRAND_RE = /\b(?:DEERFOS|MIRKA|MIKA|KLINGSPOR|NORTON|VSM)\b/iu;
@@ -20,14 +21,12 @@ const routingText = (value) => clean(value).replace(/^(?:ค่ะ|ครับ|
 
 function catalogChoice(query, assistantText) {
   const text = clean(query).replace(/^(?:ขอ(?:เป็น|เอา)|เอา)\s*/iu, "");
-  const choices = String(assistantText ?? "").split(/\r?\n/u)
-    .map((line) => /^\s*\d{1,2}\.\s+(.+)$/u.exec(line)?.[1]?.trim())
-    .filter(Boolean);
+  const choices = numberedChoices(assistantText);
   if (choices.length === 0) return false;
-  if (/^\d{1,2}[.)]?$/u.test(text)) return Number.parseInt(text, 10) <= choices.length;
-  if (choices.some((choice) => choice === text || choice.replace(/\s*\(SKU\s+[^)]+\)\s*$/iu, "") === text)) return true;
+  if (/^\d{1,2}[.)]?$/u.test(text)) return choices.some(({ number }) => number === Number.parseInt(text, 10));
+  if (choices.some(({ label }) => label === text || label.replace(/\s*\(SKU\s+[^)]+\)\s*$/iu, "") === text)) return true;
   return /^[A-Z][A-Z0-9 ._-]{2,30}$/iu.test(text)
-    && choices.filter((choice) => choice.toUpperCase().includes(text.toUpperCase())).length === 1;
+    && choices.filter(({ label }) => label.toUpperCase().includes(text.toUpperCase())).length === 1;
 }
 
 function hasProductIdentity(query) {

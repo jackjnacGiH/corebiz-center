@@ -104,7 +104,16 @@ async function recentHistory(admin: SupabaseClient, conversationId: string, curr
   const currentIndex = rows.findIndex((row) => row.external_msg_id === currentMessageId);
   return (currentIndex >= 0 ? rows.slice(0, currentIndex) : [])
     .filter((row) => ["customer", "bot", "agent"].includes(row.sender_type))
-    .map((row) => ({ role: row.sender_type === "customer" ? "user" : "assistant", content: String(row.content).slice(0, 1_200) }))
+    .map((row) => {
+      const raw = String(row.content);
+      const productMenu = row.sender_type === "bot"
+        && /^(?:ตัวเลือกสินค้า|Catalog options)[ \t]*\r?$/mu.test(raw);
+      const content = raw.slice(0, productMenu ? 4_500 : 1_200);
+      return {
+        role: row.sender_type === "customer" ? "user" : "assistant",
+        content: row.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content,
+      };
+    })
     .slice(-16);
 }
 

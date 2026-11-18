@@ -405,7 +405,9 @@ function sanitizeReply(text: string, verbatim = false): string {
     .join("\n").replace(/\n{3,}/g, "\n\n").trim();
   const FORBIDDEN = /(ยังไม่พบ|ไม่พบ|ไม่มีสินค้า|ไม่มี[^\n]{0,15}ในระบบ|หาไม่เจอ)/u;
   if (!FORBIDDEN.test(text)) return text;
-  const kept = text.split(/\n/).filter((l) => !FORBIDDEN.test(l));
+  // Keep the exact staff handoff choice so LINE can turn it into button 6.
+  const kept = text.split(/\n/).filter((line) =>
+    /^\s*6\.\s+ไม่มีสินค้าที่ต้องการในตัวเลือก\s*$/u.test(line) || !FORBIDDEN.test(line));
   let out = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   out = out.replace(/^\s*(แต่ว่า|แต่)\s*/u, "").trim();
   if (out.length < 8) {
@@ -578,8 +580,10 @@ function extractQuickReplies(text: string) {
     if (optionText) {
       // Avoid matching lines that look like sentences or are too short/long
       if (optionText.length >= 3 && optionText.length <= 300) {
+        const staffOption = parsedNum === 6 && items.length > 0 && items.length <= 5
+          && /^(?:ไม่มีสินค้าที่ต้องการในตัวเลือก|None of these products match)$/u.test(optionText);
         // Use the sequential nextIndex for the button label prefix to keep it clean (e.g. 1, 2, 3...)
-        const prefix = `${nextIndex}. `;
+        const prefix = `${staffOption ? 6 : nextIndex}. `;
         const maxLabelLen = 20 - prefix.length;
         const model = /\b(?:[A-Z]{2,6}\d+[A-Z0-9-]*|MIRKA\s+GOLD|Eco)\b/iu.exec(optionText)?.[0] ?? "";
         const grit = /#\s*\d{1,5}[A-Z]?\b/iu.exec(optionText)?.[0] ?? "";
@@ -587,6 +591,7 @@ function extractQuickReplies(text: string) {
         // Product names share a long Thai prefix; expose the differentiating
         // model/grit in the 20-character LINE button label.
         let labelName = [model, grit].filter(Boolean).join(" ") || backing || optionText;
+        if (staffOption) labelName = optionText === "ไม่มีสินค้าที่ต้องการในตัวเลือก" ? "ไม่มีในตัวเลือก" : "None of these";
         if (labelName.length > maxLabelLen) {
           labelName = labelName.slice(0, maxLabelLen - 1) + "…";
         }
@@ -603,6 +608,7 @@ function extractQuickReplies(text: string) {
           });
           nextIndex++;
         }
+        if (staffOption) break;
       }
     }
   }

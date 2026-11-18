@@ -114,12 +114,18 @@ export function messengerQuickReplies(text) {
   const found = [];
   for (const row of rows) {
     const match = row.match(/^\s*(\d{1,2})[.)]\s+(.+)$/u);
-    if (!match || Number(match[1]) !== found.length + 1) continue;
+    if (!match) continue;
+    const number = Number(match[1]);
     const option = match[2].trim();
     if (!option || option.length > 1_000) continue;
-    const title = quickReplyTitle(match[1], option);
+    const staffOption = number === 6 && found.length > 0 && found.length <= 5
+      && /^(?:ไม่มีสินค้าที่ต้องการในตัวเลือก|None of these products match)$/u.test(option);
+    if (number !== found.length + 1 && !staffOption) continue;
+    const title = staffOption
+      ? option === "ไม่มีสินค้าที่ต้องการในตัวเลือก" ? "6. ไม่มีในตัวเลือก" : "6. None of these"
+      : quickReplyTitle(match[1], option);
     found.push({ content_type: "text", title, payload: option });
-    if (found.length >= 13) break;
+    if (staffOption || found.length >= 13) break;
   }
   return found;
 }

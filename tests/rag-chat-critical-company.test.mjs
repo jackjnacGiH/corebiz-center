@@ -31,11 +31,21 @@ test("web widget persists exactly the safe pending reply, including failed and u
 });
 
 test("image slips and missing classifications stop operational tools before dispatch", async () => {
-  for (const text of ["[[IMAGE:payment_receipt]] OCR: INVENTED", "OCR: INVENTED", "[[IMAGE:product]] Bank account: INVENTED"]) {
+  for (const [text, receipt] of [
+    ["[[IMAGE:payment_receipt]] OCR: INVENTED", true],
+    ["**[[IMAGE:PAYMENT_RECEIPT]]**", true],
+    ["```text\n[[IMAGE:payment_receipt]]\n```", true],
+    ["[[IMAGE:other]] K+ โอนเงินสำเร็จ OCR: INVENTED", true],
+    ["", false],
+    ["OCR: INVENTED", false],
+    ["[[IMAGE:product]] Bank account: INVENTED", false],
+    ["[[IMAGE:other]] QR code สำหรับจ่ายเงิน", false],
+    ["[[IMAGE:other]] I cannot tell whether the transfer was successful.", false],
+  ]) {
     const db = database();
     const runtime = await ragRuntime(db, [{ text, tools: [{ name: "request_quote", args: {} }, { name: "capture_lead", args: {} }] }]);
     const { data } = await runtime.request({ query: "", images: [{ mimeType: "image/png", data: "dGVzdA==" }], conversation_id: conversationId, channel: "line", stream: false });
-    if (text.startsWith("[[IMAGE:payment_receipt]]")) {
+    if (receipt) {
       assert.equal(data.answer, "ขอบพระคุณค่ะ 🙏 เอยส่งเรื่องให้ฝ่ายบัญชีตรวจสอบเรียบร้อยแล้วนะคะ 😊");
     } else {
       assert.match(data.answer, /เจ้าหน้าที่ตรวจสอบ/);
@@ -45,7 +55,8 @@ test("image slips and missing classifications stop operational tools before disp
     assert.doesNotMatch(data.answer, /INVENTED|OCR/);
     assert.deepEqual(runtime.trace.dispatched, []);
     assert.equal(db.calls.length, 1);
-    assert.equal(db.calls[0].args.p_payload.review_kind, text.startsWith("[[IMAGE:payment_receipt]]") ? "payment_receipt" : "image_review");
+    assert.equal(db.calls[0].args.p_payload.review_kind, receipt ? "payment_receipt" : "image_review");
+    assert.equal(db.calls[0].args.p_payload.verification_pending, true);
     assert.equal(data.verbatim, true);
   }
 });
@@ -125,6 +136,33 @@ function extractFunction(source, name) {
   assert.ok(start >= 0 && next > start, name);
   return stripped.slice(start, next + 2);
 }
+
+test("LINE sends the reserved staff option through the outbound filter as Quick Reply 6", async () => {
+  const source = readFileSync(new URL("../supabase/functions/line-webhook/index.ts", import.meta.url), "utf8");
+  const functions = ["sanitizeReply", "extractQuickReplies", "textToLineMessages"]
+    .map(name => extractFunction(source, name)).join("\n") + `\nasync ${extractFunction(source, "replyToLine")}`;
+  let payload;
+  const { sanitizeReply, replyToLine } = new Function("stripBlockedEmergencyNotice", "fetch", functions + "\nreturn {sanitizeReply,replyToLine};")(
+    text => text,
+    async (url, request) => {
+      assert.equal(url, "https://api.line.me/v2/bot/message/reply");
+      payload = JSON.parse(request.body);
+      return { ok: true };
+    },
+  );
+  const caption = "ไม่มีสินค้าที่ต้องการในตัวเลือก";
+  for (const count of [1, 5]) {
+    const products = Array.from({ length: count }, (_, i) => `ล้อทรายสีแดง ${20 + i}x25x6mm. #400`);
+    const menu = ["ไม่มีสินค้าอื่นในระบบ", "ตัวเลือกสินค้า", ...products.map((name, i) => `${i + 1}. ${name}`), `6. ${caption}`].join("\r\n");
+    assert.equal(await replyToLine("test-access", "test-reply", sanitizeReply(menu)), true);
+    assert.equal(payload.messages.length, 1);
+    const [message] = payload.messages;
+    assert.match(message.text, new RegExp(`^6\\. ${caption}\\s*$`, "mu"));
+    assert.doesNotMatch(message.text, /ไม่มีสินค้าอื่นในระบบ/u);
+    assert.deepEqual(message.quickReply.items.map(item => item.action.text), [...products, caption]);
+    assert.equal(message.quickReply.items.at(-1).action.label, "6. ไม่มีในตัวเลือก");
+  }
+});
 
 test("real LINE and Messenger transformations preserve critical replies and never add accounting claims", () => {
   const line = readFileSync(new URL("../supabase/functions/line-webhook/index.ts", import.meta.url), "utf8");

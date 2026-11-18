@@ -1,5 +1,5 @@
 import { extractExplicitProductSkus, extractModelCodes, normalizeProductSearchQuery, productMatchFacets } from "./product-selection.mjs";
-import { pendingProductQuestion } from "./product-turn-context.mjs";
+import { formatProductOptions, numberedChoices, pendingProductQuestion, PRODUCT_OPTIONS_MENU_RE } from "./product-turn-context.mjs";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const PRODUCT_RE = /กระดาษทราย|ผ้าทราย|สายพาน(?:ขัด|ทราย)|จานทราย|จาานราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
@@ -96,8 +96,7 @@ export function normalizeGuidedProductTerm(value) {
 }
 
 const normalized = normalizeGuidedProductTerm;
-const CATALOG_PAGE_SIZE = 10;
-const MORE_CHOICES = { th: "แสดงเพิ่มเติม", en: "Show more" };
+const LEGACY_CATALOG_PAGE_SIZE = 10;
 
 function nextCatalogPage(query, history) {
   const offer = history.at(-1);
@@ -122,37 +121,13 @@ function nextCatalogPage(query, history) {
 export function pagedCatalogCandidateQuestion(result, lang, pageIndex = 0) {
   const options = result?.candidate_options;
   if (!Array.isArray(options) || options.length === 0) return pendingProductQuestion(result, lang);
-  const totalPages = Math.ceil(options.length / CATALOG_PAGE_SIZE);
-  const currentPage = Math.min(Math.max(0, pageIndex), totalPages - 1);
   const intro = lang === "th" ? result.candidate_intro_th : result.candidate_intro_en;
-  const marker = lang === "th"
-    ? `ตัวเลือกสินค้า หน้า ${currentPage + 1}/${totalPages}`
-    : `Catalog options page ${currentPage + 1}/${totalPages}`;
-  const choices = options.slice(currentPage * CATALOG_PAGE_SIZE, (currentPage + 1) * CATALOG_PAGE_SIZE)
-    .map((name, index) => `${index + 1}. ${name}`);
-  if (currentPage + 1 < totalPages) choices.push(`11. ${MORE_CHOICES[lang === "th" ? "th" : "en"]}`);
-  return [intro, marker, ...choices].filter(Boolean).join("\n");
+  const choices = options.map((name, index) => `${index + 1}. ${clean(name)}`);
+  return formatProductOptions([intro, ...choices].filter(Boolean).join("\n"), lang, pageIndex * LEGACY_CATALOG_PAGE_SIZE);
 }
 
 function pagedGritQuestion(result, lang, pageIndex = 0) {
-  const answer = pendingProductQuestion(result, lang);
-  if (result?.match_scan_complete !== true || !result?.missing_fields?.includes("grit")) return answer;
-  const lines = answer.split(/\r?\n/u);
-  const choices = lines.map((line) => /^\s*(\d{1,2})\.\s+(.+)$/u.exec(line)).filter(Boolean);
-  if (choices.length <= CATALOG_PAGE_SIZE
-    || !choices.every((choice, index) => Number(choice[1]) === index + 1)) return answer;
-  const bases = choices.map((choice) => /^(.+?)\s*#\s*\d{1,5}[A-Z]?\s*$/iu.exec(choice[2])?.[1]?.trim());
-  if (!bases[0] || !bases.every((base) => base === bases[0])) return answer;
-  const totalPages = Math.ceil(choices.length / CATALOG_PAGE_SIZE);
-  const currentPage = Math.min(Math.max(0, pageIndex), totalPages - 1);
-  const intro = lines.slice(0, lines.findIndex((line) => /^\s*1\.\s+/u.test(line)))
-    .join("\n").replace(/ หากไม่เห็นปุ่ม พิมพ์หมายเลขหน้ารายการได้ค่ะ/gu, "")
-    .replace(/ or type its list number/giu, "").trim();
-  const pageChoices = choices.slice(currentPage * CATALOG_PAGE_SIZE, (currentPage + 1) * CATALOG_PAGE_SIZE)
-    .map((choice, index) => `${index + 1}. ${choice[2]}`);
-  const more = currentPage + 1 < totalPages ? [`11. ${MORE_CHOICES[lang === "th" ? "th" : "en"]}`] : [];
-  const marker = lang === "th" ? `หน้า ${currentPage + 1}/${totalPages}` : `Page ${currentPage + 1}/${totalPages}`;
-  return [intro, marker, ...pageChoices, ...more].join("\n");
+  return pendingProductQuestion(result, lang, pageIndex * LEGACY_CATALOG_PAGE_SIZE);
 }
 const isOtherProductTurn = (value) => !FLAP_DISC_RE.test(value)
   && (OTHER_PRODUCT_RE.test(value) || PRODUCT_SWITCH_RE.test(value)
@@ -162,19 +137,17 @@ const isOtherProductTurn = (value) => !FLAP_DISC_RE.test(value)
 function numberedChoice(query, history) {
   const last = history.at(-1);
   if (last?.role !== "assistant") return query;
-  const options = String(last.content ?? "").split(/\r?\n/u)
-    .map((line) => /^\s*\d{1,2}\.\s+(.+)$/u.exec(line)?.[1]?.trim())
-    .filter(Boolean);
-  const choice = /^\d{1,2}$/u.test(query)
-    ? options[Number(query) - 1]
+  const options = numberedChoices(last.content);
+  const choice = /^\d{1,2}[.)]?$/u.test(query)
+    ? options.find(({ number }) => number === Number.parseInt(query, 10))?.label
     : (() => {
       const term = query.replace(/^(?:ขอ(?:เป็น|เอา)|เอา)\s*/iu, "");
       if (!/^[A-Z][A-Z0-9 ._-]{2,30}$/iu.test(term)) return null;
-      const matches = options.filter((option) => option.toUpperCase().includes(term.toUpperCase()));
-      return matches.length === 1 ? matches[0] : null;
+      const matches = options.filter(({ label }) => label.toUpperCase().includes(term.toUpperCase()));
+      return matches.length === 1 ? matches[0].label : null;
     })();
-  const catalogChoice = /ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(last.content)
-    && choice && !/^(?:แสดงเพิ่มเติม|Show more)$/iu.test(choice);
+  const catalogChoice = PRODUCT_OPTIONS_MENU_RE.test(last.content)
+    && choice && !/^(?:แสดงเพิ่มเติม|Show more|ไม่มีสินค้าที่ต้องการในตัวเลือก|None of these products match)$/iu.test(choice);
   return choice && (PRODUCT_RE.test(choice) || OTHER_PRODUCT_RE.test(choice) || catalogChoice) ? choice : query;
 }
 
@@ -232,13 +205,12 @@ export function guidedCatalogQuery(query, history = []) {
   if (quantitySku) return quantitySku;
   const offeredChoice = numberedChoice(clean(query), history);
   const current = normalized(offeredChoice);
-  if (/ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(String(history.at(-1)?.content ?? ""))
-    && String(history.at(-1)?.content ?? "").split(/\r?\n/u)
-      .some((line) => /^\s*\d{1,2}\.\s+(.+)$/u.exec(line)?.[1]?.trim() === offeredChoice)) {
-    const offeredSku = /\(SKU\s+([A-Z0-9._/-]+)\)\s*$/iu.exec(offeredChoice)?.[1];
-    if (offeredSku) return offeredSku;
-    return normalizeProductSearchQuery(current);
-  }
+  const offer = String(history.at(-1)?.content ?? "");
+  const fromCatalogMenu = PRODUCT_OPTIONS_MENU_RE.test(offer)
+    && numberedChoices(offer).some(({ label }) => label === offeredChoice);
+  const offeredSku = fromCatalogMenu && /\(SKU\s+([A-Z0-9._/-]+)\)\s*$/iu.exec(offeredChoice)?.[1];
+  if (offeredSku) return offeredSku;
+  if (fromCatalogMenu && /ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(offer)) return normalizeProductSearchQuery(current);
   const skus = extractExplicitProductSkus(current);
   if (skus.length > 1) return null;
   if (skus.length === 1) return /^20\d{8}$/u.test(skus[0]) ? skus[0] : `SKU ${skus[0]}`;
@@ -257,7 +229,7 @@ export function guidedCatalogQuery(query, history = []) {
     : /หลังกาว/iu.test(prior) ? "หลังกาว"
     : /สักหลาด|velcro/iu.test(prior) ? "สักหลาด" : "";
   if (!backingText || !/(?:กระดาษทราย|SA331|PS36|MIRKA)/iu.test(current + " " + prior) && !/หลังกาว/iu.test(current)) {
-    if (OTHER_PRODUCT_RE.test(current) || extractModelCodes(current).length) {
+    if (OTHER_PRODUCT_RE.test(current) || extractModelCodes(current).length || fromCatalogMenu && !FOLLOW_UP_RE.test(current)) {
       return normalizeProductSearchQuery(current);
     }
     if (!FOLLOW_UP_RE.test(current)) return null;

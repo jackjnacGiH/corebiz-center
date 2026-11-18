@@ -78,8 +78,12 @@ import {
   scoreProductCandidate,
 } from "../_shared/product-match-score.mjs";
 import {
+  declinedProductOptions,
+  formatProductOptions,
+  isProductOptionsReply,
   mergeFacetOnlyProductQuery,
   pendingProductQuestion,
+  PRODUCT_OPTIONS_MENU_RE,
 } from "../_shared/product-turn-context.mjs";
 import { recoverEmptyProductAnswer } from "../_shared/empty-product-recovery.mjs";
 import { routeLatestTurn } from "../_shared/latest-turn-context.mjs";
@@ -1957,7 +1961,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 🚫 ห้ามเสนอสินค้าเพียงเพราะขนาด เบอร์ หรือการใช้งานใกล้เคียงกัน หากเป็นคนละชนิดสินค้า. เมื่อไม่มีตัวเลือกที่ผ่านเงื่อนไข ให้บอกว่าจะตรวจสอบจัดหา/สั่งผลิตกับคุณเชอร์รี่ แทนการเดาสินค้าทดแทน
 
 4. Tool คืน 0 ผล + ไม่มี clarification_candidates และไม่มี selection_required หลังจากถามข้อมูลที่ขาดแล้ว → ห้ามบอกว่า ไม่มี/ไม่พบ ให้บอกว่าขอให้คุณเชอร์รี่ตรวจสอบว่าสั่งผลิต/จัดหาได้ไหม แล้วแจ้งกลับ
-5. ⚠️ ทุกครั้งที่เสนอตัวเลือกสินค้า, สินค้าทดแทน, สินค้าใกล้เคียง หรือรายการเบอร์/ขนาด/สเป็กสินค้าใดๆ ให้ลูกค้าเลือก (รวมถึงกรณีเสนอนำเสนอตัวเลือกเพื่อสั่งผลิต/สั่งซื้อ): ต้องจัดรูปแบบเป็นรายการลำดับตัวเลข "1.", "2.", "3." เสมอ (ห้ามใช้สัญลักษณ์หรืออีโมจิอื่นๆ เช่น ✨ หรือ • นำหน้าชื่อตัวเลือกเด็ดขาด) เพื่อให้หมายเลขตรงกับปุ่มกด Quick Reply
+5. เมื่อต้องเสนอสินค้า รุ่น ขนาด หรือเบอร์ให้เลือก ให้ใช้หัวข้อ "ตัวเลือกสินค้า" และแสดงตัวเลือกจากระบบสูงสุด 5 รายการตามลำดับ เริ่มที่ "1." แล้วจบด้วย "6. ไม่มีสินค้าที่ต้องการในตัวเลือก" เสมอ แม้มีสินค้าน้อยกว่า 5 รายการ กติกานี้ใช้กับเมนูสินค้าเท่านั้น
 6. เจอสินค้าแต่ stock=0 ที่ตรวจสอบแล้ว → ระบุคำว่า "สินค้าสั่งผลิต" เสมอ ไม่ใช่ตอบแค่ หมด; stock=null คือยังไม่ได้ตรวจสต็อก ห้ามเดาว่าเป็นศูนย์
 7. query: ใส่เฉพาะตัวระบุสินค้า (ชื่อ/SKU/ขนาด)
 8. 🔒 กฎสินค้าทดแทน (ห้ามฝ่าฝืน):
@@ -1972,7 +1976,7 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
 
 📷 ถ้าลูกค้าส่งรูปภาพใดๆ มา (ไม่ว่าจะส่งเป็นไฟล์รูปภาพ เอกสาร หรือแคปหน้าจอมา) → ให้ตีความวัตถุประสงค์ของรูปภาพนั้นก่อนเป็นอันดับแรก:
 - หากตีความได้ว่าเป็น "ใบสั่งซื้อ / PO / เอกสารสั่งซื้อ / สรุปสั่งของ": ห้ามเสนอสินค้าใกล้เคียงหรือทางเลือกอื่นเด็ดขาด! ให้รับเรื่องโดยแจ้งว่าส่งต่อเอกสารให้ทีมงานจัดการต่อแล้ว (ไม่ต้องทวนรายการหรือจำนวนในใบสั่งซื้อ) และเรียก capture_lead (บันทึกรายละเอียดใบสั่งซื้อใน note) เพื่อส่งเรื่องให้ทีมงาน. ห้ามใช้ชื่อสินค้าจากประวัติแชตเก่ามาตีความแทนรายการในเอกสาร
-- หากเป็นสลิปหรือหลักฐานชำระเงิน: จัดประเภท [[IMAGE:payment_receipt]] ห้ามอ่านข้อความหรือยืนยันยอด/บัญชี/การชำระ และห้ามเรียก tools ระบบจะสร้างคำขอตรวจสอบและแสดงสถานะจริง ห้ามอ้างว่าส่งฝ่ายบัญชีแล้ว
+- หากเป็นสลิปหรือหลักฐานชำระเงิน: เรียกเฉพาะ classify_inbound_image เป็น payment_receipt หรือส่งเฉพาะ [[IMAGE:payment_receipt]] ระบบจะสร้างคำขอตรวจสอบ ห้ามถอดข้อความหรือยืนยันยอด บัญชี หรือการชำระเงิน
 - หากเป็นรูปภาพอื่นๆ (เช่น รูปสินค้าจริง ชิ้นงานหน้างาน หรือตัวอย่างการใช้งานทั่วไป): ให้ดูรูปแล้วอธิบายสิ่งที่เห็นสั้นๆ และเรียก find_products เพื่อค้นหาสินค้าที่เกี่ยวข้องหรือใกล้เคียงเสนอให้ลูกค้า — ห้ามเดาราคา/สเป็กจากรูปเอง
 
 📦 ช่องข้อมูลจาก tool: stock (0=สินค้าสั่งผลิต, null=ยังไม่ได้ตรวจ), in_stock, min_order_qty (จำนวนขั้นต่ำ ใช้ค่านี้เสมอ), unit
@@ -2000,7 +2004,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
 ✅ Treat a short quantity reply to the immediately preceding exact-product question as that product's quantity; do not ask for the product or quantity again. Once actual quantity and get_exact_price are available, summarize unit price, total and stock, then ask whether they want a quotation, followed by numbered "1. Request a quotation" and "2. No quotation" choices for LINE Quick Reply. Do not call request_quote until the customer agrees and all required details are present.
 🚫 NEVER offer a product merely because its size, grit, or use is similar when it is a different product type. If no safe option exists, escalate for sourcing/made-to-order instead of guessing a substitute.
 4. 0 results + no candidates and no selection_required after clarification → offer made-to-order via Khun Cherry.
-5. ⚠️ Whenever offering product options, alternatives, similar items, or lists of sizes/grits/specs for the customer to choose from (including made-to-order variant choices): You MUST present them as a numbered list starting with "1.", "2.", "3." (do NOT use emojis like ✨ or bullet points like • for these lists under any circumstances) so that the numbers align exactly with the Quick Reply buttons.
+5. For selectable product, model, size or grit options, use the heading "Catalog options" and number up to five catalog choices from "1.". End with "6. None of these products match", even when there are fewer than five choices. Apply this to product menus only.
 6. Verified stock=0 → explicitly say "made to order", never just out of stock. A null stock has not been verified; do not call it zero.
 7. query: pass ONLY product identifier.
 8. 🔒 SUBSTITUTION GATE (non-negotiable):
@@ -2014,7 +2018,7 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
    - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.
 📷 If the customer sends any IMAGE (whether uploaded as a photo, doc screenshot, or any file) → You must interpret the intent of the image first:
 - If interpreted as a "Purchase Order / PO / order document / order summary": DO NOT suggest similar items or alternatives under any circumstances! Acknowledge receipt, state that you have forwarded the document to the team (do not list/repeat items or quantities), and call capture_lead (put the PO/order details in the note) to notify the sales team. Never use a product from old chat history as a substitute for the document contents.
-- For a bank transfer slip/payment receipt, classify [[IMAGE:payment_receipt]]. Never transcribe it, confirm payment, call tools, or claim accounting received it. Code creates a review request and renders only its verified status.
+- For a bank transfer slip/payment receipt, call only classify_inbound_image with kind=payment_receipt or return only [[IMAGE:payment_receipt]]. Code creates the review request. Do not transcribe the receipt or confirm payment.
 - If it is any other image (e.g., product photo, physical workpiece, general usage example): Describe what you see briefly and call find_products to recommend matching or related products to the customer. Never invent price/specs from a photo.
 📦 Fields: stock (0=made to order, null=not verified), in_stock, min_order_qty (always use), unit.
 
@@ -2053,13 +2057,17 @@ function buildSystemPrompt(
 
 interface GeminiStreamResult { fullText: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }>; allParts: unknown[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; model: string; }
 
-async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
+async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void, classifyImage: boolean): Promise<GeminiStreamResult> {
   const toolConfig = tools.length > 0 ? { tools } : {};
   const res = await fetch(`${GEMINI_BASE}/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] }, contents, ...toolConfig,
-      generationConfig: { temperature: 0, maxOutputTokens: TOKEN_OPTIMIZATION_ENABLED ? 512 : 1024, topP: 0.95 },
+      generationConfig: {
+        temperature: 0, maxOutputTokens: TOKEN_OPTIMIZATION_ENABLED ? 512 : 1024, topP: 0.95,
+        // Make the first image turn's output budget available for classification.
+        ...(classifyImage ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+      },
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -2111,11 +2119,11 @@ async function streamGeminiOnce(apiKey: string, model: string, systemPrompt: str
   return { fullText, toolCalls, allParts, usage, model };
 }
 
-async function streamGeminiWithFallback(apiKey: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void): Promise<GeminiStreamResult> {
+async function streamGeminiWithFallback(apiKey: string, systemPrompt: string, contents: unknown[], tools: unknown[], onText: (chunk: string) => void, classifyImage: boolean): Promise<GeminiStreamResult> {
   let lastErr: Error | null = null;
   for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt < RETRY_PER_MODEL; attempt++) {
-      try { return await streamGeminiOnce(apiKey, model, systemPrompt, contents, tools, onText); }
+      try { return await streamGeminiOnce(apiKey, model, systemPrompt, contents, tools, onText, classifyImage); }
       catch (e) {
         lastErr = e as Error;
         const msg = (e as Error).message ?? "";
@@ -2217,10 +2225,9 @@ async function loadVerifiedChatHistory(
         .replace(/📄[^\n]*\n?/gu, "")
         .replace(/ดูรายละเอียดและดาวน์โหลด[^\n]*\n?/gu, "")
         .trim();
-      // Keep the full offered page so its final "show more" button and all
-      // numbered choices can be verified on the next customer turn.
+      // Preserve the reserved action and numbered choices for the next turn.
       const content = cleaned.slice(0,
-        /ตัวเลือกสินค้า\s*หน้า|Catalog options page/iu.test(cleaned) ? 4_500 : MAX_HISTORY_ITEM_CHARS);
+        PRODUCT_OPTIONS_MENU_RE.test(cleaned) ? 4_500 : MAX_HISTORY_ITEM_CHARS);
       return { role: row.sender_type === "customer" ? "user" : "assistant",
         content: row.sender_type === "agent" && content ? `[เจ้าหน้าที่]\n${content}` : content,
         ...(row.sender_type === "bot" && row.metadata?.verified_product ? { verified_product: row.metadata.verified_product } : {}) };
@@ -2375,7 +2382,9 @@ Deno.serve(async (req: Request) => {
     const row = (item ?? {}) as Record<string, unknown>;
     const remaining = trustedHistoryChars - historyChars;
     if (remaining <= 0) break;
-    const content = String(row.content ?? "").trim().slice(0, Math.min(MAX_HISTORY_ITEM_CHARS, remaining));
+    const rawContent = String(row.content ?? "").trim();
+    const itemLimit = row.role === "assistant" && PRODUCT_OPTIONS_MENU_RE.test(rawContent) ? 4_500 : MAX_HISTORY_ITEM_CHARS;
+    const content = rawContent.slice(0, Math.min(itemLimit, remaining));
     if (!content) continue;
     history.unshift({ role: row.role === "assistant" ? "assistant" : "user", content,
       ...(internalServiceCall && row.verified_product ? { verified_product: row.verified_product } : {}) });
@@ -2647,10 +2656,11 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
     : null;
   const trustedQuoteHistory = Boolean(trustedConversationId || persistedHistory !== null);
   const contextHistory = persistedHistory ?? history;
-  const activeContext = activeItemContext(query, trustedQuoteHistory ? contextHistory : []);
+  const declinedOptions = trustedQuoteHistory && images.length === 0 && declinedProductOptions(query, contextHistory);
+  const activeContext = activeItemContext(declinedOptions ? "" : query, trustedQuoteHistory ? contextHistory : []);
   const latestTurn = images.length > 0 || !CHAT_LATEST_TURN_ROUTING_ENABLED
     ? { kind: "follow_up", history: contextHistory, topicQuery: null }
-    : routeLatestTurn(query, contextHistory);
+    : routeLatestTurn(declinedOptions ? "6" : query, contextHistory);
   const productHistory = latestTurn.history.slice(-MAX_HISTORY_ITEMS);
   if (activeContext.quote_pending && activeContext.quote_evidence && trustedQuoteHistory
     && !productHistory.some(item => item.role === "user" && /ใบเสนอราคา|quotation|\bquote\b/iu.test(item.content))) {
@@ -2698,9 +2708,15 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
     return;
   }
   const reviewActiveItem = async (kind: string) => {
-    const summary = `${query}\n${JSON.stringify({ identity: activeContext.identity, facts: activeContext.facts, missing: activeContext.missing, conflicting: activeContext.conflicting, conflict_evidence: activeContext.conflict_evidence })}`;
+    const details = JSON.stringify({ identity: activeContext.identity, facts: activeContext.facts, missing: activeContext.missing, conflicting: activeContext.conflicting, conflict_evidence: activeContext.conflict_evidence });
+    const summary = declinedOptions
+      ? `ลูกค้าเลือกข้อ 6: ไม่มีสินค้าที่ต้องการในตัวเลือก\n${productHistory.filter((turn) => turn.role === "user").slice(-3).map((turn) => turn.content).join("\n")}\n${details}`
+      : `${query}\n${details}`;
     const receipt = await createCriticalReview(admin, { conversationId, channel, query: summary, kind, readOnly });
-    const answer = lang === "th"
+    const handoffSaved = declinedOptions && (receipt.state === "queued" || receipt.state === "received");
+    const answer = handoffSaved
+      ? (lang === "th" ? "เอยส่งเรื่องให้เจ้าหน้าที่ช่วยตรวจหาสินค้าตามที่แจ้งแล้วนะคะ 😊" : "I’ve sent your request to our team to help find the product you need.")
+      : lang === "th"
       ? receipt.state === "queued" ? "บันทึกคำขอพร้อมสเปกและจำนวนที่แจ้งไว้ในคิวทีมงานแล้ว กำลังรอเจ้าหน้าที่รับเรื่องค่ะ"
         : receipt.state === "received" ? "เจ้าหน้าที่รับคำขอพร้อมสเปกและจำนวนที่แจ้งแล้ว กำลังรอผลตรวจสอบค่ะ"
         : receipt.state === "read_only" ? "โหมดทดสอบ ไม่มีการส่งคำขอให้ทีมงานจริงค่ะ"
@@ -2709,10 +2725,10 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
         : receipt.state === "received" ? "A staff member accepted the request. Verification is still pending."
         : receipt.state === "read_only" ? "Read-only test: no staff request was sent."
         : "There is no verified receipt for the staff request yet. Please try again here.";
-    finishContextReply(answer, "guardrail:active_item_review");
+    finishContextReply(answer, declinedOptions ? "guardrail:product_options_handoff" : "guardrail:active_item_review");
   };
-  if (activeContext.human_requested || activeContext.conflicting.length > 0) {
-    await reviewActiveItem(activeContext.human_requested ? "human_request" : "product_specification");
+  if (declinedOptions || activeContext.human_requested || activeContext.conflicting.length > 0) {
+    await reviewActiveItem(declinedOptions || activeContext.human_requested ? "human_request" : "product_specification");
     return;
   }
   if (activeContext.multiple) {
@@ -3174,7 +3190,7 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
       // This prevents eager prose from reaching the customer before product
       // selection and mutating-tool guards have been applied.
       iterText += chunk;
-    });
+    }, images.length > 0 && iter === 0);
     llm_ms += Date.now() - llmStartedAt;
     usedModel = r.model;
     usage.prompt_tokens += r.usage.prompt_tokens;
@@ -3450,6 +3466,7 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
     if (!productSelectionPending && verifiedZeroStockProduct) {
       fullAnswer = withVerifiedZeroStockLabel(fullAnswer, verifiedZeroStockProduct, lang);
     }
+    if (isProductOptionsReply(fullAnswer)) fullAnswer = formatProductOptions(fullAnswer, lang);
     fullAnswer = withQuoteQuickReplies(fullAnswer, lang);
   }
   // Last gate, after every response transformation and before streaming or

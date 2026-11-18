@@ -13,6 +13,52 @@ const EXPLICIT_VARIANT_RE = new RegExp(
 const VARIANT_QUESTION_RE = /(?:สินค้านี้|product).*(?:ขนาด|size|เบอร์ความละเอียด|grit|กี่รู|holes?|สักหลาด|หลังกาว|backing)|(?:ขนาด|size|เบอร์ความละเอียด|grit|กี่รู|holes?|สักหลาด|หลังกาว|backing).*(?:ต้องการ|need|which|what)/iu;
 const PRODUCT_HINT_RE = /(?:สินค้า|กระดาษทราย|ผ้าทราย|จานทราย|ล้อทราย|ใบขัด|หินเจียร|แผ่นขัด|แปรง|เทป|กาว|deerfos|mirka|paco|sia|3m|norton|vsm)/iu;
 
+export const PRODUCT_OPTIONS_MENU_RE = /^(?:#{1,6}[ \t]+)?(?:\*\*|__)?(?:ตัวเลือกสินค้า|Catalog options)(?:[ \t]+(?:หน้า|page)[ \t]*\d+\/\d+)?(?:\*\*|__)?[ \t]*\r?$/imu;
+const NO_MATCH_OPTION = { th: "ไม่มีสินค้าที่ต้องการในตัวเลือก", en: "None of these products match" };
+const NUMBERED_CHOICE_RE = /^[ \t]*(\d+)\.[ \t]+(.+)$/u;
+const isMenuControl = (label) => /^(?:แสดงเพิ่มเติม|Show more)$/iu.test(label) || Object.values(NO_MATCH_OPTION).includes(label);
+
+export function numberedChoices(text) {
+  return String(text ?? "").split(/\r?\n/u).flatMap((line) => {
+    const match = NUMBERED_CHOICE_RE.exec(line);
+    return match ? [{ number: Number(match[1]), label: match[2].trim() }] : [];
+  });
+}
+
+export function isProductOptionsReply(answer) {
+  if (PRODUCT_OPTIONS_MENU_RE.test(answer)) return true;
+  const intro = answer.split(/^[ \t]*1\.[ \t]+/mu, 1)[0];
+  if (!/เลือก[^\n]{0,40}(?:สินค้า|รุ่น|รายการ|ขนาด|เบอร์)|\b(?:choose|select)\b[^\n]{0,40}\b(?:product|item|model|size|grit)/iu.test(intro)) return false;
+  const choices = numberedChoices(answer).filter(({ label }) => !isMenuControl(label));
+  return choices.length > 0 && choices.every(({ label }) => PRODUCT_HINT_RE.test(label)
+    || EXPLICIT_VARIANT_RE.test(label) || extractModelCodes(label).length > 0 || /^หลัง(?:อ่อน|แข็ง)$/iu.test(label));
+}
+
+export function formatProductOptions(answer, lang = "th", offset = 0) {
+  const choices = [...new Set(numberedChoices(answer).map(({ label }) => label)
+    .filter((label) => !isMenuControl(label)))];
+  if (!choices.length) return answer;
+  const intro = answer.split(/\r?\n/u).filter((line) => !NUMBERED_CHOICE_RE.test(line)
+    && !PRODUCT_OPTIONS_MENU_RE.test(line) && !/^(?:หน้า|page)\s*\d+\/\d+\s*$/iu.test(line)).join("\n").trim();
+  const start = offset < choices.length ? offset : 0;
+  const options = choices.slice(start, start + 5).map((label, index) => `${index + 1}. ${label}`);
+  return [intro, lang === "th" ? "ตัวเลือกสินค้า" : "Catalog options", ...options,
+    `6. ${NO_MATCH_OPTION[lang === "th" ? "th" : "en"]}`].filter(Boolean).join("\n");
+}
+
+/** Only the reserved action on the immediately preceding bot menu is a handoff. */
+export function declinedProductOptions(query, history) {
+  const offer = history.at(-1);
+  if (offer?.role !== "assistant" || /^\[เจ้าหน้าที่\]/u.test(offer.content)
+    || !PRODUCT_OPTIONS_MENU_RE.test(offer.content)) return false;
+  const choices = numberedChoices(offer.content);
+  const action = choices.at(-1);
+  if (choices[0]?.number !== 1 || action?.number !== 6 || !Object.values(NO_MATCH_OPTION).includes(action.label)) return false;
+  const text = String(query ?? "").trim();
+  return /^(?:ข้อ\s*)?6[.)]?(?:\s*(?:ครับ|ค่ะ|คะ))?$/u.test(text)
+    || text.replace(/^6\.\s*/u, "").toLowerCase() === action.label.toLowerCase();
+}
+
 function hasStrongProductIdentity(value) {
   const identity = String(value ?? "").trim();
   return /\b\d{7,}\b/u.test(identity) ||
@@ -74,19 +120,20 @@ function candidateLabel(candidate, lang) {
 }
 
 /** Return one deterministic customer question for every pending disposition. */
-export function pendingProductQuestion(result, lang = "th") {
+export function pendingProductQuestion(result, lang = "th", offset = 0) {
   const row = result && typeof result === "object" ? result : {};
   const provided = lang === "th" ? row.clarification_question_th : row.clarification_question_en;
-  if (typeof provided === "string" && provided.trim()) return provided.trim();
+  if (typeof provided === "string" && provided.trim()) return formatProductOptions(provided.trim(), lang, offset);
 
   const candidates = Array.isArray(row.clarification_candidates)
     ? row.clarification_candidates.map((candidate) => candidateLabel(candidate, lang)).filter(Boolean).slice(0, 5)
     : [];
   if (candidates.length > 0) {
     const choices = candidates.map((candidate, index) => `${index + 1}. ${candidate}`).join("\n");
-    return lang === "th"
+    const answer = lang === "th"
       ? `พบสินค้าที่ชื่อใกล้เคียงกันค่ะ รบกวนเลือกสินค้าที่ต้องการนะคะ\n${choices}`
       : `I found similar product names. Please choose the product you mean:\n${choices}`;
+    return formatProductOptions(answer, lang, offset);
   }
 
   return lang === "th"
