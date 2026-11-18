@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCategories, getProductsByCategory, getGroups, imagesOf, keywordsFromProducts, collectionArticle } from "@/lib/products";
-import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
+import { compactSeoTitle, getOrg, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
 import CollectionArticle from "@/components/CollectionArticle";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
@@ -9,6 +10,13 @@ import SearchBox from "@/components/SearchBox";
 
 export const revalidate = 300;
 export const dynamicParams = true;
+const PAGE_SIZE = 30;
+
+function pageNumber(value: string | string[] | undefined): number {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number.parseInt(raw || "1", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
 
 export function generateStaticParams() {
   // ISR generates the category on its first visit; the sitemap lists its URL.
@@ -17,24 +25,36 @@ export function generateStaticParams() {
 
 export async function generateMetadata({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ page?: string | string[] }>;
 }): Promise<Metadata> {
   const { slug } = await params;
+  const query = await searchParams;
+  const page = pageNumber(query.page);
   const cats = await getCategories();
   const cat = cats.find((c) => c.slug === slug);
   if (!cat) return { title: "ไม่พบหมวดหมู่" };
   const products = await getProductsByCategory(slug);
   return {
-    title: `${cat.name_th} – สินค้าทั้งหมด`,
+    title: compactSeoTitle(`${cat.name_th} – สินค้า${page > 1 ? ` หน้า ${page}` : ""}`),
     description: `รวมสินค้าหมวด ${cat.name_th} จาก JNAC ${products.length} รายการ พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — ขอใบเสนอราคาได้ทันที`,
     keywords: keywordsFromProducts(products, [cat.name_th, cat.name_en || ""]),
-    alternates: { canonical: `/c/${encodeURIComponent(slug)}` },
+    alternates: { canonical: `/c/${encodeURIComponent(slug)}${page > 1 ? `?page=${page}` : ""}` },
   };
 }
 
-export default async function CategoryPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function CategoryPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ page?: string | string[] }>;
+}) {
   const { slug } = await params;
+  const query = await searchParams;
+  const currentPage = pageNumber(query.page);
   const cats = await getCategories();
   const cat = cats.find((c) => c.slug === slug);
   if (!cat) notFound();
@@ -89,6 +109,9 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
     })),
   ];
   entries.sort((a, b) => a.sort.localeCompare(b.sort, "th"));
+  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+  if (currentPage > pageCount) notFound();
+  const visibleEntries = entries.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
     <>
@@ -115,8 +138,29 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
           <SearchBox variant="page" />
         </div>
         <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {entries.map((e) => e.el)}
+          {visibleEntries.map((e) => e.el)}
         </div>
+        {pageCount > 1 && (
+          <nav className="mt-8 flex items-center justify-center gap-3" aria-label="หน้ารายการสินค้า">
+            {currentPage > 1 ? (
+              <Link
+                href={`/c/${encodeURIComponent(slug)}${currentPage === 2 ? "" : `?page=${currentPage - 1}`}`}
+                className="rounded-full border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-700 hover:border-[#0879BD] hover:text-[#0879BD]"
+              >
+                ← หน้าก่อน
+              </Link>
+            ) : <span />}
+            <span className="text-sm text-neutral-500">หน้า {currentPage} จาก {pageCount}</span>
+            {currentPage < pageCount ? (
+              <Link
+                href={`/c/${encodeURIComponent(slug)}?page=${currentPage + 1}`}
+                className="rounded-full border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-700 hover:border-[#0879BD] hover:text-[#0879BD]"
+              >
+                หน้าถัดไป →
+              </Link>
+            ) : <span />}
+          </nav>
+        )}
         {products.length === 0 && (
           <p className="mt-10 text-center text-neutral-400">ยังไม่มีสินค้าในหมวดนี้</p>
         )}

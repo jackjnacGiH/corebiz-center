@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { unstable_cache } from "next/cache";
 import { effectivePrice } from "./format";
 import { normalizeSku, type SProduct } from "./products";
 
@@ -6,6 +7,13 @@ export const SITE = "https://www.jnac.online";
 // Storefront now lives at the site root (was /shop). Kept as a named export so
 // all the URL builders below stay one-line.
 export const SHOP = SITE;
+
+/** Keep page titles concise enough to fit the global " | JNAC" suffix. */
+export function compactSeoTitle(value: string, maxLength = 55): string {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, maxLength - 1).trimEnd()}…`;
+}
 
 export interface OrgInfo {
   business_name: string;
@@ -27,7 +35,7 @@ const FALLBACK_ORG: OrgInfo = {
   logo_url: null,
 };
 
-export async function getOrg(): Promise<OrgInfo> {
+const loadOrg = async (): Promise<OrgInfo> => {
   try {
     const { data } = await supabase
       .from("org_settings")
@@ -46,7 +54,11 @@ export async function getOrg(): Promise<OrgInfo> {
     /* fall through */
   }
   return FALLBACK_ORG;
-}
+};
+
+export const getOrg = unstable_cache(loadOrg, ["storefront-org"], {
+  revalidate: 300,
+});
 
 /** Wrap a JSON-LD object for dangerouslySetInnerHTML. */
 export function ld(obj: unknown): { __html: string } {

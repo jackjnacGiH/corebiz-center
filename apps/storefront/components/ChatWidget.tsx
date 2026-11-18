@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 const WIDGET_SRC = "https://www.jnac.online/widget?pos=br&offset=16";
 
 export default function ChatWidget() {
+  const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -28,6 +29,7 @@ export default function ChatWidget() {
     // Any page CTA can fire window event "corebiz:open-chat" to pop the chat
     // open in place (instead of opening the full /widget page in a new tab).
     function onOpenChat() {
+      setLoaded(true);
       setOpen(true);
       iframeRef.current?.contentWindow?.postMessage(
         { type: "corebiz-widget-cmd", action: "open" },
@@ -42,12 +44,39 @@ export default function ChatWidget() {
     };
   }, []);
 
+  function openChat() {
+    setLoaded(true);
+    setOpen(true);
+  }
+
+  if (!loaded) {
+    return (
+      <button
+        type="button"
+        onClick={openChat}
+        className="fixed bottom-5 right-5 z-[1000] inline-flex min-h-12 items-center gap-2 rounded-full bg-[#6D28D9] px-5 py-3 font-semibold text-white shadow-lg transition hover:bg-[#5B21B6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6D28D9]"
+        aria-label="เปิดแชทกับเอย ผู้ช่วย AI"
+      >
+        <span aria-hidden="true">💬</span>
+        แชทกับเอย
+      </button>
+    );
+  }
+
   return (
     <iframe
       ref={iframeRef}
       src={WIDGET_SRC}
       title="แชทกับเอย ผู้ช่วย AI"
       allow="clipboard-write"
+      onLoad={() => {
+        if (open) {
+          iframeRef.current?.contentWindow?.postMessage(
+            { type: "corebiz-widget-cmd", action: "open" },
+            "*",
+          );
+        }
+      }}
       className={
         "fixed right-0 bottom-0 z-[1000] border-0 bg-transparent transition-[width,height] duration-200 " +
         (open

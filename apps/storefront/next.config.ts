@@ -13,6 +13,16 @@ const nextConfig: NextConfig = {
     cpus: 2,
     staticGenerationMaxConcurrency: 2,
   },
+  images: {
+    qualities: [55, 65, 75],
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "owoedccmuqnzdtxvywgt.supabase.co",
+        pathname: "/storage/v1/object/public/products/**",
+      },
+    ],
+  },
   async redirects() {
     return [
       // SEO continuity: the shop used to live under /shop.

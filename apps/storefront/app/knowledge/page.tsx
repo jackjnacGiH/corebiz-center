@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getOrg, ld, faqLd, SHOP, breadcrumbLd } from "@/lib/seo";
 import { Breadcrumb } from "@/components/ui";
 import OpenChatButton from "@/components/OpenChatButton";
+import { ABRASIVES_TOPIC_GUIDES } from "@/lib/crossSiteGuides";
 
 export const revalidate = 3600;
 
@@ -10,9 +11,9 @@ const NAVY = "#0C3C63";
 const BRAND = "#1696F4";
 
 export const metadata: Metadata = {
-  title: "ศูนย์ความรู้ (AIO) — เลือกใช้วัสดุงานขัด ตัด เจียร ให้ถูกงาน | JNAC",
+  title: "คู่มือช่วยเลือกวัสดุขัดและสินค้า",
   description:
-    "ศูนย์ความรู้ JNAC: วิธีเลือกเบอร์กระดาษทราย/จานทราย, ขัดสแตนเลส, ความเร็วรอบ (RPM) ที่ปลอดภัย, งานไม้/โลหะ และคำถามที่พบบ่อย พร้อมผู้ช่วย AI ‘เอย’ ตอบทันที",
+    "คู่มือช่วยเลือกวัสดุงานขัด ตัด เจียร เปรียบเทียบสินค้า และเชื่อมไปยังบทความเชิงลึกของ J NAC ก่อนขอใบเสนอราคา",
   alternates: { canonical: "/knowledge" },
 };
 
@@ -50,14 +51,14 @@ export default async function Knowledge() {
       <script type="application/ld+json" dangerouslySetInnerHTML={ld(faqLd(KB))} />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={ld(breadcrumbLd([{ name: "หน้าแรก", url: SHOP }, { name: "ศูนย์ความรู้ (AIO)", url: `${SHOP}/knowledge` }]))}
+        dangerouslySetInnerHTML={ld(breadcrumbLd([{ name: "หน้าแรก", url: SHOP }, { name: "คู่มือช่วยเลือกสินค้า", url: `${SHOP}/knowledge` }]))}
       />
       <main id="main-content" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
-        <Breadcrumb items={[{ name: "หน้าแรก", href: "/" }, { name: "ศูนย์ความรู้ (AIO)" }]} />
-        <h1 className="text-2xl sm:text-3xl font-extrabold" style={{ color: NAVY }}>ศูนย์ความรู้ (AIO)</h1>
+        <Breadcrumb items={[{ name: "หน้าแรก", href: "/" }, { name: "คู่มือช่วยเลือกสินค้า" }]} />
+        <h1 className="text-2xl sm:text-3xl font-extrabold" style={{ color: NAVY }}>คู่มือช่วยเลือกสินค้า JNAC</h1>
         <p className="mt-3 text-neutral-600 leading-relaxed">
-          คลังความรู้สำหรับเลือกใช้วัสดุงานขัด ตัด เจียร เครื่องมือ และพลาสติกวิศวกรรมให้ถูกกับงาน
-          มีคำถามเพิ่มเติม ถามผู้ช่วย AI “เอย” ของ {org.business_name} ได้ทันที
+          เริ่มจากคู่มือเปรียบเทียบเพื่อเลือกสินค้าให้ตรงกับวัสดุและลักษณะงาน แล้วอ่านบทความเชิงลึกจากเว็บไซต์บริษัท
+          หากยังไม่แน่ใจ ถามผู้ช่วย AI “เอย” ของ {org.business_name} ได้ทันที
         </p>
 
         {/* Ask the AI */}
@@ -85,6 +86,30 @@ export default async function Knowledge() {
           >
             ดูหน้าคู่มือเปรียบเทียบ →
           </Link>
+        </section>
+
+        <section className="mt-8" aria-labelledby="expert-articles">
+          <h2 id="expert-articles" className="text-xl font-bold" style={{ color: NAVY }}>
+            บทความเชิงลึกจาก jnac.co.th
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-neutral-600">
+            อ่านหลักการเลือกใช้และความปลอดภัยจากเว็บไซต์บริษัท แล้วกลับมาเลือกสินค้าและขอใบเสนอราคาที่ jnac.online
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {ABRASIVES_TOPIC_GUIDES.map((guide) => (
+              <a
+                key={guide.href}
+                href={guide.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-xl border border-neutral-200 bg-white p-5 transition hover:border-[#1696F4] hover:shadow-sm"
+              >
+                <h3 className="font-semibold" style={{ color: NAVY }}>{guide.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-neutral-600">{guide.description}</p>
+                <span className="mt-3 inline-flex text-sm font-semibold text-[#0879BD]">{guide.cta} →</span>
+              </a>
+            ))}
+          </div>
         </section>
 
         {/* Knowledge / FAQ */}
