@@ -11,6 +11,7 @@ import {
   productArticle,
 } from "@/lib/products";
 import {
+  compactSeoTitle,
   getOrg,
   ld,
   productLd,
@@ -28,6 +29,7 @@ import SearchBox from "@/components/SearchBox";
 import TierPrice from "@/components/TierPrice";
 import Link from "next/link";
 import { findComparisonsForText } from "@/lib/comparisons";
+import { getProductCrossSiteGuide } from "@/lib/crossSiteGuides";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -50,7 +52,7 @@ export async function generateMetadata({
   if (!p) return { title: "ไม่พบสินค้า" };
   const org = await getOrg();
   const desc = productSummary(p, org.business_name).slice(0, 155);
-  const title = `${p.name_th}${p.brand ? ` (${p.brand})` : ""} ราคา ${formatTHB(effectivePrice(p))}`;
+  const title = compactSeoTitle(`${p.name_th}${p.brand ? ` (${p.brand})` : ""}`);
   const imgs = imagesOf(p);
   return {
     title,
@@ -95,6 +97,11 @@ export default async function ProductPage({
       ...(p.tags ?? []),
       ...(p.feature_tags ?? []),
     ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const crossSiteGuide = getProductCrossSiteGuide(
+    [p.name_th, p.name_en, p.category_name_th, p.group_name, ...(p.tags ?? [])]
       .filter(Boolean)
       .join(" "),
   );
@@ -321,6 +328,31 @@ export default async function ProductPage({
             ))}
           </article>
         </section>
+
+        {crossSiteGuide && (
+          <section
+            className="mt-16 max-w-4xl rounded-2xl border border-sky-200 bg-white p-6 shadow-sm sm:p-8"
+            aria-labelledby="jnac-knowledge-guide"
+          >
+            <p className="text-xs font-bold uppercase tracking-wide text-[#0879BD]">
+              {crossSiteGuide.eyebrow}
+            </p>
+            <h2 id="jnac-knowledge-guide" className="mt-2 text-2xl font-bold text-[#0C3C63]">
+              {crossSiteGuide.title}
+            </h2>
+            <p className="mt-3 max-w-3xl leading-relaxed text-neutral-700">
+              {crossSiteGuide.description}
+            </p>
+            <a
+              href={crossSiteGuide.href}
+              target="_blank"
+              rel="noopener"
+              className="mt-5 inline-flex min-h-11 items-center rounded-lg bg-[#0C3C63] px-5 py-3 font-semibold text-white transition hover:bg-[#082F4D] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0879BD]"
+            >
+              {crossSiteGuide.cta} ↗
+            </a>
+          </section>
+        )}
 
         {relatedComparisons.length > 0 && (
           <section className="mt-16 max-w-4xl rounded-2xl border border-sky-100 bg-sky-50 p-6 sm:p-8" aria-labelledby="related-comparisons">

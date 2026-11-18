@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import type { SProduct } from "@/lib/products";
 import { imagesOf } from "@/lib/products";
 import { effectivePrice, formatTHB } from "@/lib/format";
@@ -293,8 +294,15 @@ export function Nav({ org }: { org: OrgInfo }) {
       <div className="relative max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex h-16 items-center gap-2 sm:gap-3">
         <Link href="/" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="JNAC หน้าแรก">
           {org.logo_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={org.logo_url} alt={org.business_name} className="w-9 h-9 object-contain flex-shrink-0 brightness-0 invert" />
+            <Image
+              src={org.logo_url}
+              alt={org.business_name}
+              width={112}
+              height={44}
+              sizes="(min-width: 640px) 112px, 96px"
+              quality={65}
+              className="h-10 w-24 flex-shrink-0 rounded-md bg-white p-1 object-contain sm:h-11 sm:w-28"
+            />
           ) : (
             <span className="w-9 h-9 rounded-md grid place-items-center font-bold flex-shrink-0 bg-white/15 text-white">J</span>
           )}

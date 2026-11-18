@@ -10,9 +10,9 @@ const NAVY = "#0C3C63";
 const BRAND = "#0879BD";
 
 export const metadata: Metadata = {
-  title: "ศูนย์รวมสินค้าอุตสาหกรรม ขัด ตัด เจียร · Tool · พลาสติกวิศวกรรม · CNC",
+  title: "สินค้าอุตสาหกรรม ขัด ตัด เจียร และ CNC",
   description:
-    "J NAC (Thailand) จำหน่ายสินค้าอุตสาหกรรม เครื่องมือ Tool พลาสติกวิศวกรรม และบริการงาน CNC ครบวงจร — งานกลึง กัด โมลด์ จิ๊ก ฟิกซ์เจอร์ ชิ้นส่วนเครื่องจักรและอะไหล่แต่งตามสั่ง",
+    "JNAC จำหน่ายสินค้าอุตสาหกรรมสำหรับงานขัด ตัด เจียร เครื่องมือ พลาสติกวิศวกรรม และบริการ CNC พร้อมข้อมูลสินค้าและช่องทางขอใบเสนอราคา",
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
@@ -45,10 +45,12 @@ export default async function Home() {
       {/* Hero */}
       <section className="relative flex min-h-[calc(100svh-4rem)] items-center overflow-hidden py-16 text-white sm:min-h-[680px] lg:min-h-[720px]" style={{ backgroundColor: NAVY }}>
         <Image
-          src="/hero.png"
+          src="/hero.webp"
           alt="ภาพประกอบงานขัดและเจียรในโรงงานอุตสาหกรรม"
           fill
           priority
+          fetchPriority="high"
+          quality={55}
           sizes="100vw"
           className="object-cover object-center"
         />

@@ -63,7 +63,7 @@ export default function QuoteDoc({
         <div className="flex items-start gap-3 min-w-0">
           {org?.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={org.logo_url} alt="โลโก้" className="w-12 h-12 flex-shrink-0 object-contain" />
+            <img src={org.logo_url} alt="โลโก้" className="w-28 h-12 flex-shrink-0 object-contain object-left" />
           ) : (
             <JnacLogo className="w-12 h-12 flex-shrink-0" />
           )}

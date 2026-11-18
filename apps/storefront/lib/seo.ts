@@ -7,6 +7,13 @@ export const SITE = "https://www.jnac.online";
 // all the URL builders below stay one-line.
 export const SHOP = SITE;
 
+/** Keep page titles concise enough to fit the global " | JNAC" suffix. */
+export function compactSeoTitle(value: string, maxLength = 55): string {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 export interface OrgInfo {
   business_name: string;
   address: string | null;

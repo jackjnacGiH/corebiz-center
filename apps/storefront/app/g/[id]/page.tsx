@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getGroupById, getProductsByGroup, keywordsFromProducts, collectionArticle } from "@/lib/products";
-import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
+import { compactSeoTitle, getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
 import CollectionArticle from "@/components/CollectionArticle";
 import { Breadcrumb } from "@/components/ui";
 import ProductViews from "@/components/ProductViews";
@@ -29,7 +29,7 @@ export async function generateMetadata({
     (group.description && group.description.trim()) ||
     `รวมสินค้ากลุ่ม ${group.name} จาก JNAC ${products.length} รายการ พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — ขอใบเสนอราคาได้ทันที`;
   return {
-    title: `${group.name} – สินค้าทั้งหมดในกลุ่ม`,
+    title: compactSeoTitle(`${group.name} – กลุ่มสินค้า`),
     description: desc.slice(0, 155),
     keywords: keywordsFromProducts(products, [group.name]),
     alternates: { canonical: `/g/${encodeURIComponent(group.id)}` },
@@ -41,7 +41,7 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
   const group = await getGroupById(decodeURIComponent(id));
   if (!group) notFound();
   const [products, org] = await Promise.all([getProductsByGroup(group.id), getOrg()]);
-  const crossSiteGuide = getGroupCrossSiteGuide(group.id);
+  const crossSiteGuide = getGroupCrossSiteGuide(group.id, group.name);
 
   return (
     <>
