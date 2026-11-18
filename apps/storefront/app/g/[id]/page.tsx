@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getGroups, getGroupById, getProductsByGroup, keywordsFromProducts, collectionArticle } from "@/lib/products";
+import { getGroupById, getProductsByGroup, keywordsFromProducts, collectionArticle } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
 import CollectionArticle from "@/components/CollectionArticle";
 import { Breadcrumb } from "@/components/ui";
@@ -11,9 +11,9 @@ import { getGroupCrossSiteGuide } from "@/lib/crossSiteGuides";
 export const revalidate = 300;
 export const dynamicParams = true;
 
-export async function generateStaticParams() {
-  const groups = await getGroups();
-  return groups.map((g) => ({ id: g.id }));
+export function generateStaticParams() {
+  // ISR generates the group on its first visit; the sitemap lists its URL.
+  return [];
 }
 
 export async function generateMetadata({

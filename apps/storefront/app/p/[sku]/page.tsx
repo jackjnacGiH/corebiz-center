@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import {
   getProductBySku,
-  getAllSkus,
   imagesOf,
   productSummary,
   detailBullets,
@@ -35,9 +34,10 @@ export const dynamicParams = true;
 
 const BRAND = "#1696F4";
 
-export async function generateStaticParams() {
-  const skus = await getAllSkus();
-  return skus.map((sku) => ({ sku }));
+export function generateStaticParams() {
+  // Let ISR generate each SKU on its first visit instead of reading the whole
+  // catalog during every build. The sitemap still lists the product URLs.
+  return [];
 }
 
 export async function generateMetadata({

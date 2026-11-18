@@ -71,11 +71,6 @@ export async function getAllProducts(): Promise<SProduct[]> {
     .order("is_featured", { ascending: false }).order("name_th").order("id"))).map(sanitizePublicProduct);
 }
 
-export async function getAllSkus(): Promise<string[]> {
-  const rows = await readAll<{ sku: string }>(() => supabase.from("storefront_products").select("sku,id").order("sku").order("id"));
-  return [...new Set(rows.map(r => normalizeSku(r.sku)).filter(Boolean))];
-}
-
 export async function getProductBySku(sku: string): Promise<SProduct | null> {
   const normalizedSku = normalizeSku(sku);
   if (!normalizedSku) return null;
