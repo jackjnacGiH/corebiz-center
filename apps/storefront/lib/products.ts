@@ -1,5 +1,4 @@
 import { supabase } from "./supabase";
-import { unstable_cache } from "next/cache";
 import { effectivePrice, formatTHB } from "./format";
 import type { OrgInfo } from "./seo";
 
@@ -86,25 +85,15 @@ export async function getProductBySku(sku: string): Promise<SProduct | null> {
   return matched ? sanitizePublicProduct(matched) : null;
 }
 
-const loadCategories = async (): Promise<SCategory[]> => {
+export async function getCategories(): Promise<SCategory[]> {
   return readAll<SCategory>(() => supabase.from("categories").select("slug,name_th,name_en")
     .eq("is_active", true).order("sort_order").order("id"));
-};
+}
 
-export const getCategories = unstable_cache(loadCategories, ["storefront-categories"], {
-  revalidate: 300,
-});
-
-const loadProductsByCategory = async (slug: string): Promise<SProduct[]> => {
+export async function getProductsByCategory(slug: string): Promise<SProduct[]> {
   return (await readAll<SProduct>(() => supabase.from("storefront_products").select(SELECT)
     .eq("category_slug", slug).order("name_th").order("id"))).map(sanitizePublicProduct);
-};
-
-export const getProductsByCategory = unstable_cache(
-  loadProductsByCategory,
-  ["storefront-products-by-category"],
-  { revalidate: 300 },
-);
+}
 
 /** Server search parses known kind/model/size/grit/backing facts and proven
  * spelling aliases. Explicit variants/SKUs must match; remaining words narrow
@@ -123,13 +112,9 @@ export async function searchProducts(q: string): Promise<SProduct[]> {
   }
 }
 
-const loadGroups = async (): Promise<SGroup[]> => {
+export async function getGroups(): Promise<SGroup[]> {
   return readAll<SGroup>(() => supabase.from("product_groups").select("id,name,cover_image,description").order("name").order("id"));
-};
-
-export const getGroups = unstable_cache(loadGroups, ["storefront-groups"], {
-  revalidate: 300,
-});
+}
 
 export async function getGroupById(id: string): Promise<SGroup | null> {
   const { data, error } = await supabase.from("product_groups").select("id,name,cover_image,description").eq("id", id).maybeSingle();

@@ -1,5 +1,4 @@
 import { supabase } from "./supabase";
-import { unstable_cache } from "next/cache";
 import { effectivePrice } from "./format";
 import { normalizeSku, type SProduct } from "./products";
 
@@ -35,7 +34,7 @@ const FALLBACK_ORG: OrgInfo = {
   logo_url: null,
 };
 
-const loadOrg = async (): Promise<OrgInfo> => {
+export async function getOrg(): Promise<OrgInfo> {
   try {
     const { data } = await supabase
       .from("org_settings")
@@ -54,11 +53,7 @@ const loadOrg = async (): Promise<OrgInfo> => {
     /* fall through */
   }
   return FALLBACK_ORG;
-};
-
-export const getOrg = unstable_cache(loadOrg, ["storefront-org"], {
-  revalidate: 300,
-});
+}
 
 /** Wrap a JSON-LD object for dangerouslySetInnerHTML. */
 export function ld(obj: unknown): { __html: string } {
