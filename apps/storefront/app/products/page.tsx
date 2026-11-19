@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { cloneElement } from "react";
 import Link from "next/link";
-import { getAllProducts, getCategories, getGroups, imagesOf } from "@/lib/products";
-import { getOrg, ld, itemListLd, breadcrumbLd, SHOP } from "@/lib/seo";
+import { imagesOf } from "@/lib/products";
+import { getCategoryCatalog } from "@/lib/categoryCatalog";
+import { ld, itemListLd, breadcrumbLd, SHOP } from "@/lib/seo";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
 import SearchBox from "@/components/SearchBox";
@@ -19,12 +20,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ProductsCatalog() {
-  const [groups, products, categories, org] = await Promise.all([
-    getGroups(),
-    getAllProducts(),
-    getCategories(),
-    getOrg(),
-  ]);
+  const { groups, products, categories, org } = await getCategoryCatalog();
 
   const counts = new Map<string, number>();
   const coverFallback = new Map<string, string>();
@@ -119,7 +115,7 @@ export default async function ProductsCatalog() {
             <span className="text-sm font-normal text-neutral-400">({entries.length} รายการ)</span>
           </h2>
           <CatalogGrid>
-            {entries.map((entry, index) => cloneElement(entry.el, { priority: index < 5 }))}
+            {entries.map((entry, index) => cloneElement(entry.el, { priority: index < 2 }))}
           </CatalogGrid>
         </section>
       </main>

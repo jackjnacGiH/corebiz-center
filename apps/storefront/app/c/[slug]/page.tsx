@@ -2,18 +2,20 @@ import type { Metadata } from "next";
 import { cache, cloneElement } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCategories, getProductsByCategory, getGroups, imagesOf, keywordsFromProducts, collectionArticle } from "@/lib/products";
-import { compactSeoTitle, getOrg, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
+import { imagesOf, keywordsFromProducts, collectionArticle } from "@/lib/products";
+import { getCategoryCatalog } from "@/lib/categoryCatalog";
+import { compactSeoTitle, ld, itemListLd, breadcrumbLd, SHOP, categoryUrl } from "@/lib/seo";
 import CollectionArticle from "@/components/CollectionArticle";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
 import SearchBox from "@/components/SearchBox";
 
 // searchParams pagination is request-specific, not an ISR fallback shell.
-export const dynamic = "force-dynamic";
+// searchParams still makes the route dynamic. Unlike force-dynamic, auto does
+// not disable the explicit public-data cache shared by the paginated pages.
+export const dynamic = "auto";
 const PAGE_SIZE = 30;
-const readCategories = cache(getCategories);
-const readCategoryProducts = cache(getProductsByCategory);
+const readCatalog = cache(getCategoryCatalog);
 
 function pageNumber(value: string | string[] | undefined): number {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -31,10 +33,10 @@ export async function generateMetadata({
   const { slug } = await params;
   const query = await searchParams;
   const page = pageNumber(query.page);
-  const cats = await readCategories();
-  const cat = cats.find((c) => c.slug === slug);
+  const catalog = await readCatalog();
+  const cat = catalog.categories.find((c) => c.slug === slug);
   if (!cat) return { title: "ไม่พบหมวดหมู่" };
-  const products = await readCategoryProducts(slug);
+  const products = catalog.products.filter((p) => p.category_slug === slug);
   return {
     title: compactSeoTitle(`${cat.name_th} – สินค้า${page > 1 ? ` หน้า ${page}` : ""}`),
     description: `รวมสินค้าหมวด ${cat.name_th} จาก JNAC ${products.length} รายการ พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — ขอใบเสนอราคาได้ทันที`,
@@ -53,14 +55,11 @@ export default async function CategoryPage({
   const { slug } = await params;
   const query = await searchParams;
   const currentPage = pageNumber(query.page);
-  const cats = await readCategories();
-  const cat = cats.find((c) => c.slug === slug);
+  const catalog = await readCatalog();
+  const cat = catalog.categories.find((c) => c.slug === slug);
   if (!cat) notFound();
-  const [products, groups, org] = await Promise.all([
-    readCategoryProducts(slug),
-    getGroups(),
-    getOrg(),
-  ]);
+  const { groups, org } = catalog;
+  const products = catalog.products.filter((p) => p.category_slug === slug);
 
   // Group-card merge (scoped to this category) — same UX as the catalog page.
   const counts = new Map<string, number>();
@@ -136,7 +135,7 @@ export default async function CategoryPage({
           <SearchBox variant="page" />
         </div>
         <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {visibleEntries.map((entry, index) => cloneElement(entry.el, { priority: index < 5 }))}
+          {visibleEntries.map((entry, index) => cloneElement(entry.el, { priority: index < 2 }))}
         </div>
         {pageCount > 1 && (
           <nav className="mt-8 flex items-center justify-center gap-3" aria-label="หน้ารายการสินค้า">
