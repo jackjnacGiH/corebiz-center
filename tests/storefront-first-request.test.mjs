@@ -90,3 +90,10 @@ test('product/group detail routes retain bounded ISR builds and use cached serve
   assert.ok(product.includes('variant={catalogImageVariant(imgs[0])}'));
   assert.ok(group.includes('card_image: catalogImageVariant(product.images?.[0])'));
 });
+
+test('independent company, product and group data starts in parallel, not a serial page waterfall',()=>{
+  const product=source('app/p/[sku]/page.tsx'),group=source('app/g/[id]/page.tsx');
+  assert.equal(product.split('Promise.all([getProductBySku(decodeURIComponent(sku)), getOrg()])').length-1,2);
+  assert.ok(group.includes('Promise.all([getGroupById(groupId), getProductsByGroup(groupId)])'));
+  assert.ok(group.includes('Promise.all([getGroupById(groupId), getProductsByGroup(groupId), getOrg()])'));
+});

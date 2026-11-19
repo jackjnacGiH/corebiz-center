@@ -50,9 +50,8 @@ export async function generateMetadata({
   params: Promise<{ sku: string }>;
 }): Promise<Metadata> {
   const { sku } = await params;
-  const p = await getProductBySku(decodeURIComponent(sku));
+  const [p, org] = await Promise.all([getProductBySku(decodeURIComponent(sku)), getOrg()]);
   if (!p) return { title: "ไม่พบสินค้า" };
-  const org = await getOrg();
   const desc = productSummary(p, org.business_name).slice(0, 155);
   const title = compactSeoTitle(`${p.name_th}${p.brand ? ` (${p.brand})` : ""}`);
   const imgs = imagesOf(p);
@@ -77,9 +76,8 @@ export default async function ProductPage({
   params: Promise<{ sku: string }>;
 }) {
   const { sku } = await params;
-  const p = await getProductBySku(decodeURIComponent(sku));
+  const [p, org] = await Promise.all([getProductBySku(decodeURIComponent(sku)), getOrg()]);
   if (!p) notFound();
-  const org = await getOrg();
 
   const imgs = imagesOf(p);
   const summary = productSummary(p, org.business_name);
