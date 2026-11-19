@@ -1,6 +1,8 @@
 import { supabase } from "./supabase";
 import { effectivePrice } from "./format";
 import { normalizeSku, type SProduct } from "./products";
+import { cache } from "react";
+import { unstable_cache } from "next/cache";
 
 export const SITE = "https://www.jnac.online";
 // Storefront now lives at the site root (was /shop). Kept as a named export so
@@ -34,26 +36,33 @@ const FALLBACK_ORG: OrgInfo = {
   logo_url: null,
 };
 
-export async function getOrg(): Promise<OrgInfo> {
-  try {
-    const { data } = await supabase
-      .from("org_settings")
-      .select("business_name,address,tax_id,phone,email,website,logo_url")
-      .limit(1)
-      .maybeSingle();
-    if (data) {
-      const d = data as Partial<OrgInfo>;
-      return {
-        ...FALLBACK_ORG,
-        ...d,
-        business_name: d.business_name || FALLBACK_ORG.business_name,
-      };
-    }
-  } catch {
-    /* fall through */
+const readOrg = unstable_cache(async (): Promise<OrgInfo> => {
+  const { data, error } = await supabase
+    .from("org_settings")
+    .select("business_name,address,tax_id,phone,email,website,logo_url")
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`org_unavailable: ${error.message}`);
+  if (data) {
+    const d = data as Partial<OrgInfo>;
+    return {
+      ...FALLBACK_ORG,
+      ...d,
+      business_name: d.business_name || FALLBACK_ORG.business_name,
+    };
   }
   return FALLBACK_ORG;
-}
+}, ["storefront-org-v1"], { revalidate: 300, tags: ["storefront-org"] });
+
+export const getOrg = cache(async (): Promise<OrgInfo> => {
+  try {
+    return await readOrg();
+  } catch {
+    // A failed refresh must not replace the last-good shared cache entry with
+    // a fallback identity. First-load outages retain the previous safe fallback.
+    return FALLBACK_ORG;
+  }
+});
 
 /** Wrap a JSON-LD object for dangerouslySetInnerHTML. */
 export function ld(obj: unknown): { __html: string } {

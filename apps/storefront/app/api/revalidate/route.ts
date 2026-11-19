@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,8 @@ function handle(req: NextRequest) {
   // Revalidate the whole /shop subtree so product / group / category / home
   // pages pick up the latest data from คลังสินค้า on the next request.
   revalidatePath("/", "layout");
+  revalidateTag("storefront-public-catalog", { expire: 0 });
+  revalidateTag("storefront-org", { expire: 0 });
   return NextResponse.json({ ok: true, revalidated: true });
 }
 

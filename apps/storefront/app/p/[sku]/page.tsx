@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import CatalogImage from "@/components/CatalogImage";
 import { catalogImageVariant } from "@/lib/catalogImages";
 import { notFound } from "next/navigation";
+import { getCatalogProductBySku as getProductBySku } from "@/lib/catalogPages";
 import {
-  getProductBySku,
   imagesOf,
   productSummary,
   detailBullets,
