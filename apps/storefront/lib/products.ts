@@ -74,6 +74,14 @@ export async function getAllProducts(): Promise<SProduct[]> {
     .order("is_featured", { ascending: false }).order("name_th").order("id"))).map(sanitizePublicProduct);
 }
 
+// Preserve the database's name/id collation when deriving group pages from a
+// shared snapshot; the catalog itself retains its featured-first ordering.
+export async function getPublicProductOrder(): Promise<string[]> {
+  const rows = await readAll<{ id: string }>(() => supabase.from("storefront_products").select("id")
+    .order("name_th").order("id"));
+  return rows.map(row => row.id);
+}
+
 export async function getProductBySku(sku: string): Promise<SProduct | null> {
   const normalizedSku = normalizeSku(sku);
   if (!normalizedSku) return null;

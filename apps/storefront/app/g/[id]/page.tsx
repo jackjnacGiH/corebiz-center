@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getGroupById, getProductsByGroup, keywordsFromProducts, collectionArticle } from "@/lib/products";
+import { keywordsFromProducts, collectionArticle } from "@/lib/products";
+import { getCatalogGroupById as getGroupById, getCatalogProductsByGroup as getProductsByGroup } from "@/lib/catalogPages";
 import { compactSeoTitle, getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
 import CollectionArticle from "@/components/CollectionArticle";
 import { Breadcrumb } from "@/components/ui";

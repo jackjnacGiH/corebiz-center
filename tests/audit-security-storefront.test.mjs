@@ -70,7 +70,7 @@ test('actual deployed-derived write/push handlers reject forbidden identities be
 });
 
 test('JSON-LD safely round-trips Thai text while removing literal script terminators',()=>{
-  const exports={};runInNewContext(compile('../apps/storefront/lib/seo.ts'),{exports,require:()=>({})});
+  const exports={};runInNewContext(compile('../apps/storefront/lib/seo.ts'),{exports,require:name=>name==='react'?{cache:fn=>fn}:name==='next/cache'?{unstable_cache:fn=>fn}:{}});
   const obj={name:'ไทย </script><script>inert</script>\u2028&'};
   const html=exports.ld(obj).__html;
   assert.ok(!html.includes('<'));
