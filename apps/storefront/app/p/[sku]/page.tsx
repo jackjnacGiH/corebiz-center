@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import CatalogImage from "@/components/CatalogImage";
+import { catalogImageVariant } from "@/lib/catalogImages";
 import { notFound } from "next/navigation";
 import {
   getProductBySku,
@@ -163,8 +165,7 @@ export default async function ProductPage({
           <div className="flex flex-col gap-4">
             <div className="aspect-square bg-white rounded-2xl border border-neutral-200 overflow-hidden flex items-center justify-center relative">
               {imgs[0] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={imgs[0]} alt={p.name_th} className="object-contain w-full h-full p-8" />
+                <CatalogImage src={imgs[0]} alt={p.name_th} variant={catalogImageVariant(imgs[0])} priority sizes="(min-width: 1024px) 600px, 100vw" className="object-contain w-full h-full p-8" />
               ) : (
                 <span className="text-neutral-300">ไม่มีรูปสินค้า</span>
               )}
@@ -172,6 +173,7 @@ export default async function ProductPage({
                 <StockBadge inStock={p.in_stock} />
               </span>
             </div>
+            {imgs[0] && <a href={imgs[0]} target="_blank" rel="noopener noreferrer" className="self-start text-sm font-semibold text-[#0879BD] underline underline-offset-4">เปิดรูปต้นฉบับ ↗</a>}
             {imgs.length > 1 && (
               <div className="grid grid-cols-4 gap-3">
                 {imgs.slice(0, 4).map((src, i) => (
@@ -179,8 +181,9 @@ export default async function ProductPage({
                     key={i}
                     className="aspect-square bg-white rounded-lg border border-neutral-200 p-2"
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt={`${p.name_th} รูปที่ ${i + 1}`} className="w-full h-full object-contain" />
+                    <a href={src} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
+                      <CatalogImage src={src} alt={`${p.name_th} รูปที่ ${i + 1}`} variant={catalogImageVariant(src)} sizes="(min-width: 1024px) 150px, 25vw" className="w-full h-full object-contain" />
+                    </a>
                   </div>
                 ))}
               </div>

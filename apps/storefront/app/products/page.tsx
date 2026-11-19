@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
+import { cloneElement } from "react";
 import Link from "next/link";
 import { getAllProducts, getCategories, getGroups, imagesOf } from "@/lib/products";
 import { getOrg, ld, itemListLd, breadcrumbLd, SHOP } from "@/lib/seo";
 import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
 import SearchBox from "@/components/SearchBox";
+import CatalogGrid from "@/components/CatalogGrid";
 
 export const revalidate = 300;
-
 export const metadata: Metadata = {
   title: "สินค้าทั้งหมด – แคตตาล็อก JNAC",
   description:
@@ -45,7 +46,7 @@ export default async function ProductsCatalog() {
   const visibleGroups = groups.filter((g) => (counts.get(g.id) ?? 0) > 0);
   const ungrouped = products.filter((p) => !p.group_id);
 
-  const entries: { key: string; sort: string; el: React.ReactNode }[] = [
+  const entries: { key: string; sort: string; el: React.ReactElement<{ priority?: boolean }> }[] = [
     ...visibleGroups.map((g) => ({
       key: `g-${g.id}`,
       sort: g.name,
@@ -117,9 +118,9 @@ export default async function ProductsCatalog() {
             รายการสินค้า{" "}
             <span className="text-sm font-normal text-neutral-400">({entries.length} รายการ)</span>
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {entries.map((e) => e.el)}
-          </div>
+          <CatalogGrid>
+            {entries.map((entry, index) => cloneElement(entry.el, { priority: index < 5 }))}
+          </CatalogGrid>
         </section>
       </main>
     </>

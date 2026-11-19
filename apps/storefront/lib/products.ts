@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import { effectivePrice, formatTHB } from "./format";
 import type { OrgInfo } from "./seo";
+import type { CatalogImageVariant } from "./catalogImages";
 
 export interface SProduct {
   id: string;
@@ -16,6 +17,7 @@ export interface SProduct {
   discount_type: string | null;
   weight_kg: number | null;
   images: string[] | null;
+  card_image?: CatalogImageVariant;
   spec: Record<string, unknown> | null;
   tags: string[] | null;
   feature_tags: string[] | null;
