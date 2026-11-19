@@ -3,7 +3,9 @@
 import { useState } from "react";
 import type { CatalogImageVariant } from "@/lib/catalogImages";
 
-export const CARD_IMAGE_SIZES = "(min-width: 1280px) 240px, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw";
+// Match the actual image content box: container padding, grid gaps, card border
+// and p-3 image padding. srcSet still lets high-DPR screens select a sharp file.
+export const CARD_IMAGE_SIZES = "(min-width: 1280px) 205px, (min-width: 1024px) calc((100vw - 216px) / 4), (min-width: 640px) calc((100vw - 158px) / 3), calc((100vw - 100px) / 2)";
 
 export default function CatalogImage({ src, alt, variant, sizes = CARD_IMAGE_SIZES, priority = false, className = "" }: {
   src: string;

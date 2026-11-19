@@ -6,6 +6,7 @@ import type { SProduct } from "@/lib/products";
 import { effectivePrice, formatTHB } from "@/lib/format";
 import { useCart } from "@/components/cart/CartProvider";
 import CatalogImage from "@/components/CatalogImage";
+import { useCatalogBatch } from "./useCatalogBatch";
 
 /**
  * Customer-facing product list with 4 view modes (การ์ด / กระชับ / รายการ / ตาราง),
@@ -120,7 +121,7 @@ function GridCard({ p, priority = false }: { p: SProduct; priority?: boolean }) 
 function GridView({ products }: { products: SProduct[] }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-      {products.map((p, index) => <GridCard key={p.id} p={p} priority={index < 5} />)}
+      {products.map((p, index) => <GridCard key={p.id} p={p} priority={index < 2} />)}
     </div>
   );
 }
@@ -283,7 +284,7 @@ const LABELS: Record<View, string> = { grid: "การ์ด", compact: "กร
 
 export default function ProductViews({ products }: { products: SProduct[] }) {
   const [view, setView] = useState<View>("grid");
-  const [visibleCount, setVisibleCount] = useState(30);
+  const { visibleCount, showMore } = useCatalogBatch();
   const visibleProducts = products.slice(0, visibleCount);
 
   useEffect(() => {
@@ -331,7 +332,7 @@ export default function ProductViews({ products }: { products: SProduct[] }) {
       {visibleCount < products.length && (
         <div className="mt-6 text-center">
           <p className="mb-3 text-sm text-neutral-500" aria-live="polite">แสดง {visibleProducts.length} จาก {products.length} รายการ</p>
-          <button type="button" onClick={() => setVisibleCount(count => count + 30)} className="min-h-11 rounded-full border border-[#0879BD] bg-white px-6 py-2.5 font-semibold text-[#0879BD] hover:bg-sky-50">
+          <button type="button" onClick={showMore} className="min-h-11 rounded-full border border-[#0879BD] bg-white px-6 py-2.5 font-semibold text-[#0879BD] hover:bg-sky-50">
             โหลดสินค้าเพิ่ม
           </button>
         </div>

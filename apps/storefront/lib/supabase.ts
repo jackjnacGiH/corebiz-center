@@ -11,4 +11,7 @@ const SUPABASE_ANON_KEY =
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
+  // Bound the entire PostgREST request, including SDK retry/backoff. Cached
+  // public pages retain their last successful data instead of retrying forever.
+  db: { timeout: 10000, retry: false },
 });

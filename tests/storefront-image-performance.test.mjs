@@ -23,6 +23,7 @@ function load(path, imports) {
   return exports;
 }
 const Image = load('apps/storefront/components/CatalogImage.tsx', {}).default;
+const batchHook = load('apps/storefront/components/useCatalogBatch.ts', {});
 const [original, variant] = Object.entries(manifest)[0] ?? [];
 
 test('prebuilt image variants all exist, decode as WebP and never upscale originals', async () => {
@@ -92,18 +93,19 @@ test('failed variants fall back to the untouched original; failed originals show
   assert.equal(message.props.children, 'ไม่สามารถโหลดรูปได้');
 });
 
-test('all product view modes share static variants and lists initially render at most 30 items', () => {
+test('all product view modes share static variants and mobile-first lists initially render 12 items', () => {
   const Views = load('apps/storefront/components/ProductViews.tsx', {
     'next/link': { default: ({ href, children, ...props }) => React.createElement('a', { href, ...props }, children) },
     '@/components/CatalogImage': { default: Image },
     '@/components/cart/CartProvider': { useCart: () => ({ add() {} }) },
     '@/lib/format': { effectivePrice: p => p.price, formatTHB: n => `฿${n}` },
+    './useCatalogBatch': batchHook,
   }).default;
   const products = Array.from({ length: 45 }, (_, index) => ({ id: `${index}`, sku: `SKU-${index}`, name_th: `สินค้า ${index}`, images: [original], card_image: variant, price: 20, unit: 'ชิ้น', in_stock: true, stock_qty: 1 }));
   const html = renderToStaticMarkup(React.createElement(Views, { products }));
-  assert.equal((html.match(/<img /g) ?? []).length, 30);
-  assert.equal((html.match(/loading="eager"/g) ?? []).length, 5);
-  assert.equal((html.match(/loading="lazy"/g) ?? []).length, 25);
+  assert.equal((html.match(/<img /g) ?? []).length, 12);
+  assert.equal((html.match(/loading="eager"/g) ?? []).length, 2);
+  assert.equal((html.match(/loading="lazy"/g) ?? []).length, 10);
   assert.ok(html.includes('โหลดสินค้าเพิ่ม'));
   assert.ok(!html.includes('href="/p/SKU-30"'));
   const code = source('apps/storefront/components/ProductViews.tsx');
@@ -126,11 +128,11 @@ test('server manifest selection is exact and product detail keeps original image
   assert.ok(config.includes('max-age=31536000, immutable'));
 });
 
-test('catalog load-more keeps the initial HTML to 30 cards without making the catalog dynamic', () => {
-  const Grid = load('apps/storefront/components/CatalogGrid.tsx', {}).default;
+test('catalog load-more keeps mobile-first HTML to 12 cards without making the catalog dynamic', () => {
+  const Grid = load('apps/storefront/components/CatalogGrid.tsx', { './useCatalogBatch': batchHook }).default;
   const children = Array.from({ length: 79 }, (_, index) => React.createElement('span', { key: index, 'data-card': index }, `Card ${index}`));
   const html = renderToStaticMarkup(React.createElement(Grid, null, children));
-  assert.equal((html.match(/data-card=/g) ?? []).length, 30);
+  assert.equal((html.match(/data-card=/g) ?? []).length, 12);
   assert.ok(html.includes('โหลดรายการเพิ่ม'));
   const catalog = source('apps/storefront/app/products/page.tsx');
   assert.ok(!catalog.includes('searchParams'));

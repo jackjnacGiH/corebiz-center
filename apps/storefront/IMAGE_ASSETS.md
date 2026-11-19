@@ -45,7 +45,11 @@ This change adds no provider, subscription, runtime transform service or Storage
 copies. Static hosting/bandwidth remains on the existing Vercel plan. It does not
 change plan settings or authorize spending above that plan.
 
-Catalog, group and search results initially show 30 entries with a Load more
-button (category pages retain their existing pagination). The catalog retains
-its five-minute static page cache. First-row photos are eager/high-priority; the remaining
+Catalog, group and search results initially show 12 entries on phones and 30
+from 640px upwards, with viewport-sized Load more batches. Category pages retain
+their existing 30-card pagination. Responsive `sizes` accounts for the container,
+grid gaps and image padding; high-DPR screens still select a suitably sharp
+320/640/960px source. Compression quality and original images are unchanged.
+The catalog retains its five-minute static page cache. The first two grid
+photos are eager/high-priority; the remaining
 photos stay lazy. Normal catalog data revalidation and legacy redirects remain.

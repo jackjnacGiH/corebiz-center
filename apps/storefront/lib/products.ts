@@ -80,10 +80,10 @@ export async function getProductBySku(sku: string): Promise<SProduct | null> {
   const { data, error } = await supabase.from("storefront_products").select(SELECT).eq("sku", normalizedSku).maybeSingle();
   if (error) throw new Error(`catalog_unavailable: ${error.message}`);
   if (data) return sanitizePublicProduct(data as SProduct);
-  // Legacy trailing whitespace remains supported without downloading the full catalog.
+  // Legacy leading/trailing whitespace remains supported without downloading the full catalog.
   const prefix = normalizedSku.replace(/[\\%_]/g, "\\$&");
   const candidates = await readAll<SProduct>(() => supabase.from("storefront_products").select(SELECT)
-    .like("sku", `${prefix}%`).order("sku").order("id"));
+    .like("sku", `%${prefix}%`).order("sku").order("id"));
   const matched = candidates.find(candidate => normalizeSku(candidate.sku) === normalizedSku);
   return matched ? sanitizePublicProduct(matched) : null;
 }

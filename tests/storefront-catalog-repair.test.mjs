@@ -48,7 +48,7 @@ test('repairs preserve source arrays, remove duplicate display URLs and leave si
 });
 
 function categoryFixture() {
-  const products = Array.from({ length: 67 }, (_, index) => ({ id: `${index}`, sku: `SKU${index}`, name_th: `สินค้า ${String(index).padStart(3, '0')}`, images: [], group_id: null, price: 10, in_stock: true }));
+  const products = Array.from({ length: 67 }, (_, index) => ({ id: `${index}`, sku: `SKU${index}`, name_th: `สินค้า ${String(index).padStart(3, '0')}`, images: [], category_slug: 'abrasives', group_id: null, price: 10, in_stock: true }));
   const notFound = () => { throw new Error('NOT_FOUND'); };
   const page = load('apps/storefront/app/c/[slug]/page.tsx', {
     'next/link': { default: ({ children, href, ...props }) => React.createElement('a', { href, ...props }, children) },
@@ -59,6 +59,7 @@ function categoryFixture() {
       getGroups: async () => [], imagesOf: p => p.images,
       keywordsFromProducts: () => [], collectionArticle: () => ({}),
     },
+    '@/lib/categoryCatalog': { getCategoryCatalog: async () => ({ products, categories: [{ slug: 'abrasives', name_th: 'ขัด ตัด เจียร' }], groups: [], org: { business_name: 'J NAC' } }) },
     '@/lib/seo': { compactSeoTitle: t => t, getOrg: async () => ({ business_name: 'J NAC' }), ld: () => ({ __html: '{}' }), itemListLd: () => ({}), breadcrumbLd: () => ({}), SHOP: 'https://www.jnac.online', categoryUrl: slug => `https://www.jnac.online/c/${slug}` },
     '@/lib/format': { effectivePrice: p => p.price },
     '@/components/CollectionArticle': { default: () => null },
@@ -70,7 +71,7 @@ function categoryFixture() {
 
 test('category is request-rendered and page two retains correct cards, metadata and canonical', async () => {
   const page = categoryFixture();
-  assert.equal(page.dynamic, 'force-dynamic');
+  assert.equal(page.dynamic, 'auto');
   assert.equal(page.generateStaticParams, undefined);
   const args = { params: Promise.resolve({ slug: 'abrasives' }), searchParams: Promise.resolve({ page: '2' }) };
   const html = renderToStaticMarkup(await page.default(args));
