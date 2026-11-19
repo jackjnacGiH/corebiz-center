@@ -50,7 +50,7 @@ test('category snapshot shares public reads across all slugs for 300 seconds; er
   let cached;
   const module=load('lib/categoryCatalog.ts', {
     'next/cache': { unstable_cache(fn, keys, config) { key=keys;options=config;return async()=>{if(cached)return cached;const value=await fn();cached=value;return value;}; } },
-    './products': {getAllProducts:()=>read(products),getCategories:()=>read([]),getGroups:()=>read([]),getPublicProductOrder:()=>read([])},
+    './products': {getAllProducts:()=>read(products),getCategories:()=>read([]),getGroups:()=>read([])},
     './seo': {getOrg:()=>read({business_name:'J NAC'})},
   });
   fail=true;await assert.rejects(module.getCategoryCatalog(),/offline/);

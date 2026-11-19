@@ -14,32 +14,48 @@ function load(path,imports,extra={}) {
 function requestCache(fn){const memo=new Map();return(...args)=>{const key=JSON.stringify(args);if(!memo.has(key))memo.set(key,fn(...args));return memo.get(key);};}
 const normalizeSku=sku=>sku.normalize('NFKC').replace(/^[\s\u200B-\u200D\u2060\uFEFF]+|[\s\u200B-\u200D\u2060\uFEFF]+$/g,'');
 
-test('first product/group renders share one public snapshot, preserve exact SKU precedence and DB group ordering',async()=>{
-  const group='a9332562-fe24-4f69-965a-b6c9514af844';let reads=0;
-  const products=[{id:'b',sku:' 2020001014',group_id:group,is_featured:true},{id:'c',sku:'EXACT',group_id:group},{id:'a',sku:' EXACT',group_id:group},{id:'x',sku:'20200010140',group_id:null}];
+test('first detail renders read only their SKU/group and deduplicate metadata/page requests',async()=>{
+  const group='a9332562-fe24-4f69-965a-b6c9514af844',calls=[],configs=[];
+  const products=[{id:'c',sku:'EXACT',group_id:group},{id:'a',sku:' EXACT',group_id:group}];
   const lookup=load('lib/catalogPages.ts',{
-    react:{cache:requestCache},'./products':{normalizeSku},
-    './categoryCatalog':{getCategoryCatalog:async()=>{reads++;return{products,groups:[{id:group,name:'SA331'}],productOrder:['c','a','b','x']};}},
+    react:{cache:requestCache},
+    'next/cache':{unstable_cache(fn,keys,options){configs.push({keys,options});return requestCache(fn);}},
+    './products':{normalizeSku,
+      getProductBySku:async sku=>{calls.push(['product',sku]);return sku==='2020001014'?{id:'b',sku:' 2020001014'}:null;},
+      getGroupById:async id=>{calls.push(['group',id]);return{id,name:'SA331'};},
+      getProductsByGroup:async id=>{calls.push(['products',id]);return products;},
+    },
   });
-  assert.equal((await lookup.getCatalogProductBySku('2020001014')).id,'b');
-  assert.equal((await lookup.getCatalogProductBySku('EXACT')).id,'c');
+  const [one,two]=await Promise.all([lookup.getCatalogProductBySku(' 2020001014 '),lookup.getCatalogProductBySku('2020001014')]);
+  assert.equal(one.id,'b');assert.equal(one,two);
   assert.equal(await lookup.getCatalogProductBySku('202000101'),null);
   assert.equal((await lookup.getCatalogGroupById(group.toUpperCase())).id,group);
-  assert.deepEqual(Array.from(await lookup.getCatalogProductsByGroup(group),p=>p.id),['c','a','b']);
-  assert.equal(await lookup.getCatalogGroupById('missing'),null);
-  assert.equal((await lookup.getCatalogProductsByGroup('missing')).length,0);
-  assert.equal(reads,1);
-  assert.deepEqual(products.map(p=>p.id),['b','c','a','x'],'never mutate the shared snapshot while sorting a group');
+  await lookup.getCatalogGroupById(group);
+  assert.equal(await lookup.getCatalogProductsByGroup(group.toUpperCase()),products);
+  await lookup.getCatalogProductsByGroup(group);
+  assert.equal(await lookup.getCatalogGroupById('not-a-real-group'),null);
+  assert.equal((await lookup.getCatalogProductsByGroup('not-a-real-group')).length,0);
+  assert.deepEqual(calls,[['product','2020001014'],['product','202000101'],['group',group],['products',group]]);
+  assert.deepEqual(products.map(p=>p.id),['c','a'],'retain DB collation/order, do not sort in JavaScript');
+  assert.equal(configs.length,3);
+  assert.ok(configs.every(c=>c.options.revalidate===300&&c.options.tags[0]==='storefront-public-catalog'));
+  assert.ok(!source('lib/catalogPages.ts').includes('categoryCatalog'));
+  assert.ok(!source('lib/products.ts').includes('getPublicProductOrder'));
 });
 
-test('catalog lookup propagates upstream failure rather than manufacturing a product not-found',async()=>{
+test('bounded lookup propagates upstream failures and a failed data read is not cached as missing',async()=>{
+  let fail=true,reads=0;
+  const read=async()=>{reads++;if(fail)throw new Error('catalog_unavailable');return{sku:'REAL'};};
   const lookup=load('lib/catalogPages.ts',{
-    react:{cache:requestCache},'./products':{normalizeSku},
-    './categoryCatalog':{getCategoryCatalog:async()=>{throw new Error('catalog_unavailable');}},
+    react:{cache:fn=>fn},
+    'next/cache':{unstable_cache(fn){let value;return async(...args)=>{if(value)return value;value=await fn(...args);return value;};}},
+    './products':{normalizeSku,getProductBySku:read,getGroupById:read,getProductsByGroup:read},
   });
   assert.equal(await lookup.getCatalogProductBySku('   '),null);
   await assert.rejects(lookup.getCatalogProductBySku('REAL'),/catalog_unavailable/);
-  await assert.rejects(lookup.getCatalogProductsByGroup('group'),/catalog_unavailable/);
+  await assert.rejects(lookup.getCatalogProductsByGroup('a9332562-fe24-4f69-965a-b6c9514af844'),/catalog_unavailable/);
+  fail=false;assert.equal((await lookup.getCatalogProductBySku('REAL')).sku,'REAL');
+  const before=reads;await lookup.getCatalogProductBySku('REAL');assert.equal(reads,before);
 });
 
 test('public company identity is cached 300s and failed reads do not poison the shared entry with fallback data',async()=>{

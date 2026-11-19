@@ -1,30 +1,31 @@
 import { cache } from "react";
-import { getCategoryCatalog } from "./categoryCatalog";
-import { normalizeSku } from "./products";
+import { unstable_cache } from "next/cache";
+import { getProductBySku, getGroupById, getProductsByGroup, normalizeSku } from "./products";
 
-// React cache deduplicates layout/metadata/page reads within one render only.
-// The underlying public snapshot supplies the existing 300-second freshness.
-const readCatalog = cache(getCategoryCatalog);
+// Bound a first detail request to its SKU/group, not the full catalog.
+// React cache deduplicates metadata/page reads; the data cache shares successful
+// public lookups across renders with the existing five-minute freshness.
+const options = { revalidate: 300, tags: ["storefront-public-catalog"] };
+const readProduct = unstable_cache(getProductBySku, ["storefront-product-v1"], options);
+const readGroup = unstable_cache(getGroupById, ["storefront-group-v1"], options);
+const readGroupProducts = unstable_cache(getProductsByGroup, ["storefront-group-products-v1"], options);
 
-export const getCatalogProductBySku = cache(async (sku: string) => {
+export const getCatalogProductBySku = cache((sku: string) => {
   const normalized = normalizeSku(sku);
-  if (!normalized) return null;
-  const { products } = await readCatalog();
-  return products.find(p => p.sku === normalized)
-    ?? products.find(p => normalizeSku(p.sku) === normalized)
-    ?? null;
+  return normalized ? readProduct(normalized) : Promise.resolve(null);
 });
 
-export const getCatalogGroupById = cache(async (id: string) => {
-  const { groups } = await readCatalog();
-  const normalized = id.trim().toLowerCase();
-  return groups.find(group => group.id.toLowerCase() === normalized) ?? null;
+function normalizeGroupId(id: string): string | null {
+  const value = id.trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
+}
+
+export const getCatalogGroupById = cache((id: string) => {
+  const normalized = normalizeGroupId(id);
+  return normalized ? readGroup(normalized) : Promise.resolve(null);
 });
 
-export const getCatalogProductsByGroup = cache(async (id: string) => {
-  const { products, productOrder } = await readCatalog();
-  const order = new Map(productOrder.map((productId, index) => [productId, index]));
-  const normalized = id.trim().toLowerCase();
-  return products.filter(p => p.group_id?.toLowerCase() === normalized)
-    .sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
+export const getCatalogProductsByGroup = cache((id: string) => {
+  const normalized = normalizeGroupId(id);
+  return normalized ? readGroupProducts(normalized) : Promise.resolve([]);
 });
