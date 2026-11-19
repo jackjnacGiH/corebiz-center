@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { cloneElement } from "react";
+import { cache, cloneElement } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCategories, getProductsByCategory, getGroups, imagesOf, keywordsFromProducts, collectionArticle } from "@/lib/products";
@@ -9,19 +9,16 @@ import { effectivePrice } from "@/lib/format";
 import { ProductCard, GroupCard, Breadcrumb } from "@/components/ui";
 import SearchBox from "@/components/SearchBox";
 
-export const revalidate = 300;
-export const dynamicParams = true;
+// searchParams pagination is request-specific, not an ISR fallback shell.
+export const dynamic = "force-dynamic";
 const PAGE_SIZE = 30;
+const readCategories = cache(getCategories);
+const readCategoryProducts = cache(getProductsByCategory);
 
 function pageNumber(value: string | string[] | undefined): number {
   const raw = Array.isArray(value) ? value[0] : value;
   const parsed = Number.parseInt(raw || "1", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-}
-
-export function generateStaticParams() {
-  // ISR generates the category on its first visit; the sitemap lists its URL.
-  return [];
 }
 
 export async function generateMetadata({
@@ -34,10 +31,10 @@ export async function generateMetadata({
   const { slug } = await params;
   const query = await searchParams;
   const page = pageNumber(query.page);
-  const cats = await getCategories();
+  const cats = await readCategories();
   const cat = cats.find((c) => c.slug === slug);
   if (!cat) return { title: "ไม่พบหมวดหมู่" };
-  const products = await getProductsByCategory(slug);
+  const products = await readCategoryProducts(slug);
   return {
     title: compactSeoTitle(`${cat.name_th} – สินค้า${page > 1 ? ` หน้า ${page}` : ""}`),
     description: `รวมสินค้าหมวด ${cat.name_th} จาก JNAC ${products.length} รายการ พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — ขอใบเสนอราคาได้ทันที`,
@@ -56,11 +53,11 @@ export default async function CategoryPage({
   const { slug } = await params;
   const query = await searchParams;
   const currentPage = pageNumber(query.page);
-  const cats = await getCategories();
+  const cats = await readCategories();
   const cat = cats.find((c) => c.slug === slug);
   if (!cat) notFound();
   const [products, groups, org] = await Promise.all([
-    getProductsByCategory(slug),
+    readCategoryProducts(slug),
     getGroups(),
     getOrg(),
   ]);
