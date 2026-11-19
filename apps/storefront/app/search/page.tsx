@@ -5,6 +5,7 @@ import { getOrg } from "@/lib/seo";
 import { Breadcrumb } from "@/components/ui";
 import ProductViews from "@/components/ProductViews";
 import SearchBox from "@/components/SearchBox";
+import { catalogImageVariant } from "@/lib/catalogImages";
 
 export const metadata: Metadata = {
   title: "ค้นหาสินค้า",
@@ -43,7 +44,7 @@ export default async function SearchPage({
 
           {results.length > 0 ? (
             <div className="mt-5">
-              <ProductViews products={results} />
+              <ProductViews products={results.map(product => ({ ...product, card_image: catalogImageVariant(product.images?.[0]) }))} />
             </div>
           ) : (
             <div className="mt-10 rounded-xl border border-neutral-200 bg-neutral-50 p-8 text-center">

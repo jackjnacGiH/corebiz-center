@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cloneElement } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCategories, getProductsByCategory, getGroups, imagesOf, keywordsFromProducts, collectionArticle } from "@/lib/products";
@@ -85,7 +86,7 @@ export default async function CategoryPage({
   const visibleGroups = groups.filter((g) => (counts.get(g.id) ?? 0) > 0);
   const ungrouped = products.filter((p) => !p.group_id);
 
-  const entries: { key: string; sort: string; el: React.ReactNode }[] = [
+  const entries: { key: string; sort: string; el: React.ReactElement<{ priority?: boolean }> }[] = [
     ...visibleGroups.map((g) => ({
       key: `g-${g.id}`,
       sort: g.name,
@@ -138,7 +139,7 @@ export default async function CategoryPage({
           <SearchBox variant="page" />
         </div>
         <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {visibleEntries.map((e) => e.el)}
+          {visibleEntries.map((entry, index) => cloneElement(entry.el, { priority: index < 5 }))}
         </div>
         {pageCount > 1 && (
           <nav className="mt-8 flex items-center justify-center gap-3" aria-label="หน้ารายการสินค้า">

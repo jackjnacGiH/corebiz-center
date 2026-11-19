@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { SProduct } from "@/lib/products";
 import { effectivePrice, formatTHB } from "@/lib/format";
 import { useCart } from "@/components/cart/CartProvider";
+import CatalogImage from "@/components/CatalogImage";
 
 /**
  * Customer-facing product list with 4 view modes (การ์ด / กระชับ / รายการ / ตาราง),
@@ -87,15 +88,14 @@ function AddBtn({ p, variant }: { p: SProduct; variant: "overlay" | "mini" | "fu
 }
 
 // ── individual views ──────────────────────────────────────────────────────
-function GridCard({ p }: { p: SProduct }) {
+function GridCard({ p, priority = false }: { p: SProduct; priority?: boolean }) {
   const img = img1(p);
   return (
     <div className="group relative rounded-xl border border-neutral-200 bg-white overflow-hidden hover:shadow-md transition">
       <Link href={href(p)} className="block">
         <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden">
           {img ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={img} alt={p.name_th} loading="lazy" className="w-full h-full object-contain p-3 group-hover:scale-105 transition duration-300" />
+            <CatalogImage src={img} alt={p.name_th} variant={p.card_image} priority={priority} className="w-full h-full object-contain p-3 group-hover:scale-105 transition duration-300" />
           ) : (
             <span className="text-neutral-300 text-sm">ไม่มีรูป</span>
           )}
@@ -120,7 +120,7 @@ function GridCard({ p }: { p: SProduct }) {
 function GridView({ products }: { products: SProduct[] }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-      {products.map((p) => <GridCard key={p.id} p={p} />)}
+      {products.map((p, index) => <GridCard key={p.id} p={p} priority={index < 5} />)}
     </div>
   );
 }
@@ -128,15 +128,14 @@ function GridView({ products }: { products: SProduct[] }) {
 function CompactView({ products }: { products: SProduct[] }) {
   return (
     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-2">
-      {products.map((p) => {
+      {products.map((p, index) => {
         const img = img1(p);
         return (
           <div key={p.id} className="group relative rounded-lg border border-neutral-200 bg-white overflow-hidden hover:shadow-sm transition">
             <Link href={href(p)} className="block">
               <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden">
                 {img ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={img} alt={p.name_th} loading="lazy" className="w-full h-full object-contain p-2" />
+                  <CatalogImage src={img} alt={p.name_th} variant={p.card_image} priority={index < 7} sizes="(min-width: 1280px) 170px, (min-width: 768px) 20vw, 33vw" className="w-full h-full object-contain p-2" />
                 ) : (
                   <span className="text-neutral-300 text-xs">—</span>
                 )}
@@ -164,15 +163,14 @@ function CompactView({ products }: { products: SProduct[] }) {
 function ListView({ products }: { products: SProduct[] }) {
   return (
     <div className="divide-y divide-neutral-100 rounded-xl border border-neutral-200 bg-white overflow-hidden">
-      {products.map((p) => {
+      {products.map((p, index) => {
         const img = img1(p);
         return (
           <div key={p.id} className="flex items-center gap-3 p-3 hover:bg-neutral-50">
             <Link href={href(p)} className="flex items-center gap-3 flex-1 min-w-0">
               <div className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0 rounded-lg bg-neutral-50 grid place-items-center overflow-hidden">
                 {img ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={img} alt={p.name_th} loading="lazy" className="w-full h-full object-contain p-1.5" />
+                  <CatalogImage src={img} alt={p.name_th} variant={p.card_image} priority={index < 5} sizes="80px" className="w-full h-full object-contain p-1.5" />
                 ) : (
                   <span className="text-neutral-300 text-xs">—</span>
                 )}
@@ -215,15 +213,14 @@ function TableView({ products }: { products: SProduct[] }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-neutral-100">
-          {products.map((p) => {
+          {products.map((p, index) => {
             const img = img1(p);
             return (
               <tr key={p.id} className="hover:bg-neutral-50">
                 <td className="px-3 py-2">
                   <Link href={href(p)} className="block w-10 h-10 rounded bg-neutral-50 grid place-items-center overflow-hidden">
                     {img ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={img} alt={p.name_th} loading="lazy" className="w-full h-full object-contain" />
+                      <CatalogImage src={img} alt={p.name_th} variant={p.card_image} priority={index < 5} sizes="40px" className="w-full h-full object-contain" />
                     ) : (
                       <span className="text-neutral-300 text-[10px]">—</span>
                     )}
@@ -286,6 +283,8 @@ const LABELS: Record<View, string> = { grid: "การ์ด", compact: "กร
 
 export default function ProductViews({ products }: { products: SProduct[] }) {
   const [view, setView] = useState<View>("grid");
+  const [visibleCount, setVisibleCount] = useState(30);
+  const visibleProducts = products.slice(0, visibleCount);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -325,10 +324,18 @@ export default function ProductViews({ products }: { products: SProduct[] }) {
         </div>
       </div>
 
-      {view === "grid" && <GridView products={products} />}
-      {view === "compact" && <CompactView products={products} />}
-      {view === "list" && <ListView products={products} />}
-      {view === "table" && <TableView products={products} />}
+      {view === "grid" && <GridView products={visibleProducts} />}
+      {view === "compact" && <CompactView products={visibleProducts} />}
+      {view === "list" && <ListView products={visibleProducts} />}
+      {view === "table" && <TableView products={visibleProducts} />}
+      {visibleCount < products.length && (
+        <div className="mt-6 text-center">
+          <p className="mb-3 text-sm text-neutral-500" aria-live="polite">แสดง {visibleProducts.length} จาก {products.length} รายการ</p>
+          <button type="button" onClick={() => setVisibleCount(count => count + 30)} className="min-h-11 rounded-full border border-[#0879BD] bg-white px-6 py-2.5 font-semibold text-[#0879BD] hover:bg-sky-50">
+            โหลดสินค้าเพิ่ม
+          </button>
+        </div>
+      )}
     </div>
   );
 }

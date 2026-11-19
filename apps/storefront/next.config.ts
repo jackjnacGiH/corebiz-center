@@ -23,6 +23,12 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  async headers() {
+    return [{
+      source: "/catalog-images/:path*",
+      headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+    }];
+  },
   async redirects() {
     return [
       // SEO continuity: the shop used to live under /shop.

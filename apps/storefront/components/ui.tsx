@@ -8,6 +8,8 @@ import CartButton from "@/components/cart/CartButton";
 import CardAddButton from "@/components/cart/CardAddButton";
 import AccountNavButton from "@/components/account/AccountNavButton";
 import MobileNavigation from "@/components/MobileNavigation";
+import CatalogImage from "@/components/CatalogImage";
+import { catalogImageVariant } from "@/lib/catalogImages";
 
 const BRAND = "#0879BD";
 
@@ -39,18 +41,18 @@ export function Price({ p }: { p: SProduct }) {
   );
 }
 
-export function ProductCard({ p }: { p: SProduct }) {
+export function ProductCard({ p, priority = false }: { p: SProduct; priority?: boolean }) {
   const img = imagesOf(p)[0];
   return (
     <div className="group relative rounded-xl border border-neutral-200 bg-white overflow-hidden hover:shadow-md transition">
       <Link href={`/p/${encodeURIComponent(p.sku.trim())}`} className="block">
         <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden">
           {img ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <CatalogImage
               src={img}
               alt={p.name_th}
-              loading="lazy"
+              variant={catalogImageVariant(img)}
+              priority={priority}
               className="w-full h-full object-contain p-3 group-hover:scale-105 transition duration-300"
             />
           ) : (
@@ -93,6 +95,7 @@ export function GroupCard({
   priceMin,
   priceMax,
   inStock,
+  priority = false,
 }: {
   id: string;
   name: string;
@@ -101,6 +104,7 @@ export function GroupCard({
   priceMin: number | null;
   priceMax: number | null;
   inStock: boolean;
+  priority?: boolean;
 }) {
   const priceLabel =
     priceMin == null || priceMax == null
@@ -115,11 +119,11 @@ export function GroupCard({
     >
       <div className="aspect-square bg-neutral-50 grid place-items-center overflow-hidden relative">
         {cover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <CatalogImage
             src={cover}
             alt={name}
-            loading="lazy"
+            variant={catalogImageVariant(cover)}
+            priority={priority}
             className="w-full h-full object-contain p-3 group-hover:scale-105 transition duration-300"
           />
         ) : (

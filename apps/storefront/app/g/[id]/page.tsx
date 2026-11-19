@@ -7,6 +7,7 @@ import { Breadcrumb } from "@/components/ui";
 import ProductViews from "@/components/ProductViews";
 import SearchBox from "@/components/SearchBox";
 import { getGroupCrossSiteGuide } from "@/lib/crossSiteGuides";
+import { catalogImageVariant } from "@/lib/catalogImages";
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -102,7 +103,7 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
         </div>
         {products.length > 0 && (
           <div className="mt-8">
-            <ProductViews products={products} />
+            <ProductViews products={products.map(product => ({ ...product, card_image: catalogImageVariant(product.images?.[0]) }))} />
           </div>
         )}
         {products.length === 0 && (
