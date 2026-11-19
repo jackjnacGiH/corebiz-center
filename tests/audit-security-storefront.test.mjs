@@ -102,7 +102,7 @@ test('portal cache is identity-scoped and pending A never returns after B login'
 test('storefront unavailable response throws and full reads use stable pages beyond 1000 rows',async()=>{
   const rows=Array.from({length:2017},(_,id)=>({id,sku:String(id),spec:{size:"5 inch",image_studio:{prompt:"internal"}}}));const ranges=[];let unavailable=false;
   const db={from:()=>{const builder={select:()=>builder,order:()=>builder,range:async(a,b)=>{ranges.push([a,b]);return unavailable?{error:{message:'503'}}:{data:rows.slice(a,b+1)};}};return builder;}};
-  const exports={};runInNewContext(compile('../apps/storefront/lib/products.ts'),{exports,require:()=>({supabase:db})});
+  const exports={};runInNewContext(compile('../apps/storefront/lib/products.ts'),{exports,require:name=>name.endsWith('catalogImageRepairs')?{resolveCatalogImageUrls:images=>images}:{supabase:db}});
   const products=await exports.getAllProducts();
   assert.equal(products.length,2017);assert.deepEqual(ranges,[[0,999],[1000,1999],[2000,2999]]);
   assert.equal(products[0].spec.size,"5 inch");assert.equal(products[0].spec.image_studio,undefined);

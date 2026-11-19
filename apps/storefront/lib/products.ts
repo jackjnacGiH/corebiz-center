@@ -2,6 +2,7 @@ import { supabase } from "./supabase";
 import { effectivePrice, formatTHB } from "./format";
 import type { OrgInfo } from "./seo";
 import type { CatalogImageVariant } from "./catalogImages";
+import { resolveCatalogImageUrls } from "./catalogImageRepairs";
 
 export interface SProduct {
   id: string;
@@ -292,7 +293,7 @@ export function publicSpecEntries(spec: SProduct["spec"]): [string, string][] {
 
 function sanitizePublicProduct(product: SProduct): SProduct {
   const allowed = new Set(publicSpecEntries(product.spec).map(([key]) => key));
-  return { ...product, spec: product.spec ? Object.fromEntries(Object.entries(product.spec).filter(([key]) => allowed.has(key))) : null };
+  return { ...product, images: resolveCatalogImageUrls(product.images), spec: product.spec ? Object.fromEntries(Object.entries(product.spec).filter(([key]) => allowed.has(key))) : null };
 }
 
 export function featuresOf(p: SProduct): string[] {

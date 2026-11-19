@@ -1,0 +1,32 @@
+{
+  "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/products/96364153-c58d-47bf-8869-1e9d8c0af028/1789042913235-0hil3j.png": {
+    "replacement": "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/product-groups/845bbeca-7f4b-4a0a-a97f-a528c9035795-1789123914017.png",
+    "groupId": "845bbeca-7f4b-4a0a-a97f-a528c9035795",
+    "verifiedProduct": "ล้อทรายผสมสก๊อตไบร์ทแกน 6 mm. สีแดง 40x30x6mm."
+  },
+  "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/products/bae12d50-e92c-4c87-9bf7-35d48751070b/1788937211728-pmsow2.png": {
+    "replacement": "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/product-groups/2697214b-cc7c-4fa2-9c69-94284cfb324e-1789123900304.png",
+    "groupId": "2697214b-cc7c-4fa2-9c69-94284cfb324e",
+    "verifiedProduct": "ล้อทรายผสมสก๊อตไบร์ทแกน 6 mm. สีแดง 40x25x6mm."
+  },
+  "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/products/c5690f2f-95c3-4d9d-9142-364cc1c8bf32/1789124229947-1jkwlq.png": {
+    "replacement": "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/product-groups/2697214b-cc7c-4fa2-9c69-94284cfb324e-1789123900304.png",
+    "groupId": "2697214b-cc7c-4fa2-9c69-94284cfb324e",
+    "verifiedProduct": "ล้อทรายผสมสก๊อตไบร์ทแกน 6 mm. สีแดง 40x25x6mm."
+  },
+  "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/products/pending-0w6r26bt/1780464192089-7120ym.jpg": {
+    "replacement": "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/product-groups/797564fc-f870-4190-aecf-6be3c3a3505a-1782211447219.jpg",
+    "groupId": "797564fc-f870-4190-aecf-6be3c3a3505a",
+    "verifiedProduct": "กระดาษทรายกลมสักหลาด DEERFOS SA331 5 นิ้ว #40-#2000"
+  },
+  "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/products/pending-9qjn5eef/1789559604864-s66nn2.png": {
+    "replacement": "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/product-groups/00aa0c40-288a-48d3-aac3-f867b92a2fdc-1789559853634.png",
+    "groupId": "00aa0c40-288a-48d3-aac3-f867b92a2fdc",
+    "verifiedProduct": "ล้อทรายผสมสก๊อตไบร์ทแกน 6 mm. สีแดง 30x20x6mm."
+  },
+  "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/products/pending-ton3zkqd/1789042175172-ki5u7l.png": {
+    "replacement": "https://owoedccmuqnzdtxvywgt.supabase.co/storage/v1/object/public/product-groups/8c3e7e1d-ecb2-463c-8de6-d6b6932389ef-1789108828471.png",
+    "groupId": "8c3e7e1d-ecb2-463c-8de6-d6b6932389ef",
+    "verifiedProduct": "ล้อทรายผสมสก๊อตไบร์ทแกน 6 mm. สีแดง 40x20x6mm."
+  }
+}

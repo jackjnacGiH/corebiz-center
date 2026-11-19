@@ -11,6 +11,7 @@ const output = new URL('public/catalog-images/', root);
 const widths = [320, 640, 960];
 const allowedOrigin = 'https://owoedccmuqnzdtxvywgt.supabase.co';
 const dryRun = process.argv.includes('--dry-run');
+const repairs = JSON.parse(await readFile(new URL('lib/catalog-image-repairs.json', root), 'utf8'));
 let previous = {};
 try { previous = JSON.parse(await readFile(manifestFile, 'utf8')); } catch { /* first run */ }
 
@@ -31,7 +32,7 @@ const [products, groups] = await Promise.all([
 const urls = [...new Set([
   ...products.flatMap(p => p.images ?? []),
   ...groups.map(g => g.cover_image).filter(Boolean),
-])].filter(src => {
+].map(src => repairs[src]?.replacement ?? src))].filter(src => {
   try {
     const url = new URL(src);
     return url.origin === allowedOrigin && !url.search && !url.hash &&
@@ -86,6 +87,7 @@ await Promise.all(Array.from({ length: 4 }, async () => {
 const sorted = Object.fromEntries(Object.entries(manifest).sort(([a], [b]) => a.localeCompare(b)));
 await writeFile(manifestFile, `${JSON.stringify(sorted, null, 2)}\n`);
 const report = { prepared: completed, reused, entries: Object.keys(sorted).length,
+  repairedSources: Object.keys(repairs).length,
   originalBytes: Object.values(sorted).reduce((n, e) => n + e.originalBytes, 0),
   staticBytes: Object.values(sorted).reduce((n, e) => n + e.sources.reduce((sum, s) => sum + s.bytes, 0), 0),
   errors };

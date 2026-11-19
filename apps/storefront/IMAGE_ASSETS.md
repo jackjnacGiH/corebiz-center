@@ -5,6 +5,12 @@ Product and group photos use static, content-hashed WebP variants (320, 640 and
 invoke Next.js/Vercel image transformations for catalog photos, including on
 their first visit. Original public Storage files and database URLs are untouched.
 
+`lib/catalog-image-repairs.json` records six verified missing-object URL repairs.
+The storefront resolves those exact URLs to an existing, visually verified photo
+from the same product group. Old references remain in the registry/database;
+no Storage file is deleted, overwritten or recreated. Unknown/signed URLs are
+never rewritten by this registry. The preparation script uses the same repairs.
+
 ## Refresh after uploading product/group photos
 
 From the monorepo root with Node 24 and `npm ci` completed:
