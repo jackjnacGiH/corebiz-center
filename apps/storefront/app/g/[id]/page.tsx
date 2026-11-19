@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { keywordsFromProducts, collectionArticle } from "@/lib/products";
 import { getCatalogGroupById as getGroupById, getCatalogProductsByGroup as getProductsByGroup } from "@/lib/catalogPages";
+import { getPrerenderGroupParams } from "@/lib/buildCatalog";
 import { compactSeoTitle, getOrg, ld, itemListLd, breadcrumbLd, SHOP, groupUrl } from "@/lib/seo";
 import CollectionArticle from "@/components/CollectionArticle";
 import { Breadcrumb } from "@/components/ui";
@@ -14,8 +15,7 @@ export const revalidate = 300;
 export const dynamicParams = true;
 
 export function generateStaticParams() {
-  // ISR generates the group on its first visit; the sitemap lists its URL.
-  return [];
+  return getPrerenderGroupParams();
 }
 
 export async function generateMetadata({

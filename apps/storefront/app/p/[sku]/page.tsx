@@ -3,6 +3,7 @@ import CatalogImage from "@/components/CatalogImage";
 import { catalogImageVariant } from "@/lib/catalogImages";
 import { notFound } from "next/navigation";
 import { getCatalogProductBySku as getProductBySku } from "@/lib/catalogPages";
+import { getPrerenderProductParams } from "@/lib/buildCatalog";
 import {
   imagesOf,
   productSummary,
@@ -39,9 +40,8 @@ export const dynamicParams = true;
 const BRAND = "#1696F4";
 
 export function generateStaticParams() {
-  // Let ISR generate each SKU on its first visit instead of reading the whole
-  // catalog during every build. The sitemap still lists the product URLs.
-  return [];
+  // Build known SKUs from a shared bulk snapshot; new SKUs still use ISR.
+  return getPrerenderProductParams();
 }
 
 export async function generateMetadata({

@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { getProductBySku, getGroupById, getProductsByGroup, normalizeSku } from "./products";
+import { isCatalogBuild, getBuildProduct, getBuildGroup, getBuildGroupProducts } from "./buildCatalog";
 
 // Bound a first detail request to its SKU/group and share metadata/page reads.
 // The route's existing 300s ISR caches the rendered page. A second persistent
@@ -11,7 +12,7 @@ const readGroupProducts = cache(getProductsByGroup);
 
 export const getCatalogProductBySku = cache((sku: string) => {
   const normalized = normalizeSku(sku);
-  return normalized ? readProduct(normalized) : Promise.resolve(null);
+  return normalized ? (isCatalogBuild() ? getBuildProduct(normalized) : readProduct(normalized)) : Promise.resolve(null);
 });
 
 function normalizeGroupId(id: string): string | null {
@@ -21,10 +22,10 @@ function normalizeGroupId(id: string): string | null {
 
 export const getCatalogGroupById = cache((id: string) => {
   const normalized = normalizeGroupId(id);
-  return normalized ? readGroup(normalized) : Promise.resolve(null);
+  return normalized ? (isCatalogBuild() ? getBuildGroup(normalized) : readGroup(normalized)) : Promise.resolve(null);
 });
 
 export const getCatalogProductsByGroup = cache((id: string) => {
   const normalized = normalizeGroupId(id);
-  return normalized ? readGroupProducts(normalized) : Promise.resolve([]);
+  return normalized ? (isCatalogBuild() ? getBuildGroupProducts(normalized) : readGroupProducts(normalized)) : Promise.resolve([]);
 });
