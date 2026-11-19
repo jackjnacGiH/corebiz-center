@@ -15,11 +15,10 @@ function requestCache(fn){const memo=new Map();return(...args)=>{const key=JSON.
 const normalizeSku=sku=>sku.normalize('NFKC').replace(/^[\s\u200B-\u200D\u2060\uFEFF]+|[\s\u200B-\u200D\u2060\uFEFF]+$/g,'');
 
 test('first detail renders read only their SKU/group and deduplicate metadata/page requests',async()=>{
-  const group='a9332562-fe24-4f69-965a-b6c9514af844',calls=[],configs=[];
+  const group='a9332562-fe24-4f69-965a-b6c9514af844',calls=[];
   const products=[{id:'c',sku:'EXACT',group_id:group},{id:'a',sku:' EXACT',group_id:group}];
   const lookup=load('lib/catalogPages.ts',{
     react:{cache:requestCache},
-    'next/cache':{unstable_cache(fn,keys,options){configs.push({keys,options});return requestCache(fn);}},
     './products':{normalizeSku,
       getProductBySku:async sku=>{calls.push(['product',sku]);return sku==='2020001014'?{id:'b',sku:' 2020001014'}:null;},
       getGroupById:async id=>{calls.push(['group',id]);return{id,name:'SA331'};},
@@ -37,25 +36,23 @@ test('first detail renders read only their SKU/group and deduplicate metadata/pa
   assert.equal((await lookup.getCatalogProductsByGroup('not-a-real-group')).length,0);
   assert.deepEqual(calls,[['product','2020001014'],['product','202000101'],['group',group],['products',group]]);
   assert.deepEqual(products.map(p=>p.id),['c','a'],'retain DB collation/order, do not sort in JavaScript');
-  assert.equal(configs.length,3);
-  assert.ok(configs.every(c=>c.options.revalidate===300&&c.options.tags[0]==='storefront-public-catalog'));
+  assert.ok(!source('lib/catalogPages.ts').includes('unstable_cache'),'ISR already caches detail HTML; avoid extra persistent per-SKU cache IO');
   assert.ok(!source('lib/catalogPages.ts').includes('categoryCatalog'));
   assert.ok(!source('lib/products.ts').includes('getPublicProductOrder'));
 });
 
-test('bounded lookup propagates upstream failures and a failed data read is not cached as missing',async()=>{
+test('bounded lookup propagates upstream failures and a later render retries the origin',async()=>{
   let fail=true,reads=0;
   const read=async()=>{reads++;if(fail)throw new Error('catalog_unavailable');return{sku:'REAL'};};
   const lookup=load('lib/catalogPages.ts',{
     react:{cache:fn=>fn},
-    'next/cache':{unstable_cache(fn){let value;return async(...args)=>{if(value)return value;value=await fn(...args);return value;};}},
     './products':{normalizeSku,getProductBySku:read,getGroupById:read,getProductsByGroup:read},
   });
   assert.equal(await lookup.getCatalogProductBySku('   '),null);
   await assert.rejects(lookup.getCatalogProductBySku('REAL'),/catalog_unavailable/);
   await assert.rejects(lookup.getCatalogProductsByGroup('a9332562-fe24-4f69-965a-b6c9514af844'),/catalog_unavailable/);
   fail=false;assert.equal((await lookup.getCatalogProductBySku('REAL')).sku,'REAL');
-  const before=reads;await lookup.getCatalogProductBySku('REAL');assert.equal(reads,before);
+  const before=reads;await lookup.getCatalogProductBySku('REAL');assert.equal(reads,before+1,'new render reads fresh data; no second persistent cache expiry');
 });
 
 test('public company identity is cached 300s and failed reads do not poison the shared entry with fallback data',async()=>{
@@ -92,4 +89,11 @@ test('product/group detail routes retain bounded ISR builds and use cached serve
   for(const code of [product,group]){assert.ok(code.includes('@/lib/catalogPages'));assert.ok(code.includes('export const revalidate = 300'));assert.ok(code.includes('return [];'));}
   assert.ok(product.includes('variant={catalogImageVariant(imgs[0])}'));
   assert.ok(group.includes('card_image: catalogImageVariant(product.images?.[0])'));
+});
+
+test('independent company, product and group data starts in parallel, not a serial page waterfall',()=>{
+  const product=source('app/p/[sku]/page.tsx'),group=source('app/g/[id]/page.tsx');
+  assert.equal(product.split('Promise.all([getProductBySku(decodeURIComponent(sku)), getOrg()])').length-1,2);
+  assert.ok(group.includes('Promise.all([getGroupById(groupId), getProductsByGroup(groupId)])'));
+  assert.ok(group.includes('Promise.all([getGroupById(groupId), getProductsByGroup(groupId), getOrg()])'));
 });

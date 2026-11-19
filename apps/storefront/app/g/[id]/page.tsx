@@ -24,9 +24,9 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const group = await getGroupById(decodeURIComponent(id));
+  const groupId = decodeURIComponent(id);
+  const [group, products] = await Promise.all([getGroupById(groupId), getProductsByGroup(groupId)]);
   if (!group) return { title: "ไม่พบกลุ่มสินค้า" };
-  const products = await getProductsByGroup(group.id);
   const desc =
     (group.description && group.description.trim()) ||
     `รวมสินค้ากลุ่ม ${group.name} จาก JNAC ${products.length} รายการ พร้อมราคา สเปก และสถานะพร้อมส่ง/สั่งผลิต — ขอใบเสนอราคาได้ทันที`;
@@ -40,9 +40,9 @@ export async function generateMetadata({
 
 export default async function GroupPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const group = await getGroupById(decodeURIComponent(id));
+  const groupId = decodeURIComponent(id);
+  const [group, products, org] = await Promise.all([getGroupById(groupId), getProductsByGroup(groupId), getOrg()]);
   if (!group) notFound();
-  const [products, org] = await Promise.all([getProductsByGroup(group.id), getOrg()]);
   const crossSiteGuide = getGroupCrossSiteGuide(group.id, group.name);
 
   return (

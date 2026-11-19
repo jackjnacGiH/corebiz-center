@@ -1,14 +1,13 @@
 import { cache } from "react";
-import { unstable_cache } from "next/cache";
 import { getProductBySku, getGroupById, getProductsByGroup, normalizeSku } from "./products";
 
-// Bound a first detail request to its SKU/group, not the full catalog.
-// React cache deduplicates metadata/page reads; the data cache shares successful
-// public lookups across renders with the existing five-minute freshness.
-const options = { revalidate: 300, tags: ["storefront-public-catalog"] };
-const readProduct = unstable_cache(getProductBySku, ["storefront-product-v1"], options);
-const readGroup = unstable_cache(getGroupById, ["storefront-group-v1"], options);
-const readGroupProducts = unstable_cache(getProductsByGroup, ["storefront-group-products-v1"], options);
+// Bound a first detail request to its SKU/group and share metadata/page reads.
+// The route's existing 300s ISR caches the rendered page. A second persistent
+// data-cache layer per SKU adds cold read/write latency and can compound expiry.
+// Only company identity and whole-category snapshots need cross-route caching.
+const readProduct = cache(getProductBySku);
+const readGroup = cache(getGroupById);
+const readGroupProducts = cache(getProductsByGroup);
 
 export const getCatalogProductBySku = cache((sku: string) => {
   const normalized = normalizeSku(sku);
