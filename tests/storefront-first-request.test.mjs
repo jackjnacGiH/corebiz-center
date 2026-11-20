@@ -19,6 +19,7 @@ test('first detail renders read only their SKU/group and deduplicate metadata/pa
   const products=[{id:'c',sku:'EXACT',group_id:group},{id:'a',sku:' EXACT',group_id:group}];
   const lookup=load('lib/catalogPages.ts',{
     react:{cache:requestCache},
+    './buildCatalog':{isCatalogBuild:()=>false},
     './products':{normalizeSku,
       getProductBySku:async sku=>{calls.push(['product',sku]);return sku==='2020001014'?{id:'b',sku:' 2020001014'}:null;},
       getGroupById:async id=>{calls.push(['group',id]);return{id,name:'SA331'};},
@@ -46,6 +47,7 @@ test('bounded lookup propagates upstream failures and a later render retries the
   const read=async()=>{reads++;if(fail)throw new Error('catalog_unavailable');return{sku:'REAL'};};
   const lookup=load('lib/catalogPages.ts',{
     react:{cache:fn=>fn},
+    './buildCatalog':{isCatalogBuild:()=>false},
     './products':{normalizeSku,getProductBySku:read,getGroupById:read,getProductsByGroup:read},
   });
   assert.equal(await lookup.getCatalogProductBySku('   '),null);
@@ -84,9 +86,11 @@ test('protected revalidation expires both shared data tags only after the existi
   }
 });
 
-test('product/group detail routes retain bounded ISR builds and use cached server lookup; images are unchanged',()=>{
+test('product/group detail routes prerender bulk params and retain 300s runtime ISR; images are unchanged',()=>{
   const product=source('app/p/[sku]/page.tsx'),group=source('app/g/[id]/page.tsx');
-  for(const code of [product,group]){assert.ok(code.includes('@/lib/catalogPages'));assert.ok(code.includes('export const revalidate = 300'));assert.ok(code.includes('return [];'));}
+  for(const code of [product,group]){assert.ok(code.includes('@/lib/catalogPages'));assert.ok(code.includes('export const revalidate = 300'));assert.ok(code.includes('export const dynamicParams = true'));}
+  assert.ok(product.includes('return getPrerenderProductParams();'));
+  assert.ok(group.includes('return getPrerenderGroupParams();'));
   assert.ok(product.includes('variant={catalogImageVariant(imgs[0])}'));
   assert.ok(group.includes('card_image: catalogImageVariant(product.images?.[0])'));
 });

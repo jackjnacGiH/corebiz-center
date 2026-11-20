@@ -74,6 +74,13 @@ export async function getAllProducts(): Promise<SProduct[]> {
     .order("is_featured", { ascending: false }).order("name_th").order("id"))).map(sanitizePublicProduct);
 }
 
+// Build-only bulk read: group pages must retain the database's name/id order.
+// The normal catalog keeps its existing featured-first ordering above.
+export async function getPrerenderProducts(): Promise<SProduct[]> {
+  return (await readAll<SProduct>(() => supabase.from("storefront_products").select(SELECT)
+    .order("name_th").order("id"))).map(sanitizePublicProduct);
+}
+
 export async function getProductBySku(sku: string): Promise<SProduct | null> {
   const normalizedSku = normalizeSku(sku);
   if (!normalizedSku) return null;
