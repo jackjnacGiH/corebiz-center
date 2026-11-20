@@ -1,4 +1,4 @@
-import { extractModelCodes } from "./product-selection.mjs";
+import { extractModelCodes, normalizeFlapDiscName } from "./product-selection.mjs";
 import { numberedChoices } from "./product-turn-context.mjs";
 
 const PRODUCT_NAME_RE = /กระดาษทราย|ผ้าทราย|จานทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|สก๊อตไบรท์|สก๊อตไบร์ท|ล้อทราย|ล้อขัด|ลูกขัด|ใบ(?:ขัด|ตัด|เจียร)|หินเจียร|แผ่น(?:ขัด|เจียร)|แปรง(?:ลวด|ขัด)|สายพาน(?:ขัด|ทราย)|สว่านลม|เครื่องมือ(?:ลม)?|\b(?:flap\s*disc|nonwoven|scotch\s*brite)\b/iu;
@@ -30,14 +30,14 @@ function catalogChoice(query, assistantText) {
 }
 
 function hasProductIdentity(query) {
-  const text = clean(query);
+  const text = normalizeFlapDiscName(clean(query));
   if (/https?:\/\/(?:www\.)?jnac\.online\/p\/[A-Z0-9._-]+(?:[/?#\s]|$)/iu.test(text)) return true;
   if (PRODUCT_NAME_RE.test(text) || PRODUCT_BRAND_RE.test(text)) return true;
   return extractModelCodes(text).some((code) => !/^(?:QT|SO|DN)\d+$/u.test(code));
 }
 
 function productKind(query) {
-  const text = clean(query);
+  const text = normalizeFlapDiscName(clean(query));
   if (/ม้วน\s*ใย|สก๊อตไบรท์|สก๊อตไบร์ท|\b(?:nonwoven|scotch\s*brite)\b/iu.test(text)) return "nonwoven_roll";
   if (/จานทราย|\bflap\s*disc\b/iu.test(text)) return "flap_disc";
   if (/กระดาษทราย|ผ้าทราย/iu.test(text)) return "sandpaper";

@@ -125,6 +125,13 @@ test("full findProducts resolves photograph query to one scored candidate among 
   assert.deepEqual(result.clarification_candidates.map(p => p.sku), ["2020000992"]);
   assert.equal(result.clarification_candidates[0].match_score, 85);
 });
+test("a compatible catalog model below 80 can be offered without a brand in the request", async () => {
+  const result = await edge.findProducts(fakeAdmin(), 'กระดาษทราย SA331VC 5" #1500');
+  assert.equal(result.selection_required, true);
+  assert.deepEqual(result.products, []);
+  assert.deepEqual(result.clarification_candidates.map(({ sku, match_score }) => [sku, match_score]), [["2020000992", 75]]);
+  assert.match(result.clarification_question_th, /SA331VC.*ต่างกัน/);
+});
 test("button selection resolves exact SKU, without remaining confirmation", async () => {
   const result = await edge.findProducts(fakeAdmin(), 'กระดาษทรายกลมสักหลาด SA331 5" #1500');
   assert.equal(result.selection_required, undefined);
@@ -144,7 +151,7 @@ test("catalog discovery splits attached Thai words and offers sub-80 real adhesi
   assert.equal(result.selection_required, true);
   assert.deepEqual(result.products, []);
   assert.ok(result.clarification_candidates.length >= 2);
-  assert.ok(result.clarification_candidates.every((item) => item.match_score < 80));
+  assert.ok(result.clarification_candidates.every((item) => item.safe_alternative && item.match_score < 80));
   assert.match(result.clarification_question_th, /1\. กระดาษทรายกลมหลังกาว/);
   assert.doesNotMatch(result.clarification_question_th, /สักหลาด|#800/);
 });
@@ -692,7 +699,7 @@ test("short follow-up after an unanswered product turn reuses only the adjacent 
   const unrelated = await recoverEmptyProductAnswer("มีไหนครับ", [{ role: "assistant", content: history[0].content }], "th", q => edge.findProducts(fakeAdmin(), q));
   assert.equal(unrelated.answer, null);
 });
-test("empty AI completion on complete 80-point query offers the one confirmed-choice candidate", async () => {
+test("empty AI completion on a model query offers the compatible candidate for confirmation", async () => {
   const recovered = await recoverEmptyProductAnswer('กระดาษทราย DEERFOS SA331VC 5" #1500', [], "th", q => edge.findProducts(fakeAdmin(), q));
   assert.equal(recovered.result.clarification_candidates[0].sku, "2020000992");
   assert.match(recovered.answer, /1\. กระดาษทรายกลมสักหลาด SA331 5" #1500/);
@@ -868,6 +875,31 @@ test("flap-disc question offers catalog backings before model and grit", async (
   const hard = await guidedProductDecision('จานทรายหลังแข็ง Eco 4" 72P #80', [], "th", lookup);
   assert.equal(hard.result.products.length, 1);
   assert.match(hard.result.products[0].name_th, /หลังแข็ง Eco.*#80/);
+});
+test("flap-disc aliases search the right type and keep the stated quantity through a catalog choice", async () => {
+  const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);
+  for (const order of ['สั่งแผ่นทรายซ้อน 4" เบอร์ 80 400 ใบครับ', 'สั่งทรายซ้อน 4 นิ้ว เบอร์ 80 400 ใบครับ']) {
+    const prior = [{ role: "user", content: 'ขอใบเจียร 5" #120' }, { role: "assistant", content: "เลือกได้เลยค่ะ" }];
+    assert.equal(routeLatestTurn(order, prior).kind, "new_product");
+    const first = await guidedProductDecision(order, [], "th", lookup);
+    assert.equal(first.lookupQuery, "จานทราย 4นิ้ว #80");
+    assert.equal(first.result.count, 8);
+    assert.match(first.answer, /หลังอ่อน/);
+    assert.match(first.answer, /หลังแข็ง/);
+    assert.equal(numberedChoices(first.answer).at(-1), noMatchChoice);
+    const history = [{ role: "user", content: order }, { role: "assistant", content: first.answer }];
+    const backing = await guidedProductDecision("1", history, "th", lookup);
+    assert.match(backing.answer, /CS310X.*#80/);
+    assert.doesNotMatch(backing.answer, /หลังแข็ง/);
+    history.push({ role: "user", content: "1" }, { role: "assistant", content: backing.answer });
+    const selected = await guidedProductDecision("1", history, "th", lookup);
+    assert.equal(selected.result.products[0].sku, "2020090002");
+    assert.equal(guidedRequestedQuantity("1", history, selected.lookupQuery), 400);
+  }
+  const fromImage = await lookup("แผ่นทรายซ้อน J NAC 4 นิ้ว เบอร์ 80");
+  assert.equal(fromImage.selection_required, true);
+  assert.equal(fromImage.count, 8);
+  assert.equal((await lookup('ล้อทรายซ้อน 4" #80')).count, 0);
 });
 test("flap-disc typo and short replies retain the requested grit and size", async () => {
   const lookup = q => edge.findProducts(fakeAdmin(flapDiscCatalog), q);

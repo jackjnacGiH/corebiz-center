@@ -1,4 +1,4 @@
-import { extractExplicitProductSkus, extractModelCodes, normalizeProductSearchQuery, productMatchFacets } from "./product-selection.mjs";
+import { extractExplicitProductSkus, extractModelCodes, normalizeFlapDiscName, normalizeProductSearchQuery, productMatchFacets } from "./product-selection.mjs";
 import { formatProductOptions, numberedChoices, pendingProductQuestion, PRODUCT_OPTIONS_MENU_RE } from "./product-turn-context.mjs";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
@@ -78,13 +78,12 @@ export function sameProductReference(question, card) {
 }
 
 export function normalizeGuidedProductTerm(value) {
-  const text = clean(value)
+  const text = normalizeFlapDiscName(clean(value))
     .replace(/ม้วน\s*ใย\s*สังเคราะห์/gu, "ม้วนใยขัดสังเคราะห์")
     .replace(/สก๊อตไบรท์/gu, "สก๊อตไบร์ท")
     .replace(/หลังกา+ว/gu, "หลังกาว")
     .replace(/\bMIKA\b/giu, "MIRKA")
-    .replace(/จาานราย/gu, "จานทราย")
-    .replace(/จานทราย\s*ซ้อน/gu, "จานทราย");
+    .replace(/จาานราย/gu, "จานทราย");
   if (COMPETING_PRODUCT_FORM_RE.test(text)) return text;
   return text
     .replace(/ใย(?:ขัดสังเคราะห์|ขัด|สังเคราะห์)\s*สก๊อตไบร์ท\s*(?:แบบ\s*)?ม้วน/gu,
