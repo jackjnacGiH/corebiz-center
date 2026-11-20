@@ -1,6 +1,5 @@
 import { extractModelCodes, productMatchFacets } from "./product-selection.mjs";
 
-export const PRODUCT_SUGGESTION_THRESHOLD = 80;
 export const PRODUCT_MATCH_WEIGHTS = Object.freeze({ model: 30, type: 25, size: 20, grit: 15, brand: 10 });
 const KNOWN_BRANDS = ["DEERFOS", "MIRKA", "PACO", "SIA", "3M", "NORTON", "VSM", "KLINGSPOR", "U-TOOLS", "JNAC"];
 const modelParts = (code) => /^([A-Z]+\d+)([A-Z][A-Z0-9]*)?$/.exec(code);
@@ -34,9 +33,12 @@ export function scoreProductCandidate(query, product, identity = {}) {
   const { requestedFamily, candidateFamily, requestedProductType, candidateProductType } = identity;
   if (requestedFamily && requestedFamily !== candidateFamily) conflicts.push("family");
   if (requestedProductType && requestedProductType !== candidateProductType) conflicts.push("type");
-  if ((requestedProductType && requestedProductType === candidateProductType) ||
-      (requestedFamily && requestedFamily === candidateFamily)) points.type = 25;
-  else if (/กระดาษทราย|sand\s*paper|abrasive\s*paper/i.test(query) && candidateProductType === "sanding_disc") {
+  const sameProductClass = Boolean((requestedProductType && requestedProductType === candidateProductType)
+    || (requestedFamily && requestedFamily === candidateFamily));
+  const genericSandingPaper = /กระดาษทราย|sand\s*paper|abrasive\s*paper/i.test(query)
+    && candidateProductType === "sanding_disc";
+  if (sameProductClass) points.type = 25;
+  else if (genericSandingPaper) {
     // Generic paper does not establish disc/backing: partial type evidence.
     points.type = 20;
     missing.push("specific_type");
@@ -67,9 +69,11 @@ export function scoreProductCandidate(query, product, identity = {}) {
   else missing.push("brand");
   const requestedSkus = String(query).match(/\b\d{7,}\b/g) ?? [];
   if (requestedSkus.some((sku) => sku !== String(product.sku))) conflicts.push("sku");
+  const hasModelEvidence = modelRelation === "exact" || (modelRelation === "suffix_unconfirmed"
+    && (sameProductClass || genericSandingPaper || (requested.size.length > 0 && requested.grit.length > 0)));
   const score = Object.values(points).reduce((sum, value) => sum + value, 0);
   return { score, points, conflicts, missing, model_relation: modelRelation,
-    eligible: conflicts.length === 0 && score >= PRODUCT_SUGGESTION_THRESHOLD };
+    eligible: conflicts.length === 0 && hasModelEvidence };
 }
 
 /** Always require a customer selection, even when only one suggestion passes. */
@@ -78,7 +82,7 @@ export function buildScoredProductSelection(query, candidates) {
   const selected = candidates.filter((candidate) => candidate.match?.eligible)
     .sort((a, b) => b.match.score - a.match.score || String(a.product.sku).localeCompare(String(b.product.sku)))
     .filter(({ product }) => { if (seen.has(product.sku)) return false; seen.add(product.sku); return true; })
-    .slice(0, 3);
+    .slice(0, 5);
   if (!selected.length) return null;
   const safeLine = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
   const list = (lang) => selected.map(({ product }, index) =>
@@ -90,7 +94,7 @@ export function buildScoredProductSelection(query, candidates) {
   const differenceEn = differs ? `You requested ${requestedModel}; the catalog model differs, so please confirm the item first.\n` : "";
   return {
     query, count: 0, products: [], selection_required: true, confirmation_required: true,
-    match_policy: "weighted_evidence_v1", score_threshold: PRODUCT_SUGGESTION_THRESHOLD,
+    match_policy: "catalog_model_confirmation_v1",
     missing_fields: ["product_confirmation"],
     clarification_question_th: `พบสินค้าที่ข้อมูลใกล้เคียงกับที่แจ้งค่ะ\n${differenceTh}กรุณาเลือกสินค้าที่ต้องการค่ะ\n${list("th")}`,
     clarification_question_en: `I found matching candidates.\n${differenceEn}Please select the product you mean:\n${list("en")}`,

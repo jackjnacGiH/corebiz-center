@@ -819,6 +819,12 @@ async function findProducts(admin: SupabaseClient, query: string) {
   }
 
   if (directMatches.length > 0) {
+    directMatches = directMatches.map((entry) => {
+      const { p, match } = entry;
+      const rank = scoreProductCandidate(q, p, match).score;
+      return { ...entry, rank };
+    }).sort((a, b) => b.rank - a.rank
+      || String(a.p.name_th || a.p.name_en || "").localeCompare(String(b.p.name_th || b.p.name_en || ""), "th", { numeric: true }));
     let selection: ProductSelectionResult | null = buildProductSelection(q, directMatches.map(({ p }) => p));
     const catalogNames = [...new Set(directMatches.map(({ p }) => String(p.name_th || p.name_en || "").trim()).filter(Boolean))];
     const requestedGrit = productMatchFacets(q).grit.length > 0;
@@ -851,7 +857,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
       };
     } else if (extractModelCodes(q).length === 0 && modelOptions.length > 1 && modelOptions.length <= 13
       && (rawMatchCount ?? directMatches.length) <= MAX_PRODUCT_MATCH_SCAN) {
-      const options = modelOptions.sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
+      const options = modelOptions;
       selection = {
         selection_required: true,
         missing_fields: ["model"],
@@ -981,29 +987,19 @@ async function findProducts(admin: SupabaseClient, query: string) {
     }
   }
 
-  if (PRODUCT_SCORE_SUGGESTIONS_ENABLED) {
-    const modelRoot = productModelSearchRoot(q);
-    let candidates: Record<string, unknown>[] = [];
-    if (modelRoot) {
-      // Retrieve a bounded same-root pool, then score exact facets. The root
-      // is NOT an alias: SA331VC must still be confirmed against SA331.
-      const { data: rows, error: candidateError } = await admin.from("products")
-        .select(PRODUCT_MATCH_COLUMNS).eq("status", "active")
-        .or(`name_th.ilike.%${modelRoot.replace(/^([A-Z]+)(\d+)$/, "$1%$2")}%,name_en.ilike.%${modelRoot.replace(/^([A-Z]+)(\d+)$/, "$1%$2")}%`)
-        .order("sku", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
-      if (!candidateError) candidates = (rows ?? []) as Record<string, unknown>[];
-    } else {
-      const { data: fuzzy } = await admin.rpc("search_products_fuzzy", {
-        p_query: q, p_limit: 30, p_threshold: 0.2,
-      });
-      const skus = (fuzzy ?? []).map((row: { sku: string }) => row.sku).filter(Boolean);
-      if (skus.length) {
-        const { data: rows } = await admin.from("products").select(PRODUCT_MATCH_COLUMNS)
-          .eq("status", "active").in("sku", skus);
-        candidates = (rows ?? []) as Record<string, unknown>[];
-      }
-    }
-    const scored = buildScoredProductSelection(q, candidates.map((product) => {
+  const modelRoot = productModelSearchRoot(q);
+  if (PRODUCT_SCORE_SUGGESTIONS_ENABLED && modelRoot) {
+    // A shared model root is retrieval evidence. Any offered suffix variant
+    // still requires confirmation and must agree with the requested facets.
+    const modelPattern = modelRoot.replace(/^([A-Z]+)(\d+)$/, "$1%$2");
+    const { data: rows, error: candidateError } = await admin.from("products")
+      .select(PRODUCT_MATCH_COLUMNS).eq("status", "active")
+      .or(`name_th.ilike.%${modelPattern}%,name_en.ilike.%${modelPattern}%`)
+      .order("sku", { ascending: true }).limit(MAX_PRODUCT_MATCH_SCAN);
+    const candidates = (candidateError ? [] : rows ?? []) as Record<string, unknown>[];
+    const compatible = candidates.filter((product) => matchesExplicitProductVariant(q, product)
+      && (!requestedColor || String(product.name_th || product.name_en || "").includes(`สี${requestedColor}`)));
+    const scored = buildScoredProductSelection(q, compatible.map((product) => {
       const candidateText = [product.name_th, product.name_en, (product.group as { name?: string } | null)?.name].filter(Boolean).join(" ");
       return { product, match: scoreProductCandidate(q, product, {
         requestedFamily, candidateFamily: productFamilyFor(String(product.name_th || product.name_en || candidateText)),
@@ -1013,7 +1009,6 @@ async function findProducts(admin: SupabaseClient, query: string) {
     if (scored) return { ...scored, original_query: original, synonym_rewrites: applied };
   }
 
-  // Discovery is a separate decision from the 80-point recommendation gate.
   // Search meaningful words in any order, then offer catalog choices for the
   // customer to confirm. A candidate is never an identified/priced product.
   if (PRODUCT_CATALOG_DISCOVERY_ENABLED) {
@@ -1156,7 +1151,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
             sku: product.sku, name_th: product.name_th, name_en: product.name_en,
             brand: product.brand, match_score: match.score,
             differences: match.conflicts.filter((value) => value === "model" || value === "brand"),
-            confirmation_required: true,
+            confirmation_required: true, safe_alternative: true,
           })),
         };
         return {
@@ -1168,7 +1163,7 @@ async function findProducts(admin: SupabaseClient, query: string) {
     }
   }
 
-  // With scoring enabled, no older 70%-name fallback may bypass the 80% gate.
+  // Keep the legacy name lookup available when the model fallback is disabled.
   if (!PRODUCT_SCORE_SUGGESTIONS_ENABLED) try {
     const { data: fuzzy } = await admin.rpc("search_products_fuzzy", {
       p_query: q, p_limit: 3, p_threshold: 0.2,
@@ -1968,8 +1963,8 @@ const TOOLING_GUIDE_TH = `🛠️ กฎการใช้ TOOLS (สำคั�
    - เสนอสินค้าได้เฉพาะผลจาก tool ที่มี safe_alternative=true เท่านั้น
    - ถ้า tool ส่ง requested_product_family มา: เสนอได้เฉพาะ product_family เดียวกันเท่านั้น แม้ขนาด/เบอร์ใกล้เคียงก็ห้ามข้ามชนิด เช่น "ผ้าทรายสายพาน" ห้ามเสนอ "ล้อทรายมีแกน" เด็ดขาด
    - ถ้า tool ส่ง requested_product_type มา (เช่น จานทราย, ล้อทราย, ผ้าทรายม้วน): ให้ถือเป็น hard gate ก่อนดูขนาด/เบอร์/คะแนน และเสนอได้เฉพาะ product_type เดียวกันเท่านั้น ห้ามข้ามคำระบุชนิดสินค้านี้เด็ดขาด
-   - ถ้า tool ส่ง match_policy=weighted_evidence_v1: ใช้เฉพาะ clarification_candidates ที่ match_score >= 80 และถาม clarification_question_th เพื่อให้ลูกค้าเลือก แม้มีเพียงรายการเดียว ห้ามถือว่ารหัสรุ่นที่ต่างกันเป็นรุ่นเดียวกัน และห้ามส่งต่อเจ้าหน้าที่ระหว่างรอเลือก
-   - match_score เป็นคะแนนข้อมูลตรงกันจากระบบ ไม่ใช่โอกาสถูกต้อง ห้ามคำนวณคะแนนเอง ห้ามบอกราคา/ออกใบเสนอราคาจนกว่าลูกค้าจะเลือก SKU แล้วผ่าน get_exact_price ตามกฎราคาเดิม
+   - ถ้า tool ส่ง match_policy=catalog_model_confirmation_v1 หรือ catalog_keyword_confirmation_v1: เสนอตามลำดับใน clarification_question_th ให้ลูกค้ายืนยัน แม้มีเพียงรายการเดียว และแจ้งความต่างของรุ่นหรือแบรนด์ที่ tool ระบุ ระหว่างรอเลือกให้รอคำตอบลูกค้า
+   - ใช้ match_score เพื่อจัดลำดับเท่านั้น ใช้ผลจากระบบและรอให้ลูกค้ายืนยัน SKU แล้วเรียก get_exact_price ก่อนแจ้งราคาหรือออกใบเสนอราคา
    - ผลค้นหาปกติใช้ safe_alternative / safe_match_basis จาก tool เท่านั้น ห้ามสร้างสินค้าทดแทนเอง
    - หากไม่มีตัวเลือก safe_alternative: ห้ามแสดงชื่อสินค้าอื่น ให้ capture_lead เพื่อให้ทีมตรวจสอบจัดหา/สั่งผลิต และต้องระบุ requested_product_type ในคำตอบเพื่อยืนยันว่ากำลังตรวจสอบสินค้าชนิดที่ลูกค้าถาม
    - สินค้าที่เป็น same_family แต่ขนาด/เบอร์ไม่ตรง เป็น "ทางเลือก" เท่านั้น: ต้องบอกความต่างให้ชัด และห้ามสร้างใบเสนอราคาจนกว่าลูกค้าจะยืนยัน SKU/ขนาดนั้น
@@ -2011,8 +2006,8 @@ const TOOLING_GUIDE_EN = `🛠️ TOOLING RULES (CRITICAL)
    - Offer only tool results with safe_alternative=true.
    - When requested_product_family is provided, candidate product_family MUST match exactly. Never cross product types (for example sanding belt -> mounted flap wheel), even when dimensions or grit look similar.
    - When requested_product_type is provided (for example flap disc, mounted wheel, sanding roll), it is a hard gate before dimensions, grit, or scoring: candidate product_type MUST match exactly.
-   - For match_policy=weighted_evidence_v1, offer only clarification_candidates with match_score >= 80 and ask clarification_question_en. Even one candidate needs customer selection. Different model suffixes are not confirmed aliases. Do not escalate while awaiting selection.
-   - match_score measures matching evidence, not probability. Never invent scores or quote a price until customer selection resolves a SKU and get_exact_price succeeds under the existing pricing rules.
+   - For match_policy=catalog_model_confirmation_v1 or catalog_keyword_confirmation_v1, offer the catalog options in clarification_question_en in the given order. Ask the customer to confirm even a single option. Disclose any model or brand difference reported by the tool and wait for the customer's selection.
+   - Use match_score for ranking only. Wait for the customer to confirm the SKU and for get_exact_price to succeed before quoting a price or creating a quotation.
    - For ordinary search results, trust only the tool's safe_alternative / safe_match_basis; never invent alternatives.
    - If no safe_alternative exists, do not list another product; call capture_lead for sourcing/made-to-order and explicitly name requested_product_type in the reply.
    - A same-family product with a different size/grit is an alternative only: state the difference and do not create a quote until the customer confirms that SKU/size.

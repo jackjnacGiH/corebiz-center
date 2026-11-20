@@ -16,7 +16,7 @@ const query = 'กระดาษทราย DEERFOS SA331VC 5" #1500';
 const score = (q = query, p = product, identity = generic) => scoreProductCandidate(q, p, identity);
 const result = () => buildScoredProductSelection(query, [{ product, match: score() }]);
 
-test("SA331VC: qualifying points require customer confirmation", () => {
+test("SA331VC: compatible model evidence requires customer confirmation", () => {
   assert.equal(score().score, 85);
   assert.equal(score().eligible, true);
   assert.equal(score().model_relation, "suffix_unconfirmed");
@@ -30,7 +30,7 @@ test("SA331VC: qualifying points require customer confirmation", () => {
 test("exact model and full evidence scores 100; absent brand does not get points", () => {
   assert.equal(score(query.replace("SA331VC", "SA331"), product, exactType).score, 100);
   assert.equal(score(query.replace("DEERFOS", "")).score, 75);
-  assert.equal(score(query.replace("DEERFOS", "")).eligible, false);
+  assert.equal(score(query.replace("DEERFOS", "")).eligible, true);
   assert.equal(score('กระดาษทรายกลมสักหลาด SA331VC 5" #1500', product, exactType).score, 80);
 });
 for (const [label, q, p, identity, conflict] of [
@@ -52,18 +52,22 @@ for (const [label, q, p, identity, conflict] of [
   assert.equal(match.eligible, false);
   assert.equal(buildScoredProductSelection(q, [{ product: p, match }]), null);
 });
-test("missing facet contributes zero; size/grit clarification for old exact path survives", () => {
-  assert.equal(score('กระดาษทราย DEERFOS SA331VC').eligible, false);
+test("model and product class can offer a choice when size and grit are unknown", () => {
+  assert.equal(score('กระดาษทราย DEERFOS SA331VC').eligible, true);
+  assert.equal(score("SA331VC").eligible, false);
+  assert.equal(score('5" #1500').eligible, false);
   assert.equal(matchesExplicitProductVariant('SA331 5 นิ้ว #1500', product), true);
   assert.equal(matchesExplicitProductVariant('SA331 5 นิ้ว #150', product), false);
   const selection = buildProductSelection("SA331", [product, { ...product, name_th: product.name_th.replace('5" #1500', '6" #120') }]);
   assert.deepEqual(selection.missing_fields, ["size", "grit"]);
 });
-test("deduplicate, order by score, cap at three, and reject below threshold", () => {
-  const candidates = [79, 80, 85, 100, 90].map((points, i) => ({ product: { ...product, sku: String(i) }, match: { ...score(), score: points, eligible: points >= 80 } }));
+test("rank compatible options by score without a score cutoff and exclude conflicting items", () => {
+  const candidates = [20, 45, 55, 75, 90, 100].map((points, i) => ({
+    product: { ...product, sku: String(i) },
+    match: { ...score(), score: points, eligible: points !== 100 },
+  }));
   const selected = buildScoredProductSelection(query, [...candidates, candidates[3]]);
-  assert.deepEqual(selected.clarification_candidates.map(c => c.match_score), [100, 90, 85]);
-  assert.equal(selected.clarification_candidates.length, 3);
+  assert.deepEqual(selected.clarification_candidates.map(c => c.match_score), [90, 75, 55, 45, 20]);
 });
 test("pending selection blocks lead, price, billing and quotation tools", () => {
   for (const name of ["capture_lead", "get_exact_price", "request_quote", "link_quote_customer"]) {
