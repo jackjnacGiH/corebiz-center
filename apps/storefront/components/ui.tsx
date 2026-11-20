@@ -296,19 +296,19 @@ export function Nav({ org }: { org: OrgInfo }) {
   return (
     <header className="sticky top-0 z-50 shadow-lg" style={{ background: NAVY }}>
       <div className="relative max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex h-16 items-center gap-2 sm:gap-3">
-        <Link href="/" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="JNAC หน้าแรก">
+        <Link href="/" className="flex min-w-0 flex-1 items-center gap-2" aria-label="JNAC หน้าแรก">
           {org.logo_url ? (
             <Image
               src={org.logo_url}
               alt={org.business_name}
-              width={112}
+              width={44}
               height={44}
-              sizes="(min-width: 640px) 112px, 96px"
+              sizes="(min-width: 640px) 44px, 40px"
               quality={65}
-              className="h-10 w-24 flex-shrink-0 rounded-md bg-white p-1 object-contain sm:h-11 sm:w-28"
+              className="h-10 w-10 flex-shrink-0 object-contain brightness-0 invert sm:h-11 sm:w-11"
             />
           ) : (
-            <span className="w-9 h-9 rounded-md grid place-items-center font-bold flex-shrink-0 bg-white/15 text-white">J</span>
+            <span className="w-9 h-9 grid place-items-center font-bold flex-shrink-0 text-white">J</span>
           )}
           <span className="hidden min-w-0 truncate text-sm font-bold tracking-tight text-white md:block xl:max-w-48 xl:text-base">
             {org.business_name}
