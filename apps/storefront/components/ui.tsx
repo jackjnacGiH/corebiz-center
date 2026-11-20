@@ -310,7 +310,7 @@ export function Nav({ org }: { org: OrgInfo }) {
           ) : (
             <span className="w-9 h-9 grid place-items-center font-bold flex-shrink-0 text-white">J</span>
           )}
-          <span className="hidden min-w-0 truncate text-sm font-bold tracking-tight text-white md:block xl:max-w-48 xl:text-base">
+          <span className="hidden min-w-0 whitespace-normal text-sm font-bold leading-tight tracking-tight text-white md:block xl:text-base">
             {org.business_name}
           </span>
         </Link>
