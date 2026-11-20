@@ -311,7 +311,7 @@ export function Nav({ org }: { org: OrgInfo }) {
             <span className="w-9 h-9 grid place-items-center font-bold flex-shrink-0 text-white">J</span>
           )}
           <span className="hidden min-w-0 whitespace-normal text-sm font-bold leading-tight tracking-tight text-white md:block xl:text-base">
-            {org.business_name}
+            J NAC (THAILAND) CO.,LTD.
           </span>
         </Link>
         <nav className="hidden items-center gap-3 text-xs font-semibold xl:flex 2xl:gap-4 2xl:text-sm" aria-label="เมนูหลัก">
