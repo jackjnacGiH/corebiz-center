@@ -59,6 +59,20 @@ test("real topic changes reset the old item, multi-item requests ask for disambi
   assert.equal(multi.multiple, true);
   const links = activeItemContext("https://www.jnac.online/p/2020004210 https://www.jnac.online/p/2020004211", []);
   assert.equal(links.multiple, true);
+  const flapVariants = activeItemContext('กระดาษทรายซ้อนเบอร์ 80 และจานทรายซ้อนหลังอ่อน 4" เบอร์ 120', []);
+  assert.equal(flapVariants.multiple, true);
+});
+
+test("flap-disc names in parentheses refer to one item and sheets are individual pieces", () => {
+  const query = 'กระดาษทรายซ้อนเบอร์ 120 (จานทรายซ้อนหลังอ่อน 4") จำนวน 100 แผ่นค่ะ';
+  const state = activeItemContext(query);
+  assert.equal(state.multiple, false);
+  assert.equal(state.facts.grit.value, "120");
+  assert.equal(state.facts.quantity.value, 100);
+  assert.deepEqual(catalogueQuantity(state, { unit: "ชิ้น" }), { quantity: 100, needs_review: false });
+  assert.deepEqual(catalogueQuantity(state, { unit: "ม้วน" }), { quantity: null, needs_review: true });
+  const history = [{ role: "user", content: query }, { role: "assistant", content: "ต้องการกี่แผ่นคะ" }];
+  assert.equal(activeItemContext("200 แผ่นค่ะ", history).route, "follow_up");
 });
 
 test("pack conversion and technical conflicts cannot invent catalogue facts", () => {

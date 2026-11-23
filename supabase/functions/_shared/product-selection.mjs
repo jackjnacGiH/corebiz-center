@@ -73,7 +73,7 @@ export function normalizeProductSearchQuery(value) {
     // A quote request and its quantity describe the transaction, not the
     // product identity. Keep them in the original customer turn for quoting.
     .replace(/^(?:(?:ขอ|ต้องการ|อยากได้|ทำ|ทํา|ออก|ส่ง)\s*)?ใบเสนอราคา\s*(?:ค่ะ|คะ|ครับ)?\s*[:：-]?\s*/iu, "")
-    .replace(/\s*(?:=|จำนวน|qty|quantity)\s*\d{1,6}\s*(?:ชิ้น|ตัว|อัน|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:ครับ|ค่ะ|คะ)?\s*$/iu, (assignment, offset, whole) => {
+    .replace(/\s*(?:=|จำนวน|qty|quantity)\s*\d{1,6}\s*(?:ชิ้น|ตัว|อัน|แผ่น|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)?(?:ครับ|ค่ะ|คะ)?\s*$/iu, (assignment, offset, whole) => {
       // A named product facet is identity, even when it uses '='. Only a
       // trailing order quantity may be removed from the catalog query.
       const preceding = whole.slice(0, offset).trimEnd();
@@ -114,7 +114,7 @@ export function productIdentitySearchText(value) {
     .replace(/(?:^|\s)(?:ขนาด|ไซซ์|size|เบอร์|grit)\s*[:=]?(?=\s|$)/giu, " ")
     .replace(/สี\s*(?:แดง|เขียว|น้ำเงิน|ดำ|ขาว|เหลือง|เทา|ชมพู|ส้ม)/giu, " ")
     .replace(/ราคา\s*(?:เท่าไหร่|เท่าไร|กี่บาท)?/giu, " ")
-    .replace(/(?<![\p{L}\p{M}\p{N}#./,+×*-])\d{1,6}\s*(?:ชิ้น|ตัว|อัน|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)\s*$/iu, " ")
+    .replace(/(?<![\p{L}\p{M}\p{N}#./,+×*-])\d{1,6}\s*(?:ชิ้น|ตัว|อัน|แผ่น|แพ็ค|แพ็ก|แพค|ชุด|ถุง|เส้น|ใบ|กล่อง|ม้วน|pcs?)\s*$/iu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
