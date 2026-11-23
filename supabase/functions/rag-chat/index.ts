@@ -86,7 +86,7 @@ import {
   PRODUCT_OPTIONS_MENU_RE,
 } from "../_shared/product-turn-context.mjs";
 import { recoverEmptyProductAnswer } from "../_shared/empty-product-recovery.mjs";
-import { routeLatestTurn } from "../_shared/latest-turn-context.mjs";
+import { catalogChoice, routeLatestTurn } from "../_shared/latest-turn-context.mjs";
 import {
   confirmedGuidedQuoteRequest,
   declinedGuidedQuoteRequest,
@@ -2661,7 +2661,12 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
     && !productHistory.some(item => item.role === "user" && /ใบเสนอราคา|quotation|\bquote\b/iu.test(item.content))) {
     productHistory.unshift({ role: "user", content: activeContext.quote_evidence });
   }
-  const activeQuery = resolvedActiveQuery(activeContext, query);
+  const previousMenu = productHistory.at(-1);
+  // Preserve a choice from the preceding product menu before filling in
+  // missing details from the earlier search.
+  const selectedOption = images.length === 0 && previousMenu?.role === "assistant"
+    && PRODUCT_OPTIONS_MENU_RE.test(previousMenu.content) && catalogChoice(query, previousMenu.content);
+  const activeQuery = selectedOption ? query : resolvedActiveQuery(activeContext, query);
   const finishContextReply = (answer: string, model: string, toolCalls: unknown[] = [], product: Record<string, unknown> | null = null) => {
     send({ type: "text", chunk: answer });
     send({ type: "done", sources: [], tokens: zeroTokens(), elapsed_ms: zeroElapsed(), model, tool_calls: toolCalls, request_id: telemetry.requestId, conversation_id: conversationId, channel, read_only: readOnly, active_item: product?.sku ? { source: "catalogue", sku: product.sku } : null });

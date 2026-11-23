@@ -1,10 +1,10 @@
 import { routeLatestTurn } from "./latest-turn-context.mjs";
-import { extractExplicitProductSkus, extractModelCodes, normalizeProductSearchQuery, productIdentitySearchText } from "./product-selection.mjs";
+import { extractExplicitProductSkus, extractModelCodes, normalizeFlapDiscName, normalizeProductSearchQuery, productIdentitySearchText } from "./product-selection.mjs";
 
 const QUOTE = /ใบเสนอราคา|quotation|\bquote\b/iu;
 const BILLING = /ชื่อบริษัท\s*[:：]|ที่อยู่ออกบิล|เลขผู้เสียภาษี|tax\s*id|billing\s*(?:address|details)|company\s*name\s*[:：]/iu;
 const PAYMENT = /บัญชี|สลิป|โอนเงิน|ชำระเงิน|bank\s*account|payment\s*(?:slip|receipt)/iu;
-const QUANTITY = /(?<![A-Z0-9._/,+−-])(?:จำนวน\s*[:：]?\s*)?(\d{1,6})\s*(ตัว|ชิ้น|อัน|แพ็ค|แพ็ก|แพค|กล่อง|ม้วน|เส้น|ใบ|ชุด|ถุง|pcs?|pieces?|packs?|boxes?)(?=\s|$|ค่ะ|ครับ|คะ|[,.!?])/iu;
+const QUANTITY = /(?<![A-Z0-9._/,+−-])(?:จำนวน\s*[:：]?\s*)?(\d{1,6})\s*(ตัว|ชิ้น|อัน|แผ่น|แพ็ค|แพ็ก|แพค|กล่อง|ม้วน|เส้น|ใบ|ชุด|ถุง|pcs?|pieces?|packs?|boxes?)(?=\s|$|ค่ะ|ครับ|คะ|[,.!?])/iu;
 const DIMENSIONS = /\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?(?:\s*[x×*]\s*\d+(?:\.\d+)?){0,2}/iu;
 const GRIT = /(?:เบอร์|กริต|grit|#|\bP)\s*[:：=#]?\s*(\d{1,5})/iu;
 const SHANK = /(?:แกน|shank)\s*(\d+(?:\.\d+)?)\s*(?:มม\.?|mm)?/iu;
@@ -30,7 +30,7 @@ export function requestedQuantity(text) {
   const match = QUANTITY.exec(String(text ?? ""));
   if (!match || !Number.isSafeInteger(Number(match[1])) || Number(match[1]) < 1) return null;
   const unit = /^(?:แพ็ค|แพ็ก|แพค|packs?)$/iu.test(match[2]) ? "pack"
-    : /^(?:ตัว|ชิ้น|อัน|pcs?|pieces?)$/iu.test(match[2]) ? "piece"
+    : /^(?:ตัว|ชิ้น|อัน|แผ่น|pcs?|pieces?)$/iu.test(match[2]) ? "piece"
     : /^(?:กล่อง|boxes?)$/iu.test(match[2]) ? "box" : match[2];
   return { quantity: Number(match[1]), unit, original_unit: match[2] };
 }
@@ -113,13 +113,20 @@ export function activeItemContext(query, history = []) {
     if (QUOTE.test(text)) { quotePending = true; quoteEvidence = text.slice(0, 350); }
     if (/ไม่ต้องการ.{0,12}ใบเสนอราคา|cancel.{0,12}quote/iu.test(text)) quotePending = false;
     const links = customerProductLinks(text);
-    const models = extractModelCodes(text.replace(/https?:\/\/\S+/giu, ""));
-    const namedTypes = [...text.matchAll(new RegExp(PRODUCT.source, "giu"))].map(match => match[0]);
-    if (links.length > 1 || models.length > 1 || new Set(namedTypes).size > 1
+    const description = text.replace(/https?:\/\/\S+/giu, "");
+    const productText = normalizeFlapDiscName(description);
+    const models = extractModelCodes(productText);
+    const namedTypes = new Set([...productText.matchAll(new RegExp(PRODUCT.source, "giu"))].map(match => match[0]));
+    // A parenthetical alias describes the same item. Keep explicit lists
+    // separate even when normalization maps their item names to one type.
+    const separateItems = productText !== description
+      && productText.replace(/\([^()]*\)|（[^（）]*）/gu, " ")
+        .split(/และ|กับ|[,\n;+]/u).filter(part => PRODUCT.test(part)).length > 1;
+    if (links.length > 1 || models.length > 1 || namedTypes.size > 1 || separateItems
       || ADDITIONAL_PRODUCT.test(text)) multiple = true;
     const evidence = `customer_turn:${index}`;
     if (links.length === 1) set("requested_sku", links[0], evidence, CHANGE.test(text));
-    if (!identity && (PRODUCT.test(text) || models.length === 1)) identity = productIdentitySearchText(normalizeProductSearchQuery(text.replace(/https?:\/\/\S+/giu, ""))).slice(0, 350);
+    if (!identity && (namedTypes.size > 0 || models.length === 1)) identity = productIdentitySearchText(normalizeProductSearchQuery(productText)).slice(0, 350);
     const quantity = isPackQuestion(text) ? null : requestedQuantity(text);
     if (quantity) {
       set("quantity", quantity.quantity, evidence, true);

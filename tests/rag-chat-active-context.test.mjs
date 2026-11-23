@@ -14,6 +14,48 @@ const wheelRequest = "ล้อทรายพันม้วนแกน 6 ม�
 const noProductOption = "ไม่มีสินค้าที่ต้องการในตัวเลือก";
 const menuHistory = (answer) => [{ role: "user", content: wheelRequest }, { role: "assistant", content: answer }];
 
+test("the handler offers matching flap discs and retains 100 sheets after selecting the model", async () => {
+  const db = database();
+  const product = {
+    sku: "2020000005", name_th: 'จานทรายหลังอ่อน CS310X 48P 4" #120',
+    unit: "ชิ้น", stock: 120, min_order_qty: 10,
+  };
+  const options = [product.name_th, 'จานทรายหลังอ่อน Eco 4" 46P #120',
+    'จานทรายหลังอ่อน XA911 4" 48P #120', 'จานทรายหลังอ่อน XA945 4" 46P #120'];
+  const lookups = [];
+  const pricing = [];
+  const runtime = await ragRuntime(db, [], {
+    findProducts: async (_admin, query) => {
+      lookups.push(query);
+      if (query === "จานทรายหลังอ่อน 4นิ้ว #120") {
+        return { selection_required: true, candidate_options: options, candidate_intro_th: "เลือกรุ่นที่ต้องการค่ะ" };
+      }
+      return { count: 1, products: [product] };
+    },
+    getExactPrice: async (_admin, args) => {
+      pricing.push(args);
+      return { response: { ok: true, exact_match: true, sku: product.sku, quantity: args.qty,
+        unit_price: 10, line_total: args.qty * 10, currency: "THB" } };
+    },
+  });
+  const query = 'กระดาษทรายซ้อนเบอร์ 120 (จานทรายซ้อนหลังอ่อน 4") จำนวน 100 แผ่นค่ะ';
+  const body = { conversation_id: conversationId, channel: "line", stream: false };
+  const first = await runtime.request({ ...body, query });
+  assert.deepEqual(lookups, ["จานทรายหลังอ่อน 4นิ้ว #120"]);
+  assert.equal(first.data.model, "catalog:guided_selection");
+  assert.deepEqual(first.data.answer.split("\n").filter(line => /^\d+\./u.test(line)),
+    [...options.map((name, index) => (index + 1) + ". " + name), "6. " + noProductOption]);
+  const history = [{ role: "user", content: query }, { role: "assistant", content: first.data.answer }];
+  for (const selection of [product.name_th, "1"]) {
+    const second = await runtime.request({ ...body, query: selection, history });
+    assert.equal(second.data.active_item?.sku, product.sku);
+    assert.deepEqual(pricing.at(-1), { sku: product.sku, qty: 100 });
+    assert.match(second.data.answer, /100 ชิ้น/);
+  }
+  assert.equal(pricing.length, 2);
+  assert.equal(db.tasks.size, 0);
+});
+
 test("the real handler offers five products and queues option 6 with the customer's specifications", async () => {
   const db = database();
   let lookups = 0;
