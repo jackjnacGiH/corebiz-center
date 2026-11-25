@@ -99,6 +99,7 @@ import {
   pendingQuoteQuantityRequest,
   quoteCreationBlockReason,
   sameProductReference,
+  softRollChoiceHistory,
   withQuoteQuickReplies,
   withVerifiedZeroStockLabel,
 } from "../_shared/guided-product-selection.mjs";
@@ -2652,10 +2653,11 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
   const trustedQuoteHistory = Boolean(trustedConversationId || persistedHistory !== null);
   const contextHistory = persistedHistory ?? history;
   const declinedOptions = trustedQuoteHistory && images.length === 0 && declinedProductOptions(query, contextHistory);
-  const activeContext = activeItemContext(declinedOptions ? "" : query, trustedQuoteHistory ? contextHistory : []);
+  const productContextHistory = softRollChoiceHistory(query, contextHistory) ?? contextHistory;
+  const activeContext = activeItemContext(declinedOptions ? "" : query, trustedQuoteHistory ? productContextHistory : []);
   const latestTurn = images.length > 0 || !CHAT_LATEST_TURN_ROUTING_ENABLED
-    ? { kind: "follow_up", history: contextHistory, topicQuery: null }
-    : routeLatestTurn(declinedOptions ? "6" : query, contextHistory);
+    ? { kind: "follow_up", history: productContextHistory, topicQuery: null }
+    : routeLatestTurn(declinedOptions ? "6" : query, productContextHistory);
   const productHistory = latestTurn.history.slice(-MAX_HISTORY_ITEMS);
   if (activeContext.quote_pending && activeContext.quote_evidence && trustedQuoteHistory
     && !productHistory.some(item => item.role === "user" && /ใบเสนอราคา|quotation|\bquote\b/iu.test(item.content))) {
