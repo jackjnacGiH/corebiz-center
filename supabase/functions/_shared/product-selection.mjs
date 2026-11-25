@@ -8,10 +8,18 @@ const DIMENSION_UNIT_SOURCE = '(?:"|นิ้ว|inch(?:es)?|in\\b|มม\\.?|mm
 const DIMENSION_UNIT_SEPARATOR_SOURCE = '\\s*(?:[-‐‑‒–—]\\s*)?';
 const SCALAR_DIMENSION_SOURCE = `\\b\\d+(?:\\.\\d+)?${DIMENSION_UNIT_SEPARATOR_SOURCE}${DIMENSION_UNIT_SOURCE}`;
 const DIMENSION_TUPLE_SOURCE = `\\b\\d+(?:\\.\\d+)?(?:\\s*[x×*]\\s*\\d+(?:\\.\\d+)?){1,3}${DIMENSION_UNIT_SEPARATOR_SOURCE}${DIMENSION_UNIT_SOURCE}`;
-const ROLL_DIMENSION_RE = /\b(\d+(?:\.\d+)?)\s*(?:"|นิ้ว|inch(?:es)?|in\b)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*(?:m\.?(?!m)|เมตร|meters?)(?=\s|$|[.,!?])/giu;
+const ROLL_DIMENSION_RE = /\b(\d+(?:\.\d+)?)\s*(?:"|นิ้ว|inch(?:es)?|in\b)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*(m(?:eters?)?\.?|เมตร|y(?:ds?|ards?)?\.?|หลา)(?=\s|$|[.,!?)#]|เบอร์)/giu;
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+const rollLengthUnit = (unit) => /^(?:y|หลา)/iu.test(unit) ? "หลา" : "เมตร";
+
+export function productRollDimensions(value) {
+  return [...String(value ?? "").matchAll(ROLL_DIMENSION_RE)].map(([raw, width, length, unit]) => ({
+    raw, width: Number(width), length: Number(length), unit: rollLengthUnit(unit),
+  }));
 }
 
 export function normalizeFlapDiscName(value) {
@@ -90,6 +98,7 @@ export function normalizeProductSearchQuery(value) {
       .replace(THAI_SEARCH_PREFIX_RE, "")
       .replace(ENGLISH_SEARCH_PREFIX_RE, "")
       .replace(THAI_SEARCH_SUFFIX_RE, "")
+      .replace(/^[\s.:：]+(?=\p{L})/u, "")
       .trim();
   }
   return text || String(value ?? "").trim();
@@ -130,8 +139,8 @@ function sourceText(product) {
 function extractSizes(value) {
   const text = String(value ?? "");
   const dimensions = [];
-  const withoutRollDimensions = text.replace(ROLL_DIMENSION_RE, (full, width, length) => {
-    dimensions.push(`${Number(width)}นิ้วx${Number(length)}เมตร`);
+  const withoutRollDimensions = text.replace(ROLL_DIMENSION_RE, (full, width, length, unit) => {
+    dimensions.push(`${Number(width)}นิ้วx${Number(length)}${rollLengthUnit(unit)}`);
     return " ".repeat(full.length);
   });
   const tupleRe = new RegExp(`\\b(\\d+(?:\\.\\d+)?(?:\\s*[x×*]\\s*\\d+(?:\\.\\d+)?){1,3})${DIMENSION_UNIT_SEPARATOR_SOURCE}(${DIMENSION_UNIT_SOURCE})`, "giu");
@@ -204,6 +213,9 @@ export function matchesExplicitProductVariant(query, product) {
     const requested = field.extract(query);
     if (requested.length === 0) continue;
     const available = new Set(field.extract(candidate));
+    if (field.key === "size") {
+      for (const { width } of productRollDimensions(candidate)) available.add(`${width}นิ้ว`);
+    }
     if (available.size === 0 || !requested.every((value) => available.has(value))) return false;
   }
   return true;

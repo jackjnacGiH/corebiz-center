@@ -99,6 +99,7 @@ import {
   pendingQuoteQuantityRequest,
   quoteCreationBlockReason,
   sameProductReference,
+  softRollChoiceHistory,
   withQuoteQuickReplies,
   withVerifiedZeroStockLabel,
 } from "../_shared/guided-product-selection.mjs";
@@ -2652,10 +2653,13 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
   const trustedQuoteHistory = Boolean(trustedConversationId || persistedHistory !== null);
   const contextHistory = persistedHistory ?? history;
   const declinedOptions = trustedQuoteHistory && images.length === 0 && declinedProductOptions(query, contextHistory);
-  const activeContext = activeItemContext(declinedOptions ? "" : query, trustedQuoteHistory ? contextHistory : []);
+  const rollChoiceHistory = softRollChoiceHistory(query, contextHistory);
+  const productContextHistory = rollChoiceHistory ?? contextHistory;
+  const activeContext = activeItemContext(declinedOptions ? "" : query, trustedQuoteHistory ? productContextHistory : []);
   const latestTurn = images.length > 0 || !CHAT_LATEST_TURN_ROUTING_ENABLED
-    ? { kind: "follow_up", history: contextHistory, topicQuery: null }
-    : routeLatestTurn(declinedOptions ? "6" : query, contextHistory);
+    ? { kind: "follow_up", history: productContextHistory, topicQuery: null }
+    : routeLatestTurn(declinedOptions ? "6" : query, productContextHistory);
+  const quoteSelectedItemOnly = rollChoiceHistory !== null && latestTurn.kind === "follow_up";
   const productHistory = latestTurn.history.slice(-MAX_HISTORY_ITEMS);
   if (activeContext.quote_pending && activeContext.quote_evidence && trustedQuoteHistory
     && !productHistory.some(item => item.role === "user" && /ใบเสนอราคา|quotation|\bquote\b/iu.test(item.content))) {
@@ -2785,7 +2789,7 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
       const priced = await getExactPrice(admin, { sku, qty: quantity ?? minimum }, conversationId);
       const price = isSuccessfulExactPriceResult(priced.response) ? priced.response as Record<string, unknown> : null;
       if (quantity != null && !price) { await reviewActiveItem("product_specification"); return; }
-      finishContextReply(guidedExactProductAnswer(product, quantity, price, lang), "catalog:active_item", [], product);
+      finishContextReply(guidedExactProductAnswer(product, quantity, price, lang, quoteSelectedItemOnly), "catalog:active_item", [], product);
       return;
     }
   }
@@ -2896,7 +2900,7 @@ async function handleQueryCore(admin: SupabaseClient, query: string, images: Ima
         } catch (error) {
           console.warn("guided exact price lookup failed", { request_id: telemetry.requestId, error: (error as Error).message });
         }
-        guidedAnswer = guidedExactProductAnswer(exactProduct, quantity, priceResult, lang);
+        guidedAnswer = guidedExactProductAnswer(exactProduct, quantity, priceResult, lang, quoteSelectedItemOnly);
       }
       if (guidedAnswer && guided) {
         const toolCalls: Array<{

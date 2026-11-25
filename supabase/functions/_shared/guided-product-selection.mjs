@@ -1,10 +1,12 @@
-import { extractExplicitProductSkus, extractModelCodes, normalizeFlapDiscName, normalizeProductSearchQuery, productMatchFacets } from "./product-selection.mjs";
+import { extractExplicitProductSkus, extractModelCodes, matchesExplicitProductVariant, normalizeFlapDiscName, normalizeProductSearchQuery, productMatchFacets, productRollDimensions } from "./product-selection.mjs";
 import { formatProductOptions, numberedChoices, pendingProductQuestion, PRODUCT_OPTIONS_MENU_RE } from "./product-turn-context.mjs";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const PRODUCT_RE = /กระดาษทราย|ผ้าทราย|สายพาน(?:ขัด|ทราย)|จานทราย|จาานราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const FLAP_DISC_RE = /จานทราย|\bflap\s*disc\b/iu;
 const NONWOVEN_ROLL_RE = /ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|\b(?:nonwoven|scotch\s*brite)\s*roll\b/iu;
+const SOFT_SANDING_ROLL_RE = /ผ้าทราย\s*ม้วน\s*นิ่ม/iu;
+const SOFT_ROLL_BATCH_INTRO = { th: "เอยตรวจผ้าทรายม้วนนิ่มแยกตามเบอร์แล้วค่ะ", en: "I checked each flexible sanding roll separately." };
 const COMPETING_PRODUCT_FORM_RE = /ล้อ(?:ขัด|ทราย)|ลูกขัด|แผ่น(?:ใย|ขัด|สก๊อต)|ใบขัด|จานทราย|ผ้าทราย|กระดาษทราย|สายพาน/iu;
 const OTHER_PRODUCT_RE = /กระดาษทราย|ผ้าทราย|ม้วน\s*ใย(?:ขัด)?\s*สังเคราะห์|ล้อทราย|(?:ล้อ|ลูก)ขัด|ใบ(?:ขัด|ตัด|เจียร)|หินเจียร|แผ่น(?:ขัด|เจียร)|แปรง(?:ลวด|ขัด)|สายพาน(?:ขัด|ทราย)|สว่านลม|เครื่องมือ(?:ลม)?|ลูกยาง|\b(?:SA331|PS36|MIRKA|MIKA)\b/iu;
 const PRODUCT_SWITCH_RE = /(?:ขอ)?เปลี่ยน(?:สินค้า)?(?:เป็น|ไป(?:หา)?)/iu;
@@ -79,6 +81,7 @@ export function sameProductReference(question, card) {
 
 export function normalizeGuidedProductTerm(value) {
   const text = normalizeFlapDiscName(clean(value))
+    .replace(/ม้วน\s*นิ่ม\s*ผ้าทราย/gu, "ผ้าทรายม้วนนิ่ม")
     .replace(/ม้วน\s*ใย\s*สังเคราะห์/gu, "ม้วนใยขัดสังเคราะห์")
     .replace(/สก๊อตไบรท์/gu, "สก๊อตไบร์ท")
     .replace(/หลังกา+ว/gu, "หลังกาว")
@@ -302,9 +305,10 @@ export function guidedRequestedQuantity(query, history = [], resolvedQuery = que
  * @param {number | null} [quantity]
  * @param {Record<string, unknown> | null} [price]
  * @param {string} [lang]
+ * @param {boolean} [quoteSelectedItemOnly]
  * @returns {string}
  */
-export function guidedExactProductAnswer(product, quantity = null, price = null, lang = "th") {
+export function guidedExactProductAnswer(product, quantity = null, price = null, lang = "th", quoteSelectedItemOnly = false) {
   const name = clean(lang === "th" ? product.name_th || product.name_en : product.name_en || product.name_th);
   const verifiedColor = clean(product.verified_color);
   const displayName = lang === "th" && verifiedColor && !name.includes(`สี${verifiedColor}`)
@@ -327,9 +331,12 @@ export function guidedExactProductAnswer(product, quantity = null, price = null,
       : `I found ${name} (SKU ${sku}).${verifiedPrice ? ` At ${minimum} ${unit}, the verified price is THB ${money(price.unit_price)}/${unit}.` : ""}${stockText ? ` ${stockText}.` : ""} The minimum is ${minimum} ${unit}. What quantity would you like?`;
   }
   if (quantity != null && verifiedPrice) {
+    const quoteQuestion = lang === "th"
+      ? quoteSelectedItemOnly ? "ให้เอยทำใบเสนอราคาเฉพาะรายการนี้เลยไหมคะ" : "ให้เอยทำใบเสนอราคาให้เลยไหมคะ"
+      : quoteSelectedItemOnly ? "Would you like a quotation for this item only?" : "Would you like a quotation?";
     return lang === "th"
-      ? `ราคาปัจจุบันที่ตรวจสอบจากระบบแล้ว:\n${displayName} (SKU ${sku}): ${money(price.unit_price)} บาท/${unit} สำหรับ ${quantity} ${unit} (รวม ${money(price.line_total)} บาท)${stockText ? `\n${stock === 0 ? `${displayName} เป็นสินค้าสั่งผลิตค่ะ` : stockText}` : ""}\nให้เอยทำใบเสนอราคาให้เลยไหมคะ\n1. ต้องการใบเสนอราคา\n2. ไม่ต้องการ`
-      : `Current verified price:\n${name} (SKU ${sku}): THB ${money(price.unit_price)}/${unit} for ${quantity} ${unit} (total THB ${money(price.line_total)}).${stockText ? `\n${stockText}` : ""}\nWould you like a quotation?\n1. Request a quotation\n2. No quotation`;
+      ? `ราคาปัจจุบันที่ตรวจสอบจากระบบแล้ว:\n${displayName} (SKU ${sku}): ${money(price.unit_price)} บาท/${unit} สำหรับ ${quantity} ${unit} (รวม ${money(price.line_total)} บาท)${stockText ? `\n${stock === 0 ? `${displayName} เป็นสินค้าสั่งผลิตค่ะ` : stockText}` : ""}\n${quoteQuestion}\n1. ต้องการใบเสนอราคา\n2. ไม่ต้องการ`
+      : `Current verified price:\n${name} (SKU ${sku}): THB ${money(price.unit_price)}/${unit} for ${quantity} ${unit} (total THB ${money(price.line_total)}).${stockText ? `\n${stockText}` : ""}\n${quoteQuestion}\n1. Request a quotation\n2. No quotation`;
   }
   if (quantity != null) return lang === "th"
     ? `รับจำนวน ${quantity} ${unit} สำหรับ ${displayName} (SKU ${sku}) แล้วค่ะ${stockText ? ` ${stockText}` : ""} แต่ยังตรวจราคาปัจจุบันจากระบบไม่ได้ จึงยังยืนยันยอดและออกใบเสนอราคาไม่ได้ค่ะ`
@@ -495,7 +502,88 @@ export function quoteCreationBlockReason(query, hasImages, history = []) {
     ? null : "not_explicit_quote_request";
 }
 
+function softRollRequestLines(query) {
+  const lines = String(query ?? "").split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  const start = lines.findIndex(line => /^\d{1,2}[.)]/u.test(line));
+  if (start < 0 || lines.length - start < 2 || lines.length - start > 5) return [];
+  const requests = lines.slice(start).map(line => normalized(/^\d{1,2}[.)]\s*(.+)$/u.exec(line)?.[1]));
+  if (!requests.every(line => SOFT_SANDING_ROLL_RE.test(line) && productRollDimensions(line).length === 1
+    && productMatchFacets(line).grit.length === 1 && guidedRequestedQuantity(line, []) > 0)) return [];
+  return new Set(requests.map(line => productMatchFacets(line).grit[0])).size === requests.length ? requests : [];
+}
+
+/** Bind a batch-menu selection to its original row, including that row's quantity. */
+export function softRollChoiceHistory(query, history) {
+  for (let index = history.length - 1; index > 0; index--) {
+    const menu = history[index], request = history[index - 1];
+    if (menu.role !== "assistant" || request.role !== "user"
+      || !Object.values(SOFT_ROLL_BATCH_INTRO).some(intro => menu.content.startsWith(intro))) continue;
+    const rows = softRollRequestLines(request.content);
+    const choice = index === history.length - 1 ? query
+      : history[index + 1]?.role === "user" ? history[index + 1].content : "";
+    const selected = numberedChoice(clean(choice), [menu]);
+    if (!SOFT_SANDING_ROLL_RE.test(selected) || !numberedChoices(menu.content).some(({ label }) => label === selected)) return null;
+    const grit = productMatchFacets(selected).grit[0];
+    const row = rows.find(line => productMatchFacets(line).grit[0] === grit);
+    return row ? [{ ...request, content: row }, ...history.slice(index)] : null;
+  }
+  return null;
+}
+
+function verifiedSoftRollNames(query, result) {
+  return (result?.products ?? []).filter(product => SOFT_SANDING_ROLL_RE.test(product.name_th)
+    && matchesExplicitProductVariant(query, product)).map(product => product.name_th.trim());
+}
+
+async function softRollYardOptions(query, lang, lookup) {
+  if (!SOFT_SANDING_ROLL_RE.test(query) || /เท่านั้น|ไม่เอา.{0,15}(?:หลา|สเปกอื่น)|\b(?:only|exactly)\b/iu.test(query)) return null;
+  const dimensions = productRollDimensions(query);
+  if (dimensions.length !== 1 || dimensions[0].unit !== "เมตร" || productMatchFacets(query).grit.length !== 1) return null;
+  const { raw, width, length } = dimensions[0];
+  const alternateQuery = query.replace(raw, `${width}นิ้วx${length}หลา`);
+  const names = verifiedSoftRollNames(alternateQuery, await lookup(alternateQuery));
+  if (!names.length) return null;
+  const equivalent = Number((length * 0.9144).toFixed(4));
+  return { names, note: lang === "th"
+    ? `ความยาวที่แจ้ง ${length} เมตร รุ่นที่เสนอมีความยาว ${length} หลา (${equivalent} เมตร) ค่ะ`
+    : `Requested length: ${length} m. These options are ${length} yd (${equivalent} m).` };
+}
+
+function softRollOptionsReply(lookupQuery, intro, names, lang) {
+  const choices = names.map((name, index) => `${index + 1}. ${name}`).join("\n");
+  return {
+    answer: formatProductOptions(`${intro}\n${choices}`, lang), lookupQuery,
+    result: { count: 0, products: [], selection_required: true, confirmation_required: true },
+  };
+}
+
 export async function guidedProductDecision(query, history, lang, lookup) {
+  const rollRequests = softRollRequestLines(query);
+  if (rollRequests.length) {
+    const results = await Promise.all(rollRequests.map(async (line) => {
+      const lookupQuery = normalizeProductSearchQuery(line);
+      const result = await lookup(lookupQuery);
+      const names = verifiedSoftRollNames(lookupQuery, result);
+      const alternatives = !names.length && !result?.error ? await softRollYardOptions(lookupQuery, lang, lookup) : null;
+      const grit = productMatchFacets(lookupQuery).grit[0];
+      const quantity = guidedRequestedQuantity(line, []);
+      return { names: alternatives?.names ?? names, grit, quantity, note: alternatives?.note };
+    }));
+    // Give each requested grit a place before showing additional models.
+    const names = [...results.flatMap(item => item.names.slice(0, 1)), ...results.flatMap(item => item.names.slice(1))];
+    if (!names.length) return { answer: null, lookupQuery: query, result: { count: 0, products: [] }, escalate: true };
+    const lines = results.map(({ names, grit, quantity, note }) => {
+      if (lang === "th") {
+        const detail = note ?? (names.length ? "มีรุ่นในตัวเลือกค่ะ" : "ยังยืนยันรายการตรงสเปกในแค็ตตาล็อกไม่ได้ค่ะ");
+        return `เบอร์ ${grit} จำนวน ${quantity} ม้วน · ${detail}`;
+      }
+      const detail = note ?? (names.length ? "See options below." : "An exact catalog item could not be verified.");
+      return `Grit ${grit}, ${quantity} rolls · ${detail}`;
+    });
+    const instruction = lang === "th" ? "กรุณาเลือกรุ่นที่ต้องการตรวจราคาค่ะ" : "Select a product to check its price.";
+    return softRollOptionsReply(query, [SOFT_ROLL_BATCH_INTRO[lang], ...lines, instruction].join("\n"), names, lang);
+  }
+
   const nextPage = nextCatalogPage(query, history);
   const lookupQuery = nextPage?.lookupQuery ?? guidedCatalogQuery(query, history);
   if (!lookupQuery) return null;
@@ -505,6 +593,14 @@ export async function guidedProductDecision(query, history, lang, lookup) {
       ? pagedCatalogCandidateQuestion(result, lang, nextPage?.pageIndex)
       : pagedGritQuestion(result, lang, nextPage?.pageIndex);
     return { answer, lookupQuery, result };
+  }
+
+  if (!result?.error && Number(result?.count ?? 0) === 0 && !result?.products?.length) {
+    const alternatives = await softRollYardOptions(lookupQuery, lang, lookup);
+    if (alternatives) {
+      const instruction = lang === "th" ? "รับความยาวนี้ได้ไหมคะ กรุณาเลือกสินค้าก่อนตรวจราคาค่ะ" : "Select an item if that length works for you.";
+      return softRollOptionsReply(lookupQuery, `${alternatives.note}\n${instruction}`, alternatives.names, lang);
+    }
   }
 
   // An unavailable grit is not proof that the product family is unavailable.

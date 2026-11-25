@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { database, conversationId } from "./helpers/critical-company-fixtures.mjs";
+import { ragRuntime } from "./helpers/rag-critical-runtime.mjs";
 import { recoverEmptyProductAnswer } from "../supabase/functions/_shared/empty-product-recovery.mjs";
 import { routeLatestTurn } from "../supabase/functions/_shared/latest-turn-context.mjs";
 import {
@@ -118,6 +120,70 @@ function fakeAdmin(rows = catalog) {
     rpc() { return Promise.resolve({ data: [], error: null }); },
   };
 }
+
+const softRollCatalog = [
+  { sku: "2020004261", status: "active", unit: "ม้วน", min_order_qty: 1, name_th: 'ผ้าทรายม้วนนิ่ม JB-5 2"x50Y. #320' },
+  { sku: "2020004702", status: "active", unit: "ม้วน", min_order_qty: 1, name_th: 'ผ้าทรายม้วนนิ่ม JB-5 2"x50Y. #400' },
+  { sku: "wrong-width", status: "active", name_th: 'ผ้าทรายม้วนนิ่ม JB-5 12"x50Y. #800' },
+  { sku: "wrong-grit", status: "active", name_th: 'ผ้าทรายม้วนนิ่ม JB-5 2"x50Y. #3200' },
+];
+const softRollLookup = query => edge.findProducts(fakeAdmin(softRollCatalog), query);
+
+test("a soft roll requested in metres offers the verified yard variant with confirmation", async () => {
+  const query = 'ขอราคา .ผ้าทรายม้วนนิ่ม 2"x50เมตร เบอร์320 จำนวน 2ม้วน';
+  assert.equal((await softRollLookup(query)).count, 0);
+  const menu = await guidedProductDecision(query, [], "th", softRollLookup);
+  assert.equal(menu.result.selection_required, true);
+  assert.deepEqual(menu.result.products, []);
+  assert.match(menu.answer, /50 เมตร.*50 หลา \(45\.72 เมตร\)/);
+  assert.match(menu.answer, /1\. ผ้าทรายม้วนนิ่ม JB-5 2"x50Y\. #320\b/);
+  assert.doesNotMatch(menu.answer, /#3200/);
+  assert.equal(numberedChoices(menu.answer).at(-1), noMatchChoice);
+  const history = [{ role: "user", content: query }, { role: "assistant", content: menu.answer }];
+  const selected = await guidedProductDecision("1", history, "th", softRollLookup);
+  assert.equal(selected.result.products[0].sku, "2020004261");
+  assert.equal(guidedRequestedQuantity("1", history, selected.lookupQuery), 2);
+  const reordered = await guidedProductDecision("เบอร์ 320 ม้วนนิ่ม ผ้าทราย 2 นิ้ว x 50 เมตร จำนวน 2 ม้วน", [], "th", softRollLookup);
+  assert.deepEqual(numberedChoices(reordered.answer), numberedChoices(menu.answer));
+  const strict = await guidedProductDecision('ผ้าทรายม้วนนิ่ม 2"x50เมตร เบอร์320 ต้องใช้ 50 เมตรเท่านั้น', [], "th", softRollLookup);
+  assert.doesNotMatch(strict.answer ?? "", /50 หลา|50Y/);
+  assert.deepEqual((await softRollLookup('ผ้าทรายม้วนนิ่ม 2"')).products.map(p => p.sku).sort(),
+    ["2020004261", "2020004702", "wrong-grit"]);
+});
+
+test("the chat handler offers each available roll on a numbered request and prices only the chosen row", async () => {
+  const query = [
+    "รบกวนเสนอราคา บริษัททดสอบ ค่ะ",
+    '1.ผ้าทรายม้วนนิ่ม 2"x50เมตร เบอร์320 จำนวน 2ม้วน',
+    '2.ผ้าทรายม้วนนิ่ม 2"x50เมตร เบอร์400 จำนวน 3ม้วน',
+    '3.ผ้าทรายม้วนนิ่ม 2"x50เมตร เบอร์800 จำนวน 2ม้วน',
+  ].join("\n");
+  const counts = [], db = database();
+  const runtime = await ragRuntime(db, [], {
+    findProducts: async (_admin, key) => await softRollLookup(key),
+    getExactPrice: async (_admin, { sku, qty }) => {
+      counts.push({ sku, qty });
+      return { response: { ok: true, exact_match: true, sku, quantity: qty, unit_price: 10, line_total: qty * 10, currency: "THB" } };
+    },
+  });
+  const body = { conversation_id: conversationId, channel: "line", stream: false };
+  const { data: first } = await runtime.request({ ...body, query });
+  assert.equal(first.model, "catalog:guided_selection");
+  assert.match(first.answer, /เบอร์ #800.*ยังยืนยันรายการตรงสเปก/);
+  assert.match(first.answer, /50 หลา \(45\.72 เมตร\)/);
+  assert.deepEqual(numberedChoices(first.answer), [
+    "1. " + softRollCatalog[0].name_th, "2. " + softRollCatalog[1].name_th, noMatchChoice,
+  ]);
+  assert.deepEqual(counts, []);
+  const history = [{ role: "user", content: query }, { role: "assistant", content: first.answer }];
+  const { data: second } = await runtime.request({ ...body, query: softRollCatalog[1].name_th, history });
+  assert.equal(second.active_item?.sku, "2020004702");
+  assert.deepEqual(counts, [{ sku: "2020004702", qty: 3 }]);
+  assert.match(second.answer, /3 ม้วน/);
+  assert.match(second.answer, /ทำใบเสนอราคาเฉพาะรายการนี้/);
+  assert.equal(db.tasks.size, 0);
+  assert.equal(runtime.trace.modelCalls, 0);
+});
 
 test("full findProducts resolves photograph query to one scored candidate among 189 live catalog rows", async () => {
   const result = await edge.findProducts(fakeAdmin(), 'กระดาษทราย DEERFOS SA331VC 5" #1500');
