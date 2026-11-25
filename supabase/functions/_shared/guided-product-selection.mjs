@@ -81,6 +81,7 @@ export function sameProductReference(question, card) {
 
 export function normalizeGuidedProductTerm(value) {
   const text = normalizeFlapDiscName(clean(value))
+    .replace(/ม้วน\s*นิ่ม\s*ผ้าทราย/gu, "ผ้าทรายม้วนนิ่ม")
     .replace(/ม้วน\s*ใย\s*สังเคราะห์/gu, "ม้วนใยขัดสังเคราะห์")
     .replace(/สก๊อตไบรท์/gu, "สก๊อตไบร์ท")
     .replace(/หลังกา+ว/gu, "หลังกาว")
@@ -304,9 +305,10 @@ export function guidedRequestedQuantity(query, history = [], resolvedQuery = que
  * @param {number | null} [quantity]
  * @param {Record<string, unknown> | null} [price]
  * @param {string} [lang]
+ * @param {boolean} [quoteSelectedItemOnly]
  * @returns {string}
  */
-export function guidedExactProductAnswer(product, quantity = null, price = null, lang = "th") {
+export function guidedExactProductAnswer(product, quantity = null, price = null, lang = "th", quoteSelectedItemOnly = false) {
   const name = clean(lang === "th" ? product.name_th || product.name_en : product.name_en || product.name_th);
   const verifiedColor = clean(product.verified_color);
   const displayName = lang === "th" && verifiedColor && !name.includes(`สี${verifiedColor}`)
@@ -329,9 +331,12 @@ export function guidedExactProductAnswer(product, quantity = null, price = null,
       : `I found ${name} (SKU ${sku}).${verifiedPrice ? ` At ${minimum} ${unit}, the verified price is THB ${money(price.unit_price)}/${unit}.` : ""}${stockText ? ` ${stockText}.` : ""} The minimum is ${minimum} ${unit}. What quantity would you like?`;
   }
   if (quantity != null && verifiedPrice) {
+    const quoteQuestion = lang === "th"
+      ? quoteSelectedItemOnly ? "ให้เอยทำใบเสนอราคาเฉพาะรายการนี้เลยไหมคะ" : "ให้เอยทำใบเสนอราคาให้เลยไหมคะ"
+      : quoteSelectedItemOnly ? "Would you like a quotation for this item only?" : "Would you like a quotation?";
     return lang === "th"
-      ? `ราคาปัจจุบันที่ตรวจสอบจากระบบแล้ว:\n${displayName} (SKU ${sku}): ${money(price.unit_price)} บาท/${unit} สำหรับ ${quantity} ${unit} (รวม ${money(price.line_total)} บาท)${stockText ? `\n${stock === 0 ? `${displayName} เป็นสินค้าสั่งผลิตค่ะ` : stockText}` : ""}\nให้เอยทำใบเสนอราคาให้เลยไหมคะ\n1. ต้องการใบเสนอราคา\n2. ไม่ต้องการ`
-      : `Current verified price:\n${name} (SKU ${sku}): THB ${money(price.unit_price)}/${unit} for ${quantity} ${unit} (total THB ${money(price.line_total)}).${stockText ? `\n${stockText}` : ""}\nWould you like a quotation?\n1. Request a quotation\n2. No quotation`;
+      ? `ราคาปัจจุบันที่ตรวจสอบจากระบบแล้ว:\n${displayName} (SKU ${sku}): ${money(price.unit_price)} บาท/${unit} สำหรับ ${quantity} ${unit} (รวม ${money(price.line_total)} บาท)${stockText ? `\n${stock === 0 ? `${displayName} เป็นสินค้าสั่งผลิตค่ะ` : stockText}` : ""}\n${quoteQuestion}\n1. ต้องการใบเสนอราคา\n2. ไม่ต้องการ`
+      : `Current verified price:\n${name} (SKU ${sku}): THB ${money(price.unit_price)}/${unit} for ${quantity} ${unit} (total THB ${money(price.line_total)}).${stockText ? `\n${stockText}` : ""}\n${quoteQuestion}\n1. Request a quotation\n2. No quotation`;
   }
   if (quantity != null) return lang === "th"
     ? `รับจำนวน ${quantity} ${unit} สำหรับ ${displayName} (SKU ${sku}) แล้วค่ะ${stockText ? ` ${stockText}` : ""} แต่ยังตรวจราคาปัจจุบันจากระบบไม่ได้ จึงยังยืนยันยอดและออกใบเสนอราคาไม่ได้ค่ะ`
@@ -501,7 +506,7 @@ function softRollRequestLines(query) {
   const lines = String(query ?? "").split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
   const start = lines.findIndex(line => /^\d{1,2}[.)]/u.test(line));
   if (start < 0 || lines.length - start < 2 || lines.length - start > 5) return [];
-  const requests = lines.slice(start).map(line => /^\d{1,2}[.)]\s*(.+)$/u.exec(line)?.[1] ?? "");
+  const requests = lines.slice(start).map(line => normalized(/^\d{1,2}[.)]\s*(.+)$/u.exec(line)?.[1]));
   if (!requests.every(line => SOFT_SANDING_ROLL_RE.test(line) && productRollDimensions(line).length === 1
     && productMatchFacets(line).grit.length === 1 && guidedRequestedQuantity(line, []) > 0)) return [];
   return new Set(requests.map(line => productMatchFacets(line).grit[0])).size === requests.length ? requests : [];

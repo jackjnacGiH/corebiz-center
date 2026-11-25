@@ -143,6 +143,8 @@ test("a soft roll requested in metres offers the verified yard variant with conf
   const selected = await guidedProductDecision("1", history, "th", softRollLookup);
   assert.equal(selected.result.products[0].sku, "2020004261");
   assert.equal(guidedRequestedQuantity("1", history, selected.lookupQuery), 2);
+  const reordered = await guidedProductDecision("เบอร์ 320 ม้วนนิ่ม ผ้าทราย 2 นิ้ว x 50 เมตร จำนวน 2 ม้วน", [], "th", softRollLookup);
+  assert.deepEqual(numberedChoices(reordered.answer), numberedChoices(menu.answer));
   const strict = await guidedProductDecision('ผ้าทรายม้วนนิ่ม 2"x50เมตร เบอร์320 ต้องใช้ 50 เมตรเท่านั้น', [], "th", softRollLookup);
   assert.doesNotMatch(strict.answer ?? "", /50 หลา|50Y/);
   assert.deepEqual((await softRollLookup('ผ้าทรายม้วนนิ่ม 2"')).products.map(p => p.sku).sort(),
@@ -161,7 +163,7 @@ test("the chat handler offers each available roll on a numbered request and pric
     findProducts: async (_admin, key) => await softRollLookup(key),
     getExactPrice: async (_admin, { sku, qty }) => {
       counts.push({ sku, qty });
-      return { response: { ok: true, exact_match: true, sku, quantity: qty, unit_price: 10, line_total: qty * 10 } };
+      return { response: { ok: true, exact_match: true, sku, quantity: qty, unit_price: 10, line_total: qty * 10, currency: "THB" } };
     },
   });
   const body = { conversation_id: conversationId, channel: "line", stream: false };
@@ -178,6 +180,7 @@ test("the chat handler offers each available roll on a numbered request and pric
   assert.equal(second.active_item?.sku, "2020004702");
   assert.deepEqual(counts, [{ sku: "2020004702", qty: 3 }]);
   assert.match(second.answer, /3 ม้วน/);
+  assert.match(second.answer, /ทำใบเสนอราคาเฉพาะรายการนี้/);
   assert.equal(db.tasks.size, 0);
   assert.equal(runtime.trace.modelCalls, 0);
 });
